@@ -30,6 +30,45 @@
  * what you see. So to open showing the TRACED result with the divider hard against the leading edge —
  * what was asked for — pass the trace as `afterImage` and `initialPosition={0}`. Dragging then
  * reveals the original underneath. The snippet's 50 would have opened half-and-half.
+ *
+ * ── ON `aspectRatio`, ADDED WHEN THIS WAS FIRST MOUNTED ─────────────────────────────────────────
+ *
+ * The frame was `aspect-video` and both layers are `object-cover`, which is right for the marketing
+ * strip the snippet came from and wrong for the first real caller: a photographed A4 sketch is
+ * portrait, and 16:9 centre-crops most of the sheet off the screen. The crop is identical on both
+ * layers, so the comparison stays aligned — it just stops showing the drawing.
+ *
+ * `aspectRatio` is a NUMBER applied as an inline style rather than a class, and that is not laziness.
+ * `cn()` in `lib/utils.ts` is `filter(Boolean).join(" ")` and NOT `tailwind-merge`
+ * (`.claude/skills/field-repo-frontend/SKILL.md` §11.1: "later classes do not win, CSS source order
+ * decides"), so appending `aspect-[3/4]` to a container that already has `aspect-video` is a coin
+ * toss decided by the order Tailwind happened to emit two utilities that set the same property. An
+ * inline style has no such argument with anything. When it is given, `aspect-video` is not emitted at
+ * all — and with the frame matching the source, `object-cover` crops nothing.
+ *
+ * ── ON THE TWO BADGES, WHICH USED TO NAME THE WRONG LAYER ────────────────────────────────────────
+ *
+ * They were pinned to the two top corners and rendered whatever `position` was, so at `0` — the
+ * position the first caller opens at, where the before layer is clipped to nothing and the whole frame
+ * is the AFTER image — the top-left badge sat over the after layer calling it by the before layer's
+ * name. The prop wiring was right and the labelling read backwards, which is the same "plausible and
+ * wrong" failure the `initialPosition` note above is about, one level down.
+ *
+ * So each badge is now inside a layer clipped exactly as its own image is: the before badge shares the
+ * before layer's `clipPath`, the after badge gets the complement. A badge is therefore visible only
+ * over the picture it names, and it is revealed and hidden by the same drag that reveals and hides
+ * that picture. Nothing decides this from a threshold — the two clips are the one number `position`.
+ *
+ * ── ON THE GRIP, WHICH USED TO BE HALF-CLIPPED AT THE EDGES ──────────────────────────────────────
+ *
+ * The frame is `overflow-hidden` (the images are `object-cover` inside a rounded box) and the grip is a
+ * 40px circle centred on the divider, so at `position: 0` — again, the first caller's opening state —
+ * exactly half of it was outside the frame and clipped away: the only pointer grab target was a 20px
+ * half-disc at the extreme edge. The DIVIDER still sits exactly on the clip boundary, because moving it
+ * would make the seam disagree with the picture; the GRIP is positioned separately and kept a grip's
+ * radius inside the frame with a CSS `clamp()`. Within 20px of either end the grip and the seam are
+ * visibly apart by up to that much, which is the honest trade: a handle you can grab everywhere, and a
+ * seam that is never drawn in the wrong place.
  */
 
 import { GripHorizontal, GripVertical } from "lucide-react";
@@ -52,6 +91,13 @@ export interface Reveal1Props {
   orientation?: "horizontal" | "vertical";
   /** 0 shows `afterImage` in full with the divider at the leading edge. See the file note. */
   initialPosition?: number;
+  /**
+   * Width ÷ height for the frame, e.g. `3 / 4` for a portrait sheet. Defaults to 16:9.
+   *
+   * Pass the SOURCE's own ratio and neither layer is cropped. See the file note for why this is a
+   * number and not a class.
+   */
+  aspectRatio?: number;
   showLabels?: boolean;
   dividerWidth?: number;
   className?: string;
@@ -61,6 +107,15 @@ export interface Reveal1Props {
 
 /** How far one arrow press moves the divider, in percent. The Page keys move ten times as far. */
 const STEP = 2;
+
+/**
+ * Half the grip's own size, in CSS pixels — `h-10 w-10` is 40px, so 20.
+ *
+ * The grip is never centred closer than this to an edge, so the whole circle stays inside an
+ * `overflow-hidden` frame. Kept beside the class it is derived from: changing `h-10 w-10` without
+ * changing this puts a sliver of the handle back outside the frame.
+ */
+const GRIP_HALF_PX = 20;
 
 const clamp = (value: number) => Math.max(0, Math.min(100, value));
 
@@ -76,7 +131,8 @@ export function Reveal1({
   showLabels = true,
   dividerWidth = 4,
   className,
-  ariaLabel
+  ariaLabel,
+  aspectRatio
 }: Reveal1Props) {
   const [position, setPosition] = useState(clamp(initialPosition));
   const [dragging, setDragging] = useState(false);
@@ -154,7 +210,24 @@ export function Reveal1({
     ? `inset(0 ${100 - position}% 0 0)`
     : `inset(0 0 ${100 - position}% 0)`;
 
+  /** The complement of {@link clipPath}: everything the before layer is NOT covering. */
+  const afterClipPath = isHorizontal ? `inset(0 0 0 ${position}%)` : `inset(${position}% 0 0 0)`;
+
+  /**
+   * Where the grip's centre goes — the divider's position, held a grip's radius inside the frame.
+   *
+   * `clamp()` with a percentage and two pixel bounds is doing arithmetic this component cannot do in
+   * JS: the frame's width in pixels is not known here, and measuring it would mean an observer and a
+   * re-render per resize for a purely visual inset.
+   */
+  const gripOffset = `clamp(${GRIP_HALF_PX}px, ${position}%, calc(100% - ${GRIP_HALF_PX}px))`;
+
   const shown = Math.round(position);
+
+  // A non-finite or non-positive ratio would produce `aspect-ratio: NaN`, which collapses the frame to
+  // nothing and takes both layers with it. Falling back to the class default keeps a bad number from
+  // costing the whole comparison.
+  const framed = typeof aspectRatio === "number" && Number.isFinite(aspectRatio) && aspectRatio > 0;
 
   return (
     <section className={cn("w-full", className)}>
@@ -183,8 +256,10 @@ export function Reveal1({
           tabIndex={0}
           onPointerDown={onPointerDown}
           onKeyDown={onKeyDown}
+          style={framed ? { aspectRatio } : undefined}
           className={cn(
-            "panel relative aspect-video w-full select-none overflow-hidden rounded-lg",
+            "panel relative w-full select-none overflow-hidden rounded-lg",
+            framed ? null : "aspect-video",
             "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
             isHorizontal ? "cursor-ew-resize" : "cursor-ns-resize"
           )}
@@ -205,6 +280,7 @@ export function Reveal1({
             <img className="absolute inset-0 size-full object-cover" src={beforeImage.src} alt={beforeImage.alt} />
           </div>
 
+          {/* The seam, exactly on the clip boundary — see the file note on the grip. */}
           <div
             aria-hidden
             className={cn(
@@ -215,36 +291,52 @@ export function Reveal1({
               [isHorizontal ? "left" : "top"]: `${position}%`,
               [isHorizontal ? "width" : "height"]: `${dividerWidth}px`
             }}
+          />
+
+          {/* The grip, a sibling of the seam rather than its child, so it can be held inside the
+              frame without dragging the seam off the boundary with it. */}
+          <div
+            aria-hidden
+            className={cn(
+              "absolute z-10 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2",
+              "items-center justify-center rounded-full border-2 border-white bg-primary",
+              "shadow-xl transition-transform",
+              dragging && "scale-110"
+            )}
+            style={isHorizontal ? { left: gripOffset, top: "50%" } : { top: gripOffset, left: "50%" }}
           >
-            <div
-              className={cn(
-                "absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2",
-                "items-center justify-center rounded-full border-2 border-white bg-primary",
-                "shadow-xl transition-transform",
-                dragging && "scale-110"
-              )}
-            >
-              {isHorizontal ? (
-                <GripVertical className="h-5 w-5 text-white" />
-              ) : (
-                <GripHorizontal className="h-5 w-5 text-white" />
-              )}
-            </div>
+            {isHorizontal ? (
+              <GripVertical className="h-5 w-5 text-white" />
+            ) : (
+              <GripHorizontal className="h-5 w-5 text-white" />
+            )}
           </div>
 
+          {/*
+            EACH BADGE IS CLIPPED WITH THE LAYER IT NAMES. See the file note: pinned to the corners
+            unconditionally, the before badge named the after layer for as long as the divider was near
+            the leading edge — which is where the first caller deliberately opens.
+
+            `pointer-events-none` on the wrappers, because a badge that swallowed `pointerdown` would
+            make the one corner of the frame it covers refuse to move the divider.
+          */}
           {showLabels ? (
             <>
-              <span className="absolute left-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
-                {beforeLabel}
-              </span>
-              <span
-                className={cn(
-                  "absolute z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm",
-                  isHorizontal ? "right-3 top-3" : "bottom-3 left-3"
-                )}
-              >
-                {afterLabel}
-              </span>
+              <div className="pointer-events-none absolute inset-0 z-20" style={{ clipPath }}>
+                <span className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
+                  {beforeLabel}
+                </span>
+              </div>
+              <div className="pointer-events-none absolute inset-0 z-20" style={{ clipPath: afterClipPath }}>
+                <span
+                  className={cn(
+                    "absolute rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm",
+                    isHorizontal ? "right-3 top-3" : "bottom-3 left-3"
+                  )}
+                >
+                  {afterLabel}
+                </span>
+              </div>
             </>
           ) : null}
         </div>

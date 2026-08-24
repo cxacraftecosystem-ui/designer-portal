@@ -59,8 +59,10 @@
  * getting the turntable filled in. If a viewer is added later, dynamic-import it, and measure it.
  */
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import { AlertTriangle, Box, Camera, Check, FileBox } from "lucide-react";
+
+import { DropCard } from "./DropCard";
 
 // TYPE-ONLY, so the panel that composes this one can own the contract without a runtime cycle.
 import type { AttachAnswer } from "@/components/sketches/upload/UploadTabPanel";
@@ -140,16 +142,19 @@ export function PrototypeModelField({
   onAttachModel,
   onAttachTurntable
 }: PrototypeModelFieldProps) {
-  /**
-   * The prefix every DOM id on this panel is built from.
-   *
-   * NOT A CONSTANT STRING, BECAUSE THIS PANEL IS NOT A SINGLETON. One prototype row per prototype and
-   * a dialog copy over the top of it are both ordinary, and two `id={`${fieldId}-model-file`}` inputs in
-   * one document make the label point at whichever came first — so the label beside the second input
-   * focuses the first one, and a screen reader names the wrong control. `SketchTraceField` derives
-   * every id the same way for the same reason.
-   */
-  const fieldId = useId();
+  /*
+    THERE IS NO `useId` HERE ANY MORE, AND THAT IS THE POINT RATHER THAN A LOSS.
+
+    This panel used to derive an id prefix and hand it to two labels and two inputs, because it is not
+    a singleton: one prototype row per prototype and a dialog copy over the top of it are both
+    ordinary, and two `id="prototype-model-file"` inputs in one document make each label point at
+    whichever came first — so the label beside the second input focuses the first one and a screen
+    reader names the wrong control. That is a real hazard, and this file shipped both halves of it: a
+    hardcoded id under a derived `htmlFor`, which named nothing at all.
+
+    Both pickers are now `DropCard`s, and each one derives its own ids from its own `useId`. The
+    invariant is the same and it is no longer a caller's to keep.
+  */
   const [chosen, setChosen] = useState<File | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -320,36 +325,31 @@ export function PrototypeModelField({
               it was to leave the page for the prototype's stage form — which the panel never said.
               A screen that advises a field it cannot write teaches a reader to ignore its advice.
 
-              MULTIPLE, because the field is an IMAGE_LIST and a turn is twelve to twenty-four files.
-              `accept` narrows the dialog to photographs; `chooseFrames` is what actually refuses a
-              video, because `accept` is a filter a designer can switch off in the file dialog.
+              The picker itself is now a `DropCard` — see the note on it below, which carries what used
+              to be said here about `multiple` and about `accept` being a filter rather than a rule.
             */}
             {onAttachTurntable ? (
               <div className="mt-3">
-                <label className="field-label" htmlFor={`${fieldId}-turntable`}>
-                  Add photographs to “{turntableLabel}”
-                </label>
-                <input
-                  id={`${fieldId}-turntable`}
-                  type="file"
+                {/*
+                  A DROP CARD, AND `validate` IS DELIBERATELY NOT PASSED. `chooseFrames` below is the
+                  rule for this field and it is a better rule than a MIME test: it takes the frames
+                  that are photographs, names the ones that are not, and explains in domain terms why
+                  a video of the piece turning cannot go in an IMAGE_LIST. Two refusal sentences for
+                  one refusal would be a worse answer than either. `DropCard` still clears the input
+                  after every pick, which is the behaviour this block used to have to spell out.
+
+                  `multiple`, because a turn is ONE act of capture — twelve to twenty-four files chosen
+                  in one dialog, or dragged out of one folder in one gesture.
+                */}
+                <DropCard
+                  label={`Add photographs to “${turntableLabel}”`}
+                  buttonLabel="Choose the whole turn"
                   accept="image/*"
+                  acceptSentence="Photographs, chosen or dropped together. They are added to this prototype in the order they arrive, kept on this device straight away, and uploaded with everything else."
                   multiple
-                  className="field-input mt-1 file:mr-3 file:rounded-md file:border-0 file:bg-purple-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white"
                   disabled={disabled}
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    // The input is CLEARED, so choosing the same twelve frames again is a second
-                    // attach rather than a no-op: `onChange` does not fire for an unchanged value,
-                    // and a designer whose first attempt was refused would press the same button
-                    // and get nothing at all.
-                    event.target.value = "";
-                    chooseFrames(files);
-                  }}
+                  onFiles={(files) => chooseFrames(files)}
                 />
-                <p className="mt-1 text-xs leading-4 text-ink-500">
-                  Choose the whole turn at once. They are added to this prototype in the order the file dialog
-                  hands them over, kept on this device straight away, and uploaded with everything else.
-                </p>
               </div>
             ) : (
               <p className="mt-3 text-xs leading-5 text-ink-500">
@@ -388,28 +388,31 @@ export function PrototypeModelField({
             </p>
 
             <div className="mt-2">
-              <label className="field-label" htmlFor={`${fieldId}-model-file`}>
-                Model file
-              </label>
-              <input
-                /*
-                  THE ID THE LABEL ABOVE POINTS AT, WHICH FOR A WHILE IT DID NOT.
+              {/*
+                A DROP CARD, AND THE `id`/`htmlFor` PAIR THIS BLOCK USED TO GET WRONG IS GONE WITH IT.
 
-                  This was a hardcoded `id="prototype-model-file"` under a
-                  `htmlFor={`${fieldId}-model-file`}` label — so the label named no element at all,
-                  in either the single-panel case or the two-panel case. A `<label>` whose `for` does
-                  not resolve gives the input no accessible name and stops being a click target for
-                  it: exactly the two things a label is for. That is the collision `fieldId` above was
-                  introduced to prevent, re-opened from the other side by writing one of the pair as
-                  a constant.
-                */
-                id={`${fieldId}-model-file`}
-                type="file"
+                What was here was a hardcoded `id="prototype-model-file"` under a
+                `htmlFor={`${fieldId}-model-file`}` label, so the label named no element at all — no
+                accessible name, and not a click target either, which are the two things a label is
+                for. `DropCard` derives every id it needs from its own `useId`, so the pair cannot be
+                mismatched by a caller and cannot collide when two of these panels are on one page.
+
+                NOT `multiple`: the field holds one file. A designer who drops three is told the first
+                was used, by the card, rather than having two of them silently vanish.
+
+                No `validate`: `choose` below already says what it thinks of the file — an unexpected
+                extension and a very large upload are both WARNINGS rather than refusals, because the
+                field takes any file and the next designer may well have the tool that opens it. A
+                MIME test here would turn advice into a refusal.
+              */}
+              <DropCard
+                label="Model file"
+                buttonLabel="Choose a model file"
                 accept={MODEL_ACCEPT}
-                className="field-input mt-1 file:mr-3 file:rounded-md file:border-0 file:bg-purple-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white"
+                acceptSentence={`${MODEL_FORMATS.map((format) => format.label).join(", ")} — or any other file, which is stored and downloadable but may not open for the next designer. GLB travels best; the list below says why.`}
                 disabled={disabled}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
+                onFiles={(files) => {
+                  const file = files[0];
                   if (file) choose(file);
                 }}
               />

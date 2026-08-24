@@ -46,7 +46,14 @@
  * If somebody adds PDF later, add it here behind its own `await import()` and measure what it costs.
  */
 
-import { buildSvg, derivedFileName, shapePathData, type SvgInput, type SvgResult } from "./geometryToSvg";
+import {
+  DEFAULT_DERIVED_SUFFIX,
+  buildSvg,
+  derivedFileName,
+  shapePathData,
+  type SvgInput,
+  type SvgResult
+} from "./geometryToSvg";
 
 /** What a caller gets back: the file to attach, plus anything the designer must be told. */
 export interface ExportOutcome {
@@ -87,6 +94,40 @@ export const EXPORT_FORMATS = [
 export type ExportFormatId = (typeof EXPORT_FORMATS)[number]["id"];
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * THE THREE THINGS ONE PHOTOGRAPH PRODUCES, AND THE SUFFIX EACH ONE CARRIES
+ *
+ * The panel attaches a plate to the record, and — since the owner asked for both downloads — also
+ * hands the designer the vector geometry and the rendered raster as files on their own device. All
+ * three come out of the SAME `buildSvg`/`paintGeometry` pair, on purpose: a download that was drawn
+ * by different code from the file the record gets is a download that can disagree with the archive,
+ * and the disagreement would surface as "the drawing I emailed is not the drawing in the report".
+ *
+ * So the only thing that distinguishes them is the name, which makes the name load-bearing:
+ *
+ *   ATTACH_SUFFIX ("line-art")  the plate filed on `sketch.lineArtFile`. UNCHANGED from before this
+ *                               was a constant — `sketch-line-art.svg` is what the record already
+ *                               holds and what `sketch-trace-panel.spec.ts` pins.
+ *   TRACE_SUFFIX ("line-art")   the downloaded VECTOR trace. Deliberately the same word as the
+ *                               attach: it is byte-for-byte the same file, and giving the copy on
+ *                               the designer's laptop a different name would invite the belief that
+ *                               it is a different drawing. Two constants rather than one alias
+ *                               because they answer to different questions — if the archive ever
+ *                               renames its plate, the download must not silently follow.
+ *   RENDER_SUFFIX ("traced")    the downloaded RENDERED raster. A different word, because a PNG
+ *                               named "-line-art.png" is exactly what an attached PNG is called.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export const ATTACH_SUFFIX = DEFAULT_DERIVED_SUFFIX;
+export const TRACE_SUFFIX = DEFAULT_DERIVED_SUFFIX;
+export const RENDER_SUFFIX = "traced";
+
+/** Per-call naming, for the callers that are not the attach. See the block above. */
+export interface ExportNaming {
+  /** The word between the photograph's stem and the extension. Defaults to {@link ATTACH_SUFFIX}. */
+  readonly suffix?: string;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * SVG
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -98,9 +139,14 @@ export type ExportFormatId = (typeof EXPORT_FORMATS)[number]["id"];
  * a Laplacian variance measured on a rasterised vector says nothing about the photograph anybody took.
  * Declaring the type honestly is what lets that existing rule do its job without a special case.
  */
-export function exportSvgFile(input: SvgInput, sourceName: string, provenanceNote?: string): ExportOutcome {
+export function exportSvgFile(
+  input: SvgInput,
+  sourceName: string,
+  provenanceNote?: string,
+  naming: ExportNaming = {}
+): ExportOutcome {
   const result: SvgResult = buildSvg(input, { provenanceNote });
-  const name = derivedFileName(sourceName, "svg");
+  const name = derivedFileName(sourceName, "svg", naming.suffix ?? ATTACH_SUFFIX);
   return {
     file: new File([result.svg], name, { type: "image/svg+xml" }),
     note: result.truncationNote
@@ -140,7 +186,8 @@ export const PNG_MAX_EDGE_PX = 2048;
 export async function exportPngFile(
   input: SvgInput,
   sourceName: string,
-  maxEdge: number = PNG_MAX_EDGE_PX
+  maxEdge: number = PNG_MAX_EDGE_PX,
+  naming: ExportNaming = {}
 ): Promise<ExportResult> {
   const sourceWidth = Number.isFinite(input.width) && input.width > 0 ? input.width : 1;
   const sourceHeight = Number.isFinite(input.height) && input.height > 0 ? input.height : 1;
@@ -170,7 +217,7 @@ export async function exportPngFile(
         "image is very large. Attach the SVG instead, or lower “Trace resolution” and try again."
     };
   }
-  const name = derivedFileName(sourceName, "png");
+  const name = derivedFileName(sourceName, "png", naming.suffix ?? ATTACH_SUFFIX);
   const note =
     scale < 1
       ? `The PNG is ${width}x${height}, reduced from ${Math.round(sourceWidth)}x${Math.round(sourceHeight)} so it stays printable on a phone. The SVG beside it has no such limit.`
@@ -268,7 +315,16 @@ function argbToCss(argb: number): string {
   return `rgb(${r} ${g} ${b})`;
 }
 
-function createCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas | null {
+/**
+ * A drawing surface, `OffscreenCanvas` where it exists and a detached `<canvas>` where it does not.
+ *
+ * EXPORTED FOR `comparisonPlates.ts`, WHICH IS THE ONLY OTHER PLACE THAT PAINTS THIS GEOMETRY. The
+ * fallback exists because Safari carried `createImageBitmap` for several versions before
+ * `OffscreenCanvas` (`decodeToPixels.ts` names the same asymmetry), and a second copy of that
+ * knowledge is a second thing to update the next time a browser moves. Same argument as
+ * `paintGeometry`: one painter, one surface, one opinion.
+ */
+export function createCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas | null {
   if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(width, height);
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
@@ -277,7 +333,8 @@ function createCanvas(width: number, height: number): HTMLCanvasElement | Offscr
   return canvas;
 }
 
-async function canvasToBlob(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<Blob | null> {
+/** PNG bytes off either surface kind, or null when the browser refused. Exported for the same reason. */
+export async function canvasToBlob(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<Blob | null> {
   if ("convertToBlob" in canvas) {
     try {
       return await canvas.convertToBlob({ type: "image/png" });

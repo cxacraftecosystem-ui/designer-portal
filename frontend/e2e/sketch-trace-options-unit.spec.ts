@@ -20,6 +20,7 @@ import {
   overwriteNotice
 } from "@/components/sketches/upload/traceParamTable";
 import {
+  DEFAULT_DERIVED_SUFFIX,
   MAX_SHAPES_PER_FILE,
   VERB_CUBIC,
   VERB_LINE,
@@ -31,6 +32,12 @@ import {
   type GeometryStyle
 } from "@/components/sketches/upload/geometryToSvg";
 import { workingSizeFor } from "@/components/sketches/upload/decodeToPixels";
+import { ATTACH_SUFFIX, RENDER_SUFFIX, TRACE_SUFFIX } from "@/components/sketches/upload/traceExport";
+import {
+  BAND_SOURCE_PIXELS,
+  resampleRgba,
+  resampleRgbaInBands
+} from "@/components/sketches/upload/comparisonPlates";
 
 /**
  * The UPLOAD tab's tracing options, checked against the engine that has to honour them.
@@ -380,6 +387,137 @@ test("the derived file is named after the photograph it came from", () => {
   expect(derivedFileName("", "svg")).toBe("sketch-line-art.svg");
   expect(derivedFileName(".jpg", "svg")).toBe("sketch-line-art.svg");
   expect(derivedFileName(`${"x".repeat(200)}.jpg`, "svg").length).toBeLessThanOrEqual(80 + "-line-art.svg".length);
+});
+
+test("the three artefacts one photograph produces cannot end up sharing a name", () => {
+  // THE FAILURE THIS GUARDS. The panel now makes three files from one photograph: the plate it
+  // attaches, the vector trace downloaded to the device, and the rendered raster downloaded to the
+  // device. Two of the three are PNGs of the same drawing, so if the render ever picked up the attach's
+  // suffix, a designer's downloads folder would hold two different `…-line-art.png` files — one the
+  // record's plate and one a display render — with nothing but the byte count to tell them apart.
+  expect(ATTACH_SUFFIX).toBe(DEFAULT_DERIVED_SUFFIX);
+  expect(TRACE_SUFFIX).toBe(ATTACH_SUFFIX);
+  expect(RENDER_SUFFIX).not.toBe(ATTACH_SUFFIX);
+
+  const source = "Product-Bagru-Block-Print-Photo-2-200620261153.jpg";
+  expect(derivedFileName(source, "svg", TRACE_SUFFIX)).toBe(
+    "Product-Bagru-Block-Print-Photo-2-200620261153-line-art.svg"
+  );
+  expect(derivedFileName(source, "png", RENDER_SUFFIX)).toBe(
+    "Product-Bagru-Block-Print-Photo-2-200620261153-traced.png"
+  );
+  // The attach's own name is unchanged by the suffix becoming a parameter — this is the name the
+  // record already holds and `sketch-trace-panel.spec.ts` asserts on the attached file.
+  expect(derivedFileName(source, "svg")).toBe(derivedFileName(source, "svg", ATTACH_SUFFIX));
+
+  // The suffix goes through the same deny-list as the stem, so a caller cannot smuggle a path
+  // separator into a filename through the one argument that looks like a constant.
+  expect(derivedFileName("sheet.jpg", "png", "cropped/2")).toBe("sheet-cropped_2.png");
+  // …and an empty suffix asks for the stem itself rather than leaving a dangling hyphen.
+  expect(derivedFileName("sheet.jpg", "png", "")).toBe("sheet.png");
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 5b. The comparison plate's downscale
+ *
+ * WHY IT IS TESTED HERE AND NOT IN THE BROWSER SPEC. `resampleRgba` is the only arithmetic in
+ * `comparisonPlates.ts` — the rest is canvas plumbing — and it is the part that decides whether the
+ * photograph a designer compares a trace against is a fair reduction of the photograph the engine
+ * traced or an aliased mess that invents faults. Straight loops over typed arrays, no DOM, so Node.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** A w×h RGBA plane, `paint` deciding each pixel's four bytes. */
+function plane(width: number, height: number, paint: (x: number, y: number) => [number, number, number, number]) {
+  const out = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b, a] = paint(x, y);
+      const at = (y * width + x) * 4;
+      out[at] = r;
+      out[at + 1] = g;
+      out[at + 2] = b;
+      out[at + 3] = a;
+    }
+  }
+  return out;
+}
+
+test("the comparison downscale averages rather than dropping pixels, and never upscales", () => {
+  // A one-pixel checkerboard. NEAREST-NEIGHBOUR would return all black or all white depending on which
+  // pixel it happened to land on — which is exactly how a photograph of a pencil sketch turns into a
+  // dotted mess and makes the trace beside it look wrong. A box filter returns the mean: 127-ish.
+  const checker = plane(8, 8, (x, y) => {
+    const on = (x + y) % 2 === 0 ? 255 : 0;
+    return [on, on, on, 255];
+  });
+  const half = resampleRgba(checker, 8, 8, 4, 4);
+  expect(half.length).toBe(4 * 4 * 4);
+  for (let i = 0; i < half.length; i += 4) {
+    expect(Math.abs(half[i] - 127)).toBeLessThanOrEqual(2);
+    // Alpha is averaged with everything else, and an opaque source must stay opaque.
+    expect(half[i + 3]).toBe(255);
+  }
+
+  // Every source pixel is read exactly once: the boxes tile the source. A left half of pure red and a
+  // right half of pure blue must come back as the same halves, not as a purple smear or a shifted edge.
+  const halves = plane(8, 4, (x) => (x < 4 ? [255, 0, 0, 255] : [0, 0, 255, 255]));
+  const shrunk = resampleRgba(halves, 8, 4, 4, 2);
+  expect([shrunk[0], shrunk[1], shrunk[2]]).toEqual([255, 0, 0]);
+  const rightmost = (0 * 4 + 3) * 4;
+  expect([shrunk[rightmost], shrunk[rightmost + 1], shrunk[rightmost + 2]]).toEqual([0, 0, 255]);
+
+  // ASKING FOR MORE PIXELS THAN THERE ARE GETS THE SOURCE, not an interpolated enlargement. The cap
+  // can only ever shrink — the same rule `workingSizeFor` holds, and the reason the plates of a small
+  // sketch are not blown up to 1024 to be blurry.
+  const same = resampleRgba(halves, 8, 4, 40, 20);
+  expect(same.length).toBe(8 * 4 * 4);
+  expect(Array.from(same)).toEqual(Array.from(halves));
+
+  // A degenerate request cannot produce a zero-length plane, which `createImageData` would throw on.
+  expect(resampleRgba(halves, 8, 4, 0, 0).length).toBe(4);
+});
+
+test("the banded downscale is byte-identical to the synchronous one, and stops when told to", async () => {
+  /*
+    WHY THERE ARE TWO ENTRY POINTS AT ALL. Both callers run this over the WHOLE decode — up to 4096px on
+    its long edge, so 16.7 million source pixels read once each — on the page thread, once per settled
+    trace and once per chosen photograph. That is a long task, which is a frozen tab rather than a slow
+    one; `resampleRgbaInBands` does the identical arithmetic in bands and lets go of the thread between
+    them. "Identical" is the whole claim, and this is what holds it: a band boundary that lost or
+    double-counted a source row would show up as a seam in the comparison plate, which reads as a fault
+    in the trace beside it rather than as a fault in a downscale nobody is looking at.
+  */
+  /*
+    SIZED FROM `BAND_SOURCE_PIXELS` RATHER THAN HARD-CODED, so this really does cross band boundaries
+    however that budget is retuned: a source of more than one band's worth of pixels reduced to eight
+    destination rows is at least two bands, by the arithmetic in `resampleRgbaInBands` itself. A
+    hard-coded 37x29 fits in one band and would assert nothing about the seams.
+  */
+  const edge = Math.ceil(Math.sqrt(BAND_SOURCE_PIXELS + 1));
+  const rows = 8;
+  const photograph = plane(edge, edge, (x, y) => [(x * 7) % 256, (y * 11) % 256, (x + y) % 256, 255]);
+
+  const oneShot = resampleRgba(photograph, edge, edge, 11, rows);
+  const banded = await resampleRgbaInBands(photograph, edge, edge, 11, rows);
+  expect(banded).not.toBeNull();
+  // BYTE FOR BYTE. A band boundary that lost a source row, or read one twice, is a seam across the
+  // comparison plate — which reads as a fault in the trace beside it, not in a downscale.
+  expect(Array.from(banded ?? [])).toEqual(Array.from(oneShot));
+
+  // The pass-through branch — asking for at least the source size — is not special-cased into a
+  // different answer by one route than by the other.
+  const small = plane(6, 4, (x) => [x * 10, 0, 0, 255]);
+  const whole = await resampleRgbaInBands(small, 6, 4, 60, 40);
+  expect(Array.from(whole ?? [])).toEqual(Array.from(small));
+
+  // A CALLER THAT HAS LOST INTEREST GETS `null` AND PAYS FOR NOTHING. `buildComparisonPlates` passes a
+  // check that goes true when a newer trace has settled; without it a slider drag pays for every
+  // superseded comparison in full, on the thread it is being dragged on.
+  expect(await resampleRgbaInBands(photograph, edge, edge, 11, rows, () => true)).toBeNull();
+
+  // …and a check that never fires cannot change the answer.
+  const unstopped = await resampleRgbaInBands(photograph, edge, edge, 11, rows, () => false);
+  expect(Array.from(unstopped ?? [])).toEqual(Array.from(oneShot));
 });
 
 test("the decode cap only ever shrinks, and preserves the aspect ratio", () => {

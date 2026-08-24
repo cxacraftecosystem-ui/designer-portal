@@ -47,14 +47,32 @@ import * as ts from "typescript";
  * proves nothing:
  *
  *  · REAL: `SketchTraceField.tsx` itself, `traceParamTable.ts`, `decodeToPixels.ts` (so the browser
- *    really decodes the photograph), `traceExport.ts`, `geometryToSvg.ts`, and the engine's own
- *    `lib/trace/engine/params.ts` — so every slider is drawn from the real defaults and every patch
- *    goes through the real `sanitizeTraceParams`.
- *  · STOOD IN FOR: `traceRuntime.ts` and `lucide-react`. The runtime stub is the seam this spec turns:
- *    it is what makes the engine load take a controllable 60 ms, which is the point. The real runtime
- *    dynamic-imports 43 engine files and starts a module worker — neither of which this registry can
- *    resolve, and neither of which is what these three cases are about. `e2e/trace-engine-unit.spec.ts`
- *    is where the engine itself is exercised.
+ *    really decodes the photograph), `traceExport.ts`, `geometryToSvg.ts`, `comparisonPlates.ts` (so
+ *    the before/after plates are really painted and really encoded), `components/ui/reveal1.tsx` (the
+ *    comparator itself, unmodified), `lib/utils.ts`, and the engine's own `lib/trace/engine/params.ts`
+ *    — so every slider is drawn from the real defaults and every patch goes through the real
+ *    `sanitizeTraceParams`.
+ *  · STOOD IN FOR: `traceRuntime.ts`, `lucide-react`, `@/components/ui/Dropdown` and
+ *    `@/lib/designWorkshops`. The runtime stub is the seam this spec turns: it is what makes the engine
+ *    load take a controllable 60 ms, which is the point. The real runtime dynamic-imports 43 engine
+ *    files and starts a module worker — neither of which this registry can resolve, and neither of
+ *    which is what these cases are about. `e2e/trace-engine-unit.spec.ts` is where the engine itself is
+ *    exercised.
+ *
+ * WHY THE LAST TWO STAND-INS EXIST, SINCE EACH ONE IS A REAL FILE THAT COULD HAVE BEEN COMPILED:
+ *
+ *  · `@/components/ui/Dropdown` is three adapters over `SearchableSelect`, which pulls
+ *    `AnchoredPopover` and a small tree behind it. None of that is what any case here asserts, and
+ *    ITS ABSENCE IS WHAT BROKE THIS FILE ONCE ALREADY: the panel's style and subject pickers moved from
+ *    native `<select>`s to the themed dropdown, the registry had no module of that name, and the very
+ *    first `__require("./SketchTraceField")` threw — so all six cases failed at `mount`, with
+ *    "element not found" for the trigger button and nothing to say why. The stub is a native `<select>`
+ *    carrying the same `aria-label`, so the pickers still work and the failure cannot recur silently.
+ *  · `@/lib/designWorkshops` exports `saveBlobToDisk`, which is the whole of the panel's download path;
+ *    the module also imports `@/lib/api` and four more, none of which this registry can resolve. The
+ *    stub RECORDS what the panel asked to save, which is a better assertion than a synthetic anchor
+ *    click could give: the two download cases below check the file's name, type and contents rather
+ *    than that a click happened.
  *
  * A DELAY OF 60 MS IS NOT AN ARBITRARY NUMBER. It is longer than one React commit and far shorter
  * than a real chunk fetch on a courtyard hotspot, which is the case that has to work. The bug this
@@ -65,6 +83,8 @@ import * as ts from "typescript";
 const UPLOAD_DIR = join(__dirname, "..", "components", "sketches", "upload");
 const NODE_MODULES = join(__dirname, "..", "node_modules");
 const ENGINE_PARAMS = join(__dirname, "..", "lib", "trace", "engine", "params.ts");
+const REVEAL = join(__dirname, "..", "components", "ui", "reveal1.tsx");
+const UTILS = join(__dirname, "..", "lib", "utils.ts");
 
 /** The runtime-load delay every case mounts with. See the header. */
 const RUNTIME_LOAD_MS = 60;
@@ -138,6 +158,51 @@ window.__define("lucide-react", function (module, exports, require) {
 `;
 
 /**
+ * `@/components/ui/Dropdown`, as a native `<select>`.
+ *
+ * The panel's Style and Subject pickers are the only callers. They pass `value`, `onChange`,
+ * `disabled`, `ariaLabel`, `describedBy` and `options`, and every case here reaches them (if at all)
+ * by that accessible name — so a `<select>` carrying the same name and the same options is behaviourally
+ * the part under test. See the header for why the real component is not compiled.
+ */
+const DROPDOWN_STUB = `
+window.__define("@/components/ui/Dropdown", function (module, exports, require) {
+  var React = require("react");
+  module.exports.Dropdown = function (props) {
+    return React.createElement(
+      "select",
+      {
+        value: props.value,
+        disabled: !!props.disabled,
+        "aria-label": props.ariaLabel,
+        "aria-describedby": props.describedBy,
+        onChange: function (event) { props.onChange(event.target.value); }
+      },
+      (props.options || []).map(function (option) {
+        return React.createElement("option", { key: option.value, value: option.value }, option.label);
+      })
+    );
+  };
+});
+`;
+
+/**
+ * `@/lib/designWorkshops`, reduced to the one function the panel imports.
+ *
+ * `window.__saved` is every file the panel handed to the browser to save, in order. The real
+ * `saveBlobToDisk` makes an anchor, clicks it and revokes the URL on the next task; asserting on that
+ * would be asserting on Chromium's download machinery, while what these cases are about is WHICH file
+ * the panel produced — its name, its type and what is inside it.
+ */
+const DOWNLOAD_STUB = `
+window.__define("@/lib/designWorkshops", function (module, exports, require) {
+  module.exports.saveBlobToDisk = function (blob, fileName) {
+    window.__saved.push({ name: fileName, type: blob.type, size: blob.size, blob: blob });
+  };
+});
+`;
+
+/**
  * `traceRuntime.ts`, stood in for — and the knobs this whole file turns.
  *
  * `window.__runtimeMs` is how long the engine takes to arrive, `window.__traces` records every trace
@@ -199,6 +264,10 @@ window.__define("./traceRuntime", function (module, exports, require) {
     var self = this;
     return delay(window.__traceMs).then(function () {
       if (request.signal && request.signal.aborted) throw Cancelled();
+      // NEITHER CANCELLED NOR UNAVAILABLE — an ordinary failed trace, which is a third state the panel
+      // has to render differently from both: the drawing area keeps its sentence, the comparator says
+      // there is nothing to compare and points at the message, and no button claims anything worked.
+      if (window.__traceFails) throw new Error("That photograph could not be traced.");
       return result(request.image.width, request.image.height, !!request.preview, request.params);
     });
   };
@@ -224,6 +293,65 @@ window.__define("./traceRuntime", function (module, exports, require) {
       return runtime;
     });
   };
+  /*
+    loadImageEditor, STOOD IN FOR — and the stand-in really crops, because the panel's honesty about
+    which frame is being traced is what these cases can check. window.__edits records every request,
+    so a case can assert that pressing "Use this frame for the trace" is what changes the size the
+    tracer is handed, rather than asserting on a sentence the panel wrote about itself.
+
+    The real one starts a module worker and imports engine/contrast, neither of which this registry
+    can resolve — e2e/sketch-frame-sharpen-unit.spec.ts is where the arithmetic itself is exercised,
+    on a laptop, with no browser.
+
+    NO BACKTICKS ANYWHERE IN THIS STUB. It is the body of a template literal in the spec file, so one
+    backtick in a comment closes the string and the whole file stops parsing.
+  */
+  function ImageEditor() {}
+  ImageEditor.prototype.edit = function (call) {
+    window.__edits.push({
+      width: call.pixels.width,
+      height: call.pixels.height,
+      crop: call.crop,
+      sharpen: call.sharpen
+    });
+    return delay(window.__editMs).then(function () {
+      if (window.__editFails) throw new Error("This device would not process that photograph.");
+      var w = call.crop.width;
+      var h = call.crop.height;
+      var out = new Uint8ClampedArray(w * h * 4);
+      for (var row = 0; row < h; row++) {
+        var from = ((call.crop.y + row) * call.pixels.width + call.crop.x) * 4;
+        out.set(call.pixels.data.subarray(from, from + w * 4), row * w * 4);
+      }
+      /*
+        THE NOTE COMES BACK FROM THE EDITOR — the real one builds it inside the worker, with
+        lib/trace/imageEdit.describeEdit, which is the only side of the bundle boundary that can call
+        it. The panel used to write its own copy of that sentence instead;
+        e2e/sketch-frame-sharpen-unit.spec.ts pins the real function's wording, and the last case in
+        this file pins that whatever the editor hands back is what reaches the exported SVG. So this
+        stand-in deliberately says something the real function would NOT: a panel that quietly rebuilt
+        the sentence itself would satisfy a stub that agreed with it, and fails against this one.
+
+        (No backticks in here, per the stub's own warning at the top: this is the body of a template
+        literal, and one backtick in a comment closes the string and stops the file parsing.)
+      */
+      var note = "Cropped on the device to " + w + "x" + h + " at (" + call.crop.x + ", " + call.crop.y +
+        ") of " + call.pixels.width + "x" + call.pixels.height + ". [from the editor]";
+      return { data: out, width: w, height: h, note: note, millis: 7 };
+    });
+  };
+  ImageEditor.prototype.dispose = function () { window.__editorDisposals += 1; };
+
+  module.exports.loadImageEditor = function () {
+    return delay(0).then(function () {
+      return {
+        ImageEditor: ImageEditor,
+        isUnavailable: function () { return false; },
+        isCancelled: function (error) { return !!(error && error.name === "ImageEditCancelledError"); }
+      };
+    });
+  };
+
   module.exports.loadTracePresets = function () {
     return delay(0).then(function () {
       return {
@@ -257,10 +385,16 @@ async function mount(page: Page, options: { runtimeMs?: number; traceMs?: number
       w.__runtimeLoads = 0;
       w.__disposals = 0;
       w.__runtimeFails = false;
+      w.__traceFails = false;
       w.__traces = [];
       w.__attached = [];
       w.__sources = [];
+      w.__saved = [];
       w.__decodeDelays = {};
+      w.__edits = [];
+      w.__editMs = 0;
+      w.__editFails = false;
+      w.__editorDisposals = 0;
     },
     [options.runtimeMs ?? RUNTIME_LOAD_MS, options.traceMs ?? 0]
   );
@@ -290,11 +424,28 @@ async function mount(page: Page, options: { runtimeMs?: number; traceMs?: number
   }
 
   await page.addScriptTag({ content: LUCIDE_STUB });
+  await page.addScriptTag({ content: DROPDOWN_STUB });
+  await page.addScriptTag({ content: DOWNLOAD_STUB });
   await page.addScriptTag({ content: define("@/lib/trace/engine/params", compile(ENGINE_PARAMS)) });
+  // The comparator and its one dependency, both REAL — `cn` is three lines and `reveal1.tsx` is the
+  // component whose `initialPosition` semantics the panel has to get the right way round.
+  await page.addScriptTag({ content: define("@/lib/utils", compile(UTILS)) });
+  await page.addScriptTag({ content: define("@/components/ui/reveal1", compile(REVEAL)) });
   await page.addScriptTag({ content: RUNTIME_STUB });
-  for (const name of ["geometryToSvg.ts", "traceParamTable.ts", "decodeToPixels.ts", "traceExport.ts"]) {
+  for (const name of [
+    "geometryToSvg.ts",
+    "traceParamTable.ts",
+    "decodeToPixels.ts",
+    "traceExport.ts",
+    "comparisonPlates.ts",
+    // The two new pickers. `.tsx`, so the specifier has to be stripped of the whole extension rather
+    // than of `.ts` — `"DropCard.tsx".replace(/\.ts$/, "")` is `"DropCard.tsx"`, which is a registry
+    // key nothing requires and a `require` that throws at mount with the harness's own message.
+    "DropCard.tsx",
+    "FramePanel.tsx"
+  ]) {
     await page.addScriptTag({
-      content: define(`./${name.replace(/\.ts$/, "")}`, compile(join(UPLOAD_DIR, name)))
+      content: define(`./${name.replace(/\.tsx?$/, "")}`, compile(join(UPLOAD_DIR, name)))
     });
   }
   await page.addScriptTag({
@@ -377,8 +528,23 @@ function png(width: number, height: number, grey = 200): Buffer {
   ]);
 }
 
+/**
+ * Choose a photograph.
+ *
+ * NOT `getByLabel("Photograph to trace")` ANY MORE, and the reason is the point of the change that
+ * broke it: the picker is now `DropCard`, whose `<input type="file">` is `sr-only`, `tabIndex={-1}` and
+ * `aria-hidden="true"` — deliberately, because the BUTTON is the tab stop and the accessible control,
+ * and a second unlabelled tab stop is the keyboard trap that card's header cites. An `aria-hidden`
+ * input has no accessible name, so `getByLabel` cannot find it and never will.
+ *
+ * No `.first()` either: Playwright's strict mode makes this throw if a second file input ever appears
+ * in the panel, which is exactly the warning `a11y-barriers.spec.ts` wrote after being re-anchored
+ * twice — "a positional selector on this form is now a selector that will move again the next time a
+ * field is added above it". A throw naming two inputs is a better failure than a test that silently
+ * starts driving the wrong one.
+ */
 async function pick(page: Page, name: string, width: number, height: number): Promise<void> {
-  await page.getByLabel("Photograph to trace").setInputFiles({
+  await page.locator('input[type="file"]').setInputFiles({
     name,
     mimeType: "image/png",
     buffer: png(width, height)
@@ -409,7 +575,15 @@ test("opening the panel reaches its controls, and reopening it does not reload t
   // away, in any browser, on any device: `startedRef` is what stops the state write it makes from
   // invalidating it, and `goneRef` is what keeps the bail-out to a real unmount.
   await expect(page.getByText("Loading the tracing engine…")).toHaveCount(0, { timeout: 5_000 });
-  await expect(page.getByLabel("Photograph to trace")).toBeVisible();
+  /*
+    THE PICKER'S BUTTON, NOT `getByLabel("Photograph to trace")`, AND THIS IS THE SAME CHANGE `pick`
+    ABOVE RECORDS. The picker is a `DropCard`, whose `<input type="file">` is `sr-only`,
+    `tabIndex={-1}` and `aria-hidden="true"` on purpose — the BUTTON is the tab stop and the accessible
+    control. An `aria-hidden` input has no accessible name, so `getByLabel` cannot see it; and this
+    assertion is better for it, because a button a keyboard user can reach is what "reaches its
+    controls" actually means.
+  */
+  await expect(page.getByRole("button", { name: "Choose a photograph" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Trace a sketch into line art" })).toBeVisible();
 
   // Focus moved INTO the thing that appeared. Opening unmounts the trigger, so without this the
@@ -424,7 +598,7 @@ test("opening the panel reaches its controls, and reopening it does not reload t
 
   // Reopening is instant and asks for nothing: the phase is still "ready" and the load is not redone.
   await trigger.click();
-  await expect(page.getByLabel("Photograph to trace")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose a photograph" })).toBeVisible();
   await expect(page.getByText("Loading the tracing engine…")).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __runtimeLoads: number }).__runtimeLoads)).toBe(1);
 });
@@ -621,4 +795,601 @@ test("a translucent colour reaches the canvas with the alpha the SVG gives it", 
   expect(painted.svg).toContain('fill-opacity="0.502"');
   // …so it has to be the number on the canvas. Painted opaque (255) is the bug this case names.
   expect(Math.abs(painted.alpha - 128)).toBeLessThanOrEqual(2);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 5. The frame is what is traced, and the panel does not claim it before it is
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * THE ONE PROPERTY THE CROP TOOL RESTS ON: pressing the button is what changes the pixels the tracer
+ * is handed, and until it is pressed the panel says so.
+ *
+ * This is asserted against `window.__traces` — the sizes the stub tracer was actually given — rather
+ * than against the sentence the panel writes about itself, because the failure worth catching is
+ * exactly the one where the two disagree. A crop applied to the overlay and not to the trace looks
+ * completely correct on screen.
+ */
+test("a frame reaches the tracer only when it is committed, and the panel says so until then", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  // The first preview runs on the whole decode.
+  await expect.poll(async () => (await traces(page)).length).toBeGreaterThan(0);
+  expect((await traces(page))[0]).toMatchObject({ width: 64, height: 48 });
+
+  /*
+    Narrow the frame by typing, which is the route that works with no pointer at all.
+
+    `exact: true` IS LOAD-BEARING: `getByLabel` matches by substring, and the Geometry group's "Stroke
+    width" slider also contains "Width", so the loose form is a strict-mode violation naming two
+    controls. Better to be exact than to reach for `.first()`, which would silently pick whichever the
+    DOM happened to order first the next time a control moved.
+  */
+  const frameWidth = page.getByLabel("Width", { exact: true });
+  await frameWidth.fill("32");
+  await expect(
+    page.getByText("Nothing has been applied yet: the trace is still using the whole photograph.")
+  ).toBeVisible();
+  // …and NOTHING has been traced from it yet. A crop that re-traced on every keystroke would also
+  // re-sharpen on every keystroke, which is seconds of work per character.
+  const beforeCommit = await traces(page);
+  expect(beforeCommit.every((entry) => entry.width === 64)).toBe(true);
+
+  await page.getByRole("button", { name: "Use this frame for the trace" }).click();
+
+  // The editor was asked for exactly the frame that was typed…
+  await expect
+    .poll(async () => await page.evaluate(() => (window as unknown as { __edits: unknown[] }).__edits.length))
+    .toBe(1);
+  const edits = await page.evaluate(
+    () => (window as unknown as { __edits: { crop: { width: number; height: number } }[] }).__edits
+  );
+  expect(edits[0].crop).toMatchObject({ x: 0, y: 0, width: 32, height: 48 });
+
+  // …and the tracer then received it, at that size, without anybody pressing anything else.
+  await expect.poll(async () => (await traces(page)).at(-1)?.width).toBe(32);
+  await expect(page.getByText(/The trace is using 32x48/)).toBeVisible();
+
+  // Moving the frame again makes the panel say plainly that what is on screen is no longer what is
+  // being traced — the §1.10 rule, and the alternative is a control that has silently stopped mattering.
+  await frameWidth.fill("20");
+  await expect(page.getByText(/The frame on screen is not the one being traced/)).toBeVisible();
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 6. The two downloads
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Every file the panel handed to `saveBlobToDisk`, in order. See `DOWNLOAD_STUB`. */
+interface SavedFile {
+  readonly name: string;
+  readonly type: string;
+  readonly size: number;
+}
+
+function saved(page: Page): Promise<SavedFile[]> {
+  return page.evaluate(() =>
+    (window as unknown as { __saved: SavedFile[] }).__saved.map((entry) => ({
+      name: entry.name,
+      type: entry.type,
+      size: entry.size
+    }))
+  );
+}
+
+test("the two downloads save the vector trace and the rendered raster, each re-traced at full resolution", async ({
+  page
+}) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  const downloadTrace = page.getByRole("button", { name: "Download the trace (SVG)" });
+  const downloadRender = page.getByRole("button", { name: "Download the rendered image (PNG)" });
+
+  // Until the first preview lands there is nothing to download and both buttons say so by being
+  // disabled — a download button that produces an empty file is worse than one that waits.
+  await expect(downloadTrace).toBeEnabled({ timeout: 15_000 });
+  await expect(downloadRender).toBeEnabled();
+
+  await downloadTrace.click();
+  await expect.poll(async () => (await saved(page)).length, { timeout: 15_000 }).toBe(1);
+  expect((await saved(page))[0].name).toBe("sheet-line-art.svg");
+  expect((await saved(page))[0].type).toBe("image/svg+xml");
+
+  // THE FILE IS THE TRACE, not a screenshot of it: real path data, and the provenance sentence naming
+  // the photograph it came from — which is what makes a copy on somebody's laptop still able to say
+  // what it is six months later.
+  const svg = await page.evaluate(async () =>
+    (window as unknown as { __saved: { blob: Blob }[] }).__saved[0].blob.text()
+  );
+  expect(svg).toContain("<svg");
+  expect(svg).toContain("<path");
+  expect(svg).toContain("Traced on the device from sheet.png");
+
+  // THE ASSERTION THE WHOLE CASE IS FOR. Everything on screen was a preview at half the working edge
+  // (the stub halves it exactly as the real worker reduces it), so a download that saved `svgInput`
+  // would hand over a coarser drawing under the same name, with the same path count, and nothing on
+  // screen would differ. The press re-traces at full resolution first.
+  expect((await traces(page)).at(-1)?.preview).toBe(false);
+
+  await downloadRender.click();
+  await expect.poll(async () => (await saved(page)).length, { timeout: 15_000 }).toBe(2);
+  const both = await saved(page);
+  expect(both[1].name).toBe("sheet-traced.png");
+  expect(both[1].type).toBe("image/png");
+  expect(both[1].size).toBeGreaterThan(0);
+  // A DIFFERENT SUFFIX FROM THE PLATE THE RECORD GETS. Both are PNGs of one drawing, so sharing a name
+  // would leave two files in a downloads folder with nothing but the byte count to tell them apart.
+  expect(both[1].name).not.toBe(both[0].name.replace(/\.svg$/, ".png"));
+  expect((await traces(page)).at(-1)?.preview).toBe(false);
+
+  // NEITHER DOWNLOAD FILED ANYTHING. The panel's promise is that everything above the rule writes to
+  // the record and nothing below it does; a download that quietly also attached would be the worst
+  // possible reading of "take a copy".
+  expect(await page.evaluate(() => (window as unknown as { __attached: File[] }).__attached.length)).toBe(0);
+  expect(await page.evaluate(() => (window as unknown as { __sources: File[] }).__sources.length)).toBe(0);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 7. The comparator
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("the comparator opens on the trace, with the photograph as the layer that gets revealed", async ({ page }) => {
+  // Slow enough that the "no comparison yet" state is a state and not a race.
+  await mount(page, { traceMs: 400 });
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+
+  // Before a photograph is chosen there is no comparator at all — not an empty frame.
+  await expect(page.getByRole("slider", { name: "Traced drawing against the photograph" })).toHaveCount(0);
+  await expect(page.getByText("The trace against the photograph")).toHaveCount(0);
+
+  await pick(page, "sheet.png", 64, 48);
+
+  // NO TRACE YET, AND THE CARD SAYS SO IN WORDS. An empty box with no sentence is the state this
+  // repository's most repeated bug class looks like: indistinguishable from a place with no records.
+  await expect(page.getByText("The trace against the photograph")).toBeVisible();
+  const slider = page.getByRole("slider", { name: "Traced drawing against the photograph" });
+  await expect(slider).toHaveCount(0);
+
+  await expect(slider).toBeVisible({ timeout: 15_000 });
+
+  // ── THE PROPERTY THE OWNER ASKED FOR, AND THE ONE MISTAKE THAT LOOKS IDENTICAL FROM THE CODE ──
+  // `Reveal1` clips the BEFORE layer by `position`. At 0 the before layer is fully clipped, so the
+  // frame shows the AFTER image — the trace — with the divider hard against the leading edge. Passing
+  // the trace as `beforeImage` would produce a slider that opens on the photograph and reveals the
+  // drawing: the same two pictures, the opposite feature.
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+  await expect(slider).toHaveAttribute("aria-valuetext", "0% Photograph, 100% Traced drawing");
+  await expect(slider).toHaveAttribute("aria-orientation", "horizontal");
+
+  // …and the clipped layer really is the photograph. This is the assertion that cannot be satisfied by
+  // getting the two images the wrong way round: the element carrying the clip holds the photograph.
+  const clipped = page.locator('div[style*="clip-path"] img');
+  await expect(clipped).toHaveAttribute("alt", "The photograph sheet.png, as the tracing engine read it");
+  await expect(page.getByAltText("The traced drawing, on white")).toBeVisible();
+
+  // Both layers are real bitmaps this page made, not a remote URL an optimiser would have to fetch.
+  const sources = await page.locator("img").evaluateAll((nodes) => nodes.map((n) => (n as HTMLImageElement).src));
+  expect(sources.length).toBe(2);
+  expect(sources.every((src) => src.startsWith("blob:"))).toBe(true);
+  expect(sources[0]).not.toBe(sources[1]);
+
+  // THE KEYBOARD HALF, WHICH IS THE ONLY WAY IN FOR A KEYBOARD, A SWITCH DEVICE OR A READER. The
+  // component's header records that it shipped with role="slider" and no key handler at all —
+  // announcing itself as a slider and then ignoring every arrow key.
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(slider).toHaveAttribute("aria-valuenow", "2");
+  await page.keyboard.press("End");
+  await expect(slider).toHaveAttribute("aria-valuenow", "100");
+  await expect(slider).toHaveAttribute("aria-valuetext", "100% Photograph, 0% Traced drawing");
+  await page.keyboard.press("Home");
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+
+  // The frame is the source's own ratio rather than 16:9, so a portrait sheet is not centre-cropped
+  // to a strip. 64x48 is 4:3.
+  // Compared as a NUMBER, not as a string: the prop is a number, so the computed value comes back as
+  // "1.33333 / 1" rather than "4 / 3" — and `aspect-video` would be 16/9 either way.
+  const ratio = await slider.evaluate((node) => getComputedStyle(node).aspectRatio);
+  const [frameWidth, frameHeight] = ratio.split("/").map((part) => Number(part.trim()));
+  expect(frameWidth / (frameHeight || 1)).toBeCloseTo(64 / 48, 3);
+});
+
+test("a trace that fails leaves the comparator saying so, and nothing to download", async ({ page }) => {
+  await mount(page);
+  await page.evaluate(() => {
+    (window as unknown as { __traceFails: boolean }).__traceFails = true;
+  });
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  // The engine's own sentence, in the red alert, once.
+  await expect(page.getByText("That photograph could not be traced.")).toBeVisible({ timeout: 15_000 });
+
+  // THE COMPARATOR POINTS AT THAT MESSAGE RATHER THAN RESTATING IT. Two copies of one fault in one
+  // card is how a designer ends up believing there are two faults.
+  await expect(
+    page.getByText("The trace did not finish, so there is nothing to compare. The reason is above.")
+  ).toBeVisible();
+  await expect(page.getByRole("slider", { name: "Traced drawing against the photograph" })).toHaveCount(0);
+
+  // And no button offers a file it does not have.
+  await expect(page.getByRole("button", { name: "Download the trace (SVG)" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Download the rendered image (PNG)" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: `Add the line art to “${TARGET_LABEL}”` })).toBeDisabled();
+  expect(await saved(page)).toEqual([]);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 8. The picker card
+ *
+ * `DropCard` is the one request in this wave whose whole point is a NEW INTERACTION, and it shipped
+ * with nothing asserting any of it: the case above only checked that its button was visible. Every
+ * branch below is one a reader can talk themselves into being correct — which is exactly the class of
+ * thing this file exists for, because the panel it lives in was once entirely unusable while
+ * twenty-two green tests said otherwise.
+ *
+ * The card is reached THROUGH THE PANEL rather than mounted on its own, deliberately: its `validate`
+ * rule lives at the call site (`SketchTraceField` is what decides that an SVG is refused and that an
+ * empty MIME type is not), so a case that mounted the card with a rule of its own would be testing a
+ * rule nothing ships.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The dashed drop zone itself — the element carrying the four drag handlers. */
+function dropZone(page: Page) {
+  // `border-dashed` is load-bearing on this element rather than incidental styling: the card's own
+  // header records why it is `border-2 border-dashed border-line-200` and not a bare `border`.
+  return page.locator("div.border-dashed");
+}
+
+/** A `DataTransfer` holding these files, as a drop would carry them. */
+async function transferOf(page: Page, files: { name: string; type: string; bytes: number[] }[]) {
+  return await page.evaluateHandle((entries) => {
+    const transfer = new DataTransfer();
+    for (const entry of entries) {
+      transfer.items.add(new File([new Uint8Array(entry.bytes)], entry.name, { type: entry.type }));
+    }
+    return transfer;
+  }, files);
+}
+
+test("the picker refuses what is not a photograph, in a sentence, and takes what only looks wrong", async ({
+  page
+}) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+
+  // ── A FILE THAT IS DEFINITELY NOT A PHOTOGRAPH ────────────────────────────
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "brief.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.7\n")
+  });
+
+  // The sentence NAMES THE FILE and says why, inside an alert — not a silent no-op, which is what
+  // `accept="image/*"` alone gives for a drop and for anybody who switched the dialog to "All files".
+  const refusal = page.getByText("brief.pdf — this is application/pdf, not a photograph.", { exact: false });
+  await expect(refusal).toBeVisible();
+  expect(await refusal.evaluate((node) => node.closest('[role="alert"]') !== null)).toBe(true);
+  // …and nothing was traced from it, so `validate` is the rule rather than a decoration on one.
+  expect(await traces(page)).toEqual([]);
+  await expect(page.getByRole("button", { name: "Use this frame for the trace" })).toHaveCount(0);
+
+  // ── THE SVG, WHICH IS AN IMAGE AND IS STILL REFUSED ───────────────────────
+  // `decodeToPixels`'s header: tracing vector art is a round trip that can only lose. It is the one
+  // refusal a permissive `image/*` rule would otherwise let through.
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "already-vector.svg",
+    mimeType: "image/svg+xml",
+    buffer: Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>")
+  });
+  await expect(page.getByText("an SVG is already vector art", { exact: false })).toBeVisible();
+  expect(await traces(page)).toEqual([]);
+
+  /*
+    ── AN EMPTY MIME TYPE IS TAKEN, WHICH IS THE COMMONEST FILE ON AN IPHONE ─
+
+    HEIC and AVIF arrive from several camera rolls with `type: ""`. A rule that refused everything
+    without an image MIME type would refuse the photograph the fieldwork is actually done with; the
+    decoder is what judges whether the bytes can be read, because it is the code that tried.
+
+    DROPPED RATHER THAN CHOSEN, and not by preference: `setInputFiles` with `mimeType: ""` does not
+    produce a file with an empty type — Chromium fills in `application/octet-stream`, which this card
+    then rightly refuses, and the case would be asserting the opposite of what it says. Constructing
+    the `File` in the page is the only route that can hand the rule a genuinely typeless file, which
+    the drop path does anyway.
+  */
+  const typeless = await transferOf(page, [
+    { name: "from-the-camera-roll", type: "", bytes: [...png(64, 48)] }
+  ]);
+  await dropZone(page).dispatchEvent("drop", { dataTransfer: typeless });
+  await expect.poll(async () => (await traces(page)).length, { timeout: 15_000 }).toBe(1);
+  // The refusal from the previous attempt is gone rather than left standing over a file that worked.
+  await expect(page.getByText("an SVG is already vector art", { exact: false })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("the picker takes a drop, says so while the file is over it, and names what it left out", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+
+  const zone = dropZone(page);
+  await expect(zone).toBeVisible();
+
+  // THE STATE IS TEXT, NOT ONLY A BORDER COLOUR. §1.5: a signal that exists only as colour is a signal
+  // a colour-blind reader never gets.
+  await expect(page.getByText("…or drag a file onto this card.")).toBeVisible();
+  const dragged = await transferOf(page, [{ name: "sheet.png", type: "image/png", bytes: [...png(64, 48)] }]);
+  await zone.dispatchEvent("dragenter", { dataTransfer: dragged });
+  await zone.dispatchEvent("dragover", { dataTransfer: dragged });
+  await expect(page.getByText("Let go to use this file.")).toBeVisible();
+
+  /*
+    THE HIGHLIGHT SURVIVES CROSSING THE BUTTON IN THE MIDDLE OF THE CARD, which is exactly where
+    anybody aims. `dragenter`/`dragleave` fire per element, so entering the button is a `dragleave` on
+    the card — and the boolean the house's other drop zone keeps would flicker off here. The counter is
+    what this asserts: one leave after two enters is still inside.
+  */
+  await page.getByRole("button", { name: "Choose a photograph" }).dispatchEvent("dragenter", {
+    dataTransfer: dragged
+  });
+  await zone.dispatchEvent("dragleave", { dataTransfer: dragged });
+  await expect(page.getByText("Let go to use this file.")).toBeVisible();
+
+  // ── THE DROP ITSELF, CARRYING THREE FILES ONTO A CARD THAT HOLDS ONE ──────
+  const three = await transferOf(page, [
+    { name: "first.png", type: "image/png", bytes: [...png(64, 48)] },
+    { name: "second.png", type: "image/png", bytes: [...png(32, 24)] },
+    { name: "brief.pdf", type: "application/pdf", bytes: [...Buffer.from("%PDF-1.7\n")] }
+  ]);
+  await zone.dispatchEvent("drop", { dataTransfer: three });
+
+  // The first ACCEPTED file is the one used…
+  await expect.poll(async () => (await traces(page)).length, { timeout: 15_000 }).toBeGreaterThan(0);
+  expect((await traces(page))[0]).toMatchObject({ width: 64, height: 48 });
+  // …and both the refusal and the truncation are said out loud. §1.10: quietly using one of three
+  // files is the version of this that looks like it worked.
+  await expect(page.getByText("One file was not taken: brief.pdf", { exact: false })).toBeVisible();
+  await expect(
+    page.getByText("This holds one file, so the first was used and the other one was left out.")
+  ).toBeVisible();
+  // The drag state goes with the file, rather than staying highlighted for the rest of the page's life.
+  await expect(page.getByText("…or drag a file onto this card.")).toBeVisible();
+});
+
+test("the picker's button is the tab stop, and the input is cleared so the same file can be re-chosen", async ({
+  page
+}) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+
+  // The file input is not a tab stop and has no accessible name: `sr-only`, `tabIndex={-1}` and
+  // `aria-hidden`. A second unlabelled tab stop there is the keyboard trap the card's header cites in
+  // three other files — and `sr-only` rather than `hidden` because a `display: none` input cannot be
+  // clicked programmatically in every browser.
+  const input = page.locator('input[type="file"]');
+  await expect(input).toHaveAttribute("tabindex", "-1");
+  await expect(input).toHaveAttribute("aria-hidden", "true");
+  await expect(input).toHaveClass(/sr-only/);
+
+  const choose = page.getByRole("button", { name: "Choose a photograph" });
+  await choose.focus();
+  await expect(choose).toBeFocused();
+  // A real `<button>`, so it answers to the keyboard — which a `<label>` wrapping a hidden input, the
+  // house's other pattern, does not.
+  expect(await choose.evaluate((node) => node.tagName)).toBe("BUTTON");
+  // And the sentence saying what the card takes is the button's own description, not loose text
+  // beside it.
+  const describedBy = await choose.getAttribute("aria-describedby");
+  expect(describedBy).not.toBeNull();
+  await expect(page.locator(`#${describedBy}`)).toContainText("JPEG, PNG, WebP");
+
+  await pick(page, "sheet.png", 64, 48);
+  await expect.poll(async () => (await traces(page)).length, { timeout: 15_000 }).toBeGreaterThan(0);
+
+  /*
+    THE INPUT IS EMPTY AFTERWARDS, WHICH IS THE FIX THE CARD WAS WRITTEN FOR. `change` does not fire
+    for an unchanged value, so a card that left the chosen name in the input answered the second press
+    of the same button with nothing at all — and the designer whose first attempt was refused presses
+    exactly that. `WorkshopCodeScanner` and `PrototypeModelField` both clear it; `SketchTraceField` did
+    not, which is the inconsistency the card closed.
+  */
+  await expect(input).toHaveJSProperty("value", "");
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 9. The comparator's badges and its grip
+ *
+ * Case 7 above pins the two LAYERS the right way round, by `aria-valuetext` and by which image carries
+ * the clip. It passed while the badge printed over the drawing said "Photograph": the two captions were
+ * pinned to the top corners and drawn whatever the divider was doing, so the frame that is entirely the
+ * traced drawing on open was captioned with the other layer's name. The prop wiring was right and the
+ * caption was backwards — the same "plausible and wrong" shape one level down, and nothing in this file
+ * looked at what a designer actually reads.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The `clip-path` of the layer one badge sits in.
+ *
+ * Each badge is inside a wrapper clipped exactly as its own image is, so this is the measurement that
+ * says whether a caption is being shown over the picture it names. `toBeVisible` cannot answer it: a
+ * clipped element is still laid out, still has a box, and still passes.
+ */
+async function badgeClip(page: Page, text: string): Promise<string> {
+  const clip = await page
+    .getByText(text, { exact: true })
+    .evaluate((node) => getComputedStyle(node.parentElement as HTMLElement).clipPath);
+  return clip.replace(/\s|px/g, "");
+}
+
+test("the comparator captions the layer it is showing, and its grip is inside the frame on open", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  const slider = page.getByRole("slider", { name: "Traced drawing against the photograph" });
+  await expect(slider).toBeVisible({ timeout: 15_000 });
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+
+  // ── ON OPEN THE FRAME IS ALL TRACE, SO ONLY THE TRACE'S CAPTION SHOWS ─────
+  // The photograph's badge is clipped away by the full width of the frame, exactly as the photograph
+  // is. Asserted as "the right edge is clipped by 100%" rather than by a pixel count, so the case does
+  // not depend on how wide the panel happens to be.
+  expect(await badgeClip(page, "Photograph")).toBe("inset(0100%00)");
+  // …and the drawing's badge is clipped by nothing at all.
+  expect(await badgeClip(page, "Traced drawing")).toBe("inset(0000%)");
+
+  /*
+    ── THE GRIP IS HELD INSIDE THE FRAME, WHICH IS `overflow-hidden` ─────────
+
+    Centred on a divider at 0% it was half-clipped: a 20px half-disc at the extreme edge was the only
+    thing a pointer could grab, partly under the badge that used to sit there. The keyboard route always
+    worked, which is why nothing noticed.
+
+    ASSERTED ON THE INLINE STYLE AND NOT ON A BOUNDING BOX, because THIS PAGE HAS NO STYLESHEET. The
+    harness mounts the component into a bare document (see the file header) — Tailwind never runs, so
+    `absolute`, `h-10 w-10` and `-translate-x-1/2` are inert class names and every element's box is the
+    unstyled block it would be without them. Measured here, the grip is 1264px wide and 0 tall, and a
+    geometric assertion would pass whatever the component did. The inline `left`/`top` this component
+    computes IS the fix, so that is what is checked; the seam is checked in the same breath, because
+    the trade the fix makes is "the grip may sit up to a radius off the seam near the ends" and a fix
+    that moved the SEAM instead would draw the join in the wrong place.
+  */
+  // `calc(…)` inside `clamp(…)` is read back with the wrapper dropped, so the bound is matched rather
+  // than compared to a string — the assertion is "the seam's position, held 20px in", either way.
+  // Either spelling is the same value: Chromium reads a `calc()` nested inside a `clamp()` back with
+  // the wrapper dropped, and this assertion is about the bound, not about a string.
+  const gripAt = (percent: number) => [
+    `clamp(20px, ${percent}%, calc(100% - 20px))`,
+    `clamp(20px, ${percent}%, 100% - 20px)`
+  ];
+  const gripLeft = () => slider.locator("div.h-10.w-10").evaluate((node) => (node as HTMLElement).style.left);
+  const seamLeft = () => slider.locator("div.bg-white").evaluate((node) => (node as HTMLElement).style.left);
+  expect(gripAt(0)).toContain(await gripLeft());
+  expect(await seamLeft()).toBe("0%");
+
+  // ── AND AT THE OTHER END, EVERY FACT THE OTHER WAY ROUND ──────────────────
+  await slider.focus();
+  await page.keyboard.press("End");
+  await expect(slider).toHaveAttribute("aria-valuenow", "100");
+  expect(await badgeClip(page, "Photograph")).toBe("inset(00%00)");
+  expect(await badgeClip(page, "Traced drawing")).toBe("inset(000100%)");
+  expect(gripAt(100)).toContain(await gripLeft());
+  expect(await seamLeft()).toBe("100%");
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 10. The four number boxes
+ *
+ * "The numbers are the primary route, not a fallback" is what the crop tool says about itself, and it
+ * shipped clamping every keystroke — so Left and Top could not be typed into at all while the frame was
+ * whole, and Width returned a different number from the one typed. Case 5 above passed throughout,
+ * because 32 into a 64px photograph is legal on its first character.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("a half-typed number survives being typed, and a clamp that moves one says so", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  // 300 wide, so "150" passes through a first character far below the 16px minimum edge.
+  await pick(page, "sheet.png", 300, 200);
+  await expect(page.getByRole("button", { name: "Use this frame for the trace" })).toBeVisible({ timeout: 15_000 });
+
+  const width = page.getByLabel("Width", { exact: true });
+  const left = page.getByLabel("Left", { exact: true });
+
+  /*
+    TYPED CHARACTER BY CHARACTER, WHICH IS THE WHOLE POINT. `fill` sets the value in one shot and would
+    pass against the old code: 150 is legal, so one clamp of the finished number is the number. The
+    defect lived in the intermediate states — "1" became 16, and the "5" that followed landed on it.
+  */
+  await width.click();
+  await width.press("Control+a");
+  await width.pressSequentially("150", { delay: 20 });
+  await expect(width).toHaveValue("150");
+  // …and the frame really is 150 wide, not 1516 or 160: this sentence is drawn from `crop` itself.
+  await expect(page.getByText("150x200 of 300x200", { exact: false })).toBeVisible();
+
+  /*
+    LEFT, WHILE THE FRAME IS STILL THE FULL WIDTH — the box that could not be typed into at all. `x` is
+    clamped to `min(width - crop.width, …)`, which is 0 for as long as the crop is whole, so every
+    keystroke was discarded and nothing on screen said why.
+  */
+  await page.getByRole("button", { name: "Use the whole photograph" }).click();
+  await left.click();
+  await left.press("Control+a");
+  await left.pressSequentially("40", { delay: 20 });
+  // The characters are still there while the box has focus…
+  await expect(left).toHaveValue("40");
+  await left.press("Enter");
+  // …and committing is when the impossible one is refused — with the reason, and with the way out.
+  await expect(left).toHaveValue("0");
+  await expect(page.getByText("Left cannot be 40", { exact: false })).toBeVisible();
+  await expect(page.getByText("Reduce Width first", { exact: false })).toBeVisible();
+
+  // With the frame narrowed the same 40 is legal and is taken, so the sentence above was true.
+  await width.click();
+  await width.press("Control+a");
+  await width.pressSequentially("200", { delay: 20 });
+  await left.click();
+  await left.press("Control+a");
+  await left.pressSequentially("40", { delay: 20 });
+  await left.press("Enter");
+  await expect(left).toHaveValue("40");
+  await expect(page.getByText("Left cannot be 40", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("200x200 of 300x200", { exact: false })).toBeVisible();
+
+  // And the frame that reaches the editor is the one the boxes say it is.
+  await page.getByRole("button", { name: "Use this frame for the trace" }).click();
+  await expect
+    .poll(async () => await page.evaluate(() => (window as unknown as { __edits: unknown[] }).__edits.length), {
+      timeout: 15_000
+    })
+    .toBe(1);
+  const edits = await page.evaluate(
+    () => (window as unknown as { __edits: { crop: Record<string, number> }[] }).__edits
+  );
+  expect(edits[0].crop).toMatchObject({ x: 40, y: 0, width: 200, height: 200 });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 11. The provenance sentence that actually reaches the file
+ *
+ * `lib/trace/imageEdit.describeEdit` had no caller outside its own spec: the sentence that reached the
+ * exported SVG was rebuilt by hand in `FramePanel`, so the promise the unit spec pins — "The original
+ * photograph is unchanged." — could have been edited out of the shipped path with the whole suite
+ * green. The sentence now comes back from the editor, which is the side of the bundle boundary that can
+ * call that function, and this case is what makes the two halves one thing: whatever the editor says is
+ * what the file says.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("the frame's provenance sentence reaches the exported SVG from the editor that made the pixels", async ({
+  page
+}) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+  await expect(page.getByRole("button", { name: "Use this frame for the trace" })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByLabel("Width", { exact: true }).fill("32");
+  await page.getByRole("button", { name: "Use this frame for the trace" }).click();
+  await expect(page.getByText(/The trace is using 32x48/)).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole("button", { name: `Add the line art to “${TARGET_LABEL}”` }).click();
+  await expect
+    .poll(async () => page.evaluate(() => (window as unknown as { __attached: File[] }).__attached.length), {
+      timeout: 15_000
+    })
+    .toBe(1);
+
+  const svg = await page.evaluate(async () => await (window as unknown as { __attached: File[] }).__attached[0].text());
+  // THE EDITOR'S SENTENCE, VERBATIM — see the stub's own note on why its wording deliberately differs
+  // from the real function's. A panel that rebuilt the sentence itself would write something plausible
+  // instead, and this is the only assertion that can tell the two apart.
+  expect(svg).toContain("[from the editor]");
+  expect(svg).toContain("Cropped on the device to 32x48 at (0, 0) of 64x48.");
+  // …carried inside the ordinary provenance note rather than instead of it.
+  expect(svg).toContain("Traced on the device from sheet.png");
 });

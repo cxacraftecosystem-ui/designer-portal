@@ -56,6 +56,24 @@
  *    whenever the host passes {@link SketchTraceFieldProps.onAttachSource}, and the copy follows the
  *    host rather than asserting one.
  *
+ * 5. **NOTHING ON THIS PANEL IS STORED, AND THE PANEL SAYS SO WHERE IT MATTERS.** The trace lives in
+ *    React state and dies on unmount; there is no IndexedDB row, no `localStorage` key and no cache of
+ *    a trace anywhere in this repository. Everything downstream follows from that, and two of the
+ *    owner's requests land squarely on it:
+ *
+ *    · THE TWO DOWNLOADS ARE MADE FROM MEMORY, ON THE PRESS, and they re-trace at full resolution
+ *      first exactly as the attach does — because what is on screen is a preview at a smaller working
+ *      edge, and saving that would hand the designer a coarser drawing than the one they approved with
+ *      nothing on screen to say so. There is no stored artefact to download and none is created: close
+ *      this panel, pick another photograph or reload the page and the trace is gone. The only thing
+ *      that outlives the press is the file in the designer's downloads folder and whatever `onAttach`
+ *      did with the plate. The sentence under the buttons says this in the designer's own terms.
+ *
+ *    · THE BEFORE/AFTER COMPARATOR HOLDS TWO BLOB URLS, which is the one kind of memory a component
+ *      can leak permanently: an un-revoked object URL pins its whole bitmap for the life of the TAB,
+ *      and these are photographs. They are revoked when they are replaced, when the photograph changes
+ *      and when this component unmounts — see `compareUrlsRef` and the dispose effect.
+ *
  * ────────────────────────────────────────────────────────────────────────────
  * THE SEAM
  * ────────────────────────────────────────────────────────────────────────────
@@ -72,7 +90,17 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, ChevronDown, Image as ImageIcon, Loader2, Sliders, Wand2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Download,
+  Image as ImageIcon,
+  Loader2,
+  Sliders,
+  Wand2,
+  X
+} from "lucide-react";
 
 import {
   CHOICES,
@@ -101,7 +129,35 @@ import {
 } from "./decodeToPixels";
 import { Dropdown } from "@/components/ui/Dropdown";
 
-import { EXPORT_FORMATS, exportPngFile, exportSvgFile, isExported, paintGeometry, type ExportFormatId } from "./traceExport";
+import { DropCard } from "./DropCard";
+import { FramePanel, type EditedFrame } from "./FramePanel";
+import { Reveal1 } from "@/components/ui/reveal1";
+/*
+  THE REPOSITORY'S ONE DOWNLOAD HELPER, IMPORTED RATHER THAN COPIED.
+
+  `lib/designWorkshops.ts` belongs to another unit right now and this does not edit it — importing a
+  function is not editing the file that exports it, and this page already loads that module at runtime
+  (`app/(protected)/sketches-and-prototypes/page.tsx` imports `getDesignWorkshop`), so it costs no
+  bundle here. What it buys is the docblock at `saveBlobToDisk`, which carries a fact that two of the
+  four hand-rolled copies elsewhere in this app get WRONG: the object URL must be revoked on the next
+  task and not in the same tick as the synthetic click, because "Safari in particular ends up
+  downloading nothing at all with no error anywhere". A fifth copy of an anchor-click would be a fifth
+  chance to get that one line wrong.
+*/
+import { saveBlobToDisk } from "@/lib/designWorkshops";
+
+import {
+  EXPORT_FORMATS,
+  PNG_MAX_EDGE_PX,
+  RENDER_SUFFIX,
+  TRACE_SUFFIX,
+  exportPngFile,
+  exportSvgFile,
+  isExported,
+  paintGeometry,
+  type ExportFormatId
+} from "./traceExport";
+import { buildComparisonPlates, isComparable } from "./comparisonPlates";
 import type { SvgInput } from "./geometryToSvg";
 // TYPE-ONLY, so the panel that composes this one can own the contract without a runtime cycle.
 import type { AttachAnswer } from "./UploadTabPanel";
@@ -164,6 +220,27 @@ type Phase =
   | { status: "ready" }
   | { status: "unavailable"; reason: string };
 
+/**
+ * Which full-resolution run is in flight, if any.
+ *
+ * ONE PIECE OF STATE FOR ALL THREE, because all three are the same operation with a different ending:
+ * disarm the debounce, re-trace at full resolution, then attach / save the vector / save the raster.
+ * Two independent busy flags would allow two full-resolution traces at once, and `runTrace` aborts the
+ * previous controller — so the loser would report "the trace did not finish" while the winner quietly
+ * succeeded, which is the exact class of bug the debounce/attach collision already was.
+ */
+type FullRun = "attach" | "download-trace" | "download-render";
+
+/**
+ * How much of the traced frame the comparator shows before the divider is dragged.
+ *
+ * ZERO IS THE WHOLE POINT AND IT IS NOT THE COMPONENT'S DEFAULT. `components/ui/reveal1.tsx` clips the
+ * BEFORE layer by `position`, so 0 means "before fully clipped": the traced result fills the frame and
+ * the divider sits hard against the leading edge, which is what the owner asked for. Its own default
+ * of 50 opens half-and-half. Named here so the argument is not a bare literal in the JSX.
+ */
+const COMPARE_START_POSITION = 0;
+
 export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSource }: SketchTraceFieldProps) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
@@ -176,6 +253,16 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
 
   const [file, setFile] = useState<File | null>(null);
   const [pixels, setPixels] = useState<DecodedPixels | null>(null);
+  /**
+   * The frame `FramePanel` last committed — a crop, a sharpen, or both — or null for "as decoded".
+   *
+   * HELD HERE RATHER THAN INSIDE THAT PANEL because it is an INPUT to the trace, and the trace lives
+   * on this side. `pixels` stays the whole decoded photograph for as long as the photograph is chosen:
+   * a crop is taken from it afresh every time, so widening a frame back out is always possible and the
+   * original is never the thing that was overwritten. See `FramePanel`'s header for why that matters
+   * beyond convenience.
+   */
+  const [edited, setEdited] = useState<EditedFrame | null>(null);
 
   const [params, setParams] = useState<TraceParams | null>(null);
   /**
@@ -205,7 +292,25 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   const [done, setDone] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [format, setFormat] = useState<ExportFormatId>("svg");
-  const [attaching, setAttaching] = useState(false);
+  const [running, setRunning] = useState<FullRun | null>(null);
+  /** What the last download saved, for the live region beside the buttons. Never closes the panel. */
+  const [saved, setSaved] = useState<string | null>(null);
+  /**
+   * The two comparison plates, as object URLs, or null when there is nothing to compare.
+   *
+   * URLs rather than blobs because that is what `Reveal1` takes, and the URLs are created HERE rather
+   * than in `comparisonPlates.ts` for a reason that file states: a URL is a thing that has to be
+   * revoked, and only the component knows when it left the screen.
+   */
+  const [compare, setCompare] = useState<{
+    readonly traceUrl: string;
+    readonly originalUrl: string;
+    readonly width: number;
+    readonly height: number;
+    readonly reduced: boolean;
+  } | null>(null);
+  /** Why there is no comparison, when there is a trace but the plates could not be built. */
+  const [compareProblem, setCompareProblem] = useState<string | null>(null);
 
   const tracerRef = useRef<Tracer | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -254,8 +359,26 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * offering it twice is this side's.
    */
   const sourceFiledRef = useRef<File | null>(null);
-  /** True while `attachTrace` is running, for the debounce effect to read synchronously. */
-  const attachingRef = useRef(false);
+  /**
+   * True while a full-resolution run — an attach or either download — is in flight, for the debounce
+   * effect to read synchronously.
+   *
+   * A REF AS WELL AS `running`, and not instead of it. `running` is what the buttons render from; this
+   * is what the debounce effect reads in its own body, where a piece of state would be the value from
+   * the render that scheduled the effect rather than the value now. The downloads share it because
+   * they share the hazard: a preview armed 220 ms ago aborts the full-resolution trace a press is
+   * awaiting, and the abort reads as "nothing finished" with a finished drawing on screen.
+   */
+  const fullRunRef = useRef(false);
+  /**
+   * Every object URL the comparator currently holds.
+   *
+   * THE LEAK THIS PREVENTS IS THE WORST KIND: `URL.createObjectURL` keeps its blob alive until it is
+   * revoked or the document goes away, so a panel that made two 1024px PNGs per trace and forgot them
+   * would pin one photograph-sized bitmap per slider drag for as long as the tab lived. The array is
+   * revoked and replaced together, in one place, so a plate can never be dropped without its URL.
+   */
+  const compareUrlsRef = useRef<readonly string[]>([]);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   /** Whether the panel was open on the previous render, so focus is returned only on a real close. */
@@ -350,7 +473,14 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     triggerRef.current?.focus();
   }, [open]);
 
-  /** A worker outlives the component that forgot it. */
+  /**
+   * A worker outlives the component that forgot it — and so does an object URL.
+   *
+   * ONE TEARDOWN SITE FOR BOTH, deliberately. The two leaks are the same shape: a resource the browser
+   * holds on this component's behalf and will not reclaim on unmount by itself. A blob URL is the more
+   * expensive of the two here, because the blob behind it is a photograph and it is pinned for the
+   * life of the TAB rather than of the page view — closing an inline panel is not a navigation.
+   */
   useEffect(() => {
     return () => {
       goneRef.current = true;
@@ -358,6 +488,8 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
       abortRef.current?.abort();
       tracerRef.current?.dispose();
       tracerRef.current = null;
+      for (const url of compareUrlsRef.current) URL.revokeObjectURL(url);
+      compareUrlsRef.current = [];
     };
   }, []);
 
@@ -380,9 +512,21 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     const pick = pickRef.current;
     setProblem(null);
     setDone(null);
+    // "sheet-line-art.svg was saved to this device" IS ABOUT THE OLD SHEET. It sits under the download
+    // buttons and it survived a pick, a close and a reopen, so a designer who saved a copy of one
+    // trace and then chose a different photograph was told the new one had already been saved — under
+    // a file name that is now nobody's. Every other sentence about the last photograph is cleared
+    // here; this one was missed.
+    setSaved(null);
     setResult(null);
     setFile(chosen);
     setPixels(null);
+    // A FRAME CHOSEN ON ONE SHEET IS MEANINGLESS ON THE NEXT, and it has to be cleared HERE rather
+    // than left to `FramePanel`: setting `pixels` to null unmounts that panel, so its own reset effect
+    // never runs, and the previous photograph's crop would survive as the region this one is traced
+    // from. Nothing on screen would distinguish the two — the same failure `pickRef` below exists to
+    // stop, arriving by a different route.
+    setEdited(null);
     // A new photograph is a new thing to file, whatever was filed for the old one.
     sourceFiledRef.current = null;
     const outcome = await decodeToPixels(chosen);
@@ -400,6 +544,35 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * ────────────────────────────────────────────────────────────────────────── */
 
   /**
+   * The pixels the trace actually runs on: the frame `FramePanel` committed, or the whole decode.
+   *
+   * ONE PLACE, SO NOTHING CAN TRACE A DIFFERENT FRAME FROM THE ONE THE PANEL SAYS IS APPLIED. Three
+   * consumers read it — `runTrace`, the debounce effect that re-previews, and the comparison plates —
+   * and the third is the one that would have broken silently: `buildComparisonPlates` stacks the
+   * traced drawing over the photograph, so feeding it the whole photograph while the trace ran on a
+   * crop would put two different frames in one comparator, aligned by nothing.
+   *
+   * `sourceWidth`/`sourceHeight` are carried through UNCHANGED, and that is correct rather than lazy:
+   * they mean "the file's own pixel size, before any capping" (`decodeToPixels.DecodedPixels`), which a
+   * crop does not change. `width`/`height` are the frame.
+   *
+   * A memo, not an expression at the call site: the debounce effect watches this object's identity, and
+   * rebuilt every render it would re-arm the retrace timer on every keystroke anywhere in the panel.
+   */
+  const traceSource = useMemo<DecodedPixels | null>(() => {
+    if (pixels === null) return null;
+    if (edited === null) return pixels;
+    return {
+      data: edited.data,
+      width: edited.width,
+      height: edited.height,
+      sourceWidth: pixels.sourceWidth,
+      sourceHeight: pixels.sourceHeight,
+      decodeMs: pixels.decodeMs
+    };
+  }, [edited, pixels]);
+
+  /**
    * Run one trace and hand the answer back.
    *
    * IT RETURNS THE RESULT AS WELL AS STORING IT, and that is not redundancy. `attachTrace` awaits a
@@ -410,7 +583,7 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    */
   const runTrace = useCallback(
     async (preview: boolean): Promise<SerializedTraceResult | null> => {
-      if (runtime === null || pixels === null || params === null) return null;
+      if (runtime === null || traceSource === null || params === null) return null;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -427,7 +600,7 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
           // detached once it has been posted — upstream learned this the hard way and recorded the
           // symptom: transferring the original made "the second trace produces a blank image", which
           // surfaces as a rendering bug rather than as an error.
-          image: runtime.transferableFrom(pixels),
+          image: runtime.transferableFrom(traceSource),
           params,
           preview,
           signal: controller.signal,
@@ -456,7 +629,7 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         }
       }
     },
-    [runtime, pixels, params]
+    [runtime, traceSource, params]
   );
 
   /**
@@ -466,12 +639,13 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * it from outside this effect. A parameter changed within 220 ms of pressing "Add the line art"
    * leaves a preview armed; the preview then aborts the full-resolution trace the attach is awaiting,
    * that abort is (rightly) treated as the ordinary consequence of moving a slider, and the attach
-   * reported "the trace did not finish" with a finished drawing on screen. `attachTrace` clears this
-   * timer before it starts, and `attachingRef` keeps the effect from arming a new one behind it.
+   * reported "the trace did not finish" with a finished drawing on screen. `beginFullRun` clears this
+   * timer before any of the three presses starts, and `fullRunRef` keeps the effect from arming a new
+   * one behind it.
    */
   useEffect(() => {
-    if (runtime === null || pixels === null || params === null) return;
-    if (attachingRef.current) return;
+    if (runtime === null || traceSource === null || params === null) return;
+    if (fullRunRef.current) return;
     const timer = window.setTimeout(() => {
       retraceTimerRef.current = null;
       void runTrace(true);
@@ -481,7 +655,10 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
       window.clearTimeout(timer);
       if (retraceTimerRef.current === timer) retraceTimerRef.current = null;
     };
-  }, [runtime, pixels, params, runTrace]);
+    // `traceSource` RATHER THAN `pixels`, so committing a frame in `FramePanel` re-traces exactly as
+    // moving a slider does — same debounce, same supersede-the-older-run behaviour. A frame is another
+    // input to the trace and nothing more.
+  }, [runtime, traceSource, params, runTrace]);
 
   /* ──────────────────────────────────────────────────────────────────────────
    * Drawing the answer
@@ -510,6 +687,87 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     // attached is a preview that can lie — see `paintGeometry`'s header.
     paintGeometry(context, svgInput, scale);
   }, [svgInput]);
+
+  /**
+   * Install a fresh pair of comparison URLs and revoke whatever the last pair was.
+   *
+   * REVOKE-THEN-REPLACE IN ONE FUNCTION, so the two can never drift apart. The previous URLs are dead
+   * the moment this returns, which is safe because the state write below is what renders them and it
+   * happens in the same call: React commits the new `src` values, and no `<img>` ever points at a
+   * revoked URL. Doing it in two places is how one of the pair gets forgotten.
+   */
+  const installCompareUrls = useCallback((urls: readonly string[]) => {
+    for (const url of compareUrlsRef.current) URL.revokeObjectURL(url);
+    compareUrlsRef.current = urls;
+  }, []);
+
+  /**
+   * Build the two pictures the before/after comparator shows, whenever the drawing or the photograph
+   * changes.
+   *
+   * WHY IT IS AN EFFECT AND NOT A BUTTON. The comparator is the answer to "is this trace any good",
+   * which is the question every slider on this panel is asked in service of — so it has to be looking
+   * at the trace that is on screen now, not at whichever one the designer last pressed a button for. A
+   * stale comparison is worse than none: it says the drawing is fine while the drawing on screen is
+   * not.
+   *
+   * WHAT IT COSTS, MEASURED IN THE ONLY UNIT THAT MATTERS HERE. One box-filter downscale of the
+   * decoded photograph plus two PNG encodes at `COMPARISON_LONG_EDGE_PX`, per SETTLED trace —
+   * `svgInput` only changes when a trace resolves, and a slider drag produces one trace at the end
+   * because of `RETRACE_DEBOUNCE_MS`. It is not per frame and not per pointer move.
+   *
+   * AND THAT DOWNSCALE READS THE WHOLE DECODE, up to 4096px on its long edge — 16.7 million pixels,
+   * whatever size the plate it produces is. Which is why it is `resampleRgbaInBands` and not the
+   * synchronous one: the work is identical and interruptible instead of one long task on the page
+   * thread. The sharpen went to a worker for the same reason at a hundred times the arithmetic per
+   * pixel; that file's header has the comparison. A settled trace per slider drag is exactly often
+   * enough for a frozen tab to be noticed.
+   *
+   * THE CANCEL TOKEN IS NOT OPTIONAL. Two traces can settle in quick succession (a preview, then the
+   * attach's full-resolution run), and without the token the first build's URLs are installed after
+   * the second's — so the comparator shows the older drawing, and the newer pair's URLs are the ones
+   * that get revoked. `installCompareUrls` is called only past the guard for exactly that reason.
+   */
+  useEffect(() => {
+    if (svgInput === null || traceSource === null) {
+      installCompareUrls([]);
+      setCompare(null);
+      setCompareProblem(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      // `traceSource`, NOT `pixels`: the before-layer has to be the frame the trace actually ran on,
+      // or a cropped trace is stacked over the uncropped photograph and the two layers line up nowhere.
+      const outcome = await buildComparisonPlates(traceSource, svgInput, {
+        // The downscale is done in bands with the page thread given a turn between them, and this is
+        // what stops a superseded build partway through instead of paying for a plane nobody will see.
+        // The guard below is still what decides whether an answer is used; this only saves the work.
+        shouldStop: () => cancelled || goneRef.current
+      });
+      if (cancelled || goneRef.current) return;
+      if (!isComparable(outcome)) {
+        installCompareUrls([]);
+        setCompare(null);
+        setCompareProblem(outcome.reason);
+        return;
+      }
+      const traceUrl = URL.createObjectURL(outcome.trace);
+      const originalUrl = URL.createObjectURL(outcome.original);
+      installCompareUrls([traceUrl, originalUrl]);
+      setCompareProblem(null);
+      setCompare({
+        traceUrl,
+        originalUrl,
+        width: outcome.width,
+        height: outcome.height,
+        reduced: outcome.reduced
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [svgInput, traceSource, installCompareUrls]);
 
   /* ──────────────────────────────────────────────────────────────────────────
    * Presets and controls
@@ -566,22 +824,108 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   );
   const modifiedSet = useMemo(() => new Set(modifiedLabels), [modifiedLabels]);
 
+  /**
+   * The one sentence that says why the comparator is not showing a comparison, and the empty string
+   * when it is.
+   *
+   * ALL FIVE ABSENCES ANSWERED IN ONE PLACE, because they are genuinely different and a single "no
+   * comparison" placeholder would flatten them into one shrug: nothing traced yet, a trace still
+   * running, a trace that failed, a comparison that could not be built from a trace that succeeded,
+   * and an update in flight over a comparison already on screen. The fourth is the one that would
+   * otherwise be invisible — `buildComparisonPlates` refuses when the browser gives it no drawing
+   * surface, or when the traced frame and the decoded frame disagree, and both refusals are sentences
+   * written to be read.
+   *
+   * The failed-trace branch points AT the existing red message rather than restating it: two copies of
+   * one fault in one card is how a designer ends up believing there are two.
+   */
+  const comparisonStatus =
+    compare !== null
+      ? tracing
+        ? "Updating…"
+        : ""
+      : compareProblem !== null
+        ? compareProblem
+        : tracing
+          ? progress ?? "Tracing…"
+          : problem !== null
+            ? "The trace did not finish, so there is nothing to compare. The reason is above."
+            : result === null
+              ? "The comparison appears as soon as the first trace finishes."
+              : "Preparing the comparison…";
+
   /* ──────────────────────────────────────────────────────────────────────────
    * Attaching
    * ────────────────────────────────────────────────────────────────────────── */
 
-  async function attachTrace() {
-    if (svgInput === null || file === null || runtime === null || params === null) return;
-    // Disarm the pending preview FIRST. See the debounce effect: a preview that fires mid-attach
-    // aborts the full-resolution trace this function is about to await, and the abort reads as
-    // "nothing finished" while a finished drawing is on screen.
+  /**
+   * Claim the panel for a full-resolution run, whichever of the three it is.
+   *
+   * DISARMING THE PENDING PREVIEW IS THE FIRST THING IT DOES, and it is the whole reason this is a
+   * function rather than four lines repeated. See the debounce effect: a preview that fires mid-run
+   * aborts the full-resolution trace the press is awaiting, and the abort reads as "nothing finished"
+   * while a finished drawing is on screen. The bug was found once on the attach; the downloads would
+   * have reproduced it exactly.
+   */
+  function beginFullRun(kind: FullRun) {
     if (retraceTimerRef.current !== null) {
       window.clearTimeout(retraceTimerRef.current);
       retraceTimerRef.current = null;
     }
-    attachingRef.current = true;
-    setAttaching(true);
+    fullRunRef.current = true;
+    setRunning(kind);
     setProblem(null);
+  }
+
+  function endFullRun() {
+    fullRunRef.current = false;
+    setRunning(null);
+  }
+
+  /**
+   * The provenance sentence written into a derived file.
+   *
+   * SHARED BY THE ATTACH AND BY THE DOWNLOADED SVG, because the downloaded copy is the one most likely
+   * to be mailed on, printed, or opened in Illustrator by somebody who never saw this panel — so it is
+   * the copy that most needs to be able to say what made it and from what. `buildSvg`'s header states
+   * the limit this stays inside: nothing identifying, no designer, no workshop, no account.
+   */
+  function provenanceFor(latest: SerializedTraceResult, sourceName: string): string {
+    return (
+      `Traced on the device from ${sourceName} by the Design & Prototype Workshop portal. ` +
+      `${latest.shapeCount} paths, ${latest.nodeCount} nodes.` +
+      /*
+        THE FRAME IS PART OF THE PROVENANCE, AND IT IS THE PART A REVIEWER CANNOT INFER.
+
+        A crop is destructive — everything outside it is absent from the drawing — so somebody holding
+        the SVG and the photograph side by side and finding that they do not match needs to be able to
+        tell whether that was a decision or a fault. The sentence is written by
+        `lib/trace/imageEdit.describeEdit`, inside the worker that read the pixels, and carried up
+        through `FramePanel` — not re-derived here — so a change to what the frame does changes what
+        the file says about itself.
+
+        THE PNG CARRIES NONE OF THIS AND CANNOT. `exportPngFile` takes no provenance argument — a PNG
+        has no comment channel this code writes — so a cropped trace attached as a PNG records its
+        frame nowhere but on this screen. Stated in the copy under the format buttons, and again under
+        the download buttons for the PNG a designer saves, rather than quietly tolerated.
+      */
+      (edited !== null && edited.note.length > 0 ? ` ${edited.note}` : "")
+    );
+  }
+
+  /** The traced document, in the shape both exporters and the painter take. */
+  function inputFrom(latest: SerializedTraceResult): SvgInput {
+    return {
+      geometry: latest.geometry,
+      width: latest.width,
+      height: latest.height,
+      background: latest.background
+    };
+  }
+
+  async function attachTrace() {
+    if (svgInput === null || file === null || runtime === null || params === null) return;
+    beginFullRun("attach");
     try {
       // FULL RESOLUTION, ONCE, ON THE BUTTON — never on a drag. Everything on screen until now was a
       // preview at a smaller working edge, and `SerializedTraceResult.workingWidth` is how the panel
@@ -591,15 +935,8 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         setProblem("The trace did not finish, so there is nothing to attach yet.");
         return;
       }
-      const input: SvgInput = {
-        geometry: latest.geometry,
-        width: latest.width,
-        height: latest.height,
-        background: latest.background
-      };
-      const note =
-        `Traced on the device from ${file.name} by the Design & Prototype Workshop portal. ` +
-        `${latest.shapeCount} paths, ${latest.nodeCount} nodes.`;
+      const input = inputFrom(latest);
+      const note = provenanceFor(latest, file.name);
       const outcome =
         format === "svg"
           ? exportSvgFile(input, file.name, note)
@@ -645,8 +982,72 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         error instanceof Error ? `The line art could not be made: ${error.message}` : "The line art could not be made."
       );
     } finally {
-      attachingRef.current = false;
-      setAttaching(false);
+      endFullRun();
+    }
+  }
+
+  /**
+   * Save one of the two derived artefacts to the device. Nothing is uploaded and nothing is filed.
+   *
+   * ────────────────────────────────────────────────────────────────────────────
+   * WHAT IS BEING DOWNLOADED, AND WHY IT IS NOT WHAT IS ON SCREEN
+   * ────────────────────────────────────────────────────────────────────────────
+   *
+   * IT RE-TRACES AT FULL RESOLUTION FIRST, EXACTLY AS THE ATTACH DOES. The drawing on screen is a
+   * preview traced at a smaller working edge (`PREVIEW_LONG_EDGE` in the worker), and the panel already
+   * says so under the canvas. A download button that saved `svgInput` would hand over a coarser drawing
+   * than the one being looked at, with the same shape count and the same name — the single most
+   * plausible way for this feature to be wrong while appearing to work. So the press pays for one more
+   * trace, and the two downloads and the attach all come from the same full-resolution run.
+   *
+   * THE TWO ARTEFACTS ARE THE OWNER'S TWO REQUESTS AND THEY ARE GENUINELY DIFFERENT THINGS:
+   *   · "trace"  — the VECTOR geometry, an `.svg`. Editable, scalable, re-openable in Illustrator,
+   *     Inkscape or CorelDRAW, and byte-for-byte the file the record's `lineArtFile` receives.
+   *   · "render" — the RENDERED raster, a `.png`, painted by the same `paintGeometry` that drew the
+   *     preview above. What anybody can open, print or drop into a slide.
+   * Both names are the photograph's own stem plus one suffix (`traceExport.ts` holds the three), so the
+   * downloads folder still says which photograph each came from.
+   *
+   * NOTHING PERSISTS. There is no stored trace to fetch and none is created — see property 5 in this
+   * file's header. This is a `File` made in memory on the press and handed to the browser's own save
+   * path; close the panel and it cannot be produced again without re-tracing.
+   */
+  async function downloadDerived(what: "trace" | "render") {
+    if (svgInput === null || file === null || runtime === null || params === null) return;
+    beginFullRun(what === "trace" ? "download-trace" : "download-render");
+    setSaved(null);
+    try {
+      const latest = await runTrace(false);
+      if (latest === null) {
+        setProblem("The trace did not finish, so there is nothing to download yet.");
+        return;
+      }
+      const input = inputFrom(latest);
+      const outcome =
+        what === "trace"
+          ? exportSvgFile(input, file.name, provenanceFor(latest, file.name), { suffix: TRACE_SUFFIX })
+          : await exportPngFile(input, file.name, PNG_MAX_EDGE_PX, { suffix: RENDER_SUFFIX });
+      if (!isExported(outcome)) {
+        setProblem(outcome.reason);
+        return;
+      }
+      saveBlobToDisk(outcome.file, outcome.file.name);
+      setSaved(
+        `${outcome.file.name} was saved to this device. Nothing was filed on the record and nothing was ` +
+          `uploaded.` +
+          // §10 of the frontend skill: a cap that reduced the file is stated on screen, never swallowed.
+          // `exportPngFile` reports its 2048px ceiling and `buildSvg` its shape ceiling this way, and a
+          // download that quietly dropped the sentence would be the one place the ceiling is invisible.
+          (outcome.note ? ` ${outcome.note}` : "")
+      );
+    } catch (error) {
+      setProblem(
+        error instanceof Error
+          ? `That file could not be made: ${error.message}`
+          : "That file could not be made."
+      );
+    } finally {
+      endFullRun();
     }
   }
 
@@ -706,6 +1107,16 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   /* ──────────────────────────────────────────────────────────────────────────
    * Render
    * ────────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * Any full-resolution run at all, for the buttons that must not be pressed during another.
+   *
+   * ALL THREE PRESSES DISABLE ALL THREE BUTTONS, not just their own. They share one `AbortController`
+   * (`abortRef`) and one worker, so a second press aborts the first press's trace — and this panel
+   * treats an abort as the ordinary consequence of moving a slider, so the first press would fail with
+   * "the trace did not finish" for a reason that appears nowhere on screen.
+   */
+  const busy = running !== null;
 
   if (phase.status === "unavailable") {
     // "This device cannot do it at all" wants the control gone, not a button that fails. The ordinary
@@ -774,32 +1185,73 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
       {phase.status === "ready" ? (
         <>
           {/* ── The photograph ─────────────────────────────────────────────── */}
+          {/*
+            A DROP CARD RATHER THAN A BARE `<input type="file">`, WHICH IS THE OWNER'S THIRD REQUEST —
+            and the button did not go away, it moved inside the card. See `DropCard`'s header: file drop
+            does not exist on touch at all (`dragover` never fires on Android Chrome, and a handset has
+            no second window to drag a file out of), so on the device most of this fieldwork happens on,
+            the tap is the only route there is. A card with only a drop would be a regression on the
+            input it replaced.
+
+            THIS ALSO CLOSES A LIVE INCONSISTENCY. The input this replaces never cleared
+            `event.target.value`, so re-choosing the same photograph after a refusal fired no `change`
+            event and the panel did nothing at all — `WorkshopCodeScanner` and `PrototypeModelField`
+            both clear it and both say why. `DropCard` clears it for every caller.
+          */}
           <div className="mb-3">
-            <label className="field-label" htmlFor={`${panelId}-file`}>
-              Photograph to trace
-            </label>
-            <input
-              id={`${panelId}-file`}
-              type="file"
+            <DropCard
+              label="Photograph to trace"
+              buttonLabel="Choose a photograph"
               accept={TRACEABLE_ACCEPT}
-              className="field-input mt-1 file:mr-3 file:rounded-md file:border-0 file:bg-purple-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white"
+              acceptSentence={`${TRACEABLE_IMAGE_TYPES}, wherever this browser can read them. Anything longer than ${DECODE_MAX_EDGE_PX}px on its long edge is reduced to that before tracing — the trace was never going to run above it.`}
               disabled={disabled}
-              onChange={(event) => {
-                const chosen = event.target.files?.[0];
+              /*
+                THE RULE, NOT THE FILTER. `accept="image/*"` is what the dialog offers and a drop ignores
+                it entirely, so this is what actually decides — and it decides PERMISSIVELY on purpose.
+                A phone camera roll hands over HEIC and AVIF with an EMPTY `type` on several platforms,
+                so refusing anything without an image MIME type would refuse the commonest file on an
+                iPhone. `decodeToPixels` already answers "this browser cannot read that image" in a
+                sentence, which is the honest place for that judgement: it is the code that tried.
+
+                What IS refused here is the file that is definitely not a photograph of a sheet — a
+                video, a PDF, a document — and the SVG, for the reason `decodeToPixels`'s own header
+                gives at length: tracing vector art is a round trip that can only lose.
+              */
+              validate={(candidate) => {
+                if (candidate.type === "image/svg+xml") {
+                  return "an SVG is already vector art, and rasterising it to trace it back can only lose detail. Attach it with the ordinary picker instead.";
+                }
+                if (candidate.type === "" || candidate.type.startsWith("image/")) return null;
+                return `this is ${candidate.type}, not a photograph. A drawing has to be traced from an image.`;
+              }}
+              onFiles={(files) => {
+                const chosen = files[0];
                 if (chosen) void chooseFile(chosen);
               }}
-            />
-            <p className="mt-1 text-xs text-ink-500">
-              {TRACEABLE_IMAGE_TYPES}, wherever this browser can read them. Anything longer than{" "}
-              {DECODE_MAX_EDGE_PX}px on its long edge is reduced to that before tracing — the trace was never
-              going to run above it.
-            </p>
-            {pixels && (pixels.sourceWidth !== pixels.width || pixels.sourceHeight !== pixels.height) ? (
-              <p className="mt-1 text-xs text-ink-500">
-                Read at {pixels.width}x{pixels.height}, reduced from {pixels.sourceWidth}x{pixels.sourceHeight}.
-              </p>
-            ) : null}
+            >
+              {file ? (
+                <p className="text-xs leading-4 text-ink-500">
+                  <span className="font-medium text-ink-900">{file.name}</span>
+                  {pixels && (pixels.sourceWidth !== pixels.width || pixels.sourceHeight !== pixels.height)
+                    ? ` — read at ${pixels.width}x${pixels.height}, reduced from ${pixels.sourceWidth}x${pixels.sourceHeight}.`
+                    : pixels
+                      ? ` — ${pixels.width}x${pixels.height}.`
+                      : " — reading…"}
+                </p>
+              ) : null}
+            </DropCard>
           </div>
+
+          {/* ── The frame and the sharpening ────────────────────────────────── */}
+          {/*
+            `onEdited={setEdited}` IS THE WHOLE WIRING, and it is a bare setter deliberately. That
+            panel resets the frame in an effect whose dependency array contains this callback, so an
+            inline arrow function would give it a new identity on every render and the effect would
+            reset the frame, on a loop, forever. A `useState` setter is stable for the life of the
+            component — and an `EditedFrame` is an object rather than a function, so React cannot read
+            it as an updater.
+          */}
+          {pixels ? <FramePanel pixels={pixels} disabled={disabled} onEdited={setEdited} /> : null}
 
           {/* ── The preview ────────────────────────────────────────────────── */}
           {pixels ? (
@@ -860,8 +1312,77 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
               ) : null}
               {result && result.workingWidth < result.width ? (
                 <p className="mt-2 text-xs text-ink-500">
-                  This is a preview at a smaller working size. Attaching re-traces at full resolution first.
+                  This is a preview at a smaller working size. Attaching or downloading re-traces at full
+                  resolution first.
                 </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* ── The trace against the photograph ───────────────────────────── */}
+          {/*
+            THE COMPARATOR THE OWNER ASKED FOR, OPENING ON THE TRACE.
+
+            `Reveal1` clips the BEFORE layer by `position`, so the trace is passed as `afterImage` with
+            `initialPosition={0}` (`COMPARE_START_POSITION`) — the drawing fills the frame, the divider
+            sits hard against the leading edge, and dragging reveals the photograph underneath. Passing
+            them the other way round is the obvious mistake and the component's own header says so.
+
+            NO `heading` PROP, ON PURPOSE. It renders an `<h2>`, and this panel's own heading is an
+            `<h4>`; a nested h2 would jump the document's heading levels backwards inside one card,
+            which is a real navigation fault for a screen-reader user and buys nothing here. The card's
+            `field-label` names it visually and `ariaLabel` names it to a reader.
+          */}
+          {pixels ? (
+            <div className="mb-3 rounded-md border border-line-200 bg-card p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="field-label">The trace against the photograph</span>
+                {/* One place for every "why is there no comparison" sentence, and empty when there is
+                    one — a live region that appears with its text already in it is announced by
+                    nothing, and one that says "blank" costs a reader a sentence for no information.
+                    Same arrangement as the tracing spinner above. */}
+                <span aria-live="polite" className="text-xs text-ink-500">
+                  {comparisonStatus}
+                </span>
+              </div>
+              {compare ? (
+                <>
+                  <Reveal1
+                    className="mt-2"
+                    beforeImage={{
+                      src: compare.originalUrl,
+                      alt: file ? `The photograph ${file.name}, as the tracing engine read it` : "The photograph"
+                    }}
+                    afterImage={{ src: compare.traceUrl, alt: "The traced drawing, on white" }}
+                    beforeLabel="Photograph"
+                    afterLabel="Traced drawing"
+                    initialPosition={COMPARE_START_POSITION}
+                    ariaLabel="Traced drawing against the photograph"
+                    // The photograph's own ratio, so neither layer is centre-cropped. Without it the
+                    // frame is 16:9 and a portrait A4 sheet loses most of the drawing off the top and
+                    // bottom — see the component's note on `aspectRatio`.
+                    aspectRatio={compare.width / compare.height}
+                  />
+                  {/*
+                    THE INSTRUCTION IS WRITTEN OUT BECAUSE THE GESTURE IS NOT DISCOVERABLE, and the
+                    keyboard half is written out because it exists: `RankableList.tsx` in this same
+                    directory states the rule — "a drag is a pointer gesture and is unreachable from a
+                    keyboard, from a switch device and from a screen reader" — and the comparator
+                    answers to the arrow keys, Home and End for exactly that reason. A hint nobody can
+                    see is a feature nobody can reach.
+                  */}
+                  <p className="mt-2 text-xs leading-5 text-ink-500">
+                    The drawing is shown first. Drag the handle — or focus it and use the arrow keys, Home and
+                    End — to reveal the photograph underneath. The comparison paints the drawing on white so it
+                    is visible over the photograph; the file that is attached or downloaded keeps whatever
+                    background you chose.
+                    {compare.reduced
+                      ? ` Both pictures here are ${compare.width}x${compare.height}, reduced from ${
+                          result ? `${Math.round(result.width)}x${Math.round(result.height)}` : "the traced size"
+                        } for the comparison only.`
+                      : ""}
+                  </p>
+                </>
               ) : null}
             </div>
           ) : null}
@@ -1072,6 +1593,16 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
               ))}
             </div>
             <p className="text-xs text-ink-500">{EXPORT_FORMATS.find((e) => e.id === format)?.hint}</p>
+            {/* A CAP STATED WHERE IT BITES. The SVG carries the frame in its provenance note (see
+                `provenanceFor`); a PNG has no channel for it, so a cropped or sharpened trace filed as
+                a PNG records how it was made nowhere but on this screen. §1.10: skipped work is said
+                out loud, and this is skipped work in a file rather than on a list. */}
+            {format === "png" && edited !== null ? (
+              <p className="text-xs leading-4 text-amber-800">
+                The frame you chose is written into the SVG&apos;s provenance note. A PNG has nowhere to
+                carry it, so a reviewer holding only the PNG cannot tell it was cropped or sharpened.
+              </p>
+            ) : null}
           </div>
 
           {problem ? (
@@ -1089,9 +1620,13 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
               type="button"
               className="field-button"
               onClick={() => void attachTrace()}
-              disabled={disabled || attaching || result === null || file === null}
+              disabled={disabled || busy || result === null || file === null}
             >
-              {attaching ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <ImageIcon className="h-4 w-4" aria-hidden />}
+              {running === "attach" ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <ImageIcon className="h-4 w-4" aria-hidden />
+              )}
               Add the line art to “{targetLabel}”
             </button>
             {/* DECLINING THE TRACE HAS TO FILE THE PHOTOGRAPH WHERE THIS PANEL IS THE ONLY PICKER.
@@ -1104,13 +1639,13 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                 type="button"
                 className="field-button-secondary"
                 onClick={attachSourceOnly}
-                disabled={disabled || attaching || file === null}
+                disabled={disabled || busy || file === null}
               >
                 <ImageIcon className="h-4 w-4" aria-hidden />
                 Attach the photograph only
               </button>
             ) : (
-              <button type="button" className="field-button-secondary" onClick={() => setOpen(false)} disabled={attaching}>
+              <button type="button" className="field-button-secondary" onClick={() => setOpen(false)} disabled={busy}>
                 Keep the photograph only
               </button>
             )}
@@ -1120,6 +1655,88 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
               ? "Nothing is filed until one of these is pressed. “Attach the photograph only” files the photograph exactly as it was taken and stops there; adding the line art files both, the photograph unaltered beside the drawing. Closing this panel with the × files neither."
               : "Declining costs nothing: the photograph you attached stays exactly as it is, and a drawing can be traced from it later."}
           </p>
+
+          {/* ── Downloads ──────────────────────────────────────────────────── */}
+          {/*
+            SEPARATED FROM THE ATTACH BY A RULE, BECAUSE THEY ARE DIFFERENT PROMISES. Everything above
+            this line writes to the record; nothing below it does. A download is a copy for the person
+            at the keyboard — it reaches no field, no upload queue and no draft store — and the sentence
+            underneath says so, along with the two facts a designer cannot see: that the press re-traces
+            at full resolution rather than saving the preview, and that the trace itself is not kept
+            anywhere once this panel closes.
+          */}
+          <div className="mt-4 border-t border-line-200 pt-3">
+            <span className="field-label">Download a copy to this device</span>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="field-button-secondary"
+                onClick={() => void downloadDerived("trace")}
+                disabled={disabled || busy || result === null || file === null}
+              >
+                {running === "download-trace" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Download className="h-4 w-4" aria-hidden />
+                )}
+                Download the trace (SVG)
+              </button>
+              <button
+                type="button"
+                className="field-button-secondary"
+                onClick={() => void downloadDerived("render")}
+                disabled={disabled || busy || result === null || file === null}
+              >
+                {running === "download-render" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Download className="h-4 w-4" aria-hidden />
+                )}
+                Download the rendered image (PNG)
+              </button>
+            </div>
+            <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
+              The SVG is the trace itself — the paths, editable and scalable, the same file “Add the line art”
+              attaches. The PNG is the drawing rendered as a picture, up to {PNG_MAX_EDGE_PX}px on its long
+              edge, transparent wherever the drawing is not unless you turned the white background on. Both are
+              re-traced at full resolution when you press, so neither is the smaller preview above. Neither is
+              filed on the record and neither is uploaded.
+            </p>
+            <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
+              Nothing here is stored: the trace lives only while this panel is open, so closing it, choosing
+              another photograph or reloading the page discards it, and a download after that means tracing
+              again.
+            </p>
+            {/* Mounted whether or not anything has been saved, so the sentence is a CHANGE to a region
+                already in the document — the same reason the success sentence at the bottom of this
+                component lives outside the open/closed switch. */}
+            {/*
+              THE SAME GAP AS THE ATTACH'S, SAID IN THE OTHER HALF OF THE PANEL.
+
+              `provenanceFor` is handed to `exportSvgFile` on both routes and `exportPngFile` takes no
+              provenance argument on either — a PNG has no comment channel this code writes. The copy
+              under the format buttons above says so for the file that reaches the RECORD; the download
+              block said nothing, so a designer who cropped and then pressed "Download the rendered
+              image" got a file whose frame is recorded nowhere and was told nothing about it.
+              `traceExport.ts` sets the standard this now meets: stated in the copy beside the button
+              rather than quietly tolerated.
+            */}
+            {edited !== null ? (
+              <p className="mt-1 max-w-prose text-xs leading-5 text-amber-800">
+                The frame you chose is written into the SVG&apos;s provenance note, so the downloaded SVG
+                carries it. The PNG has nowhere to carry it: saved on its own, it does not record that it
+                was cropped or sharpened.
+              </p>
+            ) : null}
+            <p aria-live="polite" aria-atomic="true" className="mt-1 text-xs leading-5 text-ink-500">
+              {saved ? (
+                <span className="flex items-start gap-2">
+                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+                  <span>{saved}</span>
+                </span>
+              ) : null}
+            </p>
+          </div>
         </>
       ) : null}
     </div>

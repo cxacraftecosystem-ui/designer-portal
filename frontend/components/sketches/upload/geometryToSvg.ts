@@ -278,17 +278,46 @@ export function buildSvg(input: SvgInput, options: SvgOptions = {}): SvgResult {
 }
 
 /**
+ * The suffix a derived file carries when the caller does not name one.
+ *
+ * Exported so the two things that must agree — the name a file is given and the name a test expects —
+ * read it from one place. `traceExport.ts` declares the others beside it.
+ */
+export const DEFAULT_DERIVED_SUFFIX = "line-art";
+
+/**
  * @returns a name for the derived file, built from the photograph's own.
  *
  * The source name is kept and a suffix added, rather than a fresh name being invented, because the
  * two files sit in one record and a reviewer has to be able to tell which photograph a plate came
  * from. `SketchRectifyField`'s neighbour does the same for the same reason.
+ *
+ * ── WHY THE SUFFIX IS A PARAMETER, AND WHY IT IS NOT A SECOND FUNCTION ──────────────────────────
+ *
+ * The panel now produces THREE things from one photograph: the line art it attaches, the same vector
+ * geometry downloaded to the device, and a rendered raster downloaded to the device. Two of those are
+ * a `.svg` and a `.png` of the drawing and the third is a `.png` of the drawing, so "-line-art.png"
+ * would name both the attachable plate and the downloaded render — one filename for two artefacts,
+ * in a downloads folder where the record's own provenance is not there to tell them apart. A
+ * parameter keeps ONE naming rule (stem, one suffix, extension) applying to all three; a second
+ * helper would be a second rule, and `lib/media.ts`'s header is explicit about what two naming
+ * implementations cost ("no two capture screens can drift into naming the same kind of file
+ * differently").
+ *
+ * The suffix goes through the same deny-list as the stem. It is a constant at every call site today,
+ * but a name-building function that trusts one of its inputs and sanitises the other is a function
+ * whose next caller has to know which is which.
  */
-export function derivedFileName(sourceName: string, extension: string): string {
+export function derivedFileName(
+  sourceName: string,
+  extension: string,
+  suffix: string = DEFAULT_DERIVED_SUFFIX
+): string {
   const trimmed = sourceName.replace(/\.[^./\\]+$/, "").trim();
   const base = trimmed.length > 0 ? trimmed : "sketch";
   // Windows, S3 keys and a .docx relationship id all dislike a different subset of the punctuation a
   // phone gallery will happily put in a filename, so the intersection is what survives.
   const safe = base.replace(/[^\w\-. ]+/g, "_").slice(0, 80);
-  return `${safe}-line-art.${extension}`;
+  const tag = suffix.replace(/[^\w\-. ]+/g, "_").trim();
+  return tag.length > 0 ? `${safe}-${tag}.${extension}` : `${safe}.${extension}`;
 }

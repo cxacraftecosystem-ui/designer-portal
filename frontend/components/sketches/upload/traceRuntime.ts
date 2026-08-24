@@ -36,6 +36,8 @@
  * this one and forward to it; do not keep both.**
  */
 
+import type { CropRect, SharpenSettings } from "@/lib/trace/imageEdit";
+import type { EditCall, EditedPixels, ImageEditor } from "@/lib/trace/imageEditClient";
 import type {
   SerializedTraceResult,
   TraceParams,
@@ -230,3 +232,83 @@ export async function loadTracePresets(): Promise<TracePresets> {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export type { SerializedTraceResult, TraceParams, TraceParamsInput, TraceProgress, Tracer, TransferableImage };
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The crop-and-sharpen worker
+ *
+ * A SECOND DOOR IN THIS FILE RATHER THAN A SECOND FILE, because the rule it exists to serve is the
+ * same one: `SketchTraceField`'s fourth property is that this feature's heavy code is not on the
+ * page's graph until a designer asks for it, and this file is where that promise is kept. A component
+ * importing `@/lib/trace/imageEditClient` at the top would put the client, the worker reference and
+ * `engine/contrast` + `engine/convolve` on the sketches page's bundle for every visitor who never
+ * touches a photograph.
+ *
+ * IT IS NOT FOLDED INTO {@link loadTraceRuntime} either. The two are independent: a designer who
+ * traces without cropping never fetches this chunk, and one who crops on a browser whose trace
+ * worker failed still gets a useful sentence rather than one failure standing in for the other.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The parts of `imageEditClient` this feature uses, resolved. */
+export interface ImageEditRuntime {
+  /**
+   * A CONSTRUCTOR, not an instance, for `TraceRuntime.Tracer`'s reason: an editor owns a worker, a
+   * worker is per-surface, and only the component knows when its surface goes away and `dispose()`
+   * is owed.
+   */
+  readonly ImageEditor: new () => ImageEditor;
+  /** True for "this device cannot crop or sharpen at all", as opposed to "this frame was refused". */
+  readonly isUnavailable: (error: unknown) => boolean;
+  /** True for a request the designer replaced. Never shown to anybody. */
+  readonly isCancelled: (error: unknown) => boolean;
+}
+
+let editorPromise: Promise<ImageEditRuntime> | null = null;
+
+/**
+ * Load the crop-and-sharpen client, once per tab.
+ *
+ * Memoised on the PROMISE and cleared on rejection, exactly as {@link loadTraceRuntime} is and for the
+ * same measured reason: two panels mounting in one tick share a fetch, and a courtyard hotspot that
+ * dropped one chunk request must not have poisoned the feature for the rest of the session.
+ */
+export async function loadImageEditor(): Promise<ImageEditRuntime> {
+  if (editorPromise !== null) return await editorPromise;
+  const started = (async (): Promise<ImageEditRuntime> => {
+    let client: typeof import("@/lib/trace/imageEditClient");
+    try {
+      client = await import("@/lib/trace/imageEditClient");
+    } catch (error) {
+      // WRAPPED, AND THE SENTENCE IS THE POINT — see `loadTraceRuntime`'s note on the same throw. An
+      // unwrapped dynamic import puts "Failed to fetch dynamically imported module:
+      // https://…/chunk-4b1e.js" on a designer's screen: true, useless, and not written for a reader.
+      //
+      // A PLAIN `Error`, DELIBERATELY, AND NOT `ImageEditUnavailableError`. That class lives in the
+      // module that just failed to load, so it is not reachable from here — and reaching for it a
+      // second time to build the error that says the first attempt failed would be a fiction. The
+      // caller does not need the class either: this function has exactly one failure, so a rejection
+      // from it IS "this device cannot crop or sharpen". `isUnavailable` is for the errors that come
+      // back from an edit, where "the frame was refused" and "the tool is gone" are different things.
+      throw new Error(
+        "The cropping and sharpening tools could not be loaded on this device. The photograph and " +
+          "the trace are unaffected — the trace's own “Sharpen amount” control still works.",
+        { cause: error }
+      );
+    }
+    return {
+      ImageEditor: client.ImageEditor,
+      // `instanceof` against the classes THIS module instance exported, so two copies of the module
+      // cannot defeat the test — the failure a `name === "..."` string comparison hides.
+      isUnavailable: (error) => error instanceof client.ImageEditUnavailableError,
+      isCancelled: (error) => error instanceof client.ImageEditCancelledError
+    };
+  })();
+  editorPromise = started;
+  try {
+    return await started;
+  } catch (error) {
+    if (editorPromise === started) editorPromise = null;
+    throw error;
+  }
+}
+
+export type { CropRect, EditCall, EditedPixels, ImageEditor, SharpenSettings };
