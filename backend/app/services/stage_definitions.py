@@ -1571,7 +1571,15 @@ STAGE_6 = StageSpec(
             # another cluster was interviewed. The number is load-bearing rather than decorative:
             # `questionnaire_consolidation` argues that "a quote from a five-person sitting is
             # different evidence from the same sentence said alone".
-            fromref("interviewArtisanCount", "Artisans in the sitting", INT, S, min_value=0),
+            # `unit=` AND NOT A BARE NUMBER, WHICH IS A REPORT RULE AND NOT A STYLE CHOICE.
+            # `format_value` appends the unit and nothing else does — a table header carries the
+            # label alone and `help` is printed by no part of the report pipeline — so a hydrated
+            # numeric either states its unit or prints as a figure the reader completes for
+            # themselves. The registry's other 28 bare counts are not hydration targets and are
+            # never checked; these three are the first counts to become one, and
+            # `test_a_carried_measurement_says_what_it_is_measured_in` is what said so.
+            fromref("interviewArtisanCount", "Artisans in the sitting", INT, S, min_value=0,
+                    unit="artisans"),
             # "ANSWERED" AND NOT "REACHED", IN BOTH PLACES. The label is the one that prints, and it
             # used to sit over a help line saying "reached" and over a count that measured neither —
             # it counted response rows, blank ones included, so this box could read 9 beside
@@ -1581,6 +1589,7 @@ STAGE_6 = StageSpec(
             # second arm is what makes the number right for an interview captured as one audio clip
             # per section, which is the app's ordinary way of taking one.
             fromref("interviewSectionsCovered", "Sections answered", INT, S, min_value=0,
+                    unit="sections",
                     help="Sections of the questionnaire with something recorded against them — an "
                          "answer typed, or an audio clip or file filed under the section. Blank "
                          "left by tabbing through a section does not count."),
@@ -1591,6 +1600,7 @@ STAGE_6 = StageSpec(
             # day this was picked" while the report never re-resolves. A frozen ratio against a live
             # instrument becomes wrong without anybody touching the report.
             fromref("interviewQuestionsAnswered", "Questions answered", INT, S, min_value=0,
+                    unit="questions",
                     help="Questions with an answer recorded against them. A saved but empty "
                          "answer is not counted."),
             fromref("interviewLastAnsweredOn", "Last answered on", DATE, S),

@@ -581,6 +581,60 @@ def _source_rows() -> dict[str, _SourceRow]:
             workshop=_SourceRow(title="Barpali cluster documentation, 2024"),
             media=(_MEDIA_IMAGE, _media("PDF", "gazetteer-page.pdf")),
         ),
+        # The sixth model, and the first whose carry is COUNTS rather than columns. Filled so that
+        # all three counts come out DIFFERENT and none of them zero: a fixture where "sections" and
+        # "questions" happened to agree could not tell a swapped pair of lambdas apart.
+        "QuestionnaireInterview": _SourceRow(
+            id="interview-1",
+            title="Barpali weavers, group 2",
+            interviewDate="2026-03-14T09:30:00+05:30",
+            place="Barpali",
+            language="Odia",
+            recordedAt="2026-03-15T18:20:00+05:30",
+            workshop=_SourceRow(title="Barpali cluster documentation, 2024"),
+            # SIX ROWS AND NOT SIX NAMES. `_SourceRow()` carries no columns at all, so the day a
+            # widened lambda reads a name off this relation the fixture raises and names the column
+            # — which is what makes the model's refusal to carry respondents' names checkable rather
+            # than merely stated.
+            artisans=tuple(_SourceRow() for _ in range(6)),
+            responses=(
+                _SourceRow(questionId="q-1", answerText="Six looms in the house, four working.",
+                           updatedAt="2026-03-14T10:05:00+05:30",
+                           question=_SourceRow(id="q-1", sectionCode="AHOUSEHOLD")),
+                _SourceRow(questionId="q-2", answerText="Two sons weave; the elder also dyes.",
+                           updatedAt="2026-03-14T10:20:00+05:30",
+                           question=_SourceRow(id="q-2", sectionCode="AHOUSEHOLD")),
+                _SourceRow(questionId="q-3", answerText="Sold through the cooperative at Barpali.",
+                           updatedAt="2026-03-14T11:40:00+05:30",
+                           question=_SourceRow(id="q-3", sectionCode="CMARKET")),
+                # A section somebody opened and tabbed through. It must not raise the answered
+                # count, must not count as a covered section, and must not become "last answered
+                # on" — its stamp is the latest of the four on purpose, so a lambda that dropped the
+                # non-blank filter would print THIS date instead.
+                #
+                # A LATER DAY AND NOT A LATER HOUR, because the field is an ISO DATE: this row first
+                # carried 12:00 against an answered row's 11:40, which truncates to the same
+                # `2026-03-14` and would have made this guard prove nothing while reading as though
+                # it proved something. Later than `recordedAt` too, which is ordinary — a response
+                # edited after the record was entered.
+                _SourceRow(questionId="q-4", answerText="   ",
+                           updatedAt="2026-03-16T09:00:00+05:30",
+                           question=_SourceRow(id="q-4", sectionCode="DTRAINING")),
+            ),
+            media=(
+                _MEDIA_IMAGE,
+                # The app's ordinary way of taking a sitting: one clip per section, the section in
+                # the filename. Five tokens with six digits of duration in the fourth is the shape
+                # `_interview_clip_section_code` accepts, and this one covers a section that has no
+                # response row at all — the capture mode that used to print "Sections answered: 0".
+                _media("AUDIO", "BLIVELIHOOD_Q14_GROUP2_001432_140320260930.m4a"),
+                # And one filed against a section by metadata rather than by filename. Built as a
+                # bare `_SourceRow` because `_media` only writes a `purpose`, and all three columns
+                # `_media_note` reads are set for the reason `_media`'s own docstring gives.
+                _SourceRow(mediaType="IMAGE", originalFilename="consent-sheet.jpg",
+                           extraMetadata={"sectionCode": "DTRAINING"}),
+            ),
+        ),
     }
 
 
