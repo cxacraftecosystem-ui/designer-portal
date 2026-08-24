@@ -29,7 +29,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ClipboardList, Download, FileSpreadsheet, Lock, Plus, Share2, Upload } from "lucide-react";
+import { ClipboardList, CopyPlus, Download, FileSpreadsheet, Lock, Plus, Share2, Upload } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
@@ -38,6 +38,7 @@ import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
+import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
 import { QuestionRow } from "@/components/questionnaires/QuestionRow";
@@ -77,6 +78,15 @@ export default function QuestionnaireDetailPage() {
   const [sectionFormOpen, setSectionFormOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [report, setReport] = useState<QFormUploadReport | null>(null);
+  const [reuseOpen, setReuseOpen] = useState(false);
+  /**
+   * The copy the reuse just made, kept so this page can hand over a LINK to it.
+   *
+   * A toast cannot: it is plain text on a timer. The copy is the thing the designer wants next — it
+   * is the one they will be recording answers into — and finishing the reuse by leaving them on the
+   * original with no route to the new row is how a designer presses the button a second time.
+   */
+  const [reused, setReused] = useState<{ id: string; title: string } | null>(null);
 
   /**
    * `includeRetired` is TRUE here and that is the point of the editor.
@@ -303,6 +313,24 @@ export default function QuestionnaireDetailPage() {
               Download question set
             </button>
             {/*
+              UNGATED, beside the other ungated control and for the same reason: the server does not
+              require ownership to reuse, because these questions already leave this system for any
+              designer through the button to the left. The gate is on the TARGET workshop, checked
+              through `load_workshop_or_404(..., for_edit=True)` — the same helper the attach path
+              uses — and the dialog's dropdown is fed the scoped workshop list this page already
+              holds, so the picker and the server agree about which workshops may be written to.
+
+              DELIBERATELY HERE AND NOT IN THE `mayEdit` DETAILS PANEL BELOW, where the "Design
+              workshop" dropdown lives. Those two controls differ by exactly one thing — whether the
+              ORIGINAL keeps its workshop — and sitting them side by side would invite a designer who
+              wanted a second copy to MOVE their live instrument off the workshop whose fieldwork is
+              already running against it.
+            */}
+            <button type="button" className="field-button-secondary" onClick={() => setReuseOpen(true)} disabled={busy}>
+              <CopyPlus className="h-4 w-4" aria-hidden />
+              Reuse at another workshop
+            </button>
+            {/*
               GATED BECAUSE THE WORKBOOK CARRIES THE SITTINGS, not just the questions: every
               respondent's name, their notes and every answer recorded against this form. The export
               endpoint used to be open to any designer and is now owner-scoped to match, so leaving
@@ -356,7 +384,29 @@ export default function QuestionnaireDetailPage() {
         </div>
       ) : null}
 
-      {report ? <UploadReport report={report} className="mb-5" /> : null}
+      {/*
+        THE COPY, WITH A ROUTE TO IT. Kept on screen until the next action rather than toasted away:
+        the new questionnaire is where the next sitting gets recorded, and this page is the ORIGINAL
+        — every control on it edits the form whose fieldwork is already running.
+      */}
+      {reused ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+          <span>
+            <span className="font-medium text-ink-900">&ldquo;{reused.title}&rdquo;</span> now carries these questions and no
+            recorded answers. This questionnaire and every sitting against it are untouched.
+          </span>
+          <Link className={rowAction("edit")} href={`/questionnaires/${reused.id}`}>
+            Open the copy
+          </Link>
+        </div>
+      ) : null}
+
+      {/* `subject` is the COPY's title, because a reuse report is never about the questionnaire whose
+          page this is. Without it the panel headed its own provenance line "This questionnaire is a
+          copy, and it carries no recorded answers" — two lines under the banner above saying this
+          questionnaire is untouched, and about the form whose fieldwork is running. `reused` is null
+          for the upload path, where the report IS about this page's subject. */}
+      {report ? <UploadReport report={report} subject={reused?.title ?? null} className="mb-5" /> : null}
 
       {/* Both download buttons sit in this page's header, side by side, with the same title on the
           two files they produce. This is the caption for that choice. */}
@@ -587,6 +637,32 @@ export default function QuestionnaireDetailPage() {
         )}
       </section>
 
+      <ReuseDialog
+        open={reuseOpen}
+        questionnaireId={id}
+        sourceTitle={form.title}
+        sourceWorkshopId={form.designWorkshopId}
+        // The page's own scoped list — `GET /design-workshops`, narrowed server-side by
+        // `visible_to_clause` to workshops this account created or holds a viewer grant on. The same
+        // list the "Design workshop" dropdown above is built from, so the two cannot disagree about
+        // where this account may put a questionnaire.
+        workshops={workshops.map((workshop) => ({ id: workshop.id, title: workshop.title }))}
+        onClose={() => setReuseOpen(false)}
+        onReused={(result) => {
+          setReuseOpen(false);
+          setReport(result.report);
+          setReused({ id: result.questionnaire.id, title: result.questionnaire.title });
+          // `load()` is deliberately NOT called. Nothing about THIS questionnaire changed — the reuse
+          // wrote a different row entirely — and re-reading would only make the screen flicker while
+          // implying the original was edited.
+          toast({
+            tone: "success",
+            title: "Questionnaire reused",
+            description: `"${result.questionnaire.title}" carries ${result.questionnaire.questionCount} questions and none of the answers recorded here.`
+          });
+        }}
+      />
+
       <UploadDialog
         open={uploadOpen}
         questionnaireId={id}
@@ -594,6 +670,10 @@ export default function QuestionnaireDetailPage() {
         onUploaded={(result) => {
           setUploadOpen(false);
           setReport(result.report);
+          // The reuse banner AND the reuse report's subject both come off `reused`, and an upload has
+          // just made both of them wrong: "this questionnaire and every sitting against it are
+          // untouched" is a sentence about a form nobody had edited yet.
+          setReused(null);
           setForm(result.questionnaire);
           // Re-read anyway: the response is authoritative for the form, but this page also shows the
           // sittings, and a re-upload can carry new answer columns that become new sittings.

@@ -16,6 +16,7 @@ The loop a designer walks:
     GET  /questionnaires/{id}/xlsx            download it back, with question ids and answers
     GET  /questionnaires/{id}/question-set.xlsx   download the QUESTIONS ALONE, to send to somebody
     POST /questionnaires/{id}/upload          re-upload an edited copy  -> an EDIT, under the rule
+    POST /questionnaires/{id}/reuse           copy it for ANOTHER workshop, questions only
     PATCH /questionnaires/{id}                rename, attach to a workshop, deactivate
     POST /questionnaires/{id}/entries         start a sitting
     PUT  /questionnaires/{id}/entries/{eid}/answers   record answers
@@ -26,6 +27,15 @@ name, every answer — so it is fieldwork and it is gated like fieldwork. ``/que
 INSTRUMENT and nothing else, so it is gated exactly as READING the form is: any designer. Sharing a
 questionnaire with a colleague was impossible before the second one existed, and the only workaround
 was to widen the first gate, which would have moved a leak rather than closing it.
+
+REUSE IS A COPY, AND THAT IS THE ANSWER TO "ONE QUESTIONNAIRE, SEVERAL WORKSHOPS".
+``Questionnaire.designWorkshopId`` is a single nullable column, so a questionnaire is at exactly one
+workshop or at none. ``POST /questionnaires/{id}/reuse`` does not widen that — it writes a SECOND
+questionnaire carrying the same questions and no fieldwork at all. Making the column a join table
+instead would have put workshop A's named respondents in workshop B's ministry annexure, because a
+SITTING has no workshop and ``report_items`` selects on ``designWorkshopId`` alone; the full argument
+is in ``reuse_questionnaire``. The cost of the copy is divergence between the two instruments, and it
+is the cost the feature accepts on purpose.
 
 THERE IS NO WAY TO DELETE A QUESTIONNAIRE HERE, and that is the point rather than an omission. A
 questionnaire with answers against it is somebody's fieldwork; ``PATCH {isActive: false}`` takes it
@@ -56,6 +66,7 @@ from app.schemas.questionnaire import (
     QuestionnaireCreate,
     QuestionnaireEntryCreate,
     QuestionnaireEntryUpdate,
+    QuestionnaireReuse,
     QuestionnaireUpdate,
 )
 from app.services.design_workshop_viewers import has_viewer_grant
@@ -71,6 +82,7 @@ from app.services.questionnaire_forms import (
     export_question_set_payload,
     guard_question_edit,
     load_form,
+    reuse_questionnaire,
     save_answers,
     supersede_question,
 )
@@ -742,6 +754,110 @@ async def read_questionnaire(
     if form is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     return public_encode(form)
+
+
+@router.post("/{questionnaire_id}/reuse", status_code=status.HTTP_201_CREATED)
+async def reuse_questionnaire_route(
+    questionnaire_id: str,
+    payload: QuestionnaireReuse,
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Use this questionnaire again, as a template, at another design workshop.
+
+    The owner's request in their own words: questionnaires "would usually be scoped to the workshops,
+    but the designers would have the permission to use the same questionnaire later on for a
+    different workshop as well in case they want to reuse the same template."
+
+    ================================================================================================
+    IT COPIES. THE COPY CARRIES QUESTIONS AND NO FIELDWORK.
+    ================================================================================================
+
+    A new ``Questionnaire`` row, a new section tree, a new question tree — and ZERO
+    ``QuestionnaireFormEntry`` and ZERO ``QuestionnaireFormAnswer``. ``reuse_questionnaire`` reads the
+    source through ``load_question_set``, which never issues the entry or answer queries at all, so
+    the rows it feeds cannot contain an answer; see that function for the full argument, including
+    why one questionnaire pointing at MANY workshops was rejected (a sitting has no workshop, and
+    ``report_items`` selects on ``designWorkshopId`` alone, so it would print workshop A's named
+    respondents in workshop B's ministry annexure).
+
+    ================================================================================================
+    A PATH ROUTE ON THE SOURCE, NOT A ``copyOf`` PARAMETER ON ``POST ""``
+    ================================================================================================
+
+    For the reason ``/question-set.xlsx`` is a second route rather than ``?questionsOnly=true`` on
+    ``/xlsx``: a parameter that changes what an endpoint DOES is one typo away from doing the other
+    thing. ``POST ""`` creates an empty questionnaire and this one clones an existing designer's
+    instrument into the caller's ownership; sharing a body between the two would put that difference
+    inside an optional field's default.
+
+    ================================================================================================
+    THE GATES, IN ORDER, AND WHY EACH IS THE ONE IT IS
+    ================================================================================================
+
+    1. ``_require_questionnaire`` — Designer or above, and the source row exists.
+    2. **NOT** ``_require_owner``. This is the one mutating route in this module that does not demand
+       ownership of the questionnaire it names, and that is deliberate: the INSTRUMENT already leaves
+       this system for any designer through ``GET /{id}/question-set.xlsx``, whose docstring states
+       the rule ("this file is exactly the openly readable half"). Refusing here would refuse in JSON
+       precisely what the .xlsx door hands over — and be routed around by downloading that file and
+       uploading it, which produces the same row with NO provenance recorded at all.
+    3. ``_require_attachable_workshop`` when a target workshop is named — the SAME helper the three
+       existing attachment routes call, because this is a fourth attachment route and that helper's
+       own docstring says so ("If a fourth attachment route is ever added, it calls this"). Workshop
+       creator, admin, or viewer grant; 404 for a workshop the caller cannot see, 409 for a
+       soft-deleted one. Asked BEFORE anything is written, so a refusal leaves no orphan row.
+    4. **No workshop check at all when no target is named.** An unattached copy is nobody's business
+       but its owner's: ``_visible_questionnaire_where`` shows it under ``ownerId = me`` and nothing
+       else, and ``report_items`` cannot reach a row with a NULL ``designWorkshopId``.
+
+    A DEACTIVATED SOURCE IS STILL REUSABLE, and that is not an oversight. ``isActive: false`` is this
+    API's stand-in for a delete — the form is out of use, its recorded answers preserved — and a
+    retired instrument is exactly the thing a designer wants to lift for a new round. Refusing would
+    force them to reactivate it first, which puts it back in every list and every dropdown for
+    everyone, to make a copy.
+
+    THE RESPONSE IS THE UPLOAD RESPONSE'S SHAPE — ``{"questionnaire": ..., "report": {...}}`` — so
+    ``QFormUploadReport`` types it on the client and the existing ``UploadReport`` panel renders it.
+    ``report.provenance`` carries ``action: "reused"``, the source id, ``answersSkipped: 0`` and a
+    sentence written to be shown VERBATIM.
+
+    It carries ONE KEY MORE than the upload response: ``sourceQuestionnaireId``, at the top level.
+    The upload path has no single source to name — a workbook is a file, and the id it claims to have
+    come from is untrusted text inside it — whereas this path copied a row it had already read and
+    authorised. ``QFormReuseResult`` is therefore ``QFormUploadResult`` plus that key rather than an
+    alias of it, so a client cannot read the id off an upload where it does not exist.
+    """
+    record = await _require_questionnaire(questionnaire_id, current_user)
+    if payload.designWorkshopId:
+        await _require_attachable_workshop(payload.designWorkshopId, current_user)
+
+    # THE TRI-STATE ON ``description``, unpacked here rather than inside the service. ``exclude_unset``
+    # is what tells "carry the source's description across" (key absent) apart from "start it empty"
+    # (key sent as null), and the service reads an EMPTY STRING as the second of those — the same
+    # convention ``renameQuestionnaire`` on the detail page already relies on, where a null would be
+    # dropped by ``clean_data`` and an empty string genuinely clears the column.
+    sent = payload.model_dump(exclude_unset=True)
+    description: str | None = None
+    if "description" in sent:
+        description = sent["description"] if sent["description"] is not None else ""
+
+    made = await reuse_questionnaire(
+        questionnaire_id,
+        owner_id=current_user.id,
+        design_workshop_id=payload.designWorkshopId,
+        title=payload.title,
+        description=description,
+    )
+    if made is None:
+        # ``_require_questionnaire`` already read the row, so this is the source disappearing between
+        # the two reads rather than a bad id. Still 404 rather than a 500 out of a None unpack.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    new_id, report = made
+    # ``include_retired`` is left at its default because a copy HAS no retired question — nothing was
+    # copied that could be retired. Passing True would be a claim about the payload that is not
+    # false, only meaningless, and the next reader would go looking for the retirement it implies.
+    form = await load_form(new_id)
+    return public_encode({"questionnaire": form, "report": report, "sourceQuestionnaireId": record.id})
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

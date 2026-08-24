@@ -31,6 +31,7 @@ import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
+import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
@@ -60,10 +61,28 @@ export default function QuestionnairesPage() {
   const [downloading, setDownloading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [report, setReport] = useState<QFormUploadReport | null>(null);
+  /**
+   * The questionnaire the report above is ABOUT, when that is not the one whose page this is — which
+   * on a LIST is every case where the sentence has a subject at all.
+   *
+   * A reuse report describes a row that is not on screen. Left unnamed, the panel's provenance line
+   * read "This questionnaire is a copy, and it carries no recorded answers" on a page showing twenty
+   * questionnaires, none of which is the copy. Null for the upload path, whose own heading claims no
+   * subject.
+   */
+  const [reportSubject, setReportSubject] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newWorkshopId, setNewWorkshopId] = useState("");
   const [workshops, setWorkshops] = useState<DwSummary[]>([]);
+  /**
+   * The row "Reuse at another workshop" was pressed on, or null.
+   *
+   * ONE DIALOG FOR THE WHOLE TABLE, holding the row it points at, rather than one per row. Twenty
+   * mounted dialogs is twenty copies of the target list and twenty title look-ups waiting to fire;
+   * the dialog re-seeds itself on open (see its own effect) so swapping the row it points at is safe.
+   */
+  const [reuseRow, setReuseRow] = useState<QFormSummary | null>(null);
   const skipFirstDebounce = useRef(true);
 
   /**
@@ -198,7 +217,7 @@ export default function QuestionnairesPage() {
         which makes it the wrong home for a list of eleven rows that could not be read and the Excel
         row numbers to find them at. This is the one thing on the page a designer may need to act on.
       */}
-      {report ? <UploadReport report={report} className="mb-5" /> : null}
+      {report ? <UploadReport report={report} subject={reportSubject} className="mb-5" /> : null}
 
       {/*
         Drawn on the list rather than only on the detail page, because THIS is the screen with a
@@ -326,6 +345,18 @@ export default function QuestionnairesPage() {
                           Record answers
                         </Link>
                         {/*
+                          UNGATED, exactly like "Download question set" below it and for the same
+                          reason: the server does NOT require ownership here, because the instrument
+                          already leaves this system for any designer through
+                          `/question-set.xlsx`. What the server does gate is the TARGET — the
+                          workshop the copy is attached to — and the dialog's dropdown is fed the
+                          page's own scoped workshop list, so the picker and the server agree about
+                          which workshops this account may write to.
+                        */}
+                        <button type="button" className={rowAction("neutral")} onClick={() => setReuseRow(row)}>
+                          Reuse at another workshop
+                        </button>
+                        {/*
                           THE SHARING DOWNLOAD COMES FIRST, and its label says what it is rather than
                           what format it is. It is offered on EVERY row, including a colleague's
                           questionnaire, because the server gates it exactly as it gates reading the
@@ -366,6 +397,39 @@ export default function QuestionnairesPage() {
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
 
+      {/*
+        `key` on the questionnaire id, so the dialog is a FRESH component per row rather than the
+        same one re-pointed. Its state — the picked target, the typed title, the titles already at
+        that target — is seeded from the row it is about, and React keeps state across a prop change
+        on the same element. Without the key, opening it on a second row would show the first row's
+        default title in the box.
+      */}
+      {reuseRow ? (
+        <ReuseDialog
+          key={reuseRow.id}
+          open
+          questionnaireId={reuseRow.id}
+          sourceTitle={reuseRow.title}
+          sourceWorkshopId={reuseRow.designWorkshopId}
+          workshops={workshops.map((workshop) => ({ id: workshop.id, title: workshop.title }))}
+          onClose={() => setReuseRow(null)}
+          onReused={(result) => {
+            setReuseRow(null);
+            // The same panel the upload path fills, with the same report shape — `provenance.action`
+            // is `"reused"` and its sentence is the one thing on this screen that states the copy
+            // carried no answers. A toast alone would say it and take it away again.
+            setReport(result.report);
+            setReportSubject(result.questionnaire.title);
+            void load();
+            toast({
+              tone: "success",
+              title: "Questionnaire reused",
+              description: `"${result.questionnaire.title}" carries ${result.questionnaire.questionCount} questions and no recorded answers. Open it to record its own.`
+            });
+          }}
+        />
+      ) : null}
+
       <UploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
@@ -373,6 +437,9 @@ export default function QuestionnairesPage() {
         onUploaded={(result) => {
           setUploadOpen(false);
           setReport(result.report);
+          // Cleared, not left standing: the panel below is now an UPLOAD report, and a stale subject
+          // would name the last copy made as the thing this upload happened to.
+          setReportSubject(null);
           // The list is refreshed rather than optimistically prepended: the upload may have been an
           // edit of a row already on screen, and re-reading is the only way this page learns which.
           void load();

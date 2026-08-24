@@ -71,12 +71,13 @@ Anything present in the database and absent from the upload is removed under rul
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.db import db
 from app.services.concurrency import gather_reads
 from app.services.questionnaire_xlsx import (
+    MAX_QUESTIONS,
     MAX_SECTIONS,
     ParsedQuestionnaire,
     derive_section_code,
@@ -890,6 +891,321 @@ async def _store_uploaded_answers(
         answers_written += len(rows)
     return (entries_created, answers_written)
 
+# --- Writing: reusing one questionnaire at another workshop ---------------------------------------
+
+
+#: The word the default reuse title is built round, and the one the collision check counts up from.
+#: Held here rather than typed inline at the service and again at the dialog's pre-fill, so
+#: "X (reused)" cannot come to mean two different strings in two places.
+REUSE_TITLE_SUFFIX = "reused"
+
+
+def reuse_title(source_title: str, taken: set[str]) -> str:
+    """``"X (reused)"``, or ``"X (reused 2)"`` when that name is already taken at the target.
+
+    COLLISION-AVOIDED RATHER THAN REFUSED. Reusing the same instrument at the SAME workshop is a
+    legitimate act — a baseline round and a follow-up round, which a sitting has no notion of — and a
+    refusal would be walkable in two clicks anyway (download the question set, upload it), producing
+    the identical row with no stated provenance at all. The dialog warns before the press; this is
+    what makes the two rows tellable apart afterwards.
+
+    ``QuestionnaireReuse.title`` caps at 220 characters, so the base is trimmed to leave room for the
+    suffix rather than letting a 218-character title produce a 226-character one that the database
+    accepts and no list column can read.
+    """
+    base = (source_title or "Questionnaire").strip() or "Questionnaire"
+    base = base[:200].rstrip()
+    lowered = {t.strip().lower() for t in taken}
+    candidate = f"{base} ({REUSE_TITLE_SUFFIX})"
+    n = 2
+    while candidate.lower() in lowered:
+        candidate = f"{base} ({REUSE_TITLE_SUFFIX} {n})"
+        n += 1
+    return candidate
+
+
+async def reuse_questionnaire(
+    source_id: str,
+    *,
+    owner_id: str,
+    design_workshop_id: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Copy a questionnaire's INSTRUMENT into a new row, optionally attached to another workshop.
+
+    Returns ``(new questionnaire id, change report)``, or ``None`` when ``source_id`` names nothing.
+
+    ================================================================================================
+    WHY A COPY AND NOT A SECOND POINTER
+    ================================================================================================
+
+    The owner's request is that a designer may "use the same questionnaire later on for a different
+    workshop as well in case they want to reuse the same template". Two shapes could serve that
+    sentence and only one of them is safe here:
+
+    * **A join table** (one questionnaire, many workshops) LEAKS FIELDWORK, because a SITTING has no
+      workshop. ``QuestionnaireFormEntry.questionnaireId`` points at the QUESTIONNAIRE, and
+      ``report_items`` selects ``{"designWorkshopId": ..., "isActive": True}`` with no permission
+      filter — so every workshop's sittings would print in every attached workshop's annexure:
+      workshop A's named respondents inside the .docx workshop B submits to a ministry. It also
+      widens ``_works_on_this_questionnaires_workshop``, which reads a SINGULAR ``designWorkshopId``,
+      into "any of n", so one viewer grant would admit its holder to every sitting at every attached
+      workshop. And an edit at B would reach A: rewording an ANSWERED question SUPERSEDES it, which
+      ADDS a question to A's live form that A never wrote, and retiring one at B retires it at A
+      mid-fieldwork.
+    * **A copy** — this function. Two rows, two section/question trees, two histories, and B's edit
+      cannot reach A because there is no shared row to edit. It costs divergence (a typo fixed on one
+      copy is not fixed on the other, and question ids differ, so comparing across workshops has to
+      match on prompt text) and it needs no migration and no change to any access predicate.
+
+    ================================================================================================
+    ENTRIES AND ANSWERS ARE NEVER WRITTEN, AND THE QUERY IS WHAT GUARANTEES IT
+    ================================================================================================
+
+    The copy arrives with zero ``QuestionnaireFormEntry`` and zero ``QuestionnaireFormAnswer``. That
+    is not a filter over a payload that had them in it: the source is read through
+    ``load_question_set``, which NEVER ISSUES THE ENTRY OR ANSWER QUERIES AT ALL — its own
+    docstring's reason, "a filter is a thing somebody can forget, and a query is not". Reading
+    through ``load_form`` and dropping ``entries`` would work today and would break the first time
+    somebody adds a key to ``load_form`` for another screen.
+
+    This is settled policy in this module rather than a new judgement. ``create_from_parsed`` already
+    refuses to re-record answers that exist elsewhere, and it argues that rule ABOUT THE DATA rather
+    than about who is holding it — "a permission test would have admitted exactly that case" — which
+    is why it binds the source's own owner reusing their own form just as firmly as a colleague.
+
+    ``retiredAt`` and ``supersededById`` are left NULL for a second, sharper reason: copying a
+    ``supersededById`` would point a row in the NEW questionnaire at a row in the SOURCE one, and
+    ``_question_in`` exists precisely to stop cross-questionnaire question pointers. ``version``
+    starts at 1 because the copy has no edit history yet, and retired sections and questions are
+    excluded because a retired question is kept for the answers hanging off it, not because it is
+    still part of the instrument (see ``build_question_set_workbook``).
+
+    ``owner_id`` IS THE CALLER, not the source's owner. ``_require_owner`` governs rewording, so a
+    copy its maker could not reword would not be a reuse — they would have to ask the original's
+    author to change a form the author is not using.
+
+    ALL OF IT OR NONE OF IT. The row, its sections and its questions are written inside one
+    ``db.tx()`` and in four statements rather than one per question, because a copy that got half way
+    is indistinguishable from a whole one: the designer sees an error, retries, and is left owning a
+    truncated instrument beside a complete "(reused 2)" with nothing on any screen able to say which
+    is short. The bounds are the parse path's own (``MAX_SECTIONS``/``MAX_QUESTIONS``), and a
+    truncation goes into ``problems`` rather than passing silently.
+
+    THE REPORT IS THE UPLOAD REPORT'S SHAPE, key for key, so ``QFormUploadReport`` types it and the
+    existing ``UploadReport`` panel renders it with no new component. ``provenance.reason`` is
+    written here to be shown VERBATIM, and it goes in ``provenance`` ONLY — deliberately NOT pushed
+    into ``problems`` the way ``create_from_parsed``'s refusal branch is. Nothing went wrong here and
+    there is no workbook: filing a successful reuse under "rows that could not be read" is how
+    designers learn to stop reading the list that does carry the rows they have lost.
+    """
+    form = await load_question_set(source_id)
+    if form is None:
+        return None
+
+    chosen = (title or "").strip()
+    if not chosen:
+        # THE TITLES ALREADY IN THE PLACE THIS COPY IS GOING, so the default name counts itself up
+        # instead of producing a second row indistinguishable from the first in every list. Scoped to
+        # the TARGET: at a workshop, the forms attached to that workshop (whoever owns them, because
+        # the report annexure prints them all); with no target, this designer's own unattached
+        # templates, which is the only place an unattached copy shows up.
+        #
+        # ``isActive`` is deliberately NOT filtered. A deactivated form is hidden from the lists but
+        # its title is still the title of a row somebody may bring back into use, and colliding with
+        # it would be a collision that appears later, out of nowhere.
+        where: dict[str, Any] = (
+            {"designWorkshopId": design_workshop_id}
+            if design_workshop_id
+            else {"designWorkshopId": None, "ownerId": owner_id}
+        )
+        # ORDERED AND BOUNDED, in that order of importance. The bound stops a workshop with a long
+        # history from being read in full to pick one name; the ordering is what makes the 500 rows it
+        # keeps the NEWEST 500 rather than whichever 500 the planner handed back, so the names most
+        # likely to be collided with — the ones made recently, by this round of work — are the ones
+        # actually counted against. Past the bound the copy can still take a duplicate title, which is
+        # a naming annoyance and not a data fault: nothing in the schema makes a title unique, and the
+        # dialog's own warning is a second chance to catch it.
+        neighbours = await db.questionnaire.find_many(
+            where=where, take=500, order=[{"createdAt": "desc"}]
+        )
+        chosen = reuse_title(form["title"], {row.title for row in neighbours})
+
+    # ============================================================================================
+    # THE COPY IS ONE TRANSACTION, IN FOUR ROUND TRIPS, AND BOUNDED
+    # ============================================================================================
+    #
+    # WHY A TRANSACTION. This used to be a bare ``create`` followed by one ``create`` per section and
+    # one per question — up to 2200 sequential statements, none of them in a transaction, against a
+    # database ``services/records.py`` describes as sitting in another region. A request that timed
+    # out at question 900 of 2000 left the ``Questionnaire`` row and 900 questions COMMITTED,
+    # attached to the target workshop and owned by the caller, while the client showed an error: the
+    # designer retries, and now owns a truncated instrument next to a complete "(reused 2)" with
+    # nothing on any screen able to say which of the two is short. A half-copied instrument is worse
+    # than no copy, because it is indistinguishable from a whole one — the same argument this
+    # module's report makes about silent success, one level down. Either the whole copy exists or
+    # none of it does.
+    #
+    # WHY BATCHED. ``create_many`` is already how this file writes answers (see
+    # ``_record_uploaded_answers``), and it turns the copy into four statements whatever the size of
+    # the instrument: the row, its sections, a read-back for their ids, and every question at once.
+    # That is also what keeps the transaction short enough to be an honest transaction rather than a
+    # lock held open across a thousand round trips.
+    #
+    # THE SECTIONS ARE READ BACK BY ``code`` because ``create_many`` returns a count and not rows,
+    # and ``@@unique([questionnaireId, code])`` is what makes that mapping exact — the source's own
+    # codes are unique within the source questionnaire for the same reason, so no two sections of
+    # this copy can claim one id.
+    #
+    # BOUNDED, with the parse path's own bounds. ``create_from_parsed`` and ``apply_parsed_edit``
+    # both slice ``[:MAX_SECTIONS]`` where they walk sections; this third writer into the same
+    # tables had no bound at all, so a source assembled through some other door could hand it a tree
+    # larger than any workbook is allowed to produce. A truncation is REPORTED rather than silent:
+    # ``problems`` is rendered by the panel that already exists for exactly this, and a copy that
+    # dropped the tail of an instrument must not look like a complete one.
+    sections_in = form["sections"][:MAX_SECTIONS]
+    sections_dropped = len(form["sections"]) - len(sections_in)
+
+    section_data: list[dict[str, Any]] = []
+    kept_by_code: dict[str, list[dict[str, Any]]] = {}
+    budget = MAX_QUESTIONS
+    questions_dropped = 0
+    for index, section in enumerate(sections_in, start=1):
+        section_data.append(
+            {
+                # The source's code, which is safe because ``@@unique([questionnaireId, code])`` is
+                # scoped to the questionnaire — and worth keeping, because a section code is what a
+                # designer comparing the two instruments reads across.
+                "code": section["code"],
+                "title": section["title"],
+                # Re-numbered from 1 rather than carried across. ``load_question_set`` returns ACTIVE
+                # sections only, so the source's own numbers can have gaps where a retired section
+                # used to sit, and a copy carrying the gaps sorts the same but reads wrong.
+                "sortOrder": index,
+            }
+        )
+        kept = section["questions"][: max(budget, 0)]
+        questions_dropped += len(section["questions"]) - len(kept)
+        budget -= len(kept)
+        kept_by_code[section["code"]] = kept
+
+    async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        made = await tx.questionnaire.create(
+            data={
+                "title": chosen,
+                # An explicitly sent description wins; otherwise the source's travels with the
+                # questions, because it is part of how the instrument reads.
+                "description": (description if description is not None else form["description"])
+                or None,
+                "ownerId": owner_id,
+                "designWorkshopId": design_workshop_id,
+                # NOT the source's ``sourceFilename``. There is no spreadsheet behind this row, and
+                # naming one would send a designer off to edit a file that produced something else.
+                "sourceFilename": None,
+            }
+        )
+        question_data: list[dict[str, Any]] = []
+        if section_data:
+            await tx.questionnaireformsection.create_many(
+                data=[row | {"questionnaireId": made.id} for row in section_data]
+            )
+            written = await tx.questionnaireformsection.find_many(
+                where={"questionnaireId": made.id}
+            )
+            id_by_code = {row.code: row.id for row in written}
+            question_data = [
+                {
+                    "sectionId": id_by_code[code],
+                    "prompt": question["prompt"],
+                    "helpText": question["helpText"],
+                    "isRequired": question["isRequired"],
+                    "sortOrder": position,
+                }
+                for code, questions in kept_by_code.items()
+                for position, question in enumerate(questions, start=1)
+            ]
+            if question_data:
+                await tx.questionnaireformquestion.create_many(data=question_data)
+
+    sections_made = len(section_data)
+    questions_made = len(question_data)
+
+    # WHAT THE TWO ROWS NOW ARE, said in the server's own sentence and shown verbatim.
+    #
+    # THE ZERO CASE HAS ITS OWN SENTENCE. "carrying the 0 questions of “X”" was reachable — a source
+    # whose every question has been retired copies nothing, and so does one nobody has added a
+    # question to yet — and it was the one ungrammatical string in a message the client is required
+    # to print as it stands. It also has to avoid CLAIMING retirement, because "no questions yet" and
+    # "every question retired" both arrive here.
+    settled = (
+        " The two are separate from here on: editing one does not change the other. No sitting and "
+        "no answer was copied — the fieldwork recorded against the original stays on the original, "
+        "under the names of the people who recorded it — so this copy starts empty and ready for "
+        "its own."
+    )
+    if questions_made:
+        reason = (
+            f"This is a new questionnaire carrying the {questions_made} "
+            + ("question" if questions_made == 1 else "questions")
+            + f" of “{form['title']}”." + settled
+        )
+    else:
+        reason = (
+            f"This is a new questionnaire with no questions in it: “{form['title']}” has none "
+            "still being asked — they were retired, or none were ever added — and a retired "
+            "question is kept where its answers are rather than copied." + settled
+        )
+
+    # THE TAIL THAT DID NOT FIT, NAMED. Empty in every ordinary reuse; the client already draws this
+    # list, so saying nothing here is the one thing that would make a truncated copy pass for whole.
+    problems: list[dict[str, Any]] = []
+    for count, unit, ceiling in (
+        (sections_dropped, "section", MAX_SECTIONS),
+        (questions_dropped, "question", MAX_QUESTIONS),
+    ):
+        if count > 0:
+            problems.append(
+                {
+                    "sheet": None,
+                    "row": None,
+                    "severity": "warning",
+                    "reason": (
+                        f"“{form['title']}” has more than {ceiling} {unit}s, which is the most one "
+                        f"questionnaire may hold. {count} {unit}"
+                        + ("" if count == 1 else "s")
+                        + " at the end of it were not copied. The original still has all of them."
+                    ),
+                    "value": None,
+                }
+            )
+
+    return made.id, {
+        "created": questions_made,
+        "sections": sections_made,
+        "superseded": 0,
+        "retired": 0,
+        "removed": 0,
+        "unchanged": 0,
+        "entriesCreated": 0,
+        "answersImported": 0,
+        "answersSkipped": 0,
+        "provenance": {
+            "action": "reused",
+            "sourceQuestionnaireId": source_id,
+            # ZERO, and STATED rather than omitted. "No answers were copied" and "this report does
+            # not mention answers" read identically, and only the first of them is a fact.
+            "answersSkipped": 0,
+            "reason": reason,
+        },
+        "versionBefore": made.version,
+        "versionAfter": made.version,
+        # PRESENT EVEN WHEN EMPTY, which is the ordinary case here. Every client already renders
+        # this list, and a report that omitted the key would make "nothing went wrong"
+        # indistinguishable from "the key was never filled in" — and would hide the one thing this
+        # list carries for a reuse: an instrument too large to have been copied whole.
+        "problems": problems,
+    }
 
 # --- Writing: applying an edit to a questionnaire that may already have answers ------------------
 

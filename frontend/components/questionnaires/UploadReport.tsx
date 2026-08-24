@@ -19,9 +19,9 @@
  * say how many of each thing happened.
  */
 
-import { AlertTriangle, CheckCircle2, Info, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CopyPlus, Info, ShieldAlert } from "lucide-react";
 
-import type { QFormUploadReport } from "@/lib/questionnaireForms";
+import type { QFormProvenance, QFormUploadReport } from "@/lib/questionnaireForms";
 
 /**
  * The counts worth printing, in the order a designer reads them, paired with the wording each one
@@ -29,11 +29,15 @@ import type { QFormUploadReport } from "@/lib/questionnaireForms";
  * report and silently left off the screen — the failure this whole panel exists to prevent, one
  * level down.
  */
-function tallies(report: QFormUploadReport): Array<{ label: string; value: number }> {
+function tallies(report: QFormUploadReport, copied: boolean): Array<{ label: string; value: number }> {
   return [
-    { label: "questions added", value: report.created },
+    // COPIED, NOT ADDED, when this report is about a reuse. "3 questions added · 2 sections added"
+    // is an account of an EDIT, and on the original's own page — where this panel is drawn — it read
+    // as three questions just added to the form whose fieldwork is running. Nothing was added to
+    // anything: a new row was written carrying the questions of an old one.
+    { label: copied ? "questions copied" : "questions added", value: report.created },
     { label: "questions updated", value: report.updated ?? 0 },
-    { label: "sections added", value: report.sections },
+    { label: copied ? "sections copied" : "sections added", value: report.sections },
     { label: "left unchanged", value: report.unchanged },
     { label: "reworded into new questions", value: report.superseded },
     { label: "retired", value: report.retired },
@@ -47,8 +51,91 @@ function tallies(report: QFormUploadReport): Array<{ label: string; value: numbe
   ].filter((entry) => entry.value > 0);
 }
 
-export function UploadReport({ report, className }: { report: QFormUploadReport; className?: string }) {
-  const counts = tallies(report);
+/**
+ * The heading, tone and icon for one provenance outcome.
+ *
+ * A LOOKUP RATHER THAN A TERNARY, and that is a bug fix rather than tidying. This block used to read
+ * `action === "answersNotImported" ? A : B`, so the moment a THIRD action existed every other value
+ * fell into B — and B's heading is "The answers in this workbook were recorded under your name". A
+ * reuse, which copies no answer at all and involves no workbook, would have announced itself as
+ * having taken authorship of somebody's fieldwork: the exact false statement the provenance field was
+ * added to prevent, made by the panel that exists to prevent it.
+ *
+ * The DEFAULT is therefore the cautious one. An action this component has never heard of gets the
+ * amber treatment and the server's own sentence, which is honest about not knowing rather than
+ * confidently wrong.
+ */
+function skinFor(
+  provenance: QFormProvenance,
+  /** The questionnaire this report is ABOUT, when it is not the page's own subject. See below. */
+  subject?: string | null
+): {
+  box: string;
+  heading: string;
+  body: string;
+  title: string;
+  icon: React.ReactNode;
+} {
+  if (provenance.action === "answersImported") {
+    return {
+      box: "border-line-200 bg-surface-50",
+      heading: "text-ink-900",
+      body: "text-ink-700",
+      title: "The answers in this workbook were recorded under your name",
+      icon: <Info className="mt-0.5 h-4 w-4 shrink-0 text-field-600" aria-hidden />
+    };
+  }
+  if (provenance.action === "reused") {
+    // NEUTRAL, not amber. Nothing was refused and nothing was lost: this is a copy that carried the
+    // questions across on purpose. Amber here would teach designers that an ordinary reuse produces
+    // a warning, which is the fastest way to make them stop reading the amber that matters.
+    //
+    // AND IT NAMES THE COPY RATHER THAN SAYING "THIS QUESTIONNAIRE", which is the second half of the
+    // same bug the lookup above was written to fix. The heading is a claim about a subject, and this
+    // panel is drawn on the page of the questionnaire that was copied FROM — so "This questionnaire
+    // is a copy, and it carries no recorded answers" appeared two lines under that page's own banner
+    // saying "This questionnaire and every sitting against it are untouched". One screen, two
+    // statements, and the false one was about the form whose fieldwork is already running. The
+    // ternary bug was fixed and the SUBJECT OF THE SENTENCE was not.
+    return {
+      box: "border-line-200 bg-surface-50",
+      heading: "text-ink-900",
+      body: "text-ink-700",
+      title: subject
+        ? `“${subject}” is a copy, and it carries no recorded answers`
+        : "This questionnaire is a copy, and it carries no recorded answers",
+      icon: <CopyPlus className="mt-0.5 h-4 w-4 shrink-0 text-field-600" aria-hidden />
+    };
+  }
+  return {
+    box: "border-amber-500/30 bg-amber-100",
+    heading: "text-amber-800",
+    body: "text-amber-800",
+    title: "The answers in this workbook were not recorded against your copy",
+    icon: <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+  };
+}
+
+export function UploadReport({
+  report,
+  className,
+  subject
+}: {
+  report: QFormUploadReport;
+  className?: string;
+  /**
+   * THE QUESTIONNAIRE THIS REPORT IS ABOUT, when that is not the questionnaire whose page this is.
+   *
+   * A REUSE REPORT IS ALWAYS ABOUT A ROW THAT IS NOT ON SCREEN. The copy is a new questionnaire; the
+   * page it is reported on is the ORIGINAL's (or the list, where "this questionnaire" names nothing
+   * at all). So every sentence in this panel that has a subject takes it from here, and the callers
+   * pass the COPY's title. Left unset, the wording falls back to "this questionnaire" — correct only
+   * for the upload paths, where the report really is about the page's own subject.
+   */
+  subject?: string | null;
+}) {
+  const copiedProvenance = report.provenance?.action === "reused";
+  const counts = tallies(report, copiedProvenance);
   const provenance = report.provenance ?? null;
   // The provenance sentence is ALSO pushed into `problems` by the server, so that a client which
   // renders only the problem list still tells the designer about it. This panel renders both, so the
@@ -60,11 +147,21 @@ export function UploadReport({ report, className }: { report: QFormUploadReport;
   const errors = problems.filter((problem) => problem.severity === "error");
   const warnings = problems.filter((problem) => problem.severity !== "error");
   const details = report.details ?? [];
+  const skin = provenance ? skinFor(provenance, subject) : null;
+  // NO WORKBOOK WAS INVOLVED IN A REUSE, so neither the heading nor the "nothing changed" fallback
+  // may mention one. This panel is shared with the two upload paths on purpose — one report shape,
+  // one component — and the price of sharing it is that its own copy cannot assume a spreadsheet.
+  const copied = copiedProvenance;
 
   return (
     <section className={`panel grid gap-4 p-4 ${className ?? ""}`}>
       <div>
-        <h2 className="font-display text-lg font-bold text-ink-900">What the upload did</h2>
+        {/* THE HEADING NAMES THE COPY when it has a name to use. "What was copied", over a tally of
+            questions and sections, reads on the original's page as a list of edits just made to the
+            form being looked at — which is exactly what a reuse does not do. */}
+        <h2 className="font-display text-lg font-bold text-ink-900">
+          {copied ? (subject ? `What was copied into “${subject}”` : "What was copied") : "What the upload did"}
+        </h2>
         <p className="mt-1 text-sm leading-6 text-ink-muted">
           {counts.length ? (
             counts.map((entry, index) => (
@@ -74,7 +171,13 @@ export function UploadReport({ report, className }: { report: QFormUploadReport;
               </span>
             ))
           ) : (
-            <>Nothing in the workbook differed from what is already stored, so nothing was changed.</>
+            <>
+              {copied
+                ? subject
+                  ? `The questionnaire “${subject}” was copied from has no active questions, so the copy is empty. Add sections and questions to it, or upload a workbook into it.`
+                  : "The questionnaire this was copied from has no active questions, so the copy is empty. Add sections and questions to it, or upload a workbook into it."
+                : "Nothing in the workbook differed from what is already stored, so nothing was changed."}
+            </>
           )}
         </p>
         {report.versionAfter !== report.versionBefore ? (
@@ -100,37 +203,13 @@ export function UploadReport({ report, className }: { report: QFormUploadReport;
         the fourth place in the stack that could paraphrase the rule and the one where paraphrasing
         it would cost a designer their understanding of who owns what.
       */}
-      {provenance ? (
-        <div
-          className={
-            provenance.action === "answersNotImported"
-              ? "grid gap-2 rounded-md border border-amber-500/30 bg-amber-100 p-3"
-              : "grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3"
-          }
-        >
+      {provenance && skin ? (
+        <div className={`grid gap-2 rounded-md border p-3 ${skin.box}`}>
           <div className="flex items-start gap-2">
-            {provenance.action === "answersNotImported" ? (
-              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
-            ) : (
-              <Info className="mt-0.5 h-4 w-4 shrink-0 text-field-600" aria-hidden />
-            )}
+            {skin.icon}
             <div className="min-w-0">
-              <p
-                className={`text-sm font-semibold ${
-                  provenance.action === "answersNotImported" ? "text-amber-800" : "text-ink-900"
-                }`}
-              >
-                {provenance.action === "answersNotImported"
-                  ? "The answers in this workbook were not recorded against your copy"
-                  : "The answers in this workbook were recorded under your name"}
-              </p>
-              <p
-                className={`mt-1 text-sm leading-6 ${
-                  provenance.action === "answersNotImported" ? "text-amber-800" : "text-ink-700"
-                }`}
-              >
-                {provenance.reason}
-              </p>
+              <p className={`text-sm font-semibold ${skin.heading}`}>{skin.title}</p>
+              <p className={`mt-1 text-sm leading-6 ${skin.body}`}>{provenance.reason}</p>
             </div>
           </div>
         </div>
@@ -184,7 +263,9 @@ export function UploadReport({ report, className }: { report: QFormUploadReport;
       {!errors.length && !warnings.length ? (
         <p className="flex items-center gap-2 text-sm text-ink-700">
           <CheckCircle2 className="h-4 w-4 text-success-600" aria-hidden />
-          Every row in the workbook was read. Nothing was skipped.
+          {copied
+            ? "Every active question came across. Nothing was skipped."
+            : "Every row in the workbook was read. Nothing was skipped."}
         </p>
       ) : null}
     </section>

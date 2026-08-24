@@ -135,7 +135,14 @@ class QuestionnaireCreate(APIModel):
 
     title: str = Field(min_length=1, max_length=220)
     description: str | None = None
-    designWorkshopId: str | None = None
+    # ``min_length=1`` because "" IS NOT A WORKSHOP ID and used to be read as one. Every route that
+    # takes this field guards it with a plain truthiness test (``if payload.designWorkshopId:``) and
+    # so SKIPS the workshop authorization check for "", then hands the empty string to Prisma as a
+    # foreign key: measured, that was ``500 {"error":"ForeignKeyViolationError"}`` where a 422
+    # belongs. Nothing was ever authorized by it — the FK refuses and the create is the first write,
+    # so no orphan survives — but a 500 tells a client to retry something that cannot succeed.
+    # ``None`` still means "not attached"; only the empty string is refused.
+    designWorkshopId: str | None = Field(default=None, min_length=1)
     sections: list[CustomSectionCreate] = Field(default_factory=list)
 
 
@@ -143,9 +150,48 @@ class QuestionnaireUpdate(APIModel):
     title: str | None = Field(default=None, min_length=1, max_length=220)
     description: str | None = None
     # The attach-to-a-workshop dropdown. Sent as null to detach; omitted to leave alone — the
-    # APIModel/clean_data convention used by every other record in this repo.
-    designWorkshopId: str | None = None
+    # APIModel/clean_data convention used by every other record in this repo. DETACHING IS ``null``
+    # AND NEVER "", which is what makes ``min_length=1`` safe here: see ``QuestionnaireCreate`` for
+    # the 500 the empty string produced on all three of the routes that take this field.
+    designWorkshopId: str | None = Field(default=None, min_length=1)
     isActive: bool | None = None
+
+
+class QuestionnaireReuse(APIModel):
+    """Reuse an existing questionnaire as a template at another design workshop.
+
+    THE BODY OF ``POST /questionnaires/{id}/reuse``. Every field is optional, and the endpoint with
+    an EMPTY body is meaningful: it makes an unattached copy — a template the caller owns, visible
+    only under ``ownerId = me`` — which is what a designer wants when they are lifting an instrument
+    now and will decide which workshop it serves later.
+
+    ``designWorkshopId`` NULL/OMITTED MEANS "DO NOT ATTACH IT YET", NOT "KEEP THE SOURCE'S
+    WORKSHOP". That is the one place this model deliberately departs from ``QuestionnaireUpdate``'s
+    ``clean_data`` convention, where an omitted key leaves the existing attachment alone: there is no
+    existing attachment on a row that does not exist yet, and inheriting the SOURCE's workshop would
+    make the default outcome "a second copy of this form at the workshop that already has one" —
+    the single least likely thing anybody pressing "Reuse at another workshop" wants.
+
+    ``title`` left unset is filled in by ``reuse_title`` — "X (reused)", counted up to
+    "X (reused 2)" — rather than defaulting to the source's exact title, so two rows at one workshop
+    are tellable apart in a list. 220 is ``Questionnaire.title``'s own ceiling, matching
+    ``QuestionnaireCreate``.
+
+    ``description`` behaves as a PATCH-style tri-state and the service reads it that way: unset means
+    "carry the source's description across", an explicit ``null`` or ``""`` means "leave it empty".
+
+    AN EMPTY-STRING ``designWorkshopId`` IS A 422, NOT AN ATTACHMENT AND NOT A 500. The route guards
+    the workshop check with ``if payload.designWorkshopId:``, so "" skipped the check and travelled on
+    to Prisma as a foreign key — measured as ``500 ForeignKeyViolationError``. No authorization was
+    bypassed (the FK refuses, and the ``Questionnaire`` create is the first write, so no orphan
+    survives) but a 500 invites a retry that cannot work. ``min_length=1`` is on the same field in
+    ``QuestionnaireCreate`` and ``QuestionnaireUpdate`` for the same measured reason: this is a third
+    door onto one defect, and fixing one door would leave the other two answering 500.
+    """
+
+    designWorkshopId: str | None = Field(default=None, min_length=1)
+    title: str | None = Field(default=None, min_length=1, max_length=220)
+    description: str | None = None
 
 
 class QuestionnaireEntryCreate(APIModel):

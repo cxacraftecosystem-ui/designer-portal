@@ -220,6 +220,11 @@ export type QFormChangeDetail = {
  * - `answersImported`    — the workbook was filled in BY HAND (no Questionnaire ID, no Question IDs),
  *                          so there is no other recorder anywhere in the picture and the answers are
  *                          recorded as sittings attributed to whoever uploaded it. The ordinary case.
+ * - `reused`              — no workbook was involved at all: this questionnaire was COPIED from another
+ *                          one through `POST /questionnaires/{id}/reuse`. Its questions came across and
+ *                          its sittings did not, so `answersSkipped` is 0 rather than absent —
+ *                          `sourceQuestionnaireId` names the original, which keeps every answer ever
+ *                          recorded against it.
  * - `answersNotImported` — the workbook came OUT OF the platform, so its answers are somebody's
  *                          fieldwork that already exists here under the names of the people who
  *                          recorded it. The questions were imported and the answers were not, because
@@ -233,7 +238,7 @@ export type QFormChangeDetail = {
  * optional to render.
  */
 export type QFormProvenance = {
-  action: "answersImported" | "answersNotImported";
+  action: "answersImported" | "answersNotImported" | "reused";
   sourceQuestionnaireId: string | null;
   answersImported?: number;
   answersSkipped?: number;
@@ -264,6 +269,20 @@ export type QFormUploadReport = {
 };
 
 export type QFormUploadResult = { questionnaire: QForm; report: QFormUploadReport };
+
+/**
+ * What `POST /questionnaires/{id}/reuse` answers: the upload result, plus the id it was copied FROM.
+ *
+ * DELIBERATELY THE SAME `{questionnaire, report}` SHAPE, key for key, so `QFormUploadReport` types it
+ * and {@link "@/components/questionnaires/UploadReport"} renders it unchanged. A second report shape
+ * for "what the reuse did" would be a second panel to keep in step with this one, and the panel is
+ * the part of this feature most likely to be quietly trimmed.
+ *
+ * `report.provenance.action` is `"reused"` and `report.provenance.answersSkipped` is `0` — stated
+ * rather than omitted, because "no answers were copied" and "this report says nothing about answers"
+ * read identically and only the first is a fact.
+ */
+export type QFormReuseResult = QFormUploadResult & { sourceQuestionnaireId: string };
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Single-question edits — the two-outcome responses
@@ -314,6 +333,27 @@ export type QFormUpdateBody = {
   description?: string | null;
   designWorkshopId?: string | null;
   isActive?: boolean;
+};
+
+/**
+ * The body of a reuse. Every field optional, and an EMPTY body is meaningful.
+ *
+ * `designWorkshopId` OMITTED MEANS "DON'T ATTACH IT YET" — it does NOT inherit the source's
+ * workshop, which is the one place this differs from {@link QFormUpdateBody}'s `clean_data`
+ * convention. There is no existing attachment on a row that does not exist yet, and inheriting the
+ * source's would make the default outcome "a second copy of this form at the workshop that already
+ * has one": the least likely thing anybody pressing "Reuse at another workshop" wants.
+ *
+ * `title` omitted is filled in by the server as "X (reused)", counted up to "X (reused 2)" against
+ * the titles already at the target. Send one to override it.
+ *
+ * `description` is a tri-state on the wire and the server reads it as one: OMIT the key to carry the
+ * source's description across, send `null` to start it empty.
+ */
+export type QFormReuseBody = {
+  designWorkshopId?: string | null;
+  title?: string;
+  description?: string | null;
 };
 
 export type QFormSectionCreateBody = {
@@ -411,6 +451,28 @@ export function createQuestionnaire(body: QFormCreateBody) {
 
 export function patchQuestionnaire(id: string, body: QFormUpdateBody) {
   return apiFetch<QForm>(`/questionnaires/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+/**
+ * Copy this questionnaire's QUESTIONS into a new one, optionally at another design workshop.
+ *
+ * IT COPIES; IT DOES NOT SHARE. Two rows, two question trees, two histories — editing the copy does
+ * not touch the original and vice versa. The alternative (one questionnaire attached to several
+ * workshops) was rejected on the server for a reason worth knowing here too: a SITTING has no
+ * workshop, and the report annexure selects purely on `designWorkshopId`, so it would have printed
+ * one workshop's named respondents inside another workshop's ministry submission.
+ *
+ * NO SITTING AND NO ANSWER COMES ACROSS. The copy arrives empty of fieldwork, ready for its own, and
+ * the original keeps every answer ever recorded against it.
+ *
+ * NOT owner-gated on the server, and the UI must not gate it either: the questions of any
+ * questionnaire are already readable by any designer, and already downloadable by any designer
+ * through {@link downloadQuestionSet}. What IS gated is the target — the workshop list this is
+ * offered against must be the one the account may already write to, which is why the dialog is
+ * handed the workshops the page already holds rather than fetching every workshop there is.
+ */
+export function reuseQuestionnaire(id: string, body: QFormReuseBody = {}) {
+  return apiFetch<QFormReuseResult>(`/questionnaires/${id}/reuse`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export function createSection(id: string, body: QFormSectionCreateBody) {
