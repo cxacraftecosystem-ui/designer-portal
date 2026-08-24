@@ -469,17 +469,34 @@ internal fun DwIdentityCardControl(
     repository: WorkshopRepository,
     enabled: Boolean,
     /**
-     * THE TARGET BOX KEEPS ONLY THE MASK, SO THIS PANEL HAS TO SAY SO AND [onUse] GETS THE MASK.
+     * THE TARGET BOX KEEPS ONLY THE MASK, SO THIS PANEL HAS TO SAY SO — AND [onUse] STILL GETS THE
+     * FULL NUMBER.
      *
      * Read off `FieldDto.storeMasked` by the caller, not guessed from [kind]. The registry is the
      * authority on what a field stores, and a control that inferred it from "this looks like an
      * Aadhaar box" would be wrong on the very next field the server adds.
      *
-     * WHAT IT CHANGES HERE, AND WHAT IT DELIBERATELY DOES NOT. The candidate buttons still print the
-     * FULL number, grouped 4-4-4: proofreading twelve digits against the card in the designer's hand
-     * is the entire purpose of this panel and a masked button would make it impossible. What changes
-     * is the value handed to [onUse] and the sentence above the buttons — so the designer checks the
-     * whole number, and what lands in the box is what the repository will hold.
+     * WHAT IT CHANGES HERE IS ONE SENTENCE, AND THAT IS NOW ALL IT CHANGES. It used to also mask the
+     * value before handing it over, and THAT INVERTED THE ONE ORDERING THIS FEATURE CALLS FORCED.
+     * `DwValues.scalarText` — the port of `coerce_value`'s scalar-text arm — runs length, then
+     * FORMAT, then mask, and its own comment says reversing the last two "does not weaken the check;
+     * it MANUFACTURES the exact defect the check exists to prevent". Masking here ran the mask FIRST:
+     * `commit` handed `"XXXX XXXX 0123"` to `DwValues.coerce`, `DwTextFormats.error` matched
+     * `AADHAAR_MASK_RE`, and the AADHAAR format enforced nothing at all — on the one route that can
+     * put twelve digits into that box in a single tap. Nothing was exploitable today (candidates
+     * reach these buttons only after `IdentityCardText` has Verhoeff-screened them), which is exactly
+     * why it needed writing down rather than leaving: the guard simply did not cover this path, and
+     * the next reading route added would inherit that.
+     *
+     * So the full number goes to [onUse], the format checks the digits, and the mask is applied by
+     * the same line that applies it to a hand-typed number. What the designer sees in the box
+     * afterwards is the number they proofread — the browser's `IdentityCardCapture` behaves
+     * identically, with `FieldInput` printing "only the last four digits are stored" under it — and
+     * the sentence above the buttons is what says the box is not what gets kept.
+     *
+     * The candidate buttons still print the FULL number, grouped 4-4-4: proofreading twelve digits
+     * against the card in the designer's hand is the entire purpose of this panel and a masked button
+     * would make it impossible.
      */
     storeMasked: Boolean = false,
     onUse: (String) -> Unit,
@@ -972,16 +989,22 @@ internal fun DwIdentityCardControl(
                 fontSize = 11.sp
             )
             if (storeMasked) {
-                // WHAT THE BOX WILL ACTUALLY HOLD, SAID WHERE THE FULL NUMBER IS ON SCREEN.
+                // WHAT THE FIELD WILL ACTUALLY KEEP, SAID WHERE THE FULL NUMBER IS ON SCREEN.
                 //
                 // The buttons below print twelve digits because proofreading them is the point; the
                 // field keeps four (`FieldDto.storeMasked`). Without this sentence the designer taps
-                // "Use 2345 6789 0123", watches four digits appear in the box, and has no way to
-                // tell a masking rule from a bug that ate their answer — on the one control whose
-                // whole subject is a number they were asked to check digit by digit.
+                // "Use 2345 6789 0123", finds four digits stored against it, and has no way to tell a
+                // masking rule from a bug that ate their answer — on the one control whose whole
+                // subject is a number they were asked to check digit by digit.
+                //
+                // IT SAYS "SAVED", NOT "WRITTEN INTO THE BOX", and the distinction is now real: the
+                // full number is what reaches the box (see [storeMasked] on why the mask cannot be
+                // applied before the format runs), and the mask is what the save keeps. The web says
+                // the same thing in the same place — `FieldInput`'s "only the last four digits of
+                // this number are stored", under the box, while the digits are still on screen.
                 Text(
                     "$targetLabel keeps only the last four digits. Check the whole number here — " +
-                        "what is written into the box is “XXXX XXXX ####”, which is also all the " +
+                        "what is SAVED is “XXXX XXXX ####”, which is also all the " +
                         "report prints.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
@@ -1000,13 +1023,15 @@ internal fun DwIdentityCardControl(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Button(
                             onClick = {
-                                // MASKED ON THE WAY INTO THE FIELD WHERE THE FIELD SAYS SO, so what
-                                // the designer sees in the box afterwards is what the repository will
-                                // hold. `StageSchemaStore` would mask it at the next coercion and the
-                                // server at the next save, so doing it here changes nothing about
-                                // what is stored — it changes only whether the designer is shown a
-                                // value that was about to be rewritten under them.
-                                onUse(if (storeMasked) ArtisanIdentity.mask(choice.value) ?: choice.value else choice.value)
+                                // THE FULL NUMBER, THROUGH THE ONE DOOR, IN THE ONE ORDER. See
+                                // [storeMasked] above: this line used to mask first, which let the
+                                // declared AADHAAR format see a mask instead of the digits and
+                                // enforce nothing — format BEFORE mask is the invariant
+                                // `DwValues.scalarText` and `FieldSpec.text_format` both call forced
+                                // rather than tidy, and this was the one route that inverted it.
+                                // `commit` masks it on the way into the draft exactly as it does a
+                                // hand-typed number, so nothing about what is STORED changes.
+                                onUse(choice.value)
                                 choices = emptyList()
                                 discardPhoto()
                             },

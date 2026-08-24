@@ -150,6 +150,8 @@ import com.designprototype.workshop.data.DataAccessGrantDto
 import com.designprototype.workshop.data.DataAccessScopeItemDto
 import com.designprototype.workshop.data.DataAccessTierInfo
 import com.designprototype.workshop.data.DwStageFocus
+// The ONE email rule on this handset — see the note above the artisan form's email check.
+import com.designprototype.workshop.data.DwTextFormats
 import com.designprototype.workshop.data.EntryCommentDto
 import com.designprototype.workshop.data.MyGrantsDto
 import com.designprototype.workshop.data.RecordRevisionDto
@@ -5005,16 +5007,25 @@ private fun workshopOptionLabel(workshop: WorkshopDetailDto): String {
     return if (day.isBlank()) title else "$title · $day"
 }
 
-/**
- * The shape an email address has to have, character for character the web form's `EMAIL_RE`
- * (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/` in components/forms/ArtisanForm.tsx): something, an @, something,
- * a dot, something — no spaces anywhere.
+/*
+ * THE EMAIL RULE USED TO BE A PRIVATE `EMAIL_RE` HERE, AND IT WAS THE SECOND COPY OF A RULE WHOSE
+ * OWNER SAYS IT IS THE ONLY ONE.
  *
- * Deliberately the WEB's rule rather than `Patterns.EMAIL_ADDRESS` or a stricter RFC pattern: the two
- * clients write into one column, and the same artisan must not be accepted on the phone and refused
- * in the browser. "a@b" fails here exactly as it fails there.
+ * `DwTextFormats` — the file that answers `FieldSpec.text_format` on this handset — states in its own
+ * header that "[EMAIL_RE] is now the one rule, matching lib/textFormats.ts and contact_formats.py
+ * character for character", and it was written precisely because email was the control experiment:
+ * three implementations of one rule, each carrying a comment claiming to match the other two, and
+ * all three answers different. Leaving a fourth private copy here — for the ARTISAN RECORD FORM, the
+ * surface every other validator on this screen was told to copy — reproduces the exact condition
+ * under which the previous three were also believed to agree. They did agree today (Kotlin `matches`
+ * is a full match, so the unanchored source was equivalent), which is what the previous three had in
+ * common as well.
+ *
+ * So the record form now calls `DwTextFormats.emailError`, which is the one rule and the one
+ * sentence. The reasoning that used to live here is worth keeping and lives there: deliberately the
+ * WEB's shape rather than `Patterns.EMAIL_ADDRESS` or an RFC grammar, because both clients write into
+ * one column and the same artisan must not be accepted on the phone and refused in the browser.
  */
-private val EMAIL_RE = Regex("""[^\s@]+@[^\s@]+\.[^\s@]+""")
 
 // ---------------------------------------------------------------------------
 // Artisan identity: Aadhaar number and Artisan Pehchan (PM Vishwakarma) card.
@@ -6679,11 +6690,13 @@ private fun ArtisanForm(
         // Phone (optional) must be a valid number for its ISD code when present.
         artisanPhoneValidationError(phone)?.let { msg -> phoneError = msg; onError("Fix the phone number highlighted above."); return }
         phoneError = null
-        // Email (optional) must look like an address when present — the same shape the web form
-        // enforces (EMAIL_RE in components/forms/ArtisanForm.tsx). Accepting "a@b" here while the web
-        // refused it meant one artisan got two different verdicts depending on who typed them in.
-        if (email.isNotBlank() && !EMAIL_RE.matches(email.trim())) {
-            emailError = "Enter a valid email address (name@example.com)."
+        // Email (optional) must look like an address when present — THE one rule, through
+        // `DwTextFormats.emailError`, which is also what `DwValues.coerce` enforces on a stage box and
+        // what `contact_formats.email_error` answers on the server. Accepting "a@b" here while the web
+        // refused it meant one artisan got two different verdicts depending on who typed them in; a
+        // private copy of the regex in this file meant the same thing waiting to happen again.
+        DwTextFormats.emailError(email)?.let { message ->
+            emailError = message
             runCatching { emailFocus.requestFocus() }
             onError("Fix the email highlighted above."); return
         }

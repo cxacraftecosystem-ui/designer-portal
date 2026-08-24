@@ -1,0 +1,529 @@
+{
+  "about": [
+    "THE ONE PLACE THE THREE IMPLEMENTATIONS OF FieldSpec.text_format ARE COMPARED.",
+    "",
+    "The server ENFORCES a declared format (app/services/stage_schema.py, _FORMATS, inside",
+    "coerce_value's scalar-text arm). Both clients render a PREVIEW of the same rule so the",
+    "ordinary mistake never costs a round trip on one bar of signal. A preview that disagrees with",
+    "the enforcement is a milder version of the defect this feature exists to end, so the three are",
+    "pinned against these rows rather than against a comment asking each side to stay in step.",
+    "",
+    "WHY A CHECKED-IN TABLE AND NOT A PARITY COMMENT. Email is the control experiment. Its rule was",
+    "stated in three places -- a private regex in ArtisanForm.tsx, the same regex again as that",
+    "input's pattern attribute, and an arm of the Kotlin port of coerce_value -- with prose asking",
+    "them to agree. They did not: the web accepted an address with no @, Android refused it, the",
+    "server checked nothing, and nobody noticed. The only mechanism in this repository that",
+    "demonstrably holds three languages together is a checked-in fixture plus a test on each side",
+    "that reads it: that is structurally what",
+    "test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from does for the schema, and",
+    "it is the only reason that asset cannot silently drift.",
+    "",
+    "HOW TO READ A ROW. `value` is what a client posts or a designer types, AFTER clean_text and a",
+    "strip (coerce_value does both before any format runs). `error` is the exact sentence the format",
+    "answers, or null when the value is accepted. THE SENTENCES ARE PART OF THE CONTRACT: 'the same",
+    "checks, in the same order, with the same sentences' is written in three files in this",
+    "repository, and it is a UX promise -- a researcher who corrects a number on the handset must",
+    "read the same instruction on the laptop.",
+    "",
+    "WHAT THESE ROWS DELIBERATELY DO NOT COVER:",
+    "  * MASKING. participant.aadhaarNumber also declares store_masked, so an accepted full number",
+    "    is STORED as 'XXXX XXXX <last four>'. That is a separate step, after this one, and it is",
+    "    pinned by test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask.",
+    "  * LENGTH. Bounds are FieldSpec.max_length, published to both clients as maxLength, and they",
+    "    are checked BEFORE the format so an over-long answer keeps its own refusal rather than",
+    "    being quietly shortened into a plausible mask.",
+    "  * BLANK. Every *_error function in this repository answers null for a blank value; whether an",
+    "    empty box is allowed is `required`'s question and validate_entry's.",
+    "  * PEHCHAN. TextFormat.PEHCHAN exists and is enforceable, but NO FIELD DECLARES IT, on",
+    "    purpose: participant.artisanCardNo carries a mask from hydration and pehchan_error ACCEPTS",
+    "    a mask (fourteen alphanumerics, inside 4-32, no checksum to fail), so declaring it there",
+    "    would be a no-op that looks like protection. See _pehchan_format_error.",
+    "",
+    "",
+    "`server_only` IS NOW EMPTY, AND THE KEY IS KEPT RATHER THAN DELETED. It held exactly one row -- PHONE_IN 'not a number' -- under the claim that no client control could produce it. That claim was true of the control and false of the column the control is filled from, so the row has moved into `vectors` and both clients now answer it. The key stays because the DISTINCTION is still real and the next row of that kind should go in it rather than being forced into `vectors`: a value no client can produce AND no client can be handed. The bar is higher than it looks, and the one row that was there did not clear it -- hydration hands a client whatever the record column holds.",
+    "",
+    "WHERE THIS FILE LIVES, AND WHY IT IS NOT UNDER ANY ONE SIDE. At the repository root, so that no side owns it. A fixture inside a client's test resources reads as that client's fixture, and a fixture inside backend/tests reads as the server's -- and the whole claim being made here is that one rule has one answer."
+  ],
+  "readers": [
+    "backend/tests/test_stage_schema.py::test_the_three_implementations_agree_on_the_shared_vector_table",
+    "frontend/e2e/text-format-parity-unit.spec.ts::the browser and the handset agree on the shared vector table",
+    "android/app/src/test/java/com/designprototype/workshop/data/DwTextFormatParityTest.kt::the handset and the browser agree on the shared vector table",
+    "",
+    "ALL THREE READ THIS FILE AND NONE OF THEM COPIES IT. A copy would be a second table to keep in",
+    "step, and the day somebody updated one and not the other the two clients would be proved equal",
+    "to two different servers. The clients briefly DID have a second copy, under",
+    "android/app/src/test/resources/dw-text-format-cases.json, written in this same wave before this",
+    "file existed. Converging on one was the first thing the three-way comparison found, and the",
+    "second copy is gone.",
+    "",
+    "A CLIENT READER ASSERTS `vectors` ONLY, never `server_only` -- see the note on that key."
+  ],
+  "divergences_to_reconcile": [
+    "THREE DIVERGENCES HAVE BEEN RECORDED HERE AND ALL THREE ARE CLOSED. Kept rather than deleted:",
+    "each names a trap that will be walked into again, and the rows that pin them are in the table",
+    "above ('768 029', the PEHCHAN pair, '---' in three formats, and the four PHONE_IN rows).",
+    "",
+    "1. PINCODE -- FIXED IN THE RULE, AND THEN FIXED AGAIN IN THE CONTROL THAT DRAWS IT.",
+    "   The server checks the NORMALISED value: address.normalize_pincode strips separators, so",
+    "   '768 029' is accepted and stored as typed. That is deliberate and is written at",
+    "   participant.pincode -- values in exactly that shape are already in the column, typed by",
+    "   somebody reading a card aloud. Both previews called pincodeValidationError on the RAW value,",
+    "   which is right where that function lives (the record page's box strips non-digits as you",
+    "   type, so a space cannot get into it) and wrong for a stage box, which shows whatever the",
+    "   record held. Both now strip separators first --",
+    "   stageFieldFormats.pincodeOrSpacedValidationError and DwTextFormats.pincodeError.",
+    "",
+    "   AND THAT WAS NOT THE WHOLE OF IT, WHICH IS THE PART WORTH READING. This entry used to end",
+    "   'neither calls the record page's validator directly any more', and that was measured on the",
+    "   dispatch table alone. StageAddressField -- the control the PIN code box actually mounts --",
+    "   went on calling pincodeValidationError(own) on the raw stored value, and formatShownByControl",
+    "   returns true for that role, so FieldInput's correct notice was SUPPRESSED in favour of the",
+    "   wrong one. A hydrated '768 029' therefore drew a red line the server, the handset and",
+    "   fieldFormatError all disagreed with, with aria-invalid absent and the collapsed-disclosure",
+    "   count at zero. A rule with one implementation can still have two callers: whenever",
+    "   formatShownByControl answers true, the control it names has to be checked, not just the",
+    "   dispatch entry.",
+    "",
+    "2. PEHCHAN -- FIXED IN THE CLIENTS, and it was harmless. The server measures the normalised value",
+    "   (uppercased, non-alphanumerics removed), so pehchan_error's alnum arm can never fire there;",
+    "   both clients measured the raw trimmed value and could return that first sentence. Both now",
+    "   normalise first, which makes that arm unreachable on all three sides EXCEPT for a value that",
+    "   normalises to nothing ('---'), where all three fall back to the raw string -- see 3.",
+    "   All three ACCEPT 'XXXX XXXX 3456', which is precisely why no field declares this format and",
+    "   why a mask-aware predicate is the prerequisite for attaching it to participant.artisanCardNo.",
+    "",
+    "3. SEPARATORS ONLY -- FIXED IN THE CLIENTS, and it was a silent revert on three formats at once.",
+    "   Every one of the server's three normalising entries (_aadhaar_format_error,",
+    "   _pincode_format_error, _pehchan_format_error) has the same shape: normalise, and if that",
+    "   leaves nothing, measure the RAW string. Both clients had ported the second half of each and",
+    "   not the first, so a box holding '---' was accepted here and refused there -- no message, Save,",
+    "   per-field refusal, save_stage restoring from previous, value back on the next GET with nothing",
+    "   said. THE DIRECTION IS THE WHOLE POINT and this was the wrong one: a preview may be LOOSER",
+    "   than the enforcement (one round trip lost, nothing wrong stored) and may never be TIGHTER (an",
+    "   answer the server would take, refused on a stage nobody can get past) -- but 'looser' costs a",
+    "   round trip only when the designer can see why, and a preview that stays silent about a value",
+    "   the server will refuse is what makes a revert look like lost work.",
+    "",
+    "ONE RESIDUAL, NAMED SO IT IS NOT MISTAKEN FOR AGREEMENT: pehchan_error on the server tests",
+    "str.isalnum(), which is true of Devanagari and every other script, while both clients test ASCII.",
+    "A value of nothing but non-ASCII letters therefore gets 'letters and digits only' on the clients",
+    "and the length sentence on the server. There is no row for it because NO FIELD DECLARES PEHCHAN;",
+    "the day participant.artisanCardNo does, that is the line to fix first and a row here is how to",
+    "prove it."
+  ],
+  "vectors": [
+    {
+      "format": "",
+      "value": "anything at all",
+      "error": null,
+      "note": "NO FORMAT DECLARED: the arm enforces nothing. This is the state of all but a handful of the registry's 570 fields and it must stay cheap and silent."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "",
+      "error": null
+    },
+    {
+      "format": "AADHAAR",
+      "value": "---",
+      "error": "Aadhaar number must be 12 digits — remove any letters or symbols.",
+      "note": "SEPARATORS ONLY, WHICH IS TYPEABLE: this is a plain text box, so a designer can leave three dashes in it. The dispatch entry the server actually enforces is _aadhaar_format_error, whose FIRST line is 'if normalize_aadhaar(text) is None: return aadhaar_error(text)' -- measured on the RAW string. Both clients had ported only its second half (aadhaar_or_mask_error), which opens with 'normalises to nothing -> no error', so both ACCEPTED this while the server refused it: no message on the box, Save pressed, the field refused, save_stage restoring it from previous, and the value back as it was on the next GET with nothing said. A silent revert, inside the feature written to end silent reverts."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "123456789012",
+      "error": "Aadhaar numbers never start with 0 or 1 — please re-check the first digit.",
+      "note": "UIDAI never issues a number beginning 0 or 1."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "134567890124",
+      "error": "Aadhaar numbers never start with 0 or 1 — please re-check the first digit."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "2345 6789 0124",
+      "error": null,
+      "note": "The same number as a person types it. Separators come off before the check."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "2345-6789-0124",
+      "error": null
+    },
+    {
+      "format": "AADHAAR",
+      "value": "23456789012",
+      "error": "Aadhaar number must be exactly 12 digits (this one has 11).",
+      "note": "The count is in the sentence because a researcher holding the card needs to know which way to correct it."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "234567890123",
+      "error": "That Aadhaar number fails its checksum, so at least one digit is wrong. Please re-read the card and enter it again.",
+      "note": "Verhoeff catches every single-digit error and every adjacent transposition -- the two ways a twelve-digit number is misread."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "234567890124",
+      "error": null,
+      "note": "A real number: twelve ASCII digits, does not start 0 or 1, Verhoeff-valid. Accepted here and then masked by store_masked."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "987654321096",
+      "error": null
+    },
+    {
+      "format": "AADHAAR",
+      "value": "X",
+      "error": "Aadhaar number must be 12 digits — remove any letters or symbols.",
+      "note": "The same point, minimally: is_masked_aadhaar accepts this too."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "XXXX XXXX 0124",
+      "error": null,
+      "note": "THE ROW THAT MATTERS MOST. hydrate_entries writes this into the box and validate_entry re-coerces every field on every save, so refusing it would paint a permanent red error on a row nobody touched, naming a fault the designer cannot fix because the digits are not theirs to see."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "XXXX XXXX 12345",
+      "error": "Aadhaar number must be 12 digits — remove any letters or symbols.",
+      "note": "A mask this repository could not have produced: mask_aadhaar keeps exactly four digits."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "XXXX XXXX XXXX",
+      "error": null,
+      "note": "mask_aadhaar's other output shape: a value too short to reveal any digits is masked entirely."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "XXXX-XXXX-0124",
+      "error": null,
+      "note": "The mask with dashes rather than spaces: the separator set is the same on all three sides (whitespace, the ASCII hyphen, U+2010 to U+2015), so this normalises to the same twelve characters as the row above it and is the same accepted mask."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "XXXXXXXX0124",
+      "error": null
+    },
+    {
+      "format": "AADHAAR",
+      "value": "XxamplE 1234",
+      "error": "Aadhaar number must be 12 digits — remove any letters or symbols.",
+      "note": "REFUSED, though is_masked_aadhaar ('an X anywhere') calls it a mask. That rule is right where a masked value is DROPPED before the write (ArtisanUpdate) and catastrophic here, where whatever is accepted is stored and then masked. The accept-arm is a SHAPE."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "hello world 1234",
+      "error": "Aadhaar number must be 12 digits — remove any letters or symbols.",
+      "note": "THE DEFECT THIS WHOLE FEATURE EXISTS TO END. Fourteen characters, inside the field's bound of 20; with the format check after the mask instead of before it, this was STORED as 'XXXX XXXX 1234' and printed as a national identity number in a document submitted to a ministry."
+    },
+    {
+      "format": "AADHAAR",
+      "value": "xxxx xxxx 0124",
+      "error": "Aadhaar number must be 12 digits — remove any letters or symbols.",
+      "note": "LOWER CASE IS NOT A MASK. Both producers emit upper-case X, and folding case is what would let a run of prose through."
+    },
+    {
+      "format": "EMAIL",
+      "value": "",
+      "error": null,
+      "note": "Blank is `required`'s question, never a format's."
+    },
+    {
+      "format": "EMAIL",
+      "value": "   ",
+      "error": null
+    },
+    {
+      "format": "EMAIL",
+      "value": "  designer@dch.gov.in  ",
+      "error": null,
+      "note": "Trimmed before the rule, as coerce_value trims."
+    },
+    {
+      "format": "EMAIL",
+      "value": "@dch.gov.in",
+      "error": "Enter a valid email address (name@example.com)."
+    },
+    {
+      "format": "EMAIL",
+      "value": "de signer@dch.gov.in",
+      "error": "Enter a valid email address (name@example.com)."
+    },
+    {
+      "format": "EMAIL",
+      "value": "designer",
+      "error": "Enter a valid email address (name@example.com)."
+    },
+    {
+      "format": "EMAIL",
+      "value": "designer@",
+      "error": "Enter a valid email address (name@example.com)."
+    },
+    {
+      "format": "EMAIL",
+      "value": "designer@@dch.gov.in",
+      "error": "Enter a valid email address (name@example.com)."
+    },
+    {
+      "format": "EMAIL",
+      "value": "designer@dch",
+      "error": "Enter a valid email address (name@example.com).",
+      "note": "NO DOT. The handset's deleted EMAIL arm accepted this and the server accepted it too; only the record page refused it. The single most important row in this table."
+    },
+    {
+      "format": "EMAIL",
+      "value": "designer@dch.gov.in",
+      "error": null
+    },
+    {
+      "format": "EMAIL",
+      "value": "designer@dch.gov.in extra",
+      "error": "Enter a valid email address (name@example.com)."
+    },
+    {
+      "format": "EMAIL",
+      "value": "latha",
+      "error": "Enter a valid email address (name@example.com).",
+      "note": "A name with no domain. THE WEB ACCEPTED THIS IN THE STAGE BOX: the mirrored input sets type=\"email\" but is rendered OUTSIDE the record form, so no submit event ever validates it."
+    },
+    {
+      "format": "EMAIL",
+      "value": "latha.nayak+workshop@sub.example.co.in",
+      "error": null,
+      "note": "A plus tag, dots in the local part and a multi-label domain are all real addresses. A stricter pattern refuses researchers' own mail while still accepting undeliverable addresses."
+    },
+    {
+      "format": "EMAIL",
+      "value": "latha@@example.org",
+      "error": "Enter a valid email address (name@example.com).",
+      "note": null
+    },
+    {
+      "format": "EMAIL",
+      "value": "latha@example",
+      "error": "Enter a valid email address (name@example.com).",
+      "note": "A domain with no dot."
+    },
+    {
+      "format": "EMAIL",
+      "value": "latha@example.org",
+      "error": null,
+      "note": null
+    },
+    {
+      "format": "EMAIL",
+      "value": "latha@example.org, ammaji@example.org",
+      "error": "Enter a valid email address (name@example.com).",
+      "note": "Two addresses pasted into one box -- the whitespace class in the pattern is what catches it."
+    },
+    {
+      "format": "PEHCHAN",
+      "value": "",
+      "error": null
+    },
+    {
+      "format": "PEHCHAN",
+      "value": "---",
+      "error": "Pehchan card number must be letters and digits only.",
+      "note": "The separators-only case in the third arm. _pehchan_format_error also falls back to the raw string, and this is the one row where the 'letters and digits only' sentence is reachable at all -- on every other input the normalisation has already removed whatever would have triggered it."
+    },
+    {
+      "format": "PEHCHAN",
+      "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "error": "Pehchan card number must be between 4 and 32 characters.",
+      "note": "33 characters."
+    },
+    {
+      "format": "PEHCHAN",
+      "value": "ABC",
+      "error": "Pehchan card number must be between 4 and 32 characters."
+    },
+    {
+      "format": "PEHCHAN",
+      "value": "PMV1234567",
+      "error": null
+    },
+    {
+      "format": "PEHCHAN",
+      "value": "PMVY12345678",
+      "error": null,
+      "note": "DECLARED ON NO FIELD, and these three rows are thin on purpose. The server and the handset measure the NORMALISED value, so pehchan_error's 'letters and digits only' arm is unreachable from a format check and any value containing a separator is an open disagreement rather than a settled expectation -- only rows where raw and normalised agree are listed."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "",
+      "error": null
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+",
+      "error": "Enter a 10-digit number for +91.",
+      "note": "A lone plus: no dial code to resolve and no digits to count. Falls to the +91 arm on all three sides (the parsers default to India when they cannot read a code) and is refused there. Pinned because it is the boundary of the shape rule -- separators and a '+' alone are not a number."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+44 123",
+      "error": "Enter a valid phone number (4–14 digits).",
+      "note": "Note the en dash in the sentence: it is the record page's own character and the clients test the string."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+44 20 7946 0958",
+      "error": null,
+      "note": "Another dial code: four to fourteen digits, loose enough for the range of national number lengths worldwide."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+44 791",
+      "error": "Enter a valid phone number (4–14 digits)."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+44 7911123456",
+      "error": null
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+44 791112345678901",
+      "error": "Enter a valid phone number (4–14 digits)."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+91 98765 43210",
+      "error": null,
+      "note": "Internal spacing is collapsed before the split, as both clients' parsers do."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+91 987654321",
+      "error": "Enter a 10-digit number for +91.",
+      "note": "Nine digits. This is the value the audit found saving cleanly: the stage mounts the record page's own PhoneField with mirror={false}, so its message is advisory and nothing refused the save."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+91 9876543210",
+      "error": null,
+      "note": "What both clients compose: a dial code, one space, the national digits."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+91 9876543210 call his son Ramesh on the landline instead",
+      "error": "Enter a 10-digit number for +91.",
+      "note": "The same hole as the row above, in the shape it was actually found in: a real number with a note typed after it. participant.phone now also declares max_length=20, which refuses this one on length -- but the length check runs FIRST and the format is what the vector table measures, so this row asserts the shape rule rather than the bound."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+91 98765432101",
+      "error": "Enter a 10-digit number for +91."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+91 98765432109",
+      "error": "Enter a 10-digit number for +91.",
+      "note": "Eleven digits."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "+919876543210",
+      "error": null,
+      "note": "Compact, no space. Both parsers resolve the longest known code."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "987654321",
+      "error": "Enter a 10-digit number for +91.",
+      "note": "Bare and nine digits: the number the stage box used to accept in silence."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "9876543210",
+      "error": null,
+      "note": "THE LEGACY ARM, AND IT IS LOAD-BEARING. Artisan.phone has never had a server-side rule, so the table holds bare numbers written before the dial-code picker existed and hydration has been copying them into participant.phone ever since. Refusing this would put a permanent red error on every legacy roster row, over a value the designer cannot correct."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "abc9876543210def",
+      "error": "Enter a 10-digit number for +91.",
+      "note": "TEN DIGITS, AND REFUSED ANYWAY. phone_digits strips everything that is not an ASCII digit before the count, so the 4-14 window bounds the DIGITS and says nothing about the string: this was accepted, stored and printed. max_length does not close it either (it is sixteen characters against a bound of twenty), so all three sides now also check the SHAPE -- an optional dial code, digits, and separators, nothing else. It cannot refuse anything either picker composes, because both write '+CC digits' and nothing else."
+    },
+    {
+      "format": "PHONE_IN",
+      "value": "not a number",
+      "error": "Enter a 10-digit number for +91.",
+      "note": "MOVED HERE OUT OF server_only ON 2026-08-24, AND THE NOTE IT CARRIED THERE WAS WRONG IN AN INSTRUCTIVE WAY. It said 'no client can reach it', because both clients opened their phone rule with 'no digits -> no error' and a phone box only accepts digits. True of the CONTROL, false of the DATA: nothing has ever validated Artisan.phone, hydrate_entries copies it into participant.phone, and coerce_value re-coerces every field on every save. So a stored value like this refused on EVERY save while both previews called it clean, and PhoneField drew an EMPTY BOX for it (it renders only the digits it could parse) with FieldInput's notice suppressed because formatShownByControl says the control speaks for PHONE. Nothing on the page, and a silent revert on the next GET. Both clients now refuse a non-blank value with no digits, and PhoneField prints the stored string it cannot show."
+    },
+    {
+      "format": "PINCODE",
+      "value": "",
+      "error": null
+    },
+    {
+      "format": "PINCODE",
+      "value": "---",
+      "error": "Pincode must be 6 digits — remove any letters or symbols.",
+      "note": "The same separators-only case as AADHAAR '---', and the same fix: _pincode_format_error measures the RAW string when normalisation leaves nothing, and both clients used to return null for it."
+    },
+    {
+      "format": "PINCODE",
+      "value": "030300",
+      "error": "Pincodes never start with 0 — please re-check the first digit."
+    },
+    {
+      "format": "PINCODE",
+      "value": "068029",
+      "error": "Pincodes never start with 0 — please re-check the first digit.",
+      "note": "The leading digit is the postal zone, numbered 1-9. There is no zone 0."
+    },
+    {
+      "format": "PINCODE",
+      "value": "30300",
+      "error": "Pincode must be exactly 6 digits (this one has 5)."
+    },
+    {
+      "format": "PINCODE",
+      "value": "303007",
+      "error": null
+    },
+    {
+      "format": "PINCODE",
+      "value": "3030A7",
+      "error": "Pincode must be 6 digits — remove any letters or symbols."
+    },
+    {
+      "format": "PINCODE",
+      "value": "768 029",
+      "error": null,
+      "note": "ALREADY IN THE COLUMN, typed exactly that way by somebody reading a card aloud, and named in participant.pincode's own comment as the value a tighter rule would start refusing on a stage a designer is trying to submit. The server and the handset both check the NORMALISED value and leave the stored string as typed. THE BROWSER DOES NOT YET: stageFieldFormats.ts dispatches PINCODE straight to components/forms/LocationFields.tsx's pincodeValidationError, which measures the raw trimmed value and so refuses this -- stricter than the enforcement, which is the one direction fieldFormatError's own docstring calls harmful. Strip separators there, as the Aadhaar preview beside it already does. See divergences_to_reconcile."
+    },
+    {
+      "format": "PINCODE",
+      "value": "768-029",
+      "error": null,
+      "note": "'768 029' with a dash instead of the space. Pinned separately because the value in the column is the spaced one and it would be easy to 'fix' the normalisation to strip only whitespace -- which all three sides would then do differently from address.py."
+    },
+    {
+      "format": "PINCODE",
+      "value": "76802",
+      "error": "Pincode must be exactly 6 digits (this one has 5).",
+      "note": null
+    },
+    {
+      "format": "PINCODE",
+      "value": "768029",
+      "error": null,
+      "note": null
+    },
+    {
+      "format": "PINCODE",
+      "value": "7680A9",
+      "error": "Pincode must be 6 digits — remove any letters or symbols.",
+      "note": null
+    }
+  ],
+  "server_only": []
+}

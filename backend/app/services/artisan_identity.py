@@ -197,6 +197,47 @@ def mask_aadhaar(value: str | None) -> str | None:
     return f"XXXX XXXX {normalized[-4:]}"
 
 
+#: The two shapes :func:`mask_aadhaar` can emit, matched against the NORMALISED value (separators
+#: already stripped): eight X's then the real last four digits, or twelve X's for a value too short
+#: to reveal any of them.
+#:
+#: DELIBERATELY NOT :func:`is_masked_aadhaar`, WHOSE RULE IS "AN X ANYWHERE". That rule is correct
+#: where a masked value is DROPPED before the write — ``ArtisanUpdate`` passes it through untouched
+#: and ``records.drop_masked_identity_numbers`` removes the key, so nothing it accepts is ever
+#: stored. It is catastrophic in ``coerce_value``, which has no drop: whatever the format check
+#: accepts there IS what gets stored and then masked, so "XxamplE 1234" would pass as "a mask" and
+#: be written to a ministry document as "XXXX XXXX 1234".
+_AADHAAR_MASK = re.compile(r"X{8}(?:[0-9]{4}|X{4})")
+
+
+def aadhaar_or_mask_error(value: str | None) -> str | None:
+    """The reason ``value`` is neither a usable Aadhaar number nor a mask this module produced.
+
+    WHY THIS EXISTS SEPARATELY FROM :func:`aadhaar_error`. A stage entry's Aadhaar box holds the
+    MASK almost all of the time: ``hydrate_entries`` copies ``mask_identity_number(...)`` into
+    ``participant.aadhaarNumber``, and ``coerce_value`` re-coerces every field on every save. A
+    validator that knew only :func:`aadhaar_error` would look at "XXXX XXXX 9012" and answer
+    "Aadhaar number must be 12 digits — remove any letters or symbols." on a box nobody touched,
+    on every save, forever, naming a fault the designer cannot fix because the digits are not
+    theirs to see. So the mask has to be an accepted answer, and it has to be accepted by SHAPE
+    rather than by the presence of an X.
+
+    Case-sensitive on purpose: both mask producers — :func:`mask_aadhaar` and Kotlin
+    ``ArtisanIdentity.mask`` — emit upper-case X's, and folding case is exactly what would let a
+    run of prose containing "xxxx" through the door.
+
+    Blank is not this function's question. It answers ``None`` for a value that normalises to
+    nothing, the way :func:`aadhaar_error` does; whether an empty box is allowed is
+    ``required``'s business and ``validate_entry``'s.
+    """
+    normalised = normalize_aadhaar(value)
+    if normalised is None:
+        return None
+    if _AADHAAR_MASK.fullmatch(normalised):
+        return None
+    return aadhaar_error(normalised)
+
+
 def is_masked_aadhaar(value: str | None) -> bool:
     """True when ``value`` is a mask this module produced rather than a real number.
 

@@ -66,6 +66,19 @@ import {
   sketchSourceFields,
   workshopTitleRole
 } from "@/components/designworkshop/stageFieldRoles";
+/*
+ * THE FORMAT THE REGISTRY DECLARES FOR THIS FIELD, AND THE RECORD PAGE'S OWN VALIDATOR FOR IT.
+ *
+ * Read, never inferred from the key — same rule as `storeMasked` two imports down. See
+ * {@link stageFieldFormats} for why the rule is a declaration on the field rather than a check in
+ * this file: the box this file draws is a SECOND box for the same fact, and it is the one the report
+ * prints, so a check that lives here governs the copy that is printed and nothing else.
+ */
+import {
+  fieldFormatError,
+  formatShownByControl,
+  isAadhaarMaskValue
+} from "@/components/designworkshop/stageFieldFormats";
 import { PhotoMeasureField } from "@/components/designworkshop/PhotoMeasureField";
 import { SketchRectifyField, type SketchSource } from "@/components/designworkshop/SketchRectifyField";
 import { SignaturePad } from "@/components/SignaturePad";
@@ -521,6 +534,44 @@ export function FieldInput({
   const labelId = `${controlId}-label`;
   const hintId = `${controlId}-hint`;
   const errorId = `${controlId}-error`;
+  const formatErrorId = `${controlId}-format`;
+
+  /**
+   * WHY WHAT IS IN THIS BOX WILL NOT SAVE, SAID BEFORE THE SAVE — or null when it will.
+   *
+   * ── THIS IS THE HALF THE AUDIT FOUND MISSING, AND IT IS NOT A CONVENIENCE ─────────────────────
+   *
+   * `coerce_value` refuses a value whose declared `text_format` it does not match, and `save_stage`
+   * then RESTORES THE REFUSED KEY FROM `previous`. The save response carries the message, so
+   * immediately afterwards the box still shows what was typed with the reason underneath — which is
+   * correct and recoverable. The revert only becomes visible on the next
+   * `GET /{id}/stages/{key}`: the typed value is replaced by the old one and the message is gone,
+   * because the message lived in the save response and nothing persisted it. That is the "value just
+   * snaps back" the audit saw, and from the designer's chair it is indistinguishable from the app
+   * losing their work.
+   *
+   * A rule the box can apply to what it is HOLDING has no such lifetime problem: it is derived from
+   * the value on screen, so it is on the page the moment the value is wrong, it survives every
+   * re-render, and after a revert it re-evaluates against whatever came back. In the ordinary case
+   * the malformed value never leaves the browser at all.
+   *
+   * ── NOT `setCustomValidity`, WHICH IS HOW THE RECORD PAGE DOES IT ─────────────────────────────
+   *
+   * `AadhaarField` blocks through native constraint validation, and that mechanism needs a SUBMIT
+   * EVENT. A mirrored stage box is rendered OUTSIDE the record form `StageRecordEmbed` mounts, so no
+   * submit event ever passes over it — which is also the exact reason `type="email"` did nothing
+   * here for as long as this branch has existed. The comment claiming otherwise is corrected below.
+   */
+  const formatProblem = fieldFormatError(field, value);
+  /**
+   * True when the mounted control prints that sentence itself, so this wrapper must not repeat it.
+   *
+   * PHONE and the PIN code box both reuse the record page's control, and both of those controls
+   * already show the same message from the same function as the designer types. `aria-invalid` and
+   * the describedby below are still wired from `formatProblem` — what is suppressed is one duplicated
+   * paragraph, never the fact that the field is refused.
+   */
+  const formatShownBelow = Boolean(formatProblem) && !formatShownByControl(entity, field);
 
   /**
    * What the control points at with `aria-describedby`, or nothing when there is nothing to say.
@@ -528,11 +579,19 @@ export function FieldInput({
    * Order matters and is the reading order on screen: the instruction first, then what went wrong
    * with the answer. An empty string here would be a describedby pointing at no element, which some
    * readers announce as a blank — worse than the attribute being absent.
+   *
+   * THE FORMAT REFUSAL IS LAST AND IS SEPARATE FROM `errorId`, because the two are different facts:
+   * `error` is what the repository said about the value it stored, and this is this browser saying
+   * the value in the box will not get that far. A designer who has both must be read both — folding
+   * them into one slot would drop whichever arrived second.
    */
   const hasHint = Boolean(field.help || field.unit);
-  const describedBy = [hasHint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
+  const describedBy =
+    [hasHint ? hintId : null, error ? errorId : null, formatShownBelow ? formatErrorId : null]
+      .filter(Boolean)
+      .join(" ") || undefined;
   /** Undefined rather than `false`: a valid field says nothing, it does not announce its validity. */
-  const invalid = error ? true : undefined;
+  const invalid = error || formatProblem ? true : undefined;
 
   /**
    * A dictated phrase this box could not take, and the value it was refused over.
@@ -621,6 +680,56 @@ export function FieldInput({
       </p>
     ) : null;
 
+  /**
+   * The declared format's refusal, IN BOTH WRAPPERS so it cannot depend on which control drew.
+   *
+   * ── WHY IT IS HERE AND NOT INSIDE ONE BRANCH ──────────────────────────────────────────────────
+   *
+   * A format can be declared on TEXT, LONG_TEXT, URL, PHONE or EMAIL, and those reach four different
+   * branches below — the plain input, `StageAddressField`, `StagePhoneField` and the textarea. Put in
+   * the wrapper, one line covers every one of them, and a field that gains a format tomorrow on a
+   * type nobody thought about is covered without a line changing. That is the same property the
+   * registry itself exists for, and it is why the audit's own recommendation — a check in the TEXT
+   * branch — would have left PHONE and the PIN code box exactly as they were.
+   *
+   * NOT FOLDED INTO `FieldHint`'s `error` SLOT, for the reason the dictation notice below is not
+   * either: that slot is the SERVER's answer about the value it stored, and this is the browser
+   * saying the value in the box will not reach it. A designer who has just been told the repository
+   * refused their answer must not have that sentence replaced by a different one.
+   *
+   * `role="alert"`, matching `PhoneField` and `AadhaarField`: the message appears as the designer
+   * types, so it has to reach them at the moment the value stops being savable rather than when they
+   * next happen to pass the box. `error-600` is one of the two literal status colours in the palette
+   * and deliberately does not invert — "this will not save" must read identically in both themes.
+   *
+   * ── WHAT THIS DELIBERATELY DOES NOT DO IS BLOCK "SAVE STAGE" ──────────────────────────────────
+   *
+   * The record page blocks: `ArtisanForm` is a real `<form>`, so a malformed email or a nine-digit
+   * phone number stops its Submit natively, and stopping it costs nothing because nothing else is in
+   * flight. A stage save is not that. It carries every entity on the stage — thirty-odd answers,
+   * a roster of participants, and staged media — in one request, from a handset in a courtyard on one
+   * bar of signal, and `PhoneField`'s own doc block records the decision this surface already made:
+   * "Native constraint validation is deliberately absent from the workshop … completeness is judged
+   * by `stage_completeness` when a report is generated, not by the browser at save time." Refusing
+   * the whole save over one malformed field would throw away the twenty-nine answers beside it.
+   *
+   * So the division of labour is: the SERVER refuses the one field (and `save_stage` keeps the
+   * previous value for it while storing everything else), and this line makes sure the designer is
+   * looking at the reason before they press the button rather than after. `EntityForm` counts these
+   * on a collapsed group's header so one folded away inside a disclosure is not silent. If the owner
+   * decides a format violation should also gate the button, `EntityForm`'s `needsAttentionIn` is the
+   * count to gate on — it is the one that already merges this rule with the server's refusals, one
+   * line per field — and the stage page's `save()` is the one place to do it, deliberately left
+   * un-gated here rather than half-gated in a component that cannot see the whole stage. (This
+   * paragraph named `formatViolationsIn` until it was deleted: a second exported counter that
+   * nothing called, whose docstring claimed the job `needsAttentionIn` performs.)
+   */
+  const formatNotice = formatShownBelow ? (
+    <p id={formatErrorId} role="alert" className="text-xs font-medium leading-5 text-error-600">
+      {formatProblem}
+    </p>
+  ) : null;
+
   const labelled = (control: React.ReactNode) => (
     <div className="grid min-w-0 gap-1">
       <label className="field-label" htmlFor={controlId}>
@@ -628,6 +737,7 @@ export function FieldInput({
       </label>
       {control}
       <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
+      {formatNotice}
       {dictationNotice}
     </div>
   );
@@ -640,6 +750,7 @@ export function FieldInput({
       </span>
       {control}
       <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
+      {formatNotice}
       {dictationNotice}
     </div>
   );
@@ -864,9 +975,28 @@ export function FieldInput({
           <input
             id={controlId}
             className="field-input"
-            // `type` carries the mobile keyboard as much as the validation: a phone field that opens
-            // the alphabetic keyboard is a phone field a designer mistypes on a handset in a
-            // courtyard. `url`/`email` also give the browser its own inline validation for free.
+            /*
+             * `type` CARRIES THE MOBILE KEYBOARD HERE, AND NOTHING ELSE. A field that opens the
+             * alphabetic keyboard for an email address is a field a designer mistypes on a handset in
+             * a courtyard, so `url` and `email` are worth setting for the `@` and the `.com` key they
+             * put on the soft keyboard.
+             *
+             * THIS COMMENT USED TO END "`url`/`email` also give the browser its own inline validation
+             * for free", AND THAT WAS FALSE AT THIS MOUNT POINT — measured, not suspected. A browser
+             * validates `type="email"` on a SUBMIT EVENT (or an explicit
+             * `checkValidity`/`reportValidity` call). This input is not inside a `<form>`: the stage
+             * page is a set of controls with a "Save stage" button that calls `save()` directly, and
+             * where `StageRecordEmbed` DOES mount a real `<form>` for a record, the mirrored copy of
+             * the same field is rendered OUTSIDE it. So no submit event has ever passed over this box
+             * and the browser has never checked one character of it.
+             *
+             * That sentence is the reason nobody looked. `participant.email` therefore had NO rule
+             * anywhere on this path — not here, not in `coerce_value`, not in `ArtisanCreate` — while
+             * the record page two clicks away had a regex AND a blocking `pattern`, and the handset
+             * refused a missing `@` outright. The refusal now comes from `formatProblem` above, off
+             * the registry's declared `text_format`, which reaches this box whether or not anything
+             * ever submits it.
+             */
             type={field.type === "URL" ? "url" : field.type === "EMAIL" ? "email" : "text"}
             maxLength={field.maxLength || undefined}
             aria-describedby={describedBy}
@@ -912,12 +1042,40 @@ export function FieldInput({
               SHOWN ONLY OVER AN UNMASKED VALUE. `isMaskedIdentityNumber` is the same "contains an
               X" rule as the server's `is_masked_aadhaar`, so the sentence disappears once the box
               holds the mask — over a hydrated row it would be a warning about nothing, and a
-              warning that is always on is a warning nobody reads.
+              warning that is always on is a warning nobody reads. THE MASK CASE IS NOT SILENT ANY
+              MORE, THOUGH: it gets its own sentence in the branch below, which states a fact rather
+              than raising an alarm.
             */
             <p className="text-xs leading-5 text-ink-500">
               Only the last four digits of this number are stored. Saving this stage replaces what is in the box with
               “XXXX XXXX {inputValue(value).replace(/\D/g, "").slice(-4) || "####"}”, which is also all the report
               prints — so check the number against the card now, not afterwards.
+            </p>
+          ) : field.storeMasked && isAadhaarMaskValue(inputValue(value)) ? (
+            /*
+              AND WHAT THE BOX IS HOLDING WHEN IT IS ALREADY A MASK, WHICH USED TO BE SAID NOWHERE.
+
+              A mask has to be an ACCEPTED value here — `hydrate_entries` writes one into this box
+              and `coerce_value` re-checks every field on every save, so refusing it would put a
+              permanent red error on a row nobody touched over digits the designer is not entitled
+              to see (`_aadhaar_format_error` has the long version). The consequence is that a
+              designer can also TYPE or PASTE "XXXX XXXX 1234" into it and nothing objects: it is
+              byte-for-byte what hydration writes, `mask_aadhaar` is idempotent so it stores
+              unchanged, and the report prints it exactly like a mask of a number somebody had read
+              off a card. The server cannot tell those two apart — the only discriminator is what the
+              row held BEFORE the save, and `coerce_value` is handed one value and nothing else.
+
+              So this sentence is the one thing that CAN separate them, and it separates them for the
+              only reader who knows which happened: the person looking at the box. It states what is
+              there rather than warning about it, which is why it is `ink-500` and not `error-600`
+              and why it is correct over a hydrated row as well — "this stage holds four digits, the
+              number is on the artisan record" is exactly what a designer needs to know before they
+              go looking for the rest of it here.
+            */
+            <p className="text-xs leading-5 text-ink-500">
+              This box is holding a mask, not a number: “{inputValue(value)}” is all this stage stores and all the
+              report prints. The full number is on the artisan record. Typing or pasting a mask here stores exactly
+              that — four digits nobody has checked against a card.
             </p>
           ) : null}
         </>

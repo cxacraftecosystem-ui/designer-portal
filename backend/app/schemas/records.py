@@ -49,6 +49,24 @@ class ArtisanCreate(APIModel):
     name: str = Field(min_length=1, max_length=180)
     localName: str | None = None
     gender: str | None = None
+    # ── THE TWO CONTACT COLUMNS STILL CARRY NO RULE HERE, AND THAT IS A DEFERRAL WITH A DATE ──
+    #
+    # ``contact_formats.validate_email`` / ``validate_phone`` exist, are shaped exactly like
+    # ``validate_aadhaar`` and ``validate_pincode`` below, and have NO CALLER. Wiring them in is a
+    # separate change on purpose: ``ArtisanUpdate`` is a PATCH surface, an editor who reopens a
+    # record and presses Save re-sends whatever is stored, and ``Artisan.phone`` has never had a
+    # rule — so switching these on would start 422-ing edits over a legacy value the editor never
+    # touched. That needs a measurement of the column first, and the same measurement decides
+    # whether the fix is a validator or a backfill.
+    #
+    # WHAT THE DEFERRAL NOW COSTS, WHICH IS NEW SINCE THE STAGE HALF LANDED. ``participant.email``
+    # declares ``text_format=EMAIL``, and ``hydrate_entries`` copies this column into it through
+    # ``coerce_value``, dropping anything that field refuses. So a malformed address created here
+    # is no longer copied into the workshop roster — it is DROPPED, and the stage's contact box
+    # comes up blank with nothing said about why. Better than printing it in a ministry document,
+    # and still silent; the honest close is refusing the address at this end. See
+    # ``contact_formats.validate_email``'s docstring, which carries the same note from the other
+    # side.
     phone: str | None = None
     email: str | None = None
     place: str = Field(min_length=1, max_length=180)
@@ -162,6 +180,9 @@ class ArtisanUpdate(APIModel):
     name: str | None = Field(default=None, min_length=1, max_length=180)
     localName: str | None = None
     gender: str | None = None
+    # No validator, deliberately, and this is the surface the deferral is ABOUT: see the paragraph
+    # above ``ArtisanCreate.phone``. A PATCH re-sends what is stored, so a rule added here refuses
+    # an edit over a value the editor never typed.
     phone: str | None = None
     email: str | None = None
     place: str | None = Field(default=None, min_length=1, max_length=180)

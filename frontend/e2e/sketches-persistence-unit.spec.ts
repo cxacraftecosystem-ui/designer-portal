@@ -251,8 +251,24 @@ test("the turntable can be filled from the tab that advises filling it", () => {
   expect(PANEL_SOURCE, "the callback the panel offers").toContain(
     "onAttachTurntable?: (files: File[]) => AttachAnswer;"
   );
-  expect(MODEL_SOURCE, "and the control that uses it").toContain('id={`${fieldId}-turntable`}');
+  // THIS ASSERTION USED TO READ `toContain('id={`${fieldId}-turntable`}')` AND IT WENT RED THE MOMENT
+  // THE PICKER IMPROVED. The turntable input is now a `DropCard`, and each card derives its own ids
+  // from its own `useId` — which is better, because the label and the input can no longer disagree
+  // about a hand-built id. But the old line pinned the hand-built id itself, so a change that removed
+  // a whole class of bug read as a regression.
+  //
+  // The lesson is about what a source-read test should hold onto. Pinning an id string pins the
+  // implementation; pinning the CONTROL and its behaviour pins the thing the feature promises. What
+  // matters here is that the turntable is offered by a card that takes a whole turn at once, and that
+  // the frames go to the callback the panel declares.
+  expect(MODEL_SOURCE, "the turntable is offered by a drop card").toContain("<DropCard");
+  expect(MODEL_SOURCE, "and it is the turntable's card, named from the field").toContain(
+    "label={`Add photographs to “${turntableLabel}”`}"
+  );
   expect(MODEL_SOURCE, "a turn is many frames chosen at once").toContain("multiple");
+  expect(MODEL_SOURCE, "and the whole turn reaches the panel's callback").toContain(
+    "onFiles={(files) => chooseFrames(files)}"
+  );
   expect(HOST_SOURCE, "wired to the registry field, not to a name this file invented").toContain(
     "fieldKey: PROTOTYPE_TURNTABLE"
   );

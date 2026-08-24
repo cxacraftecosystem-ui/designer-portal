@@ -9,30 +9,24 @@ import {
   DEFAULT_DIAL_CODE,
   DEFAULT_ISO2,
   countryByIso2,
-  countryForDialCode,
-  flagEmoji,
-  splitDialPrefix
+  flagEmoji
 } from "@/lib/countries";
+/*
+ * THE RULE AND THE PARSER BOTH MOVED OUT OF THIS FILE, AND THE MOVE IS THE WHOLE POINT.
+ *
+ * They were `parsePhone` and an inline ternary in the body below — private, unexported, and
+ * therefore enforced on the record page and NOWHERE ELSE. The design workshop mounts this very
+ * component for `participant.phone` with `mirror={false}`, which drops the native `pattern` and
+ * leaves the message advisory, and `coerce_value` had no phone rule at all on either path. So a
+ * nine-digit number typed into a stage saved cleanly and printed in a ministry roster.
+ *
+ * `FieldSpec.text_format = PHONE_IN` now declares the rule on the field and the server enforces it,
+ * with `lib/textFormats` as the one implementation all three sides read. This component keeps the
+ * inline message it always had — same function, so it cannot disagree with the refusal.
+ */
+import { isPhoneNumberShaped, phoneValidationError, splitStoredPhone } from "@/lib/textFormats";
 
 const FOREIGN_CONFIRM = "This marks the artisan as a foreign resident. Continue?";
-
-/** Split a stored phone ("+CC rest", "+CCrest", or bare 10 digits) into prefix + national digits. */
-function parsePhone(raw: string | null | undefined): { iso2: string; digits: string } {
-  const value = (raw ?? "").trim();
-  if (!value) return { iso2: DEFAULT_ISO2, digits: "" };
-  if (value.startsWith("+")) {
-    const space = value.indexOf(" ");
-    if (space > 0) {
-      const country = countryForDialCode(value.slice(0, space));
-      if (country) return { iso2: country.iso2, digits: value.slice(space + 1).replace(/\D/g, "") };
-    }
-    const match = splitDialPrefix(value);
-    if (match) return { iso2: match.country.iso2, digits: match.rest };
-    return { iso2: DEFAULT_ISO2, digits: value.replace(/\D/g, "") };
-  }
-  // Bare numbers (legacy rows) are Indian nationals: 10 digits under +91.
-  return { iso2: DEFAULT_ISO2, digits: value.replace(/\D/g, "") };
-}
 
 /**
  * Phone input with an ISD-prefix picker (flag emoji + dial code, default +91). Submits ONE string
@@ -71,21 +65,71 @@ export function PhoneField({
   disabled?: boolean;
   mirror?: boolean;
 }) {
-  const [{ iso2, digits }, setState] = useState(() => parsePhone(defaultValue));
+  const [{ iso2, digits }, setState] = useState(() => splitStoredPhone(defaultValue));
+  /**
+   * Whether anybody has touched this control since it was seeded. Only ever set, never cleared.
+   *
+   * It exists for `unshown` below and for nothing else: once the designer has typed, the box IS the
+   * value and the stored string it was seeded with is history. `defaultValue` does not change while
+   * they type — this component is uncontrolled and `StagePhoneField` re-keys it only when the value
+   * arrives from somewhere other than its own `onValueChange` — so without this flag the notice
+   * would stand under a box the designer had already corrected.
+   */
+  const [edited, setEdited] = useState(false);
   const errorId = useId();
   const country = countryByIso2(iso2) ?? countryByIso2(DEFAULT_ISO2)!;
   const dialCode = country.dialCode;
   const combined = digits ? `${dialCode} ${digits}` : "";
 
-  // Android parity (ui/PhoneField.kt artisanPhoneValidationError): same rule, same two sentences,
-  // so a researcher who corrects a number on the phone reads the same instruction on the laptop.
-  const error = !digits
-    ? null
-    : dialCode === DEFAULT_DIAL_CODE && digits.length !== 10
-      ? "Enter a 10-digit number for +91."
-      : dialCode !== DEFAULT_DIAL_CODE && (digits.length < 4 || digits.length > 14)
-        ? "Enter a valid phone number (4–14 digits)."
-        : null;
+  /*
+   * ONE FUNCTION, MEASURED ON THE STORED STRING, so this box cannot disagree with the server about
+   * the number it is holding.
+   *
+   * Android parity (ui/PhoneField.kt artisanPhoneValidationError): same rule, same two sentences, so
+   * a researcher who corrects a number on the phone reads the same instruction on the laptop. It
+   * used to be a ternary written out here, which is how the rule came to exist in two places and be
+   * enforced in one.
+   *
+   * `combined` AND NOT `(dialCode, digits)`: the stored string is what `coerce_value`,
+   * `report_builder` and the handset's coerce port all see, so validating the composed value is the
+   * only way the message under this box and the refusal from the repository are answers to the same
+   * question. It round-trips exactly — `splitStoredPhone` splits at the first space and resolves the
+   * prefix, and the rule only depends on whether that prefix is +91 and on the digit count.
+   */
+  /**
+   * The stored string this box CANNOT SHOW, or "" when there is no such thing.
+   *
+   * ── THE DEFECT THIS CLOSES, WHICH IS A SILENT REVERT AND NOT A COSMETIC ONE ───────────────────
+   *
+   * This control renders `digits` — what `splitStoredPhone` could parse — and composes `combined`
+   * from it. A stored value with no digits in it therefore drew AN EMPTY BOX: `combined` was "",
+   * `phoneValidationError("")` was null, and the design workshop's wrapper stays deliberately quiet
+   * for a PHONE field (`formatShownByControl`) because this control is supposed to be the one saying
+   * it. So `participant.phone` holding "not a number" — copied there by `hydrate_entries` from a
+   * column nothing has ever validated — was refused by the server on every save, restored from
+   * `previous`, and reported by nobody: the value snapped back on the next GET with no red text
+   * anywhere and an empty box where the fault was.
+   *
+   * A value that IS number-shaped needs none of this: its digits are in the box, so a wrong count is
+   * something the designer can see and fix. What this names is the case where the box and the column
+   * hold different things.
+   *
+   * PRINTED VERBATIM, because "there is something here you cannot see" is not actionable and the
+   * string itself is: it is usually a note somebody typed into a phone column ("ask his son"), which
+   * tells the designer where the number actually is.
+   */
+  const stored = (defaultValue ?? "").trim();
+  const unshown = !edited && stored !== "" && !isPhoneNumberShaped(stored) ? stored : "";
+
+  /*
+   * MEASURED ON THE UNSHOWABLE STORED VALUE WHERE THERE IS ONE, so the message under this box is
+   * about the thing that will actually be saved. Android has always done it this way round —
+   * `FieldRenderer`'s PHONE arm computes `DwTextFormats.error(field.format, DwValues.text(value))`
+   * from the stored value and hands it in — and the note there says why: "a HYDRATED number that is
+   * already malformed is flagged the moment the stage opens rather than only after somebody happens
+   * to edit it".
+   */
+  const error = phoneValidationError(unshown || combined);
 
   /**
    * THE NAME IS ON THE ROW AND IT IS WHAT THE FILTER BOX SEARCHES.
@@ -123,6 +167,7 @@ export function PhoneField({
 
   function emit(next: { iso2: string; digits: string }) {
     setState(next);
+    setEdited(true);
     const nextCountry = countryByIso2(next.iso2);
     onValueChange?.(next.digits && nextCountry ? `${nextCountry.dialCode} ${next.digits}` : "");
   }
@@ -188,6 +233,19 @@ export function PhoneField({
       {error ? (
         <p id={errorId} role="alert" className="text-xs text-error-600">
           {error}
+        </p>
+      ) : null}
+      {/* WHAT THE COLUMN HOLDS, WHEN IT IS NOT WHAT THE BOX IS SHOWING. See `unshown` above: without
+          this line the sentence above stands over an empty box, which reads as an error about
+          nothing and gives the designer no way to know a value is there at all. `ink-500`, not
+          `error-600` — the refusal is one sentence and this is the fact behind it, not a second
+          fault. Deliberately NOT in `aria-describedby`: the error already is, and a screen reader
+          reading a stored fragment as part of the field's description on every focus would bury the
+          instruction. It is a `<p>` in reading order immediately after it. */}
+      {unshown ? (
+        <p className="text-xs leading-5 text-ink-500">
+          What is saved for this field is “{unshown}”, which this box cannot show — it holds a dial code and digits
+          only. Type the number to replace it.
         </p>
       ) : null}
       {/* Zero-size (not hidden) mirror input: submits the single combined value under the existing

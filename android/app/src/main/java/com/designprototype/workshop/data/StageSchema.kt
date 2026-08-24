@@ -231,12 +231,36 @@ data class FieldDto(
      * there in a single tap. A phone that did not know about this flag would write those twelve
      * digits into a draft, print them on the on-device report, show them to the designer as their
      * saved answer, and be silently overruled on the next sync. So [StageSchemaStore] masks at the
-     * same point the server does (see `lengthChecked`) and `FieldRenderer` says so on the box.
+     * same point the server does (see [scalarText]) and `FieldRenderer` says so on the box.
      *
      * It is part of `registry_version()` for the same reason: a field GAINING the flag has to
      * invalidate cached drafts, or a phone with no signal goes on promising to keep what it cannot.
      */
     val storeMasked: Boolean = false,
+    /**
+     * THE SHAPE THIS FIELD'S TEXT HAS TO HAVE — "EMAIL", "PHONE_IN", "AADHAAR", "PEHCHAN",
+     * "PINCODE" — or "" when the registry declares none.
+     *
+     * `coerce_value` enforces it in the scalar-text arm, between the `max_length` check and the
+     * `store_masked` mask, and REFUSES a value that does not match rather than storing it. So this
+     * is the one key on [FieldDto] that lets this handset say the server's "no" at the moment the
+     * value is typed, which is the whole reason [DwValues] exists.
+     *
+     * DECODED AS A STRING AND NOT AN ENUM, deliberately, and it is the same choice [reportRole] and
+     * [derivedKind] make. A server one release ahead can name a format this build has never heard
+     * of; as an enum that is a decode failure that blanks the field — or, with
+     * `coerceInputValues`, silently becomes the first member and enforces the WRONG rule. As a
+     * string it is a token [DwTextFormats.error] has no entry for, and it answers null: the value
+     * goes up and the server refuses it by name. See that function on why "enforce nothing" is the
+     * safe direction and "guess a rule" is not.
+     *
+     * IT IS PART OF `registry_version()`, so a field GAINING a format invalidates cached drafts —
+     * exactly as [storeMasked] and [derivedKind] do, and for exactly the same reason: a phone with
+     * no signal that does not know a field gained a rule goes on accepting values the server will
+     * now refuse, and the designer meets the refusal a fortnight later as a card about a stage they
+     * finished in another district.
+     */
+    val format: String = "",
     val minValue: Double? = null,
     val maxValue: Double? = null,
     /** NARRATIVE | KEY_VALUE | TABLE_COLUMN | CAPTION | GALLERY | COVER_FIELD | METRIC | BULLETS | HIDDEN. */
@@ -631,44 +655,82 @@ object DwValues {
                     Coerced(JsonPrimitive(trimmed), null)
                 }
 
-            DwFieldType.EMAIL ->
-                if (!trimmed.contains('@') || trimmed.startsWith('@') || trimmed.endsWith('@')) {
-                    Coerced(null, "${field.label} is not a valid email address")
-                } else {
-                    lengthChecked(field, trimmed)
-                }
-
+            /*
+             * NO LOCAL EMAIL RULE ANY MORE — AND DELETING IT IS THE POINT OF THE CHANGE.
+             *
+             * This arm used to read `!trimmed.contains('@') || trimmed.startsWith('@') ||
+             * trimmed.endsWith('@')` and answer "${'$'}{field.label} is not a valid email address".
+             * That was THE THIRD ANSWER to what a valid email address is: stricter than the browser
+             * (which checked nothing at all on a stage box) and stricter than the server (which
+             * checked nothing anywhere, on either path). So this handset refused addresses the
+             * browser accepted, and the repository accepted addresses this handset had refused.
+             *
+             * The rule now arrives as a DECLARATION on the field — `text_format = EMAIL` — and is
+             * answered by [DwTextFormats.emailError], which is the same rule and the same sentence as
+             * `lib/textFormats.ts` and `contact_formats.py`. It is enforced in [scalarText] below,
+             * with the other four formats, in the same branch and the same order as the server. So
+             * EMAIL keeps no arm of its own here: falling through to `else` is what makes the type
+             * carry nothing but the keyboard, which is all it should ever have carried.
+             */
             DwFieldType.URL ->
                 // Deliberately permissive: a field officer types "dch.gov.in" and meaning it is the
                 // point, not the scheme. Only something that is plainly not a locator is refused.
                 if (trimmed.contains(' ')) {
                     Coerced(null, "${field.label} must not contain spaces")
                 } else {
-                    lengthChecked(field, trimmed)
+                    scalarText(field, trimmed)
                 }
 
-            else -> lengthChecked(field, trimmed)
+            else -> scalarText(field, trimmed)
         }
     }
 
-    private fun lengthChecked(field: FieldDto, text: String): Coerced =
+    /**
+     * `coerce_value`'s SCALAR-TEXT ARM, ported in the server's own order: length, then format, then
+     * mask.
+     *
+     * RENAMED FROM `lengthChecked`, because that name had already stopped being true when the mask
+     * landed and would now be lying about two things. The three steps are one door — the server says
+     * so of its own — and the order between them is argued below rather than left to look incidental.
+     */
+    private fun scalarText(field: FieldDto, text: String): Coerced {
+        // LENGTH FIRST. An over-long answer keeps its OWN refusal rather than being handed to a
+        // format rule that would report a different fault, or — worse, on a `storeMasked` field —
+        // being quietly shortened into a plausible mask. Same ordering, same reason, as the server.
         if (field.maxLength > 0 && text.length > field.maxLength) {
-            Coerced(null, "${field.label} is longer than ${field.maxLength} characters")
-        } else {
-            // THE MASK IS APPLIED HERE BECAUSE THE SERVER APPLIES IT HERE — same branch, same order,
-            // after the length check and not before it. See [FieldDto.storeMasked]: this is a port of
-            // `coerce_value`'s scalar-text arm, and a port that skipped the transform would leave the
-            // phone showing twelve digits as the designer's saved answer while the repository held
-            // four. `ArtisanIdentity.mask` is character-for-character the server's `mask_aadhaar`
-            // (both keep the last four, X out the rest, and mask anything shorter than four whole),
-            // and it is idempotent, so re-coercing a value hydration already masked changes nothing.
-            //
-            // A null answer means the value normalised to nothing, which `text` cannot be — it is
-            // non-blank and trimmed by the caller — but reading a null as "clear the field" rather
-            // than "leave it alone" is the direction that loses data, so it is spelled out.
-            val stored = if (field.storeMasked) ArtisanIdentity.mask(text) ?: text else text
-            Coerced(JsonPrimitive(stored), null)
+            return Coerced(null, "${field.label} is longer than ${field.maxLength} characters")
         }
+
+        /*
+         * FORMAT SECOND, AND BEFORE THE MASK — WHICH IS FORCED, NOT MERELY TIDY.
+         *
+         * [ArtisanIdentity.mask] takes the last four characters of ANYTHING once separators come
+         * off. So with the two steps the other way round, a typed "hello world 1234" normalises to
+         * fourteen characters, sails under `max_length = 20`, and becomes "XXXX XXXX 1234" BEFORE any
+         * rule looks at it — at which point it is a well-formed mask and nothing downstream can tell
+         * it from a real Aadhaar number. Reversing this ordering does not weaken the check; it
+         * MANUFACTURES the exact defect the check exists to prevent, in the shape of a government
+         * identity number, in a document submitted to a ministry.
+         *
+         * That is also why `_validate_registry` on the server refuses `store_masked = true` without
+         * `text_format = AADHAAR`: unqualified, `store_masked` is `mask(anything)`.
+         */
+        DwTextFormats.error(field.format, text)?.let { return Coerced(null, it) }
+
+        // THE MASK IS APPLIED HERE BECAUSE THE SERVER APPLIES IT HERE — same branch, same order,
+        // after the length check and not before it. See [FieldDto.storeMasked]: this is a port of
+        // `coerce_value`'s scalar-text arm, and a port that skipped the transform would leave the
+        // phone showing twelve digits as the designer's saved answer while the repository held
+        // four. `ArtisanIdentity.mask` is character-for-character the server's `mask_aadhaar`
+        // (both keep the last four, X out the rest, and mask anything shorter than four whole),
+        // and it is idempotent, so re-coercing a value hydration already masked changes nothing.
+        //
+        // A null answer means the value normalised to nothing, which `text` cannot be — it is
+        // non-blank and trimmed by the caller — but reading a null as "clear the field" rather
+        // than "leave it alone" is the direction that loses data, so it is spelled out.
+        val stored = if (field.storeMasked) ArtisanIdentity.mask(text) ?: text else text
+        return Coerced(JsonPrimitive(stored), null)
+    }
 
     private fun rangeChecked(field: FieldDto, value: Double): String? {
         val min = field.minValue

@@ -151,6 +151,21 @@ export type DwReportRole =
   | "BULLETS"
   | "HIDDEN";
 
+/**
+ * The members of the server's `TextFormat` enum — see {@link DwField.format}.
+ *
+ * `PHONE_IN` and not `PHONE`: the rule is "+91 means exactly ten digits, any other dial code means
+ * four to fourteen", which is a rule about India and is named for it, exactly as the enum registry
+ * names `INDIAN_STATE`. A second country's rule is then a second member rather than a silent change
+ * of meaning in this one.
+ *
+ * A WIDER TYPE THAN THE UNION IS DELIBERATE at the fetch boundary — the schema arrives as JSON, so
+ * a server one release ahead can send a member this build has never heard of. That is not a type
+ * error, it is a value the dispatch table has no entry for, and `fieldFormatError` answers it by
+ * enforcing NOTHING rather than by guessing. See its note on why that is the safe direction.
+ */
+export type DwTextFormat = "EMAIL" | "PHONE_IN" | "AADHAAR" | "PEHCHAN" | "PINCODE";
+
 export type DwCardinality = "SINGLETON" | "COLLECTION";
 
 export type DwEnumOption = { value: string; label: string };
@@ -215,6 +230,39 @@ export type DwField = {
    * invalidates cached drafts when it moves.
    */
   storeMasked?: boolean;
+  /**
+   * THE SHAPE THIS FIELD'S TEXT HAS TO HAVE, AS THE SERVER DECLARED IT — read, never inferred.
+   *
+   * `coerce_value` enforces it in the scalar-text arm, between the `maxLength` check and the
+   * `storeMasked` mask, and REFUSES a value that does not match rather than storing it. So this is
+   * the only key on `DwField` that tells the browser, before a round trip, that a box will not
+   * accept what is being typed into it.
+   *
+   * ── WHY A DECLARATION AND NOT A CHECK IN `FieldInput` ──────────────────────────────────────────
+   *
+   * Because the box that needed the check is not the box the validators were attached to.
+   * `StageRecordEmbed` mounts the real `ArtisanForm` for a participant row, so every record-page
+   * validator is present and working two inches away — and `splitMirroredFields` ALSO draws a
+   * second, editable box for the same fact, which is the copy `report_builder` prints. Both boxes
+   * held one artisan's email address; only one of them was governed; the ministry got the other.
+   * A rule declared on the field reaches both boxes, this client, the handset, and every direct API
+   * caller, and — because `validate_entry` re-coerces every field on every save — it also starts
+   * refusing the malformed values already sitting in `DwStageEntry.data`. A client-side check
+   * cannot reach one stored byte.
+   *
+   * ── IT IS PART OF `registry_version()`, SO IT INVALIDATES CACHED DRAFTS ───────────────────────
+   *
+   * Same reason as `storeMasked` and `derivedKind`: a phone with no signal that does not know a
+   * field has GAINED a format goes on accepting values the server will now refuse, and the designer
+   * finds out a fortnight later when the sync lands. Behaviour goes into the version; labels do not.
+   *
+   * The values are the members of the server's `TextFormat` — "EMAIL", "PHONE_IN", "AADHAAR",
+   * "PEHCHAN", "PINCODE" — and the key is ABSENT when the field declares none (`field_to_dict`
+   * emits only non-default keys). An unrecognised value must not blank the box or block the save;
+   * see `fieldFormatError` in `components/designworkshop/stageFieldFormats.ts` for what a client one
+   * release behind does with a format it has never heard of, and why that direction is the safe one.
+   */
+  format?: DwTextFormat;
   minValue?: number;
   maxValue?: number;
   reportRole?: DwReportRole;

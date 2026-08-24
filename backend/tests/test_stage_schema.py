@@ -29,10 +29,12 @@ from app.services.stage_schema import (
     FieldSpec,
     FieldType,
     ReportRole,
+    TextFormat,
     Tier,
     all_entities,
     coerce_value,
     enum_label,
+    field_to_dict,
     promoted_values,
     registry_to_dict,
     registry_version,
@@ -1046,3 +1048,391 @@ def test_the_reason_is_not_demanded_when_no_count_was_overridden():
             outcomes, {"achievements": "Ten designs were developed."}, enforce_required=enforce
         )
         assert "countOverrideReason" not in errors
+
+
+# --------------------------------------------------------------------------------------
+# FieldSpec.text_format — the declared shape of a scalar text value
+#
+# WHAT THESE TESTS ARE ABOUT, because it is not a new type or a new box. A stage row MIRRORS a
+# record page's fields, and every one of the record page's validators was present and working two
+# inches away — attached to the box nobody prints. The value the REPORT prints is the stage copy,
+# and for that copy `coerce_value` checked a length and nothing else: EMAIL, PHONE and TEXT all
+# went through one scalar-text arm. So a typed "hello world 1234" passed
+# `participant.aadhaarNumber`'s bound of 20, was masked to "XXXX XXXX 1234" by `store_masked`, and
+# was printed as a national identity number in a document submitted to a ministry. The validations
+# had not gone missing; they were attached to the wrong box.
+# --------------------------------------------------------------------------------------
+
+
+#: The three-language contract. See the file's own `about` for why a checked-in table and not a
+#: parity comment: email is the control experiment for whether prose keeps three implementations
+#: in step, and the answer measured on 2026-08-24 was three different answers and nobody noticing.
+VECTOR_TABLE = (
+    pathlib.Path(__file__).resolve().parents[2] / "shared" / "text-format-vectors.json"
+)
+
+#: A Verhoeff-valid Aadhaar, computed rather than written down. A literal here would rot the first
+#: time somebody edited a digit of it, and it would rot into a test that passes for the wrong
+#: reason: the number would simply be refused by the checksum arm.
+def _valid_aadhaar() -> str:
+    from app.services.artisan_identity import verhoeff_ok
+
+    for last in "0123456789":
+        candidate = f"23456789012{last}"
+        if verhoeff_ok(candidate):
+            return candidate
+    raise AssertionError("no Verhoeff-valid Aadhaar in the candidate range")
+
+
+def _participant_field(key: str) -> FieldSpec:
+    field = _entity("participant").field(key)
+    assert field is not None, f"participant has no {key!r} field"
+    return field
+
+
+def test_a_typed_string_that_is_not_an_aadhaar_is_refused_rather_than_masked():
+    """THE DEFECT THIS FEATURE EXISTS TO END, and it shipped.
+
+    `participant.aadhaarNumber` was a plain TEXT box with a 20-character bound and
+    `store_masked=True`. `mask_aadhaar` strips separators and keeps the LAST FOUR CHARACTERS OF
+    ANYTHING, so "hello world 1234" — fourteen characters, comfortably inside the bound —
+    normalised to "helloworld1234" and was stored as "XXXX XXXX 1234". A design workshop's stage
+    reads do not pass through `records._redact_sensitive`, a `DesignWorkshopViewer` is a grantee,
+    hydration copies at save time and the report never re-resolves: so a typo, in the shape of a
+    government identity number, became a permanent line of a ministry document that nothing
+    downstream could tell from a real one.
+
+    THE MASKING IS WHAT MADE IT UNDETECTABLE. That is why the format is checked BEFORE the mask and
+    not after: reversed, the ordering MANUFACTURES the defect it is meant to prevent — the value is
+    a well-formed mask by the time anybody looks at it.
+
+    Both halves are asserted, and the second is the one a later refactor is likely to lose: not
+    merely that an error came back, but that nothing was stored.
+    """
+    aadhaar = _participant_field("aadhaarNumber")
+    assert aadhaar.text_format is TextFormat.AADHAAR
+
+    stored, error = coerce_value(aadhaar, "hello world 1234")
+    assert error == "Aadhaar number must be 12 digits — remove any letters or symbols.", error
+    assert stored is None, (
+        f"{stored!r} was stored: a typo in the shape of an Aadhaar number, which is the whole of "
+        "the defect. The format check has to run BEFORE store_masked"
+    )
+
+    # A REAL NUMBER IS STILL ACCEPTED AND STILL MASKED, which is the second half of the owner's
+    # 2026-08-24 instruction ("a designer entitled to the full number can type over the mask") and
+    # the reason this is a format rather than a refusal of full numbers.
+    real = _valid_aadhaar()
+    assert coerce_value(aadhaar, real) == (f"XXXX XXXX {real[-4:]}", None)
+
+
+def test_a_hydrated_mask_survives_re_coercion_without_a_refusal():
+    """The trap a naive Aadhaar validator falls into, on a row nobody touched, for ever.
+
+    `hydrate_entries` writes `mask_identity_number(...)` into this box, and `validate_entry`
+    re-coerces EVERY field on EVERY save. A predicate that knew only `aadhaar_error` would answer
+    "Aadhaar number must be 12 digits" against the mask; `save_stage` restores the refused key from
+    `previous` (the same mask), so the stored value would never change and the error would reappear
+    on every save, for ever, naming a fault the designer cannot fix because the digits are not
+    theirs to see.
+
+    Idempotence is asserted as well as acceptance: `mask_aadhaar` on its own output must be a
+    no-op, or the value would drift a little on each save.
+    """
+    aadhaar = _participant_field("aadhaarNumber")
+    for mask in ("XXXX XXXX 0124", "XXXX XXXX XXXX"):
+        stored, error = coerce_value(aadhaar, mask)
+        assert error is None, f"{mask!r} was refused: {error}"
+        assert stored == mask, f"{mask!r} came back as {stored!r}"
+
+
+def test_the_mask_predicate_refuses_what_is_masked_aadhaar_accepts():
+    """The accept-arm is a SHAPE, and choosing the other one would have re-shipped the defect.
+
+    `is_masked_aadhaar`'s rule is "an X anywhere". That is correct where it is used — a masked
+    value posted back by `ArtisanUpdate` means "I was not shown the real number and did not change
+    it", and the route DROPS the key before the write (`drop_masked_identity_numbers`), so nothing
+    it accepts is ever stored. `coerce_value` has no drop: whatever the format accepts is STORED
+    and then masked. Under `is_masked_aadhaar`, "XxamplE 1234" is a mask, passes, and is stored as
+    "XXXX XXXX 1234" — the original defect, unchanged, now behind a validator.
+
+    So both facts are asserted together: the old predicate says yes, the new one says no.
+    """
+    from app.services.artisan_identity import aadhaar_or_mask_error, is_masked_aadhaar
+
+    aadhaar = _participant_field("aadhaarNumber")
+    for accepted_by_the_wrong_rule in ("XxamplE 1234", "X", "XXXX XXXX 12345"):
+        assert is_masked_aadhaar(accepted_by_the_wrong_rule), (
+            "this test is asserting a difference that no longer exists"
+        )
+        assert aadhaar_or_mask_error(accepted_by_the_wrong_rule) is not None
+        stored, error = coerce_value(aadhaar, accepted_by_the_wrong_rule)
+        assert error is not None and stored is None, (
+            f"{accepted_by_the_wrong_rule!r} was stored as {stored!r}"
+        )
+
+    # AND THE CASE-SENSITIVITY IS DELIBERATE. Both mask producers emit upper-case X's, and folding
+    # case is exactly what would let a run of prose containing "xxxx" through the door.
+    assert aadhaar_or_mask_error("xxxx xxxx 0124") is not None
+
+
+def test_store_masked_requires_an_aadhaar_format():
+    """The highest-value line in the whole feature, and it is a registry rule rather than a check.
+
+    `store_masked` on its own is `mask(anything)` — precisely how "hello world 1234" became a
+    government identity number in a ministry document. Pairing the flag with the format in
+    `validate_registry` means any FUTURE field that declares the flag inherits the guard by
+    construction, instead of by somebody remembering the paragraph that explains why.
+    """
+    aadhaar = _participant_field("aadhaarNumber")
+    assert aadhaar.store_masked and aadhaar.text_format is TextFormat.AADHAAR
+
+    with _swapped_attrs(aadhaar, text_format=TextFormat.NONE):
+        problems = validate_registry()
+        assert any("store_masked without text_format=AADHAAR" in p for p in problems), problems
+
+    assert validate_registry() == []
+
+
+def test_a_format_may_only_be_declared_on_a_type_that_reaches_the_branch_enforcing_it():
+    """The same rule, and the same sentence, as the `store_masked` rule directly above it.
+
+    `coerce_value` enforces a format inside its scalar-text branch and nowhere else. Declared on an
+    INT, a DATE or an IMAGE_LIST the format would serialise to both clients, be published in the
+    digest, appear in the bundled Android asset — and refuse nothing on the way in. A published
+    flag nothing enforces is the silent failure this whole feature exists to end, rebuilt inside
+    the feature.
+    """
+    numeric = next(
+        f for _s, e in all_entities() for f in e.fields if f.type is FieldType.INT
+    )
+    with _swapped_attrs(numeric, text_format=TextFormat.PINCODE):
+        problems = validate_registry()
+        assert any("only a scalar text field" in p for p in problems), problems
+
+    rich = next(
+        f for _s, e in all_entities() for f in e.fields if f.type is FieldType.RICH_TEXT
+    )
+    with _swapped_attrs(rich, text_format=TextFormat.EMAIL):
+        assert any("only a scalar text field" in p for p in validate_registry())
+
+    assert validate_registry() == []
+
+    # AND EVERY TYPE THE RULE ALLOWS REALLY DOES REACH THE BRANCH. A rule that permitted a type
+    # whose values never pass through the format check would be the same silent failure with a
+    # green test beside it.
+    for allowed in (FieldType.TEXT, FieldType.LONG_TEXT, FieldType.URL,
+                    FieldType.PHONE, FieldType.EMAIL):
+        spec = _f(label="Contact", type=allowed, text_format=TextFormat.EMAIL)
+        assert coerce_value(spec, "not-an-address")[1] is not None, (
+            f"a format declared on {allowed.value} is accepted by validate_registry and enforced "
+            "by nothing"
+        )
+
+
+def test_the_version_changes_when_a_field_gains_a_format():
+    """A format is BEHAVIOUR, so it belongs in the digest — the rule that docstring already states.
+
+    A handset that has never reached the network and does not know a field has gained a format goes
+    on accepting values the server will now refuse, shows no error where the browser shows one, and
+    reports the refusal only after a save it presented as complete. That is the same class of
+    silent disagreement as a derivation that stopped computing, which is why the digest covers it.
+    """
+    baseline = registry_version()
+    plain = next(
+        f for _s, e in all_entities()
+        if e.key == "surveyResponse"
+        for f in e.fields
+        if f.type is FieldType.TEXT and f.text_format is TextFormat.NONE
+    )
+    with _swapped_attrs(plain, text_format=TextFormat.PINCODE):
+        assert registry_version() != baseline, (
+            "a field gained a format and the digest did not move, so every phone holding the old "
+            "registry would go on accepting what the server now refuses and never be told to "
+            "refetch"
+        )
+    assert registry_version() == baseline
+
+    # AND CHANGING WHICH format IS ALSO A CHANGE. A digest that hashed only "has a format" would
+    # pass the assertion above while missing a correction from PHONE_IN to EMAIL.
+    email = _participant_field("email")
+    with _swapped_attrs(email, text_format=TextFormat.PHONE_IN):
+        assert registry_version() != baseline
+    assert registry_version() == baseline
+
+
+def test_a_legacy_bare_ten_digit_phone_is_not_refused_on_re_save():
+    """The trap that made writing a server-side phone rule dangerous, one field over.
+
+    `Artisan.phone` has never had a server-side rule — `ArtisanCreate`/`ArtisanUpdate` declare
+    `phone: str | None` with no validator — so the table holds bare numbers written before the
+    dial-code picker existed, and `hydrate_entries` has been copying them into `participant.phone`
+    ever since. `PhoneField.tsx`'s parser is explicit about them: "Bare numbers (legacy rows) are
+    Indian nationals: 10 digits under +91." A `phone_error` that read a missing dial code as
+    malformed would refuse EVERY one of those rows on its next save, and because `save_stage`
+    restores a refused key from `previous` the designer would get a permanent red error on a box
+    they never touched, over a value they cannot correct.
+    """
+    phone = _participant_field("phone")
+    assert phone.text_format is TextFormat.PHONE_IN
+
+    for legacy in ("9876500001", "9876 500 001"):
+        stored, error = coerce_value(phone, legacy)
+        assert error is None, f"{legacy!r} was refused: {error}"
+        assert stored == legacy, "a legacy number must be kept as typed, not reformatted"
+
+    # The composed shape both clients write, and the nine-digit number the audit found saving
+    # cleanly because the stage mounts PhoneField with `mirror={false}` (advisory, not blocking).
+    assert coerce_value(phone, "+91 9876500001")[1] is None
+    assert coerce_value(phone, "+91 987650000")[1] == "Enter a 10-digit number for +91."
+
+
+def test_participant_email_is_bounded():
+    """A format is a shape, not a length, and this field had NO length at all.
+
+    `participant.email` declared no `max_length`, so it was unbounded: the report's participant
+    block, the .docx, the .xlsx and every export would carry whatever a client posted. The bound is
+    chosen NOW, while nothing is stored, for the reason written at `pincode` and at
+    `aadhaarNumber`: `validate_entry` re-coerces EVERY field on EVERY save, so a bound added later
+    becomes a refusal on a box the designer never touched.
+    """
+    email = _participant_field("email")
+    assert email.type is FieldType.EMAIL
+    assert email.text_format is TextFormat.EMAIL
+    assert email.max_length == 254, "the longest an RFC-conformant address can be"
+
+    # THE BOUND BITES BEFORE THE FORMAT, which is what keeps an over-long answer's refusal its own
+    # rather than being reported as a malformed address.
+    long_but_well_formed = "a" * 250 + "@example.org"
+    stored, error = coerce_value(email, long_but_well_formed)
+    assert stored is None and error is not None
+    assert "longer than 254" in error, error
+
+
+def test_every_email_and_phone_field_in_the_registry_declares_a_format():
+    """A TYPE WITHOUT A RULE IS WHAT THIS ALL WAS, so the sweep is the part that has to hold.
+
+    `FieldType.EMAIL` and `FieldType.PHONE` are captured, published and printed exactly like TEXT:
+    both fall into the same scalar-text arm of `coerce_value`. Declaring the type therefore bought
+    the designer a keyboard on the handset and nothing else. Adding the next such field without a
+    format is the way this gap comes back, and it would look completely reasonable in review.
+    """
+    unchecked = [
+        f"{entity.key}.{field.key}"
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.type in (FieldType.EMAIL, FieldType.PHONE)
+        and not field.deprecated
+        and field.text_format is TextFormat.NONE
+    ]
+    assert unchecked == [], (
+        f"{unchecked} are typed EMAIL/PHONE and declare no text_format, so the server checks "
+        "nothing but their length — which is the state this feature was written to end"
+    )
+
+
+def test_every_declared_format_is_published_to_the_clients():
+    """Both clients preview the rule, and a preview they were never told about is no preview.
+
+    The refusal reaches the exact box already (`placeStageErrors` -> `EntityForm` -> `FieldHint`
+    with `role="alert"`), so this is not about the error path. It is about the ordinary case never
+    needing the round trip at all — a fleet often on one bar of signal, where a save that comes
+    back refused looks like a value that silently reverted.
+    """
+    published = {
+        f"{entity.key}.{field.key}": field_to_dict(field, entity.key).get("format")
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.text_format is not TextFormat.NONE and not field.deprecated
+    }
+    assert published, "no field declares a format; this test is measuring nothing"
+    for path, value in published.items():
+        assert value, f"{path} declares a format that field_to_dict does not publish"
+
+    # And the default is still omitted, on the same "only non-default keys" rule as everything
+    # around it: the whole registry crosses the wire on every app start.
+    plain = _participant_field("name")
+    assert plain.text_format is TextFormat.NONE
+    assert "format" not in field_to_dict(plain, "participant")
+
+
+def test_the_pehchan_predicate_accepts_a_mask_which_is_why_no_field_declares_it():
+    """A no-op that LOOKS like protection is worse than the gap it appears to close.
+
+    `TextFormat.PEHCHAN` exists and is enforceable, and the obvious next move would be to declare
+    it on `participant.artisanCardNo` — which also carries a mask from hydration. `pehchan_error`
+    ACCEPTS that mask: separators come off, fourteen alphanumerics remain, comfortably inside the
+    4-32 window, and there is no checksum to fail. `schemas/records.py` records that this exact
+    acceptance once stored a mask OVER a real card number — 200 OK, revision recorded, regulated
+    identifier gone. (The Aadhaar mask fails its own validation instead, which is the only reason
+    that half was noticed.)
+
+    So the format would refuse nothing that box could hold. Attaching it needs its own mask-aware
+    predicate — the `aadhaar_or_mask_error` shape — and an owner decision about
+    `IdentityCardCapture kind="PEHCHAN"`, which exists to write full numbers into that field. This
+    test is the record of that being a deferral rather than an oversight, and it fails the day
+    somebody declares the format without the predicate.
+    """
+    from app.services.artisan_identity import normalize_pehchan, pehchan_error
+
+    assert pehchan_error(normalize_pehchan("XXXX XXXX 3456")) is None, (
+        "pehchan_error now refuses a mask, so the reason artisanCardNo declares no format has "
+        "changed — re-read this test's docstring before deleting it"
+    )
+    card = _participant_field("artisanCardNo")
+    assert card.text_format is TextFormat.NONE
+    assert card.store_masked is False
+
+
+def test_the_three_implementations_agree_on_the_shared_vector_table():
+    """The server's half of the one mechanism that keeps three languages in step.
+
+    Email is the control experiment for whether parity PROSE works: the same intent stated in a
+    private regex in `ArtisanForm.tsx`, again as that input's `pattern` attribute, and again in the
+    Kotlin port of `coerce_value` — three implementations, three answers, nobody noticing. The web
+    accepted an address with no `@`, Android refused it, the server checked nothing.
+
+    So the rule is a checked-in table read by a test on each side, which is structurally what
+    `test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from` does for the schema
+    and the only reason that asset cannot silently drift. The MESSAGES are asserted and not just
+    the accept/refuse verdict: "the same checks, in the same order, with the same sentences" is
+    written in three files in this repository and it is a promise to the researcher, who must read
+    the same instruction on the laptop that they read on the handset.
+    """
+    payload = json.loads(VECTOR_TABLE.read_text(encoding="utf-8"))
+    vectors = payload["vectors"]
+    # The same floor both client readers assert (`DwTextFormatParityTest`,
+    # `text-format-parity-unit.spec.ts`): a table somebody emptied while "regenerating" it
+    # would make every row below pass vacuously, which is the one way a parity test can lie.
+    assert len(vectors) > 30, "the shared case table is suspiciously small"
+
+    # Every format that a field actually declares must be exercised, or a row could be added to
+    # the registry with no vector behind it.
+    declared = {
+        f.text_format.value
+        for _s, e in all_entities()
+        for f in e.fields
+        if f.text_format is not TextFormat.NONE and not f.deprecated
+    }
+    covered = {row["format"] for row in vectors}
+    assert declared <= covered, f"{declared - covered} is declared and has no vectors"
+
+    # THE SHARED ROWS, then the server-only ones — of which there are NONE today, and the loop still
+    # reads the key rather than assuming it is empty.
+    #
+    # The split is not bookkeeping: a client reader asserting a `server_only` row would be asserting
+    # a rule its own control cannot produce. The single row that was ever in there — PHONE_IN "not a
+    # number" — turned out not to qualify, and how it failed to is the lesson: "no client can reach
+    # it" was measured on the CONTROL (a phone box only accepts digits) and not on the DATA (nothing
+    # validates `Artisan.phone`, `hydrate_entries` copies it into `participant.phone`, and both
+    # clients are then handed it). It refused on every save while both previews called it clean,
+    # which is a silent revert. A row belongs in `server_only` only when no client can produce the
+    # value AND no client can be handed it; `divergences_to_reconcile` in the same file carries the
+    # three that have been closed and the one residual that is not pinned.
+    for row in vectors + payload["server_only"]:
+        spec = _f(label="Value", type=FieldType.TEXT,
+                  text_format=TextFormat(row["format"]))
+        _stored, error = coerce_value(spec, row["value"])
+        assert error == row["error"], (
+            f"{row['format']} {row['value']!r}: expected {row['error']!r}, got {error!r}"
+        )

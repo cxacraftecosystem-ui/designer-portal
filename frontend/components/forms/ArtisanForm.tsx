@@ -38,12 +38,12 @@ import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type Batch
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import { deriveAge, deriveExperienceYears } from "@/lib/recordDerivations";
+import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
 
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // The Pehchan Yes/No dropdown submits these through the Select's mirror input; `submit` parses them
 // back into the boolean the API expects. Keeping them as the option VALUES (with "Yes"/"No" only as
@@ -502,8 +502,16 @@ export function ArtisanForm({
     resetKey: initial?.id ?? null
   });
 
-  const emailError =
-    email.trim() && !EMAIL_RE.test(email.trim()) ? "Enter a valid email address (name@example.com)." : null;
+  /*
+   * THE ONE EMAIL RULE, READ RATHER THAN RESTATED.
+   *
+   * `EMAIL_RE` used to be declared at the top of this file and the SAME expression written out again
+   * as the `pattern` attribute of the input below — two literals, no test between them, and the two
+   * halves of one rule seven hundred lines apart. It now comes from `lib/textFormats`, which is also
+   * what `FieldSpec.text_format = EMAIL` dispatches to in the design workshop and what the server's
+   * `contact_formats.email_error` was written to match. The sentence is unchanged.
+   */
+  const emailError = emailValidationError(email);
   const emailErrorId = `${identityLabelId}-email-error`;
 
   /*
@@ -1200,7 +1208,12 @@ export function ArtisanForm({
             <TextInput
               name="email"
               type="email"
-              pattern="[^\s@]+@[^\s@]+\.[^\s@]+"
+              /* BUILT FROM THE SHARED SOURCE, NOT WRITTEN OUT AGAIN. This attribute is what makes
+                 the RECORD form's own Submit refuse a malformed address natively — it is deliberately
+                 kept, not deleted, because a real `<form>` is exactly the place native constraint
+                 validation works and this is the one surface that has one. `pattern` is implicitly
+                 anchored by the HTML spec, so the unanchored source is what belongs here. */
+              pattern={EMAIL_PATTERN}
               title="name@example.com"
               value={email}
               aria-invalid={!!emailError}

@@ -49,6 +49,7 @@ import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.customFieldToFieldDto
 import com.designprototype.workshop.data.dwCustomFieldDrawable
 import com.designprototype.workshop.data.dwCustomUnsupportedNote
+import com.designprototype.workshop.data.DwTextFormats
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.WorkshopRepository
@@ -553,13 +554,41 @@ fun FieldRenderer(
 
             DwFieldType.PHONE -> {
                 FieldCaption(field)
-                // The ISD-prefix editor, reused whole. Its own inner caption reads "Phone" while the
-                // registry's label sits above it — a small duplication accepted deliberately, because
-                // the alternative is a second phone field without the measured dial column, the
-                // country search and the foreign-resident confirmation this one already carries.
+                /*
+                 * THE ISD-PREFIX EDITOR, REUSED WHOLE. Its own inner caption reads "Phone" while the
+                 * registry's label sits above it — a small duplication accepted deliberately, because
+                 * the alternative is a second phone field without the measured dial column, the
+                 * country search and the foreign-resident confirmation this one already carries.
+                 *
+                 * ── AND THE ONE THING REUSING IT DID NOT BRING WITH IT ──────────────────────────
+                 *
+                 * [ArtisanPhoneField] shows only the error it is HANDED — it has no rule of its own,
+                 * because on the record form the rule is applied by the caller. So this arm passed
+                 * the SERVER's message and nothing else, and a nine-digit number typed into a stage
+                 * was accepted here in silence, exactly as it was on the web (where the same control
+                 * is mounted with `mirror = false`, dropping the native pattern that blocks it on the
+                 * record page). `coerce_value` had no phone rule on either path either, so a nine-
+                 * digit number reached a roster printed for a ministry.
+                 *
+                 * The declared `text_format = PHONE_IN` fixes that at the server, and this line is
+                 * what puts the same sentence under the box while the designer is still standing in
+                 * front of the person whose number it is. It is measured on the STORED string, which
+                 * is what [DwValues.coerce] and `coerce_value` both see — so the message under the
+                 * box and the refusal from the repository are answers to the same question.
+                 *
+                 * DERIVED FROM `value` RATHER THAN SET ON CHANGE, so a HYDRATED number that is
+                 * already malformed is flagged the moment the stage opens rather than only after
+                 * somebody happens to edit it. Hydration copies the artisan record's phone number
+                 * verbatim, and nothing in this repository has ever stopped a bad one being stored
+                 * there.
+                 */
+                val phoneProblem = DwTextFormats.error(field.format, DwValues.text(value))
                 ArtisanPhoneField(
                     value = DwValues.text(value),
-                    error = error,
+                    // The server's answer wins where there is one: it is about the value actually
+                    // stored, and it may name a fault this rule cannot see (a conditional
+                    // requirement, a stage-wide refusal).
+                    error = error ?: phoneProblem,
                     onValueChange = { text ->
                         onChange(text.trim().takeIf { it.isNotBlank() }?.let(::JsonPrimitive))
                     }
@@ -907,6 +936,29 @@ private fun ScalarInput(
         if (bufferAsStored != stored) buffer = stored
     }
 
+    /**
+     * The declared format's refusal, DERIVED FROM WHAT IS IN THE BOX rather than set on commit.
+     *
+     * ── WHY IT IS NOT LEFT TO `localError`, WHICH ALREADY CARRIES COERCION FAILURES ─────────────
+     *
+     * `localError` is written by [commit], so it only exists once the designer has TYPED. That is
+     * right for the failures it was built for — "12." is not a number, and nobody arrives at a stage
+     * with a half-typed decimal in the box — and it is wrong for a format, because a malformed value
+     * can be there before anybody touches it. `hydrate_entries` copies an artisan record's email
+     * address and phone number into a participant row verbatim, and nothing in this repository has
+     * ever stopped a malformed one being stored on the record: `ArtisanCreate.email` is a bare
+     * `str | None`. So a hydrated row can open holding a value the next save will refuse, and until
+     * this line the box said nothing until the designer happened to edit it — at which point the
+     * refusal reads as a fault they just introduced.
+     *
+     * Derived, so it also survives the value being reverted: `save_stage` restores a refused key from
+     * `previous`, and a rule computed from the box re-answers against whatever comes back instead of
+     * living only as long as the response that carried it.
+     */
+    val formatProblem = remember(field.format, buffer) {
+        buffer.trim().takeIf { it.isNotEmpty() }?.let { DwTextFormats.error(field.format, it) }
+    }
+
     /** Commit typed or spoken text through exactly one coercion, so both paths validate alike. */
     fun commit(text: String) {
         buffer = text
@@ -935,7 +987,7 @@ private fun ScalarInput(
             // of a stream would be overwritten by the next partial, so the alternative is a box that
             // silently discards typing — which reads as a broken keyboard.
             readOnly = spoken.isNotBlank(),
-            isError = error != null || localError != null,
+            isError = error != null || localError != null || formatProblem != null,
             // SUPPORTING TEXT AND NOT A PLACEHOLDER, which is where the browser puts the same string.
             // Material3 hides a placeholder behind the label until the box has focus, so a placeholder
             // here would reveal the computed figure only to a designer who tapped a box they had every
@@ -977,10 +1029,18 @@ private fun ScalarInput(
                 repository = services!!.repository,
                 enabled = enabled,
                 // READ OFF THE REGISTRY, never inferred from the field's name. The server masks this
-                // field's value on every save when it declares the flag, so the control both SAYS so
-                // above the candidate buttons and hands the masked form to `commit` — otherwise the
-                // designer taps a twelve-digit number, watches four digits land in the box, and
-                // cannot tell a masking rule from a bug that ate the answer they just proofread.
+                // field's value on every save when it declares the flag, so the control SAYS so above
+                // the candidate buttons — otherwise the designer taps a twelve-digit number, finds
+                // four digits stored against it, and cannot tell a masking rule from a bug that ate
+                // the answer they just proofread.
+                //
+                // THE CONTROL NO LONGER MASKS THE VALUE ITSELF, and that is the whole of what this
+                // flag does here now. It used to hand `ArtisanIdentity.mask(...)` to `onUse`, which
+                // meant `commit` below coerced a MASK: `DwTextFormats.error` matched the mask shape
+                // and the declared AADHAAR format enforced nothing, on the one route that can put
+                // twelve digits into this box in a single tap. Format before mask is the ordering
+                // `scalarText` calls forced rather than tidy, and `commit` is where both happen — so
+                // the full number comes back from the control and goes through the one door.
                 storeMasked = field.storeMasked,
                 // The ONLY route from the reader to the field, and it is reached from a tap on a
                 // button that spells the number out. Nothing above ever calls this.
@@ -988,7 +1048,15 @@ private fun ScalarInput(
                 onError = services.onError,
             )
         }
-        InlineError(localError ?: error)
+        /*
+         * ONE LINE, THREE POSSIBLE FAULTS, IN THE ORDER THEY BECAME TRUE.
+         *
+         * `localError` first: it is about the keystroke that was just refused, so it is the newest
+         * fact and the one the designer is acting on. `formatProblem` next: what is in the box will
+         * not save. `error` last: what the repository said about the value it stored, which is the
+         * oldest of the three and the one most likely to have been superseded by an edit.
+         */
+        InlineError(localError ?: formatProblem ?: error)
     }
 }
 

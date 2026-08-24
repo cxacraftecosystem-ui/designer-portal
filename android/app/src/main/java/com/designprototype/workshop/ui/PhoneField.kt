@@ -105,16 +105,68 @@ internal fun composeArtisanPhone(dialCode: String, national: String): String {
 }
 
 /**
+ * The characters that may sit BETWEEN the digits of a phone number: the space both clients compose,
+ * the tabs and newlines a paste can carry, the no-break space an IME produces, the ASCII hyphen and
+ * the six dashes U+2010 to U+2015.
+ *
+ * ENUMERATED RATHER THAN `\s`, WHICH IS THE ONLY WAY THREE LANGUAGES CAN AGREE ON THIS RULE. Java's
+ * `\s` is ASCII-only without `UNICODE_CHARACTER_CLASS` while Python's and JavaScript's both match
+ * the no-break space, so a shape rule written with `\s` would be STRICTER ON THIS HANDSET than on
+ * the server — a red line under a value the repository accepts, on a stage a designer cannot get
+ * past, which is the one direction this whole feature refuses. `contact_formats._PHONE_SEPARATORS`
+ * and `lib/textFormats.PHONE_SEPARATORS` are the same set, spelled the same way.
+ */
+private val PHONE_SEPARATORS = Regex("[ \\t\\r\\n\\u00a0\\u2010-\\u2015-]+")
+/** What is left once those come off: an optional `+` and then digits, nothing else. */
+private val PHONE_COMPACT = Regex("\\+?[0-9]+")
+
+/**
+ * True when [stored] holds nothing but a dial code, digits and separators.
+ *
+ * THE HOLE THE 4–14 WINDOW LEAVES OPEN, AND IT IS THE ONE A PRINTED ROSTER SHOWS. The rule below
+ * counts DIGITS, having stripped everything else first, so on its own it accepts a paragraph with a
+ * number in it: `"+91 9876543210 call his son Ramesh on the landline instead"` and
+ * `"abc9876543210def"` were both accepted, on all three sides, and printed verbatim.
+ * `participant.phone` now also declares `max_length = 20`, which closes the first (57 characters)
+ * and cannot close the second (sixteen) — so the shape has to be checked as well as the count.
+ *
+ * IT CANNOT REFUSE ANYTHING EITHER PICKER COMPOSES: [composeArtisanPhone] writes "+CC digits" and
+ * nothing else, and the legacy shape is a bare run of digits. What it refuses is what arrived
+ * through the API or was typed into a box that had no rule.
+ */
+internal fun isPhoneNumberShaped(stored: String?): Boolean {
+    val compact = PHONE_SEPARATORS.replace((stored ?: "").trim(), "")
+    return compact.isNotEmpty() && PHONE_COMPACT.matches(compact)
+}
+
+/**
  * Inline validation for a stored phone: null when empty or valid. +91 must be exactly 10 digits;
  * other codes accept 4–14 digits (loose enough for the range of national number lengths worldwide).
+ *
+ * THE SHAPE IS CHECKED AS WELL AS THE COUNT — see [isPhoneNumberShaped]. A failed shape reuses the
+ * arm's own sentence rather than adding a third: "Enter a 10-digit number for +91." is the right
+ * instruction for `"abc9876543210def"`, and a new sentence would have to be ported to the server,
+ * the browser and the shared fixture table to say the same thing.
+ *
+ * `digits.isEmpty() -> null` USED TO BE THE FIRST ARM, AND THE VECTOR TABLE CARRIED THAT ROW UNDER
+ * `server_only` ON THE GROUND THAT "no client can reach it". That was true of the CONTROL and false
+ * of the DATA: [ArtisanPhoneField]'s box only accepts digits, so nothing a designer types can compose
+ * "not a number" — but nothing has ever validated `Artisan.phone`, `hydrate_entries` copies it into
+ * `participant.phone`, and both `coerce_value` and [DwValues.coerce] re-coerce every field on every
+ * save. So a stored value with no digits was refused by the server on EVERY sync, restored from
+ * `previous`, and called clean here: a silent revert on the next read, which is the exact failure
+ * this feature was written to end. The blank guard below is what keeps an empty BOX quiet —
+ * [composeArtisanPhone] returns "" for it, which is blank, not "no digits".
  */
 internal fun artisanPhoneValidationError(stored: String?): String? {
-    val (code, national) = parseArtisanPhone(stored ?: "")
+    val text = (stored ?: "").trim()
+    if (text.isEmpty()) return null
+    val (code, national) = parseArtisanPhone(text)
     val digits = phoneDigits(national)
+    val shaped = isPhoneNumberShaped(text)
     return when {
-        digits.isEmpty() -> null
-        code == "+91" -> if (digits.length == 10) null else "Enter a 10-digit number for +91."
-        else -> if (digits.length in 4..14) null else "Enter a valid phone number (4–14 digits)."
+        code == "+91" -> if (shaped && digits.length == 10) null else "Enter a 10-digit number for +91."
+        else -> if (shaped && digits.length in 4..14) null else "Enter a valid phone number (4–14 digits)."
     }
 }
 
@@ -239,6 +291,31 @@ fun ArtisanPhoneField(value: String, error: String?, onValueChange: (String) -> 
                     modifier = Modifier.weight(1f)
                 )
             }
+        }
+        // WHAT THE COLUMN HOLDS, WHEN IT IS NOT WHAT THE BOX IS SHOWING.
+        //
+        // This control renders the DIGITS [parseArtisanPhone] could find, so a stored value with none
+        // in it draws an empty box — and the caller's [error] (computed from the stored string, see
+        // `FieldRenderer`'s PHONE arm) then stands under a box that looks blank, naming a fault over a
+        // value the designer cannot see. `Artisan.phone` has never had a server-side rule and
+        // `hydrate_entries` copies it into `participant.phone`, so this is stored data rather than a
+        // hypothesis.
+        //
+        // NO "edited" FLAG IS NEEDED HERE, unlike the web's `PhoneField`: [value] is hoisted state
+        // that the caller updates on every keystroke, so the moment the designer types anything the
+        // stored string IS what the box shows and this line goes away by itself. The browser's copy
+        // is uncontrolled and has to remember that it was touched.
+        //
+        // Same sentence as the web, word for word: a designer who meets this on the handset and again
+        // on a laptop must not have to work out whether two differently-phrased lines mean the same
+        // thing.
+        if (value.isNotBlank() && !isPhoneNumberShaped(value)) {
+            Text(
+                "What is saved for this field is “$value”, which this box cannot show — it holds a " +
+                    "dial code and digits only. Type the number to replace it.",
+                color = Muted,
+                fontSize = 11.sp
+            )
         }
     }
 

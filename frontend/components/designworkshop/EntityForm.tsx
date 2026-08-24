@@ -57,6 +57,7 @@ import {
   mirrorRefField,
   splitMirroredFields
 } from "@/components/designworkshop/StageRecordEmbed";
+import { fieldFormatError } from "@/components/designworkshop/stageFieldFormats";
 import { StageReferenceMultiPicker } from "@/components/designworkshop/StageReferenceField";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
@@ -382,6 +383,44 @@ export function refusedIn(fields: DwField[], errors: FieldErrors): number {
 }
 
 /**
+ * How many of these fields a designer has to go and look at: refused by the last save, OR holding a
+ * value the NEXT save will refuse because it does not match the format the registry declares.
+ *
+ * ── WHY THE SECOND HALF HAD TO JOIN THE FIRST RATHER THAN GET ITS OWN PILL ────────────────────
+ *
+ * `AdvancedDisclosure` unmounts its panel while collapsed and `MirroredFieldsDisclosure` hides its
+ * one, so on either of them a malformed value inside can be drawn nowhere at all — which is the
+ * exact failure `refusedIn` was added for, one step earlier in time. A hydrated participant row
+ * arrives with the artisan record's email address in a mirrored box that is closed by default; if
+ * that address is malformed (and nothing in this repository has ever stopped one being stored, on
+ * any path), the designer presses Save, the repository refuses that one field, and the only red text
+ * on the page is behind a summary that says "Details from the artisan record" and nothing else.
+ *
+ * ONE PILL AND NOT TWO, because "3 to fix" is the whole of what a closed disclosure can usefully
+ * say, and a designer deciding whether to open it does not need to know which of the two reasons
+ * put the number there — they will see the sentence on the box the moment it opens. Two pills on one
+ * button would also make the row header and this control disagree about how a count is spelled,
+ * which `refusedIn`'s own note already argues against.
+ *
+ * COUNTED ONCE PER FIELD. A field can be both — the server refused it and the value still in the box
+ * is still malformed, which is the ordinary state straight after a refused save — and "2 to fix" for
+ * one box would send the designer looking for a second problem that does not exist.
+ */
+function needsAttentionIn(fields: DwField[], errors: FieldErrors, row: DwEntryData): number {
+  return fields.filter(
+    (field) =>
+      // A RETIRED FIELD IS NOT SOMETHING TO GO AND LOOK AT. `validate_entry` skips a deprecated
+      // spec outright, so the server neither refuses its value nor could ever have put a message
+      // against it, and no grid draws one — `formFields()` filters them out before the groups are
+      // built. Unreachable today, therefore, and kept because it is the guard the deleted
+      // `formatViolationsIn` carried and the pill must not be able to send a designer looking for
+      // a box that is not on the page. See the note at the foot of `stageFieldFormats.ts`.
+      !field.deprecated &&
+      (Boolean(errors?.[field.key]) || Boolean(fieldFormatError(field, row[field.key])))
+  ).length;
+}
+
+/**
  * The "More detail" disclosure.
  *
  * `aria-controls` is set ONLY while the panel is mounted. The panel is unmounted on collapse (there
@@ -420,7 +459,8 @@ function AdvancedDisclosure({
   id: string;
   count: number;
   /**
-   * How many fields BEHIND this control the last save refused. Drives the pill and the auto-open.
+   * How many fields BEHIND this control need attention — refused by the last save, or holding a
+   * value the next save will refuse. Drives the pill and the auto-open. See `needsAttentionIn`.
    *
    * Zero, and this renders exactly as it always did.
    */
@@ -662,7 +702,7 @@ function MirroredEntityBody({
           <AdvancedDisclosure
             id={`${idPrefix}-advanced`}
             count={groups.workshopAdvanced.length}
-            refused={refusedIn(groups.workshopAdvanced, errors)}
+            refused={needsAttentionIn(groups.workshopAdvanced, errors, data)}
             defaultOpen={focusHere && focusIsIn(focus, entity, groups.workshopAdvanced)}
           >
             {grid(groups.workshopAdvanced)}
@@ -680,7 +720,7 @@ function MirroredEntityBody({
         <MirroredFieldsDisclosure
           id={`${idPrefix}-mirrored`}
           count={groups.mirrored.length}
-          refused={refusedIn(groups.mirrored, errors)}
+          refused={needsAttentionIn(groups.mirrored, errors, data)}
           defaultOpen={mirroredNeeded || (focusHere && focusIsIn(focus, entity, groups.mirrored))}
         >
           {grid(groups.mirrored)}
@@ -786,7 +826,7 @@ export function EntityForm({
           <AdvancedDisclosure
             id={`advanced-${entity.key}`}
             count={advanced.length}
-            refused={refusedIn(advanced, errors)}
+            refused={needsAttentionIn(advanced, errors, data)}
             defaultOpen={focusIsIn(focus, entity, advanced)}
           >
             <FieldGrid
@@ -1293,7 +1333,7 @@ export function CollectionTable({
                         <AdvancedDisclosure
                           id={`${panelId}-advanced`}
                           count={advanced.length}
-                          refused={refusedIn(advanced, rowErrors)}
+                          refused={needsAttentionIn(advanced, rowErrors, row)}
                           defaultOpen={focus?.rowKey === rowKey && focusIsIn(focus, entity, advanced)}
                         >
                           <FieldGrid

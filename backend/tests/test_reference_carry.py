@@ -1081,6 +1081,23 @@ def test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column():
     assert naming_words(pehchan.label), f"“{pehchan.label}” no longer names a card at all"
 
 
+def _valid_aadhaar() -> str:
+    """A number the application's own Verhoeff routine accepts, rather than a literal that rots.
+
+    The same helper, for the same reason, as ``tests/test_identity_masking.py``: a hand-written
+    twelve digits is a coin flip on the checksum, and since ``participant.aadhaarNumber`` gained
+    ``text_format=AADHAAR`` a checksum-failing literal would be REFUSED — turning an assertion
+    about masking into an assertion about nothing.
+    """
+    from app.services.artisan_identity import verhoeff_ok
+
+    for last in "0123456789":
+        candidate = f"23456789012{last}"
+        if verhoeff_ok(candidate):
+            return candidate
+    raise AssertionError("no Verhoeff-valid Aadhaar in the candidate range")
+
+
 def test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask():
     """The decision said MASKED. For one revision only the hydrated value was.
 
@@ -1127,14 +1144,51 @@ def test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask():
     # THE BARE NUMBER, THE GROUPED NUMBER AND THE MASK ITSELF all arrive as the same stored value.
     # The third is the idempotence that lets hydration and a save agree, and lets
     # `records._IDENTITY_KEYS` re-mask a stage entry by key name without corrupting it.
-    for typed in ("234567890123", "2345 6789 0123", "2345-6789-0123", "XXXX XXXX 0123"):
+    #
+    # THE NUMBER IS COMPUTED AND NOT WRITTEN DOWN, and that changed on 2026-08-24 when
+    # `text_format=AADHAAR` landed beside the flag. This loop used to use a literal "234567890123",
+    # which is NOT Verhoeff-valid — nothing checked, so nothing cared. Now the format runs before
+    # the mask, so a literal here would either rot into a test that passes for the wrong reason (a
+    # checksum refusal, asserted as though it were a masking) or force the next reader to hand-
+    # verify a checksum. `_valid_aadhaar` asks the application's own routine instead.
+    real = _valid_aadhaar()
+    grouped = f"{real[:4]} {real[4:8]} {real[8:]}"
+    hyphenated = f"{real[:4]}-{real[4:8]}-{real[8:]}"
+    mask = f"XXXX XXXX {real[-4:]}"
+    for typed in (real, grouped, hyphenated, mask):
         stored, error = coerce_value(aadhaar, typed)
         assert error is None, f"{typed!r} was refused: {error}"
-        assert stored == "XXXX XXXX 0123", f"{typed!r} was stored as {stored!r}"
+        assert stored == mask, f"{typed!r} was stored as {stored!r}"
 
-    # NOT A REFUSAL, because the designer must still be able to answer the box. A 422 here would be
-    # the reading of the decision this repository deliberately did not take.
-    assert coerce_value(aadhaar, "234567890123")[1] is None
+    # NOT A REFUSAL OF A REAL NUMBER, because the designer must still be able to answer the box. A
+    # 422 on twelve valid digits would be the reading of the decision this repository deliberately
+    # did not take.
+    assert coerce_value(aadhaar, real)[1] is None
+
+    # ── BUT A VALUE THAT WAS NEVER AN AADHAAR NUMBER *IS* REFUSED NOW, AND THAT IS NOT A REVERSAL
+    #    OF THE PARAGRAPH ABOVE ────────────────────────────────────────────────────────────────────
+    #
+    # "Mask rather than refuse" was always an argument about a DESIGNER'S REAL NUMBER: the box must
+    # stay answerable. It was never an argument for accepting anything at all, and for one revision
+    # that is what it bought, because `mask_aadhaar` keeps the last four characters of WHATEVER it
+    # is handed. "hello world 1234" is fourteen characters — inside this field's bound of 20 — so it
+    # normalised to "helloworld1234" and was STORED as a plausible-looking mask, on a permanent
+    # grantee-readable row, printed as a national identity number in a document submitted to a
+    # ministry. The masking is precisely what made it undetectable.
+    #
+    # `test_a_typed_string_that_is_not_an_aadhaar_is_refused_rather_than_masked` in
+    # `test_stage_schema.py` owns this rule and its ordering. It is asserted HERE as well because
+    # this is the test a reader opens to find out what the carried Aadhaar box does, and the two
+    # halves of the answer — a real number is masked, a non-number is refused — are one decision.
+    stored, error = coerce_value(aadhaar, "hello world 1234")
+    assert stored is None and error is not None, (
+        f"a typed string that is not an Aadhaar number was stored as {stored!r}; the format check "
+        "has to run BEFORE store_masked, or masking manufactures the defect it prevents"
+    )
+    assert aadhaar.text_format.value == "AADHAAR", (
+        "the mask is only as good as the format beside it: store_masked alone is mask(anything), "
+        "which is how a typo became a government identity number in a ministry document"
+    )
 
     # THE BOUND STILL BITES, AND BEFORE THE MASK. Masking first would make `max_length` unreachable
     # on this field — every masked value is 14 characters — so an answer nobody could have meant

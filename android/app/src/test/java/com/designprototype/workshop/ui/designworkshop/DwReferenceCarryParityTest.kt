@@ -381,7 +381,40 @@ class DwReferenceCarryParityTest {
      * media id even where the box is a gallery. A fixture that handed each box a value already in
      * its stored form would pass while proving nothing about the coercion that has to happen.
      */
-    private fun plausible(field: FieldDto): JsonElement = when (DwFieldType.of(field.type)) {
+    /**
+     * A VALUE THAT SATISFIES THE DECLARED `text_format`, WHERE THE FIELD DECLARES ONE.
+     *
+     * ── THIS IS THE `maxLength` NOTE BELOW, ONE DECLARATION LATER ─────────────────────────────
+     *
+     * The type arm below already cuts its string to `maxLength` for a stated reason: "a longer
+     * fixture string would be refused by the length check and read here as 'the mapping did not
+     * arrive' — a green-to-red flip with nothing wrong on either surface." `text_format` is the same
+     * kind of declaration and needs the same treatment. `participant.aadhaarNumber` is a TEXT field
+     * declaring `AADHAAR`, so the generic "Recorded answer" is now refused by
+     * [com.designprototype.workshop.data.DwTextFormats] inside `coerce` — correctly, because a typed
+     * string in the shape of nothing at all was exactly the value that used to be masked to
+     * "XXXX XXXX swer" and printed as a national identity number in a ministry document — and the
+     * assertion read that legitimate refusal as a missing mapping.
+     *
+     * THE AADHAAR NUMBER IS A REAL VERHOEFF-VALID ONE. A plausible-looking twelve digits would be
+     * refused by the checksum arm, which is the same green-to-red flip one arm further in.
+     *
+     * WHAT THIS FIXTURE DOES *NOT* MODEL, and it is worth knowing while reading the assertion: in
+     * production the value hydration copies into that box is the MASK (`mask_identity_number`), not
+     * a number, and the format accepts a mask by shape precisely so that re-coercing a hydrated row
+     * stays silent. Both are accepted; this generator uses the number because it is also the value a
+     * designer types.
+     */
+    private fun plausibleForFormat(field: FieldDto): JsonElement? = when (field.format) {
+        "AADHAAR" -> JsonPrimitive("234567890124")
+        "PINCODE" -> JsonPrimitive("768029")
+        "EMAIL" -> JsonPrimitive("cluster@dch.gov.in")
+        "PHONE_IN" -> JsonPrimitive("+91 9876543210")
+        "PEHCHAN" -> JsonPrimitive("PMV1234567")
+        else -> null
+    }
+
+    private fun plausible(field: FieldDto): JsonElement = plausibleForFormat(field) ?: when (DwFieldType.of(field.type)) {
         // Inside the declared range as well as the declared type: `participant.experienceYears`
         // carries min 0 / max 90, and a fixture that ignored a bound would report a value dropped
         // for being out of range as a mapping that never arrived.

@@ -44,7 +44,16 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from app.services.artisan_identity import mask_aadhaar
+from app.services.address import normalize_pincode, pincode_error
+from app.services.artisan_identity import (
+    aadhaar_error,
+    aadhaar_or_mask_error,
+    mask_aadhaar,
+    normalize_aadhaar,
+    normalize_pehchan,
+    pehchan_error,
+)
+from app.services.contact_formats import email_error, normalize_email, phone_error
 from app.services.report_model import clean_text
 from app.services.report_theme import ACCENT_PRESET_ENUM, FONT_PRESET_ENUM
 
@@ -128,6 +137,178 @@ class ReportRole(str, Enum):
     METRIC = "METRIC"                # a headline number
     BULLETS = "BULLETS"              # a bulleted list
     HIDDEN = "HIDDEN"
+
+
+class TextFormat(str, Enum):
+    """THE SHAPE A SCALAR TEXT FIELD'S VALUE MUST HAVE, declared once and enforced by the server.
+
+    ── THE DEFECT THIS ENDS ────────────────────────────────────────────────────────────────────
+    A stage row mirrors a record page's fields, and every one of the record page's validators was
+    present and working two inches away — attached to the box nobody prints. The value the REPORT
+    prints is the stage copy, and for that copy ``coerce_value`` checked a length and nothing
+    else: EMAIL, PHONE and TEXT all went through one scalar-text arm. So "hello world 1234" typed
+    into ``participant.aadhaarNumber`` passed a 20-character bound, was masked by
+    :attr:`FieldSpec.store_masked` to "XXXX XXXX 1234", and was printed as a national identity
+    number in a document submitted to a ministry. A nine-digit phone saved. An unbounded,
+    unchecked string saved as an email address, on the web, while the SAME registry field on
+    Android was refused by the handset's own port. Three implementations, three answers.
+
+    ── WHY THE REGISTRY AND NOT ``FieldInput.tsx`` ──────────────────────────────────────────────
+    Four reasons, in order of weight:
+
+    1. THE SERVER IS THE ONLY PATH BOTH CLIENTS SHARE, AND THE ONLY ONE THAT CAN RE-REFUSE WHAT
+       IS ALREADY STORED. ``validate_entry`` re-coerces EVERY field on EVERY save — the same
+       property that made ``store_masked`` retroactive. A format declared today starts refusing
+       the garbage already sitting in ``DwStageEntry.data`` the next time its stage is saved. A
+       client-side check cannot reach one stored byte.
+    2. A WEB-ONLY FIX LEAVES THE CLIENT THAT ALREADY DISAGREES UNTOUCHED, and produces a fourth
+       answer rather than one.
+    3. DIRECT API CALLERS AND OLDER BUILDS. ``validate_entry``'s docstring is explicit that a
+       phone one release ahead is a supported caller; a client-side rule is advisory by
+       construction.
+    4. THIS REPOSITORY HAD ALREADY WRITTEN DOWN THAT THE DECLARATION IS THE RIGHT END STATE.
+       ``frontend/components/designworkshop/stageFieldRoles.ts``, unprompted: "THE HONEST END
+       STATE IS A DECLARATION … this is the stopgap until the registry carries it, and it is
+       written as one key list in one file so that the day it does, one function dies."
+
+    ── WHAT A MEMBER MEANS, AND WHY THE COUNTRY IS IN THE NAME ──────────────────────────────────
+    ``PHONE_IN`` rather than ``PHONE``: the rule is "+91 takes exactly ten digits", which is a
+    fact about India and not about telephones. The same reasoning as ``ENUMS``' ``INDIAN_STATE``.
+    A second country's rule would be a second member, not an argument.
+
+    Each member must have an entry in :data:`_FORMATS` — the module refuses to import otherwise
+    (see the assertion under that table). A published format nothing enforces is the exact silent
+    failure this whole feature exists to end.
+    """
+
+    NONE = ""
+    EMAIL = "EMAIL"
+    PHONE_IN = "PHONE_IN"
+    AADHAAR = "AADHAAR"
+    PEHCHAN = "PEHCHAN"
+    PINCODE = "PINCODE"
+
+
+def _no_format_error(_text: str) -> str | None:
+    """:attr:`TextFormat.NONE` — every field that declares nothing, which is nearly all of them."""
+    return None
+
+
+def _email_format_error(text: str) -> str | None:
+    """The record page's own email rule, on the path the record page never reached.
+
+    ``contact_formats`` had to be WRITTEN rather than reused: there was no server-side email rule
+    anywhere in this repository, including on the record path. See that module's header.
+    """
+    return email_error(normalize_email(text))
+
+
+def _aadhaar_format_error(text: str) -> str | None:
+    """A real Aadhaar number or a mask this repository produced — and nothing else.
+
+    THE MASK HAS TO BE AN ACCEPTED ANSWER, WHICH IS THE WHOLE DIFFICULTY. ``hydrate_entries``
+    writes ``mask_identity_number(...)`` into ``participant.aadhaarNumber`` and ``validate_entry``
+    re-coerces every field on every save, so a predicate that knew only ``aadhaar_error`` would
+    paint a red error on that box on every save, for ever, on a row nobody touched — naming a
+    fault the designer cannot fix because the digits are not theirs to see.
+
+    AND IT IS ACCEPTED BY SHAPE, NOT BY THE PRESENCE OF AN X. See ``aadhaar_or_mask_error`` for
+    why ``is_masked_aadhaar`` is the wrong accept-arm HERE while being right where it is used:
+    that one is applied where the masked value is DROPPED before the write, and whatever this one
+    accepts is STORED and then masked.
+
+    A value that normalises to nothing at all (a box holding only dashes) is refused rather than
+    accepted: ``coerce_value`` has already established the box is non-empty, so answering "no
+    number here, nothing to check" would store the dashes under a declared format.
+
+    ── WHAT THIS DOES *NOT* CLOSE, MEASURED AND WRITTEN DOWN RATHER THAN LEFT TO BE FOUND AGAIN ──
+    A designer can TYPE OR PASTE "XXXX XXXX 1234" into this box and it is accepted, because that is
+    byte-for-byte what hydration writes and this function cannot tell the two apart. ``mask_aadhaar``
+    is idempotent, so it stores unchanged, and the report prints it indistinguishably from a real
+    masked number — an identity number in a ministry document whose digits nobody ever read off a
+    card. The exposure is NARROWED from what it was (before ``store_masked`` was qualified, any
+    fourteen characters ending in four digits became a well-formed mask) to exactly this: eight
+    upper-case X's and four digits, typed by hand.
+
+    IT CANNOT BE CLOSED HERE, AND THE REASON IS STRUCTURAL. The only thing that separates a
+    hydrated mask from a typed one is what the row held BEFORE the save — accept the mask when it
+    equals ``previous[key]``, refuse it otherwise — and ``coerce_value`` is handed one field's value
+    and nothing else. ``previous`` lives two layers up in ``save_stage``, and threading it into the
+    one door every save goes through is a signature change to ``coerce_value`` and ``validate_entry``
+    that only this one field would read. ``entry_provenance``'s hydration stamp is the other
+    discriminator and ``report_builder`` does not consult it. Both are owner-sized calls, so what is
+    here instead is: the client says on the box that only four digits are kept (``FieldInput``, and
+    it now says so over a mask as well), and this paragraph so the next reader does not have to
+    re-derive that the gap is deliberate rather than missed.
+    """
+    if normalize_aadhaar(text) is None:
+        return aadhaar_error(text)
+    return aadhaar_or_mask_error(text)
+
+
+def _pehchan_format_error(text: str) -> str | None:
+    """The record path's Pehchan rule: alphanumeric, 4-32 characters, one spelling per card.
+
+    DECLARED ON NO FIELD TODAY, DELIBERATELY, AND THIS PARAGRAPH IS THE REASON — do not read the
+    entry in :data:`_FORMATS` as an invitation to attach it to ``participant.artisanCardNo``.
+    That box carries a MASK from hydration ("XXXX XXXX 3456"), and ``pehchan_error`` ACCEPTS a
+    mask: separators come off, fourteen alphanumerics remain, comfortably inside the 4-32 window,
+    and there is no checksum to fail. ``schemas/records.py`` records that this exact acceptance
+    once stored a mask over a real card number — 200 OK, revision recorded, regulated identifier
+    gone. So a ``PEHCHAN`` format on that field would be a no-op that LOOKS like protection,
+    which is worse than the gap it appears to close.
+
+    Attaching it needs its own mask-aware predicate (the ``aadhaar_or_mask_error`` shape) and an
+    owner decision about ``IdentityCardCapture kind="PEHCHAN"``, whose entire purpose is to write
+    full numbers into that box. Pinned by
+    ``test_the_pehchan_predicate_accepts_a_mask_which_is_why_no_field_declares_it``.
+    """
+    normalised = normalize_pehchan(text)
+    if normalised is None:
+        return pehchan_error(text)
+    return pehchan_error(normalised)
+
+
+def _pincode_format_error(text: str) -> str | None:
+    """``address.pincode_error``: six ASCII digits, never a leading zero.
+
+    Checked against the NORMALISED value, which is what makes this safe to declare on boxes that
+    already hold "768 029" — typed exactly that way by somebody reading a card aloud, and named
+    in ``participant.pincode``'s own comment as the value a tighter rule would start refusing on
+    a stage a designer is trying to submit. Separators come off before the check and the STORED
+    string is left as typed, so nothing already in the column changes shape.
+    """
+    normalised = normalize_pincode(text)
+    if normalised is None:
+        return pincode_error(text)
+    return pincode_error(normalised)
+
+
+#: WHICH FUNCTION ENFORCES WHICH FORMAT. Three of the five reuse the record path's own validator
+#: rather than restating its rule, which is the entire point: Aadhaar and Pehchan come from
+#: ``artisan_identity``, the PIN code from ``address``. Only email and phone had to be written,
+#: because the record path had no server-side rule for either (``contact_formats``).
+_FORMATS: dict[TextFormat, Callable[[str], str | None]] = {
+    TextFormat.NONE: _no_format_error,
+    TextFormat.EMAIL: _email_format_error,
+    TextFormat.PHONE_IN: phone_error,
+    TextFormat.AADHAAR: _aadhaar_format_error,
+    TextFormat.PEHCHAN: _pehchan_format_error,
+    TextFormat.PINCODE: _pincode_format_error,
+}
+
+# AT IMPORT, NOT AT THE FIRST SAVE THAT HAPPENS TO USE IT. A member with no entry here would
+# serialise to both clients as a declared format, be published in the digest, appear in the
+# bundled Android asset — and enforce nothing, which is the silent failure this feature exists to
+# end, rebuilt inside the feature. `validate_registry` catches a field declaring one too, but only
+# the tests run that; this runs on every process that imports the registry, including the server.
+_unenforced = [member.name for member in TextFormat if member not in _FORMATS]
+if _unenforced:
+    raise RuntimeError(
+        "TextFormat member(s) with no entry in _FORMATS: " + ", ".join(_unenforced)
+        + " — a declared format that nothing enforces is published to both clients and refuses "
+        "nothing on the way in"
+    )
 
 
 class Cardinality(str, Enum):
@@ -247,6 +428,28 @@ class FieldSpec:
     #: is behaviour rather than wording: a phone with no signal that did not know about the flag
     #: would go on letting a designer type twelve digits believing they were kept.
     store_masked: bool = False
+    #: WHAT SHAPE THIS FIELD'S VALUE MUST HAVE — an email address, an Indian phone number, an
+    #: Aadhaar number, a PIN code. One declaration, enforced by :func:`coerce_value` (the one door
+    #: every save goes through), published to both clients as ``format``, and part of
+    #: :func:`registry_version`.
+    #:
+    #: See :class:`TextFormat` for the defect this ends and for why the declaration lives here
+    #: rather than in a client. In short: the report prints the STAGE copy of a mirrored fact, and
+    #: for that copy the server checked a length and nothing else — so a typo in the shape of a
+    #: government identity number reached a ministry document, an unbounded string saved as an
+    #: email address, and the same registry field was refused by Android and accepted by the web.
+    #:
+    #: ENFORCED BEFORE :attr:`store_masked` MASKS, WHICH IS FORCED AND NOT MERELY TIDY.
+    #: ``mask_aadhaar`` takes the last four characters of ANYTHING once separators come off, so
+    #: masking first would MANUFACTURE the defect this is here to prevent: the value is a
+    #: well-formed mask by the time anybody looks at it, and nothing downstream can tell it from a
+    #: real one. ``validate_registry`` refuses ``store_masked`` without ``AADHAAR`` for that
+    #: reason — the flag on its own is ``mask(anything)``.
+    #:
+    #: May only be declared on a type that reaches the branch enforcing it (TEXT, LONG_TEXT, URL,
+    #: PHONE, EMAIL); ``validate_registry`` refuses the rest, for the same reason and in the same
+    #: words as the ``store_masked`` rule beside it.
+    text_format: TextFormat = TextFormat.NONE
     phase_note: str = ""         # a reviewer comment from the source document
     deprecated: bool = False
     replaced_by: str = ""
@@ -1253,6 +1456,47 @@ def validate_registry() -> list[str]:
                         "scalar text field passes through the branch that applies the mask, so "
                         "the flag would be published and never enforced"
                     )
+                # ── A DECLARED FORMAT MUST BE ENFORCEABLE, AND ``store_masked`` MUST HAVE ONE ──
+                #
+                # THE SAME SENTENCE AND THE SAME REASON as the ``store_masked`` rule directly
+                # above: ``coerce_value`` applies a format inside its scalar-text branch and
+                # nowhere else, so declared on any other type the format would serialise to both
+                # clients, be published in the digest, appear in the bundled asset — and refuse
+                # nothing on the way in. RICH_TEXT is excluded from the other side, as there: it
+                # never reaches that branch at all.
+                if f.text_format is not TextFormat.NONE:
+                    if f.type not in (
+                        FieldType.TEXT, FieldType.LONG_TEXT, FieldType.URL,
+                        FieldType.PHONE, FieldType.EMAIL,
+                    ):
+                        problems.append(
+                            f"field {where} declares text_format {f.text_format.value} but is "
+                            f"{f.type.value}; only a scalar text field passes through the branch "
+                            "that enforces a format, so the declaration would be published and "
+                            "never enforced"
+                        )
+                    if f.text_format not in _FORMATS:
+                        # Reachable only from a hand-written spec whose ``text_format`` is a bare
+                        # string rather than a member — which the dataclass cannot refuse, and
+                        # which would raise inside ``coerce_value`` on a designer's save rather
+                        # than here.
+                        problems.append(
+                            f"field {where} declares text_format {f.text_format!r}, which has no "
+                            "entry in _FORMATS and therefore enforces nothing"
+                        )
+                # ``store_masked`` WITHOUT A FORMAT IS ``mask(anything)``, AND THAT IS EXACTLY HOW
+                # A TYPO BECAME A GOVERNMENT IDENTITY NUMBER IN A MINISTRY DOCUMENT. ``mask_aadhaar``
+                # strips separators and takes the last four characters of whatever it is handed, so
+                # "hello world 1234" was stored — and printed — as "XXXX XXXX 1234". The pairing is
+                # enforced here rather than trusted to the one field that declares the flag today,
+                # so any future field declaring it inherits the guard by construction instead of by
+                # somebody remembering this paragraph.
+                if f.store_masked and f.text_format is not TextFormat.AADHAAR:
+                    problems.append(
+                        f"field {where} declares store_masked without text_format=AADHAAR; the "
+                        "mask keeps the last four characters of ANY value, so without the format "
+                        "a typo is stored in the shape of an identity number"
+                    )
                 if f.deprecated and not f.replaced_by:
                     # A deprecated field with no successor leaves a form with a dead input and
                     # no migration path for the data already stored under it.
@@ -1457,6 +1701,49 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
                 return None, None
             if spec.max_length and len(text) > spec.max_length:
                 return None, f"{spec.label} is longer than {spec.max_length} characters"
+            # ── THE DECLARED SHAPE, BETWEEN THE BOUND AND THE MASK ─────────────────────────────
+            #
+            # See :class:`TextFormat` for what was wrong and why the rule is declared in the
+            # registry rather than in a form. The ORDER of these three steps is the whole of the
+            # correctness here:
+            #
+            #   1. ``max_length`` first, unchanged: an over-long answer keeps its own refusal
+            #      rather than being quietly shortened into a plausible mask (the argument already
+            #      written at ``FieldSpec.store_masked``).
+            #   2. THE FORMAT, HERE. Refused per field, so the designer keeps the other twenty
+            #      answers of the entry — ``save_stage`` restores a rejected key from ``previous``
+            #      and reports the message against this exact box.
+            #   3. the mask last.
+            #
+            # 2 BEFORE 3 IS FORCED. ``mask_aadhaar`` strips separators and takes the last four
+            # characters of ANYTHING, so with the order reversed a typed "hello world 1234" —
+            # fourteen characters, comfortably inside this field's bound of 20 — becomes
+            # "XXXX XXXX 1234" and is STORED, and printed as a national identity number in a
+            # document submitted to a ministry. Nothing downstream could tell it from a real one.
+            # That is not hypothetical: it is what this branch did until this block existed.
+            #
+            # The message is the record page's own sentence, verbatim, and is NOT prefixed with
+            # the label: ``aadhaar_error``'s four sentences, ``pincode_error``'s three and
+            # ``PhoneField``'s two all name their field already ("Aadhaar number must be…"), and
+            # a designer reading "Aadhaar number: Aadhaar number must be…" learns nothing from the
+            # first half. The other refusals in this function prefix the label because their
+            # messages are generic ("must be a list").
+            #
+            # ``.get`` AND NOT A SUBSCRIPT, WHICH IS THE DIFFERENCE BETWEEN A NO-OP AND A 500.
+            # ``_validate_registry`` already refuses a field whose ``text_format`` has no entry
+            # here, and the module refuses to import if a ``TextFormat`` member has none — but
+            # both of those see ENUM members, and the one case neither covers is the one that
+            # reaches this line: a hand-written spec built with ``text_format="EMAIL"`` as a bare
+            # string. ``TextFormat`` is a ``str`` Enum, so that spec passes every ``is not
+            # TextFormat.NONE`` test written against it while ``_FORMATS["EMAIL"]`` raises
+            # ``KeyError`` — a 500 out of the one door every save goes through, which the stage
+            # editor's ``isTransient`` reads as "no connection". A permanently un-saveable stage
+            # that looks like bad signal is exactly the failure the lone-surrogate paragraph forty
+            # lines above exists to prevent, so the fallback is the same one an unknown format gets
+            # on both clients: enforce nothing, and let the registry check be the thing that shouts.
+            format_error = _FORMATS.get(spec.text_format, _no_format_error)(text)
+            if format_error:
+                return None, format_error
             if spec.store_masked:
                 # THE ONE DOOR EVERY SAVE GOES THROUGH, WHICH IS WHY THE MASK IS APPLIED HERE.
                 #
@@ -1485,7 +1772,7 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
                 # ``text`` cannot be (it is non-empty and stripped) — but reading its None as a
                 # cleared field rather than as "unchanged" is the direction that loses data, so it
                 # is spelled out instead of assumed.
-                return (masked if masked else text), None
+                return (masked or text), None
             return text, None
 
         if t is FieldType.ENUM:
@@ -1928,6 +2215,19 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
     # designer proofreads and what is stored cannot differ. See ``FieldSpec.store_masked``.
     if f.store_masked:
         out["storeMasked"] = True
+    # THE SHAPE THE SERVER WILL REFUSE THIS BOX FOR, SAID TO THE CLIENT THAT DRAWS IT.
+    #
+    # Published for the same reason as ``storeMasked`` beside it, and with one addition: the
+    # clients render a PREVIEW of the rule so the ordinary mistake never costs a round trip, and a
+    # preview is only honest if it is the server's own rule that is previewed. A client that does
+    # not know a field gained a format shows no error, the designer saves, and the refusal arrives
+    # from the server against a box whose control said nothing — which on a fleet often on one bar
+    # is a save that appears to have silently reverted.
+    #
+    # ``format`` and not ``textFormat``: it is the name both clients already use for the concept
+    # in their own field types, and the key is what crosses the wire.
+    if f.text_format is not TextFormat.NONE:
+        out["format"] = f.text_format.value
     # Emitted on the same "only non-default keys" rule as everything around it, so no field in
     # today's registry emits it and neither the bundled Android asset nor `registry_version()`
     # moves for adding the line. It starts crossing the wire the day a field declares a bound,
@@ -2046,6 +2346,14 @@ def registry_version() -> str:
     disagreement as a derivation that stopped computing. Labels and help text stay out; behaviour
     goes in.
 
+    ``text_format`` IS HERE FOR THE SAME REASON, ONE FEATURE LATER AGAIN — and it is the clearest
+    case of the rule this docstring already states, "labels and help text stay out; behaviour goes
+    in". A format decides what a save REFUSES. A handset that has never reached the network and
+    does not know a field has gained one goes on accepting values the server will now reject, shows
+    the designer no error where the browser shows one, and reports the refusal only after a save it
+    presented as complete. That is the same class of silent disagreement as a derivation that
+    stopped computing. Pinned by ``test_the_version_changes_when_a_field_gains_a_format``.
+
     THE HYDRATION MAPPING IS HERE FOR THE SAME REASON, ONE FEATURE LATER. ``field_to_dict`` now
     publishes :data:`REFERENCE_HYDRATION` as ``refHydration`` so the clients fill a row in by the
     server's rule instead of by matching key names — matching names is what wrote an artisan's
@@ -2074,7 +2382,7 @@ def registry_version() -> str:
                 parts.append(f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
                              f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
                              f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}:"
-                             f"{int(f.store_masked)}")
+                             f"{int(f.store_masked)}:{f.text_format.value}")
     digest = hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
     return digest[:16]
 

@@ -63,6 +63,11 @@ under — see the rules in :mod:`app.services.stage_schema`.
 
 from __future__ import annotations
 
+# The record path's own ceiling for a Pehchan card number, named rather than re-typed as `32` at
+# `participant.artisanCardNo` — two surfaces bounding one fact must not be able to drift apart by a
+# digit. `artisan_identity` is pure (it imports `re` and nothing else), so this keeps the promise
+# `stage_schema` makes about this module's dependencies.
+from app.services.artisan_identity import PEHCHAN_MAX_LENGTH
 from app.services.stage_schema import (
     REF_SCOPE_ALL,
     REF_SCOPE_WORKSHOP,
@@ -72,6 +77,7 @@ from app.services.stage_schema import (
     FieldType,
     ReportRole,
     StageSpec,
+    TextFormat,
     Tier,
     _install,
 )
@@ -412,8 +418,19 @@ STAGE_3 = StageSpec(
             # designer's hand. Masking it would un-ship that control. The Aadhaar's masking follows
             # an explicit owner decision about the Aadhaar (2026-08-24, below); no such decision has
             # been made about the Pehchan card number, and this line must not be read as one.
+            #
+            # `max_length=32` AND STILL NO `text_format`, WHICH IS TWO DECISIONS AND NOT ONE.
+            # The format stays off for the reason argued at `_pehchan_format_error`: `pehchan_error`
+            # ACCEPTS "XXXX XXXX 3456" — fourteen alphanumerics, inside 4-32, no checksum to fail —
+            # so `PEHCHAN` on this box would be a no-op that looks like protection, and attaching it
+            # needs a mask-aware predicate and an owner call about `IdentityCardCapture
+            # kind="PEHCHAN"`. NONE OF THAT IS A REASON TO LEAVE THE BOUND OFF. `records.py` holds
+            # this same fact to 4-32 characters through `validate_pehchan` (a named 422), and this
+            # copy — a TABLE_COLUMN at 16% of a printed roster — took any length at all. 32 is the
+            # record path's own ceiling, `PEHCHAN_MAX_LENGTH`, so the two surfaces now bound one
+            # fact identically; the hydrated mask is fourteen characters and sits well inside it.
             fromref("artisanCardNo", "Artisan ID / card number", T, S, report_role=COL,
-                    column_width_pct=16.0,
+                    column_width_pct=16.0, max_length=PEHCHAN_MAX_LENGTH,
                     help="The Artisan Pehchan Card number. Shown masked to its last four digits "
                          "when it is filled in from the linked record."),
             fromref("pehchanCardAvailable", "Holds an Artisan Pehchan Card", BOOL, S,
@@ -544,8 +561,34 @@ STAGE_3 = StageSpec(
             # correct and identical for all 26 pairs (a name kept from the previous artisan would be
             # far worse), and it is written down because this is the only field where the value being
             # discarded may have been supplied by hand from a card rather than copied by the server.
+            # -- `text_format=AADHAAR`: THE OTHER HALF OF THE MASK, AND WITHOUT IT THE MASK WAS
+            #    THE DEFECT -----------------------------------------------------------------------
+            #
+            # `store_masked` alone is `mask(anything)`. `mask_aadhaar` strips separators and keeps
+            # the last four characters of WHATEVER it is handed, so for one revision a typed
+            # "hello world 1234" — fourteen characters, comfortably inside the bound above — was
+            # stored as "XXXX XXXX 1234" and printed as a national identity number in a document
+            # submitted to a ministry. Nothing downstream could tell it from a real one, and the
+            # masking is what made it undetectable: the value LOOKS like the thing the decision
+            # promised. `validate_registry` now refuses `store_masked` without this format for
+            # exactly that reason, so the pairing cannot come apart again.
+            #
+            # THE PREDICATE IS MASK-AWARE, WHICH IS THE WHOLE DIFFICULTY. `hydrate_entries` writes
+            # the mask into this box and `validate_entry` re-coerces every field on every save, so
+            # a check that knew only `aadhaar_error` would answer "must be 12 digits" on this box
+            # on EVERY save, for ever, on a row nobody touched — naming a fault the designer
+            # cannot fix because the digits are not theirs to see. `aadhaar_or_mask_error` accepts
+            # the mask BY SHAPE ("XXXXXXXX" plus four digits, or twelve X's) and not by the
+            # presence of an X: `is_masked_aadhaar`'s "an X anywhere" is right where a masked
+            # value is DROPPED before the write (`ArtisanUpdate`) and catastrophic here, where
+            # whatever passes is STORED and then masked.
+            #
+            # THE DESIGNER CAN STILL FILL THE BOX, which is the second half of the owner's
+            # instruction and the reason this is a format and not a refusal of full numbers: a
+            # real twelve digits is accepted and then masked, exactly as before. What is refused
+            # is only what was never an Aadhaar number.
             fromref("aadhaarNumber", "Aadhaar number", T, A, report_role=KV, max_length=20,
-                    store_masked=True,
+                    store_masked=True, text_format=TextFormat.AADHAAR,
                     help="The artisan’s Aadhaar number — NOT the Artisan Pehchan Card "
                          "number, which is the “Artisan ID / card number” box above. "
                          "Only the last four digits are ever stored here, as “XXXX XXXX 9012”: "
@@ -705,13 +748,58 @@ STAGE_3 = StageSpec(
             # Until then the honest box is the loose one. I could not check what is actually stored in
             # these boxes today: the compose stack is down, so there is no Postgres here to run the
             # DISTINCT over `DwStageEntry.data` that would settle it.
-            fromref("pincode", "PIN code", T, S, max_length=10),
+            # `text_format=PINCODE` REUSES `address.pincode_error` — six ASCII digits, never a
+            # leading zero, and the same three sentences a researcher reads on the record page.
+            # It is checked against the NORMALISED value, which is what makes it safe to declare
+            # on a box the paragraph above says already holds "768 029": separators come off
+            # before the check and the stored string is left exactly as typed, so nothing already
+            # in this column changes shape or starts being refused. `max_length=10` stays for the
+            # same reason it was chosen.
+            fromref("pincode", "PIN code", T, S, max_length=10,
+                    text_format=TextFormat.PINCODE),
             fromref("address", "Address", LT, S),
             fromref("subjectLocation", "Location of the artisan’s place", GEO, A,
                     help="The pin a researcher dropped on the artisan’s own place, not the "
                          "device’s position when the record was typed."),
-            fromref("email", "Email", FieldType.EMAIL, S),
-            fromref("phone", "Phone", FieldType.PHONE, S),
+            # -- THE TWO CONTACT BOXES, WHICH UNTIL NOW WERE CHECKED BY NOBODY ----------------
+            #
+            # `FieldType.EMAIL` and `FieldType.PHONE` were TYPES WITHOUT RULES. Both fell into
+            # `coerce_value`'s one scalar-text arm beside TEXT — clean, strip, `max_length` — so
+            # the server checked nothing, on this path or on the record path, and the record
+            # page's own validators (a regex in `ArtisanForm.tsx`, an inline rule in
+            # `PhoneField.tsx`) governed only the record page. The mirrored stage box is rendered
+            # OUTSIDE the record form, so even the browser's `type="email"` never fired: no
+            # submit event ever crosses it. What the REPORT prints is this copy.
+            #
+            # `max_length=254` ON THE EMAIL, AND IT IS NEW. This field declared no bound at all,
+            # so it was unbounded — a format is a shape and not a length. 254 is the longest an
+            # RFC-conformant address can be. Chosen NOW, while nothing is stored, for the reason
+            # written out above `pincode` and at `aadhaarNumber`: `validate_entry` re-coerces
+            # EVERY field on EVERY save, so a bound added later becomes a refusal on a box the
+            # designer never touched.
+            #
+            # `PHONE_IN` NAMES THE COUNTRY BECAUSE THE RULE IS ABOUT THE COUNTRY: +91 takes
+            # exactly ten digits, any other dial code four to fourteen — the record page's rule
+            # and the handset's, verbatim, sentences included. Its port on the server
+            # (`contact_formats.split_phone`) keeps the clients' legacy arm, "bare numbers are
+            # Indian nationals": `Artisan.phone` has never had a server-side rule, this box is
+            # hydrated from it, and a rule that read a bare ten digits as malformed would refuse
+            # every legacy roster row on its next save.
+            #
+            # `max_length=20` ON THE PHONE, AND IT IS THE SAME ARGUMENT THE EMAIL'S 254 IS. A
+            # format is a SHAPE and not a length, and `phone_error` measures the DIGITS: it strips
+            # every non-digit before counting, so "+91 9876543210 call his son Ramesh on the
+            # landline instead" is ten digits and was accepted, unbounded, into a column the
+            # participant roster prints. 20 is the longest thing either picker can compose —
+            # `\+\d{1,4} \d{4,14}`, which is the mirror input's own pattern on the record page — so
+            # a value that passes the format can never fail this bound, and what the bound catches
+            # is only what arrived from somewhere with no control in front of it. The other half of
+            # that hole is closed by `contact_formats.phone_is_number_shaped`, because a bound
+            # alone does not refuse "abc9876543210def".
+            fromref("email", "Email", FieldType.EMAIL, S, max_length=254,
+                    text_format=TextFormat.EMAIL),
+            fromref("phone", "Phone", FieldType.PHONE, S, max_length=20,
+                    text_format=TextFormat.PHONE_IN),
             # THE MOST USEFUL THING ON THE ARTISAN RECORD TO SOMEBODY STANDING IN THE ROOM, and it
             # reached nothing. `dos`/`donts` are newline-separated, numbered guidance a researcher
             # wrote about how to work with THIS artisan — a positive prompt and a negative one.
@@ -1142,7 +1230,9 @@ STAGE_5 = StageSpec(
             fromref("recordState", "State on the record", T, S, max_length=80),
             fromref("recordDistrict", "District on the record", T, S, max_length=80),
             fromref("recordVillage", "Village on the record", T, S, max_length=120),
-            fromref("recordPincode", "PIN code on the record", T, S, max_length=10),
+            # Same rule as `participant.pincode`, checked against the normalised value. See there.
+            fromref("recordPincode", "PIN code on the record", T, S, max_length=10,
+                    text_format=TextFormat.PINCODE),
             # THE PIN, WHICH IS THE HALF OF THE ADDRESS THAT IS NOT A STRING. The four boxes above
             # carry what the record page's stated-address fields say; the record page ALSO lets a
             # researcher drop a pin on the tool's own place with the map picker, and that coordinate
@@ -1469,7 +1559,9 @@ STAGE_6 = StageSpec(
             fromref("recordState", "State on the record", T, S, max_length=80),
             fromref("recordDistrict", "District on the record", T, S, max_length=80),
             fromref("recordVillage", "Village on the record", T, S, max_length=120),
-            fromref("recordPincode", "PIN code on the record", T, S, max_length=10),
+            # Same rule as `participant.pincode`, checked against the normalised value. See there.
+            fromref("recordPincode", "PIN code on the record", T, S, max_length=10,
+                    text_format=TextFormat.PINCODE),
             # THE PIN, WHICH IS THE HALF OF THE ADDRESS THAT IS NOT A STRING. The four boxes above
             # are the record's stated address; this is the pin a researcher dropped on the product's
             # own place with the map picker, which is about the place and not about the desk — the
@@ -1619,7 +1711,17 @@ STAGE_8 = StageSpec(
               column_width_pct=32.0),
             f("productsDiscussed", "Products discussed", TAGS, S),
             f("priceExpectation", "Price expectation", MONEY, S, unit="INR", min_value=0),
-            f("contact", "Contact", FieldType.PHONE, S),
+            # The other `FieldType.PHONE` in the registry, and it gets the same rule as
+            # `participant.phone` — a typed type with no check is the same hole wherever it sits.
+            # This one is a respondent met in a market rather than a hydrated roster row, so
+            # nothing legacy is stored behind it; the format is declared for consistency and
+            # because `PhoneField` is mounted on it with `mirror={false}`, whose advisory message
+            # would otherwise be the only thing between a nine-digit number and a report.
+            # `max_length=20` for the reason written at `participant.phone`: the format bounds the
+            # digits and not the string, so without it this box takes a paragraph with a number in
+            # it. 20 is the longest value either picker composes.
+            f("contact", "Contact", FieldType.PHONE, S, max_length=20,
+              text_format=TextFormat.PHONE_IN),
             f("location", "Location", GEO, A,
               phase_note="Reviewer: “Phase 3 and only 1 or 2 features” (geo/date tagging)."),
             f("voiceNote", "Voice recording", AUDIO, A),

@@ -48,10 +48,10 @@ import {
   OFFLINE_STATES,
   PINCODE_LENGTH,
   loadAddressReference,
-  pincodeValidationError,
   postalZoneMismatch
 } from "@/components/forms/LocationFields";
 import type { AddressFieldRole } from "@/components/designworkshop/stageFieldRoles";
+import { pincodeOrSpacedValidationError } from "@/components/designworkshop/stageFieldFormats";
 import { inputValue, type DwEntryData, type DwField, type DwValue } from "@/lib/designWorkshops";
 
 /** The served district lists, keyed by state, or null until the shared request lands. */
@@ -142,11 +142,33 @@ export function StageAddressField({
   const stateName = role.role === "state" ? own : role.stateField ? inputValue(row[role.stateField.key]) : "";
 
   if (role.role === "pincode") {
-    // Advisory, both of them, and in the record page's own words. `pincodeValidationError` is the
-    // shape check the API also runs (same three sentences, same order, `services/address.py`), and
-    // `postalZoneMismatch` is the one that catches a real mistake — a PIN that belongs to a
-    // different state from the one on the row above it.
-    const shape = pincodeValidationError(own);
+    /*
+     * Advisory, both of them, and in the record page's own words. The shape check is the one the
+     * API also runs (same three sentences, same order, `services/address.py`), and
+     * `postalZoneMismatch` is the one that catches a real mistake — a PIN that belongs to a
+     * different state from the one on the row above it.
+     *
+     * ── `pincodeOrSpacedValidationError` AND NOT `pincodeValidationError`, AND THE DIFFERENCE IS
+     *    A RED LINE UNDER A VALUE THE REPOSITORY ACCEPTS ─────────────────────────────────────────
+     *
+     * This line used to read `pincodeValidationError(own)` — the RAW stored value. That function
+     * refuses anything which is not six bare digits, which is right where it lives, because the
+     * record page's box strips non-digits as they are typed. THIS box is a hydration target: it
+     * shows whatever `participant.pincode` holds, and that field's own comment in
+     * `stage_definitions.py` names "768 029" — typed exactly that way by somebody reading an address
+     * aloud — as a value already in the column. The server normalises before it checks
+     * (`_pincode_format_error`) and so does the handset (`DwTextFormats.pincodeError`), so all three
+     * of them ACCEPT that value while this box drew "Pincode must be 6 digits — remove any letters
+     * or symbols." under it.
+     *
+     * And it drew it alone, which is what made it worse than a wrong message: `formatShownByControl`
+     * returns true for this role, so `FieldInput`'s wrapper deliberately stays quiet and lets this
+     * control speak — while `aria-invalid` and the "N to fix" count on a collapsed disclosure are
+     * both driven from `fieldFormatError`, which said the value was fine. A red sentence with no
+     * `aria-invalid`, inside a group whose header said nothing, about a value nobody could correct.
+     * One function now answers for all three, and it is the one the server's dispatch matches.
+     */
+    const shape = pincodeOrSpacedValidationError(own);
     const zone = postalZoneMismatch(stateName, own);
     return (
       <div className="grid gap-1">
