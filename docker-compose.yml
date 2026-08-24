@@ -10,7 +10,7 @@
 #   docker compose --profile cache up  ... plus Redis. Nothing uses it until you say so — see below.
 #   docker compose --profile full up   everything at once.
 #
-# THE DEFAULT IS THE CONTRACT. The four services a bare `up` starts are deliberately profile-less,
+# THE DEFAULT IS THE CONTRACT. The three services a bare `up` starts are deliberately profile-less,
 # because a developer who types the command they have typed for months must not discover that it
 # now also builds two images and runs a Redis. Everything added since is behind a profile, and
 # `docker compose config --services` with no flags is the test of that promise.

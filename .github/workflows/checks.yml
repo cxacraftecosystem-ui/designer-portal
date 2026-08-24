@@ -526,3 +526,100 @@ jobs:
         # documented, reviewable diff rather than a number somebody retyped:
         #     node docs/tools/check-docs.mjs --write
         run: node docs/tools/check-docs.mjs
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  # 4 · The container and Kubernetes packaging
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  #
+  # NOTHING HERE DEPLOYS, AND NOTHING HERE IS MEANT TO. Production is one EC2 box behind nginx
+  # behind CloudFront (docs/CI.md §0); the manifests under `infra/k8s/` have never been applied, and
+  # the compute to run a cluster is not available. They stay unapplied on purpose.
+  #
+  # WHAT THIS JOB IS FOR: before it, no workflow in `.github/` mentioned docker, kubectl or
+  # kustomize at all, so nineteen manifests and two Dockerfiles were carried by the repository with
+  # nothing anywhere confirming they still parse. A kustomize overlay that stopped building, or a
+  # `dockerfile:` path that a rename left dangling, would have been found by the first person to try
+  # to use them — which, for a packaging nobody runs day to day, could be a year later and in the
+  # middle of an incident. The whole job is seconds; the per-push half needs no daemon and no
+  # cluster.
+  #
+  # It asserts SHAPE, not policy. The provider-name rule, the doc-set rules and the REPO_FACTS
+  # counts all belong to `docs/tools/check-docs.mjs`, which already sweeps these files; a second,
+  # stricter copy of that rule here would contradict it — `base/hpa.yaml` names the old provider
+  # deliberately, dated, to say which figure the connection budget came from.
+  packaging:
+    name: Container and manifest packaging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: The manifest tree must be present
+        # CHECKED BEFORE THE BUILD, so a missing tree is reported as a missing tree rather than as
+        # whatever kustomize says about it. Worth its own step for a reason particular to git: an
+        # empty directory is not tracked, so `infra/k8s/base/` losing its contents produces four
+        # deletions in a diff nobody is looking at and then nothing at all.
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in infra/k8s/base/kustomization.yaml \
+                   infra/k8s/overlays/dev/kustomization.yaml \
+                   infra/k8s/overlays/staging/kustomization.yaml \
+                   infra/k8s/overlays/prod/kustomization.yaml; do
+            if [ ! -s "$f" ]; then
+              echo "::error::${f} is missing or empty. docs/KUBERNETES.md documents this tree, and an empty directory is not tracked by git — it can go missing with no other symptom."
+              missing=1
+            fi
+          done
+          [ "$missing" = "0" ] || exit 1
+          echo "manifest tree present: $(find infra/k8s -type f -name '*.yaml' | wc -l) files"
+
+      - name: Every overlay must build, and must build something
+        run: |
+          set -euo pipefail
+          command -v kubectl >/dev/null 2>&1 || {
+            echo "::error::kubectl is not on this runner image any more. Add azure/setup-kubectl before this step; do not delete the check."
+            exit 1
+          }
+          for overlay in dev staging prod; do
+            out="$(mktemp)"
+            if ! kubectl kustomize "infra/k8s/overlays/${overlay}" > "$out"; then
+              echo "::error::infra/k8s/overlays/${overlay} does not build."
+              exit 1
+            fi
+            # A kustomize build over an empty resource list SUCCEEDS and emits nothing, so the
+            # object count is the assertion and the exit code is not.
+            objects="$(grep -c '^kind:' "$out" || true)"
+            if [ "${objects:-0}" -lt 10 ]; then
+              echo "::error::overlay ${overlay} built only ${objects:-0} object(s). Expected the base's ten plus the overlay's namespace and secret store."
+              exit 1
+            fi
+            echo "${overlay}: ${objects} objects"
+          done
+
+      - name: The compose stack must still describe itself
+        # `config` resolves interpolation and validates the file without building anything, so it
+        # is cheap enough to run on every push — and it is what catches a `dockerfile:` pointing at
+        # a path that no longer exists, or a profile typo. The service list is printed because the
+        # compose file's header makes a PROMISE about it: a bare `up` starts three services and
+        # everything added since sits behind a profile.
+        run: |
+          set -euo pipefail
+          docker compose config --quiet
+          echo "services a bare 'up' would start:"
+          docker compose config --services | sort | sed 's/^/  /'
+
+      - name: Build both images
+        # MANUAL RUNS ONLY. Two image builds on every push is CI time nobody asked for, and nothing
+        # deploys these images from here. Ask for it when you have changed a Dockerfile:
+        #     gh workflow run Checks --ref <branch>
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          docker build -f backend/Dockerfile -t design-workshop-backend:ci .
+          docker build -f frontend/Dockerfile -t design-workshop-frontend:ci \
+            --build-arg NEXT_PUBLIC_API_URL=http://localhost:8000 \
+            --build-arg NEXT_PUBLIC_APP_URL=http://localhost:3000 .
+          docker image ls --format '  {{.Repository}}:{{.Tag}}  {{.Size}}' \
+            | grep -E 'design-workshop-(backend|frontend):ci'

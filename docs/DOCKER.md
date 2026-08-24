@@ -376,3 +376,30 @@ Rebuild without cache.
 
 **The API container is `unhealthy` but the app responds** — check the probe path is `/health`.
 `/api/health` returns 404 and would keep it unhealthy forever.
+
+## How this document is kept true
+
+The compose file and the two Dockerfiles are the source; everything above is prose about them. Three
+commands are the set difference, and none of them needs a cluster or a running daemon to be useful:
+
+```bash
+# 1. The promise this document makes about the DEFAULT stack: a bare `up` starts three services and
+#    everything added since sits behind a profile. If this prints five, the promise is broken.
+docker compose config --services | sort
+
+# 2. Every service that builds, and the Dockerfile it builds from. Diff against the tables above.
+grep -n 'dockerfile:' docker-compose.yml
+
+# 3. Every variable the API container is handed, which is the list this document's environment
+#    table has to match.
+docker compose config | sed -n '/^  api:/,/^  [a-z]/p' | grep -oE '^      [A-Z_0-9]+:' | tr -d ' :'
+```
+
+| Claim class | Kept true by |
+|---|---|
+| The default stack is three services | `docker compose config --services`, run by the **Container and manifest packaging** job in `.github/workflows/checks.yml` on every push. Added 2026-08-24. |
+| The compose file parses, and every `dockerfile:` path exists | The same job's `docker compose config --quiet` step. A `dockerfile:` pointing at a deleted path is otherwise invisible until somebody runs `--profile api up`. |
+| Both images actually build | The same job, **on a manual run only** (`gh workflow run Checks`). Two image builds per push is CI time nobody asked for, and nothing deploys these images. |
+| Environment defaults | `docker-compose.yml`'s `${VAR:-default}` interpolation, and `backend/app/core/config.py` behind it. [ENVIRONMENT.md](ENVIRONMENT.md) is the index of the names. |
+| The refusal-to-boot guard | `docker/backend/entrypoint.sh`. It classifies a database host by SHAPE, not by provider name — see the note in `PROVIDER_ALLOWLIST` in `docs/tools/check-docs.mjs` about the two stale vendor mentions in its header. |
+| The bucket and database names must not be renamed | Stated at length in `docker-compose.yml` beside each one. Both are `initdb`/`mc mb` facts: renaming either asks an already-initialised volume for something that was never created. Nothing automated can catch this — it is a comment because it has to be. |

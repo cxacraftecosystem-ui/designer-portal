@@ -531,3 +531,35 @@ kubectl v1.36.1 (bundled Kustomize v5.8.1); kubeconform v0.7.0
 - [docs/SECURITY.md](SECURITY.md) — the trust boundaries these manifests inherit.
 - [backend/DEPLOY_AWS.md](../backend/DEPLOY_AWS.md) — the EC2/S3/CloudFront deployment in use today.
 - [docs/CI.md](CI.md) — the GitHub Actions pipeline that deploys it.
+
+## How this document is kept true
+
+Two things about this document are unusual and shape how it is maintained. It describes a
+deployment **that has never run** — so nothing can be verified by observing production — and its
+most load-bearing number came from a database provider this project no longer uses.
+
+The mechanical half is three commands, none of which needs a cluster:
+
+```bash
+# 1. The tree this document's file table describes. A file added to base/ without a row above
+#    shows up here first.
+find infra/k8s -type f -name '*.yaml' | sort
+
+# 2. Every overlay builds, and builds SOMETHING — a kustomize build over an empty resource list
+#    succeeds and emits nothing, so the object count is the assertion and the exit code is not.
+for o in dev staging prod; do
+  printf '%-8s %s objects
+' "$o" "$(kubectl kustomize infra/k8s/overlays/$o | grep -c '^kind:')"
+done
+
+# 3. Nothing here is wired to run. This returning nothing is the check.
+grep -rn 'kubectl apply' .github/
+```
+
+| Claim class | Kept true by |
+|---|---|
+| All three overlays build, and the tree is present | The **Container and manifest packaging** job in `.github/workflows/checks.yml`, on every push. Added 2026-08-24, when no workflow in `.github/` mentioned kubectl, kustomize or docker at all — nineteen manifests carried with nothing confirming they still parsed. |
+| The file table in [What is here](#what-is-here) | Command 1. The job asserts a count (≥ 10 objects per overlay); a row added here without a file, or a file without a row, diverges from it. |
+| No unlabelled provider name appears in a manifest | `KNOWN_PROVIDERS` in `docs/tools/check-docs.mjs`, which sweeps the tracked tree and whose "stated once" count for the current provider is **measured, not asserted**. Deliberately NOT re-checked by the packaging job: `base/hpa.yaml` and `overlays/prod/kustomization.yaml` name the old provider on purpose, dated, to say which figure the connection budget came from. A stricter rule here would forbid the honest form. |
+| **The 200-client ceiling** | **NOTHING — and it is the number every other number here divides.** `base/hpa.yaml` and `overlays/prod/kustomization.yaml` both already say so in place: the figure is the old provider's, measured before production left it on 2026-08-22, and it has deliberately not been re-derived against a limit nobody has read. The arithmetic around it is provider-independent and stays correct; the ceiling is not. `backend/.env.production` is the authority on the current provider and [ENVIRONMENT.md](ENVIRONMENT.md) is the one file that names it. **Re-read this before applying anything** — a materially higher real ceiling makes `maxReplicas: 6` needlessly cautious, and a lower one makes it dangerous. |
+| That none of this is running | Command 3, and the opening line of this document. |

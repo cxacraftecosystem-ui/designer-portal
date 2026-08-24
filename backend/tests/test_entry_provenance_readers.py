@@ -32,6 +32,7 @@ off those shared records onto each workshop's rows. Those are the readers below.
 Nothing here touches a database.
 """
 
+import tokenize
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -611,6 +612,57 @@ def test_no_record_reader_can_serve_a_stale_value_because_there_is_no_overlay():
     )
 
 
+#: Comments and string literals are not code, and matching them made this check cry wolf.
+#:
+#: `app/services/design_workshop_grants.py` was reported as an unclassified reader of
+#: `DwStageEntry` on 2026-08-24 while containing NO read of it at all: its `_may_capture_for`
+#: docstring explains that the predicate is a WRITE rule and that the row-level read filter
+#: (``entry_rows(..., author_id=...)``) is the other half of the pair. Naming the loader in order
+#: to say "this is not the loader" was enough to be accused of calling it.
+#:
+#: The two available fixes are not equivalent. Adding the module to the classified list would have
+#: certified a reader that does not exist, and — because the list is what suppresses the failure —
+#: would have silenced this check for that file on the day it really did start reading the table,
+#: which is precisely the wave the docstring above warns about. So the DETECTOR is fixed instead.
+#:
+#: The trade, stated: a module reaching the table through a string (``getattr(db, "dwstageentry")``)
+#: is now invisible here. It always was — that spelling matches neither pattern — so nothing is lost
+#: that was previously held, and prose stops counting as a call.
+_PROSE_TOKENS = {tokenize.COMMENT, tokenize.STRING} | {
+    getattr(tokenize, name)
+    for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
+    if hasattr(tokenize, name)
+}
+
+
+def _reads_stage_entries(path: Path) -> bool:
+    """Whether this module reads ``DwStageEntry`` IN CODE, both ways in.
+
+    Comment and string spans are blanked rather than removed, so every remaining character keeps its
+    original offset and a match cannot be manufactured by two lines being joined together.
+    """
+    text = path.read_text(encoding="utf-8")
+    line_starts, offset = [], 0
+    for line in text.splitlines(keepends=True):
+        line_starts.append(offset)
+        offset += len(line)
+    chars = list(text)
+    with open(path, "rb") as handle:
+        for token in tokenize.tokenize(handle.readline):
+            if token.type not in _PROSE_TOKENS:
+                continue
+            (start_row, start_col), (end_row, end_col) = token.start, token.end
+            if start_row - 1 >= len(line_starts) or end_row - 1 >= len(line_starts):
+                continue
+            start = line_starts[start_row - 1] + start_col
+            end = min(line_starts[end_row - 1] + end_col, len(chars))
+            for index in range(start, end):
+                if chars[index] != "\n":
+                    chars[index] = " "
+    code = "".join(chars).lower()
+    return "db.dwstageentry." in code or "entry_rows(" in code
+
+
 def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
     """**THE TRIPWIRE FOR THE READER NOBODY REMEMBERED TO ADD TO THIS FILE.**
 
@@ -663,14 +715,24 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()
     for path in root.rglob("*.py"):
-        text = path.read_text(encoding="utf-8").lower()
-        if "db.dwstageentry." in text or "entry_rows(" in text:
+        if _reads_stage_entries(path):
             found.add(str(path.relative_to(root.parent)).replace("\\", "/"))
     unclassified = sorted(found - allowed)
     assert unclassified == [], (
         f"{unclassified} reads DwStageEntry and is not in this test's classified list. Decide "
         "whether it must resolve field provenance (services/entry_provenance), add a test for it "
         "beside the others in this file, and then add it here."
+    )
+    # AND THE DETECTOR MUST STILL DETECT, which is the failure mode the line above cannot see.
+    # `unclassified` is a set difference, so anything that stops `_reads_stage_entries` finding
+    # readers at all — a tokenizer that blanks too much, a spelling that changed — empties `found`
+    # and makes this test pass while checking nothing. Every name on the list is a module known to
+    # read the table, so every name on the list must come back.
+    undetected = sorted(allowed - found)
+    assert undetected == [], (
+        f"{undetected} is on the classified list and the detector no longer finds it. This check "
+        "reports what is NOT on the list, so a detector that finds nothing reports nothing: fix "
+        "`_reads_stage_entries`, and do not delete these names to make it quiet."
     )
 
 
