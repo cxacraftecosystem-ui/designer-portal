@@ -1480,10 +1480,25 @@ jobs:
           # Masked the way the single-PUT step masks it: the second path segment is the uploader's
           # user id, and this repository's rule is that object keys are not logged.
           safe="$(printf '%s' "$object_key" | awk -F/ 'NF>2{ $2="<uploader-id-redacted>" }1' OFS=/)"
+          # PUBLIC_URL TOO, and forgetting it is what broke the first multipart run: the publish step
+          # reads it under `set -u`, so an unset variable is "PUBLIC_URL: unbound variable" AFTER a
+          # successful 67 MB upload — the object sitting in storage with no release row pointing at it.
+          # Harmless (the next run re-uploads) and a waste of six minutes.
+          #
+          # `complete` answers publicUrl, and `create` answered one too; prefer complete's and fall
+          # back, because the assembled object is the thing being named. Empty is legitimate: the
+          # backend derives a URL from the object key when no public base is configured, which is
+          # exactly what `_durable_url` exists for, and `publish_release` does
+          # `payload.url or public_url_for_key(...)`.
+          public_url="$(jq -r '.publicUrl // empty' /tmp/mp.json)"
+          if [ -z "$public_url" ]; then
+            public_url="$(jq -r '.publicUrl // empty' /tmp/mp-urls.json)"
+          fi
           echo "assembled ${part_count} parts into ${safe}"
           {
             echo "OBJECT_KEY=${object_key}"
             echo "OBJECT_KEY_SAFE=${safe}"
+            echo "PUBLIC_URL=${public_url}"
           } >> "$GITHUB_ENV"
 
       - name: Publish the release
