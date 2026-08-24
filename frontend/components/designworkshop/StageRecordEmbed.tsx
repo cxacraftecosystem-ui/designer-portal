@@ -5,15 +5,17 @@
  *
  * ── WHAT THE OWNER ASKED FOR, AND WHY THREE WAVES OF MAPPING DID NOT DELIVER IT ───────────────
  * FOUR of a design workshop's entities ask for the same facts a repository record page already
- * collects, out of the EIGHT REF fields that hydrate from one at all — see {@link MIRROR_POINTS} for
- * the four and {@link NOT_EMBEDDED} for why the other four are attributions rather than mirrors.
+ * collects, out of the ELEVEN REF fields that hydrate from one at all — see {@link MIRROR_POINTS} for
+ * the four and {@link NOT_EMBEDDED} for why the other seven are attributions rather than mirrors.
  *
  * COUNTED, NOT REMEMBERED. An earlier draft of this paragraph said "seven" and "three", which were
- * the numbers before the pin test's first run added two refusals nobody had enumerated — so the
- * numbers here are not to be trusted either, they are to be re-run:
+ * the numbers before the pin test's first run added two refusals nobody had enumerated; it then said
+ * "eight" and "four" until 2026-08-24, when the same pin caught three more in one wave (the two
+ * parents of the new stage-5 process cascade and the sixth reference model's baseline citation). So
+ * the numbers here are not to be trusted either, they are to be re-run:
  *   cd frontend && npx playwright test e2e/stage-record-embed-unit.spec.ts --reporter=line
  * walks `referenceHydrationPoints()` and fails on any key neither table below mentions, and its
- * "the refusals are the ones that were argued" case names all four refusals by hand.
+ * "the refusals are the ones that were argued" case names all seven refusals by hand.
  * For three waves this was approached by WIDENING `DW_REFERENCE_HYDRATION` so that more of a chosen
  * record crossed onto the stage row. That closes the DATA gap and leaves the one the
  * owner was actually describing untouched: "copy the same pages over there as is, and add workshop
@@ -318,6 +320,42 @@ export const NOT_EMBEDDED: readonly { point: string; why: string }[] = [
       "pre-edit values by the singleton's next Save — that form read `initial` at mount and the " +
       "linked id never changed. Correcting the process in the singleton itself is safe; closing the " +
       "hazard needs the stage page, which is the only place that holds both entities."
+  },
+  {
+    point: "traditionalProcess.productRef",
+    why:
+      "One pair (`name -> documentedFor`) beside the 7 of `processRef` on the same entity, whose " +
+      "`ProcessForm` IS a mirror point above. It is the CASCADE — choosing the product is what " +
+      "narrows the process list below it — and this entity may no more mount two record forms than " +
+      "`existingProduct` may: one Save would be able to write a ProductDocumentation and a Process, " +
+      "and the row would have two ideas of what it is about. It stays an ORDINARY PICKER, drawn " +
+      "above the record form in the `pickers` group beside `processRef` in declaration order, which " +
+      "is where {@link splitMirroredFields} already puts every REF field of a mirror-point entity. " +
+      "Note it is the SECOND writer of `documentedFor` rather than a new box: the mirrored/footer " +
+      "split is derived from the mapping's TARGET keys, and that target is already mirrored through " +
+      "`processRef`, so this refusal moves no field between the two groups."
+  },
+  {
+    point: "processStep.productRef",
+    why:
+      "The same pair on the other stage-5 entity, and its sibling `processStep.processRef` is " +
+      "refused above rather than shipped — so there is no record form on this entity for a second " +
+      "one to compete with, and the reason is the stronger one: a Process has many steps, hydration " +
+      "cannot pick one, and a form per step row would save the sequence the other rows came from. A " +
+      "ProductDocumentation form here would be worse still, being a form for the GRANDPARENT of the " +
+      "row it sits on. Ordinary picker, drawn with `processRef` in the pickers group."
+  },
+  {
+    point: "artisanBaseline.interviewRef",
+    why:
+      "There is no form to mount. A `QuestionnaireInterview` is a SITTING — a title, a date, a " +
+      "place, a language and a set of artisans — recorded through the questionnaire area's own " +
+      "screens, and `isInlineCreatable` does not name the model, so `mirrorRefField` would return " +
+      "null and the embed would fall back to the generated grid anyway. It should not be made " +
+      "creatable from here either: an interview is EVIDENCE this stage cites, not a record the " +
+      "citation's author should be able to mint beside the citation. All eleven pairs it carries " +
+      "are COUNTS and administrative facts about the sitting — never an answer, never an artisan's " +
+      "name — so there is no record page's worth of fields to mirror in the first place."
   },
   {
     point: "workshopSetup.craftRef",

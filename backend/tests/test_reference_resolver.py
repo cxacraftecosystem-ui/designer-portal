@@ -402,7 +402,24 @@ async def test_a_hand_typed_participant_narrows_to_nothing_rather_than_to_everyt
 
 async def test_a_model_that_cannot_be_filtered_says_so(client, linked, world):
     """Reported rather than ignored: silently dropping the filter would serve the whole table to
-    a picker the designer believes is narrowed to one artisan."""
+    a picker the designer believes is narrowed to one artisan.
+
+    ── WHICH MODELS THIS STILL COVERS, BECAUSE THE SET SHRANK ON 2026-08-24 ─────────────────────
+    ``Process`` USED TO BE IN IT AND IS NOT ANY MORE. It now declares ``filter_field="productId"``
+    and both stage-5 process pickers are narrowed by a ``productRef`` sibling, so a ``filterBy``
+    against ``Process`` is honoured rather than refused. Nothing in this test asserted that, and
+    nothing in it should be read as still asserting it — the parametrised subject is ``Artisan``.
+
+    The two models that still refuse are ``Artisan`` (stage 3 is where the roster is BUILT, so
+    there is nothing above it to narrow by) and ``QuestionnaireInterview`` (its link to artisans is
+    a many-to-many, and the filter arm applies a scalar column name). Both are asserted, without a
+    database, in ``test_process_product_cascade.py::
+    test_a_model_that_still_cannot_be_filtered_still_says_so`` — deliberately there rather than
+    here, because a 422 on every open of both process pickers is the failure this change could
+    cause, and it must be catchable on a tree with no Postgres. That file also carries the
+    executable narrowing tests: the product's processes and only those, several of them, and none
+    auto-selected.
+    """
     response = client.get(
         f"/api/design-workshops/{linked}/references",
         params={"model": "Artisan", "filterBy": world["latha"].id},

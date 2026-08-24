@@ -506,6 +506,143 @@ CRAFT_NOT_CARRIED = {
     "createdById": "bookkeeping",
 }
 
+# ── THE SIXTH MODEL, AND THE FIRST WHOSE LOADED ROWS ARE CONFIDENTIAL ──────────────────
+#
+# `QuestionnaireInterview` is the GLOBAL artisan questionnaire's SITTING — a title, a date, a place,
+# a language, a named set of artisans, a review status. Not the per-workshop custom `Questionnaire`;
+# the five reasons are on `REFERENCE_MODELS["QuestionnaireInterview"]` and none of them is about
+# taste. Cited from stage 6's new `artisanBaseline` singleton, whose stage is titled "Existing
+# Products & Artisan Baseline" and had no entity for the artisan half.
+#
+# EVERY REFUSAL BELOW IS A DISCLOSURE DECISION, WHICH IS WHY THIS LEDGER MATTERS MORE HERE THAN
+# ANYWHERE ELSE IN THE FILE. The other five models describe objects — a saree, a loom, a dye
+# sequence. This one describes an afternoon spent with named people, and the columns it refuses are
+# refused because a design workshop's stage reads do NOT pass through `records._redact_sensitive`, a
+# `DesignWorkshopViewer` is a grantee, and a hydrated value is a permanent copy the report never
+# re-resolves. `test_no_artisan_answer_or_name_crosses_from_an_interview` executes the refusals; this
+# table is what makes a future widening a decision rather than an omission.
+QUESTIONNAIRE_INTERVIEW_CARRIED = {
+    "title": "artisanBaseline.interviewTitle",
+    "interviewDate": "artisanBaseline.interviewDate",
+    "place": "artisanBaseline.interviewPlace",
+    "language": "artisanBaseline.interviewLanguage",
+    "recordedAt": "artisanBaseline.interviewDocumentedOn",
+    # The TITLE crosses through the `workshop` relation; the id does not. Same shape as
+    # `Craft.workshopId` above, and needed for the same reason: the picker is WORKSHOP-scoped, but on
+    # a design workshop with no linked `Workshop` it falls back to the whole table and reports
+    # `scoped: false`, so an out-of-cluster sitting can legitimately be picked.
+    "workshopId": "artisanBaseline.interviewDocumentedAtWorkshop (Workshop.title, via the relation)",
+}
+QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
+    # THE ONE JUDGEMENT CALL IN THE MODEL, AND IT GOES TO EXCLUSION. Unlike `Artisan.notes` (carried
+    # as the roster row's record notes), whose subject is the one person named on the row it lands
+    # on, an interview's notes are unbounded free prose about a GROUP of which the report may name
+    # one — so a sentence about "the second weaver's daughter" can be neither attributed nor
+    # redacted, and the report has no place to put it. Everything a citation needs is structured. If
+    # the owner wants it, it gets its own box and never a designer's narrative (the two-authors
+    # rule); the default here is silence.
+    "notes": (
+        "free prose about a GROUP, of which a report page may name one member — unattributable and "
+        "unredactable. Unlike the artisan record's notes, whose subject is the person named on the "
+        "row it lands on. An owner decision to reverse; the default is silence."
+    ),
+    "status": _MUTABLE_VERDICT,
+    "reviewNotes": _MUTABLE_VERDICT,
+    "reviewedById": _MUTABLE_VERDICT,
+    "reviewedAt": _MUTABLE_VERDICT,
+    # A `String? @unique` that a "carry the scalars" instinct sweeps in without noticing. It is the
+    # SORTED, COMMA-JOINED LIST OF ARTISAN IDS — a group re-identification key in one string, which
+    # smuggles in exactly the roster the names refusal excludes.
+    "artisanSetKey": (
+        "a group re-identification key: the sorted, comma-joined ARTISAN IDS of the sitting. "
+        "Carrying it would smuggle in the roster the names refusal excludes, in one string."
+    ),
+    # `_reference_place` returns `(row.place, '', '')` for every model but `Artisan`, and this model
+    # does not include `location` at all — the cleanest form of the refusal. Its own docstring's
+    # worked example is this exact scenario: "a researcher interviews six artisans in one afternoon
+    # at a cooperative hall", where the device fix would draw all six on the hall. An interview also
+    # has no STATED address to carry: it is an event, not a residence.
+    "locationId": (
+        "join key, and provenance rather than stated: the desk the record was typed at. This model "
+        "does not include the relation at all, so no Location column is one getattr away."
+    ),
+    "extraMetadata": "bookkeeping",
+    "recordedTimezone": "the date is carried as a bare DATE, so the zone has nothing to qualify",
+    "createdAt": "bookkeeping",
+    "updatedAt": "bookkeeping",
+    # NOT AN "INTERVIEWED BY" BOX. `hydrate_entries` already stamps
+    # `HydrationSource(author_id=row.createdById)` and the field-provenance views show that name —
+    # which is who SAVED the record, not a claim that they conducted the sitting. The same
+    # distinction `_measurement_method_note` exists to keep between the saver and the measurer.
+    "createdById": "bookkeeping — and see the refusal of an 'interviewed by' box on the model",
+}
+
+# ── THE TWO MODELS BEHIND THE COUNTS, LEDGERED BECAUSE THE INCLUDE LOADS THEM ─────────────
+#
+# Same precedent as `ProcessStep` above: these rows are not pickable, they arrive through
+# `REFERENCE_MODELS["QuestionnaireInterview"].include` and a lambda reads them, so every column is a
+# decision. `answerText` being in the CARRIED list is deliberate and is the most important line in
+# this file: its NON-BLANKNESS is counted and its TEXT never crosses in any form, at any masking, in
+# any count-with-sample. Four independent reasons, each sufficient, are on the `_interview_*` helpers
+# and above the hydration mapping.
+QUESTIONNAIRE_RESPONSE_CARRIED = {
+    "answerText": (
+        "artisanBaseline.interviewQuestionsAnswered — COUNTED (non-blank), NEVER QUOTED. See "
+        "test_no_artisan_answer_or_name_crosses_from_an_interview."
+    ),
+    "updatedAt": "artisanBaseline.interviewLastAnsweredOn (the max across the sitting)",
+}
+QUESTIONNAIRE_RESPONSE_NOT_CARRIED = {
+    "interviewId": "join key — the rows are reached through the interview's own responses relation",
+    "questionId": "join key",
+    "notes": (
+        "free text about a named person, on the same terms as answerText: the schema cannot say who "
+        "in a group said it, and the copy is permanent and one-way."
+    ),
+    "answeredById": "bookkeeping — and the same saver-is-not-the-speaker refusal as createdById",
+    "createdAt": "bookkeeping",
+}
+
+# THE JOIN TABLE ITSELF, LEDGERED BECAUSE `artisanId` IS THE COLUMN THE NAMES REFUSAL IS ABOUT.
+#
+# Nothing is READ off these rows — `_interview_artisan_count` takes `len()` of the list and stops —
+# and that is precisely why it belongs here: "we only counted them" is a decision, and the column
+# that would turn a count into a roster is one `getattr` away in a loop that already has the rows in
+# hand. Every entry is a refusal.
+QUESTIONNAIRE_INTERVIEW_ARTISAN_CARRIED: dict[str, str] = {}
+QUESTIONNAIRE_INTERVIEW_ARTISAN_NOT_CARRIED = {
+    "interviewId": "join key",
+    "artisanId": (
+        "the roster of the sitting. Only the COUNT crosses — a sitting may cover artisans who are "
+        "not on this workshop's roster, so naming or identifying them would have a submitted report "
+        "disclose that a person from another cluster was interviewed."
+    ),
+    "createdAt": "bookkeeping",
+}
+
+QUESTIONNAIRE_QUESTION_CARRIED = {
+    "sectionCode": "artisanBaseline.interviewSectionsCovered (distinct codes, counted)",
+}
+QUESTIONNAIRE_QUESTION_NOT_CARRIED = {
+    # NOT A DISCLOSURE ON ITS OWN, and refused all the same: prompts WITHOUT answers answer nothing,
+    # and prompts WITH answers are the thing forbidden above. Only the counts cross. `supersededById`
+    # is the column that exists because a prompt is reworded under answers already given — "How many
+    # looms?" answered "12", reworded to "How many weavers?" — which is the same fact that forbids
+    # freezing a prompt/answer pair into a submitted report.
+    "prompt": (
+        "a prompt without its answer answers nothing, and with its answer it is the disclosure "
+        "refused above. Only the COUNT of answered questions crosses."
+    ),
+    "sectionTitle": "as prompt: only the count of distinct sections crosses",
+    "sortOrder": "the instrument's own ordering; nothing printed is ordered by it",
+    "isActive": "instrument lifecycle — and the reason no denominator crosses",
+    "retiredAt": "instrument lifecycle",
+    "supersededById": "instrument lifecycle — the rewording column; see prompt",
+    "sectionId": "join key",
+    "createdAt": "bookkeeping",
+    "updatedAt": "bookkeeping",
+}
+
 # ── THE RELATION LEDGER — the blind spot, ledgered ────────────────────────────────────────────
 #
 # Same contract as the scalar lists above and for the same reason: a relation that reaches nothing
@@ -645,6 +782,66 @@ RELATION_LEDGER = {
         ),
         "workshops": "join key — the WorkshopCraft reading of workshop scope",
     },
+    "QuestionnaireInterview": {
+        "createdBy": "bookkeeping — who SAVED the record, which is not a claim about who sat in",
+        # THE REFUSAL THAT IS EXPRESSED BY AN ABSENT INCLUDE RATHER THAN BY AN IF. `_reference_place`
+        # reads `row.location` for EVERY model and prefers `location.village` over the free-text
+        # `place`, and `load_report_references` runs at RENDER time — so turning this include on would
+        # change what an already-submitted document prints. Its own docstring's worked example is this
+        # model's exact scenario: six artisans interviewed in one afternoon at a cooperative hall,
+        # every one of them drawn on the hall.
+        "location": (
+            "NOT INCLUDED, deliberately — provenance, not stated. The desk the record was typed at. "
+            "Not including it is the cleanest form of the refusal: no Location column is one getattr "
+            "away from a future carry."
+        ),
+        "workshop": (
+            "read by the picker — artisanBaseline.interviewDocumentedAtWorkshop takes Workshop.title, "
+            "via include={'workshop': True}. Safe by the same check Craft.workshop passed: nothing at "
+            "render time reads row.workshop."
+        ),
+        "artisans": (
+            "read by the picker — COUNTED into artisanBaseline.interviewArtisanCount and into the "
+            "sublabel's artisan phrase, via include={'artisans': True}. THE COUNT AND NEVER THE "
+            "NAMES: a sitting may cover artisans who are not on this workshop's roster, and naming "
+            "them would have a submitted report disclose that a person from another cluster was "
+            "interviewed. Deliberately NOT symmetrical with ToolDocumentation.artisanLinks."
+        ),
+        "responses": (
+            "read by the picker — counted into artisanBaseline.interviewSectionsCovered, "
+            "artisanBaseline.interviewQuestionsAnswered and artisanBaseline.interviewLastAnsweredOn, "
+            "via include={'responses': {'include': {'question': True}}}. THE ANSWERS ARE LOADED AND "
+            "DISCARDED, which is the one confidential include in the registry; the follow-up is a "
+            "count_include facility so they never leave Postgres."
+        ),
+        "media": (
+            "read by the picker — counted into artisanBaseline.interviewMediaNote via "
+            "include={'media': True}. No media_field and therefore no photograph: an interview's "
+            "images are pictures of named artisans mid-interview and the roster already carries each "
+            "participant's portrait. The note is the only thing that can say the AUDIO RECORDING of "
+            "the sitting exists."
+        ),
+    },
+    "QuestionnaireResponse": {
+        "interview": "join key — the rows are reached through the interview's responses relation",
+        "question": (
+            "read by the picker — the DENORMALISED sectionCode only, for "
+            "artisanBaseline.interviewSectionsCovered. The nesting stops there: no `section`."
+        ),
+        "answeredBy": "bookkeeping — and the saver is not the speaker; see createdBy above",
+    },
+    "QuestionnaireQuestion": {
+        "section": "NOT INCLUDED — the denormalised sectionCode answers the only question asked",
+        "responses": "join key — reached from the other side, through the interview",
+    },
+    "QuestionnaireInterviewArtisan": {
+        "interview": "join key",
+        "artisan": (
+            "LOADED AND NOT READ. `include={'artisans': True}` does not nest `artisan`, so the "
+            "related Artisan row is not fetched at all — which is the cheapest possible form of the "
+            "names refusal: there is no name in the process to leak."
+        ),
+    },
 }
 
 
@@ -656,6 +853,12 @@ LEDGER = [
     ("Process", PROCESS_CARRIED, PROCESS_NOT_CARRIED),
     ("ProcessStep", PROCESS_STEP_CARRIED, PROCESS_STEP_NOT_CARRIED),
     ("Craft", CRAFT_CARRIED, CRAFT_NOT_CARRIED),
+    ("QuestionnaireInterview", QUESTIONNAIRE_INTERVIEW_CARRIED,
+     QUESTIONNAIRE_INTERVIEW_NOT_CARRIED),
+    ("QuestionnaireResponse", QUESTIONNAIRE_RESPONSE_CARRIED, QUESTIONNAIRE_RESPONSE_NOT_CARRIED),
+    ("QuestionnaireQuestion", QUESTIONNAIRE_QUESTION_CARRIED, QUESTIONNAIRE_QUESTION_NOT_CARRIED),
+    ("QuestionnaireInterviewArtisan", QUESTIONNAIRE_INTERVIEW_ARTISAN_CARRIED,
+     QUESTIONNAIRE_INTERVIEW_ARTISAN_NOT_CARRIED),
 ]
 
 
@@ -1595,6 +1798,92 @@ def _craft_row(**overrides):
     return SimpleNamespace(**fields)
 
 
+def _response_row(**overrides):
+    """One ``QuestionnaireResponse`` as the ``responses`` include hands it to the data lambda.
+
+    THE ANSWER TEXT IS PRESENT IN THE FIXTURE ON PURPOSE, and it is the only fixture in this file
+    whose value must never appear in any assertion about what was stored. The include loads it — there
+    is no scalar `select` on the relation — so a fixture without it would let
+    `test_no_artisan_answer_or_name_crosses_from_an_interview` pass for the wrong reason: nothing
+    would be leaking because nothing was there.
+    """
+    fields = dict(
+        answerText="Twelve, and two of them belong to my brother.",
+        notes="She hesitated before answering.",
+        updatedAt=datetime(2026, 3, 14, 11, 30),
+        question=SimpleNamespace(sectionCode="LOOMS", sectionTitle="Looms and equipment",
+                                 prompt="How many looms do you own?"),
+    )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+def _interview_row(**overrides):
+    """One ``QuestionnaireInterview`` as the sixth reference model's picker loads it.
+
+    A SITTING, NOT A FORM: the global artisan questionnaire is a single instrument
+    (`QuestionnaireSection.code` is unique and its `sortOrder` is globally unique), so what a
+    designer picks is this — an afternoon, with a place, a language and a named set of people.
+
+    SIX ARTISANS AND FOUR RESPONSES ACROSS THREE SECTIONS, one of the four saved BLANK. Those
+    numbers are the fixture's whole job. `interviewQuestionsAnswered` is 3 of 4, because `"   "` is a
+    saved row with nothing in it; `interviewSectionsCovered` is 2 of the 3 sections touched, because
+    the section whose only row is that blank one is not covered either. THE BLANK ROW IS THE FIXTURE'S
+    POINT: it used to be counted as a covered section, which made the printed pair
+    "Sections answered: 3 / Questions answered: 3" describe a sitting where one of the three sections
+    holds nothing at all — and made "9 / 0" reachable on a sitting where a researcher had tabbed
+    through nine and answered none.
+
+    THE MEDIA ARM IS NOT IN THIS FIXTURE, on purpose: its two files are a plain photograph and a
+    plainly-named audio file, so it stands for a sitting whose section signal is entirely in its
+    ANSWERS. The clip-nomenclature and metadata arms have their own tests below, which is where the
+    interesting filenames belong.
+
+    NO `location` KEY, matching the model's include. If one is ever added here it is a sign somebody
+    has turned the relation on, which changes what already-submitted documents print.
+    """
+    fields = dict(
+        id="qi_1",
+        title="Barpali weavers, group 2",
+        interviewDate=datetime(2026, 3, 14, 9, 0),
+        place="Barpali",
+        language="Odia",
+        notes="The second weaver's daughter translated for her.",
+        status="APPROVED",
+        artisanSetKey="art_1,art_2,art_3,art_4,art_5,art_6",
+        recordedAt=datetime(2026, 3, 16, 8, 0),
+        createdById="usr_9",
+        workshop=SimpleNamespace(title="Sambalpuri Ikat cluster survey, Barpali"),
+        artisans=[SimpleNamespace(artisanId=f"art_{n}",
+                                 artisan=SimpleNamespace(name=f"Artisan {n}"))
+                  for n in range(1, 7)],
+        responses=[
+            _response_row(),
+            _response_row(question=SimpleNamespace(sectionCode="DYES",
+                                                   sectionTitle="Dyes",
+                                                   prompt="Which dyes?"),
+                          answerText="Natural indigo.",
+                          updatedAt=datetime(2026, 3, 14, 12, 0)),
+            _response_row(question=SimpleNamespace(sectionCode="INCOME",
+                                                  sectionTitle="Income",
+                                                  prompt="Monthly income?"),
+                          answerText="   ",
+                          updatedAt=datetime(2026, 3, 14, 12, 15)),
+            _response_row(question=SimpleNamespace(sectionCode="DYES",
+                                                  sectionTitle="Dyes",
+                                                  prompt="Where from?"),
+                          answerText="Bought in Bargarh.",
+                          updatedAt=datetime(2026, 3, 15, 7, 45)),
+        ],
+        media=[
+            _media_row(id="med_q1", mediaType="AUDIO", originalFilename="sitting.m4a"),
+            _media_row(id="med_q2", mediaType="IMAGE", originalFilename="group.jpg"),
+        ],
+    )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
 class _Delegate:
     def __init__(self, rows):
         self._rows = rows
@@ -1634,14 +1923,29 @@ class _FakeDb:
         ]
 
 
-async def _hydrate(monkeypatch, entity_key, sent, *, rows, photos=None, previous=None):
-    """Run one entry through the real hydration and return the stored ``data``."""
+async def _hydrate_entry(monkeypatch, entity_key, sent, *, rows, photos=None, previous=None):
+    """Run one entry through the real hydration and return the whole ``PendingEntry``.
+
+    ``_hydrate`` below returns only ``data``, which is what almost every test in this file wants. The
+    exceptions are the two-writer tests: a box written by either of two refs holds the SAME STRING
+    whichever one wrote it, so ``entry.hydrated`` — the ``HydrationSource`` naming the model and the
+    source key — is the only thing that says which. A test reading ``data`` alone would pass with the
+    ordering rule inverted.
+    """
     monkeypatch.setattr(dw, "db", _FakeDb(rows, photos or {}))
     entry = dw.PendingEntry(
         entity=_entity(entity_key), data=dict(sent), previous=dict(previous or {}),
         row_id=None, ordinal=0, client_key="k1",
     )
     await dw.hydrate_entries([entry])
+    return entry
+
+
+async def _hydrate(monkeypatch, entity_key, sent, *, rows, photos=None, previous=None):
+    """Run one entry through the real hydration and return the stored ``data``."""
+    entry = await _hydrate_entry(
+        monkeypatch, entity_key, sent, rows=rows, photos=photos, previous=previous
+    )
     return entry.data
 
 
@@ -1687,6 +1991,356 @@ async def test_a_fully_documented_artisan_arrives_whole(monkeypatch):
     assert data["documentedOn"] == "2025-03-12"
     assert data["photo"] == "med_1"
     assert data["photoCaption"] == "At her loom, Barpali"
+
+
+async def test_a_documented_questionnaire_interview_arrives_whole(monkeypatch):
+    """EVERY declared target of ``artisanBaseline.interviewRef`` is non-empty, and the counts are
+    the counts rather than merely present.
+
+    THIS IS THE ROUND TRIP FOR THE SIXTH REFERENCE MODEL, and it runs the REAL ``hydrate_entries``
+    over a fake Prisma client, so ``coerce_value``, the only-fill-blanks rule and the clearing rule
+    all decide whether a value survives — which is the difference between this and a test that
+    re-implements the copy loop and passes while the feature is broken.
+    """
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row()]},
+    )
+    blank = sorted(t for t in _targets("artisanBaseline.interviewRef") if not data.get(t))
+    assert blank == [], f"a documented interview left these boxes empty: {blank}"
+
+    assert data["interviewTitle"] == "Barpali weavers, group 2"
+    assert data["interviewPlace"] == "Barpali"
+    assert data["interviewLanguage"] == "Odia"
+    # THE SITTING'S DATE AND THE TYPING-IN DATE ARE TWO DIFFERENT FACTS, and the fixture makes them
+    # two different days so that a mapping which crossed them could not pass.
+    assert data["interviewDate"] == "2026-03-14"
+    assert data["interviewDocumentedOn"] == "2026-03-16"
+    assert data["interviewArtisanCount"] == 6
+    # THE ROWS TOUCH THREE SECTIONS AND COVER TWO, and three of the four responses carry an answer:
+    # the fourth is "   ", a saved row with nothing in it, and it is the ONLY row of its section. So
+    # the section count drops it for the same reason the answer count does. Reading 3 here means the
+    # blank-row rule has been lost and the two boxes can contradict each other again.
+    assert data["interviewSectionsCovered"] == 2
+    assert data["interviewQuestionsAnswered"] == 3
+    assert data["interviewLastAnsweredOn"] == "2026-03-15"
+    assert data["interviewMediaNote"] == (
+        "Attached to the interview record: 1 photograph, 1 audio note."
+    )
+    assert data["interviewDocumentedAtWorkshop"] == "Sambalpuri Ikat cluster survey, Barpali"
+
+
+async def test_an_interview_that_answered_nothing_says_zero_rather_than_nothing(monkeypatch):
+    """Zero is a statement about the evidence and a blank is an absence of one.
+
+    A sitting that produced no answers is exactly the citation a reader most needs to see for what it
+    is, so the three counts hydrate as 0 rather than being skipped by
+    ``if value in (None, ""): continue``. This is the ``age``/``experienceYears`` rule — zero is a
+    real value — and it is why the helpers return an int unconditionally rather than falling back to
+    None through an ``or``.
+    """
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(responses=[], artisans=[], media=[])]},
+    )
+    assert data["interviewArtisanCount"] == 0
+    assert data["interviewSectionsCovered"] == 0
+    assert data["interviewQuestionsAnswered"] == 0
+    # No responses => no `max()` to take, and no media => no sentence. Both are absences rather than
+    # zeroes, which is why they are the two keys that answer None.
+    assert "interviewLastAnsweredOn" not in data
+    assert "interviewMediaNote" not in data
+
+
+async def test_a_section_whose_only_row_is_blank_is_not_a_covered_section(monkeypatch):
+    """THE PAIR OF NUMBERS MUST NOT BE ABLE TO CONTRADICT EACH OTHER, and it could.
+
+    `_interview_sections_covered` counted DISTINCT `sectionCode` over response rows whether they held
+    an answer or not, while `_interview_questions_answered` has always required a non-blank one. So a
+    researcher who opened nine sections, tabbed through them and saved produced nine blank rows, and
+    the `KeyValueBlock` printed "Sections answered: 9" directly above "Questions answered: 0" in a
+    document submitted to a ministry.
+
+    Written as the extreme case rather than as one blank among answers, because that is the shape that
+    made the pair absurd rather than merely generous.
+    """
+    tabbed = [
+        _response_row(answerText="", question=SimpleNamespace(sectionCode=f"S{n}",
+                                                             sectionTitle=f"Section {n}",
+                                                             prompt="?"))
+        for n in range(1, 10)
+    ]
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(responses=tabbed, media=[])]},
+    )
+    assert data["interviewQuestionsAnswered"] == 0
+    assert data["interviewSectionsCovered"] == 0, (
+        "nine sections opened and none answered must not print as nine covered — the two counts "
+        "read the same rows and must apply the same non-blank test"
+    )
+    # And nothing was ANSWERED, so there is no date to print beside the zero either.
+    assert "interviewLastAnsweredOn" not in data
+
+
+async def test_an_interview_recorded_as_section_clips_counts_its_sections(monkeypatch):
+    """THE APP'S ORDINARY WAY OF TAKING AN INTERVIEW USED TO COUNT AS ZERO.
+
+    A sitting captured as one AUDIO CLIP PER SECTION carries its section signal in the clip FILENAME
+    — `questionnaireClipBaseName` in MainActivity.kt builds
+    `SECTION_QUESTION_INTERVIEWNAME_DURATIONHHMMSS_DATETIMEDDMMYYYYHHMM` — and may have NO response
+    rows at all. The old count read only response rows, so the report printed "Sections answered: 0"
+    for a sitting whose View Data matrix (`questionnaire._derived_completed_sections`, which reads
+    the same filenames) showed nine.
+
+    ONE FILE PER SECTION AND ONE SECTION RECORDED TWICE, so the assertion is about DISTINCT sections
+    and would not pass on a plain file count.
+    """
+    clips = [
+        _media_row(id="med_c1", mediaType="AUDIO",
+                   originalFilename="LOOMS_SEC_BARPALIGROUP2_001432_140320260915.m4a"),
+        _media_row(id="med_c2", mediaType="AUDIO",
+                   originalFilename="DYES_SEC_BARPALIGROUP2_000817_140320261002.m4a"),
+        _media_row(id="med_c3", mediaType="AUDIO",
+                   originalFilename="DYES_04_BARPALIGROUP2_000122_140320261010.m4a"),
+        _media_row(id="med_c4", mediaType="AUDIO",
+                   originalFilename="INCOME_SEC_BARPALIGROUP2_000355_140320261041.m4a"),
+    ]
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(responses=[], media=clips)]},
+    )
+    assert data["interviewSectionsCovered"] == 3, (
+        "an interview recorded as one clip per section has to count those sections; reading 0 here "
+        "is the report contradicting the screen it was checked against"
+    )
+    # NOT AN ANSWER COUNT, AND THE TWO ARE DIFFERENT FACTS. A clip is content recorded against a
+    # section and it is not a typed answer to a question, so this stays 0 and stays honest.
+    assert data["interviewQuestionsAnswered"] == 0
+    assert "interviewLastAnsweredOn" not in data
+
+
+async def test_an_uploaded_photograph_is_not_read_as_a_section_code(monkeypatch):
+    """THE SHAPE CHECK EARNS ITS KEEP HERE, and without it the count would INVENT sections.
+
+    The route this agrees with validates a filename's leading token against the real section-code
+    list. `QuestionnaireSection` is not reachable from an interview row — the divergence path
+    re-fetches with `spec.include` and nothing else — so this validates the NOMENCLATURE instead: five
+    underscore-separated tokens with six digits of duration in the fourth. A camera roll name has one
+    token and a scanned document has two, so neither can pass, and "IMG" does not become a section.
+
+    THE `SEC` SENTINEL IS THE SUBTLE ONE. `questionnaireClipBaseName` substitutes it when it has no
+    section code at all, so a well-formed clip can lead with a token that means "unknown" — and
+    counting that would add one phantom section to every sitting recorded without one.
+    """
+    misleading = [
+        _media_row(id="med_m1", originalFilename="IMG_2031.jpg"),
+        _media_row(id="med_m2", mediaType="PDF", originalFilename="consent_form.pdf"),
+        _media_row(id="med_m3", mediaType="AUDIO", originalFilename="LOOMS_notes_draft.m4a"),
+        _media_row(id="med_m4", mediaType="AUDIO",
+                   originalFilename="SEC_SEC_BARPALIGROUP2_001432_140320260915.m4a"),
+    ]
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(responses=[], media=misleading)]},
+    )
+    assert data["interviewSectionsCovered"] == 0
+
+
+async def test_a_section_tagged_on_a_media_row_counts_without_any_response(monkeypatch):
+    """The metadata arm, which is the one the route lists FIRST for media.
+
+    `extraMetadata.sectionCode` names the section outright and needs no lookup at all, and
+    `extraMetadata.questionId` is resolved through the questions THIS ROW's own responses carry. Both
+    are checked here because the second is the one that can only work when the response is present,
+    and a test of the first alone would not show that.
+    """
+    rows = [
+        _media_row(id="med_s1", mediaType="AUDIO", originalFilename="a.m4a",
+                   extraMetadata={"sectionCode": "dyes"}),
+        _media_row(id="med_s2", originalFilename="b.jpg", extraMetadata={"questionId": "q_looms"}),
+    ]
+    answered = _response_row(questionId="q_looms")
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(responses=[answered], media=rows)]},
+    )
+    # `dyes` normalises to `DYES` — the same normalisation the route applies to both ends — and
+    # `q_looms` resolves through the response to LOOMS, which its own answer had already covered.
+    assert data["interviewSectionsCovered"] == 2
+
+
+async def test_a_section_the_row_cannot_resolve_leaves_the_box_blank(monkeypatch):
+    """WHERE THE COUNT WOULD BE A FLOOR, NOTHING IS PRINTED — and this is the one such case.
+
+    A media row tagged with a `questionId` whose question has NO response row on this interview cannot
+    be resolved from anything the include loads. The box prints a bare number a reader takes as the
+    whole truth, so an understatement is worse than a blank: `hydrate_entries` skips a None and the
+    field simply does not appear in the block, which is the honest answer available.
+    """
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(
+            responses=[_response_row(questionId="q_looms")],
+            media=[_media_row(id="med_u1", extraMetadata={"questionId": "q_unknown"})],
+        )]},
+    )
+    assert "interviewSectionsCovered" not in data, (
+        "an unresolvable section signal must blank the box rather than print a floor; a number the "
+        "reader cannot tell is partial is worse than no number"
+    )
+    # Everything else on the block still crosses — one unanswerable count is not a reason to lose
+    # the citation.
+    assert data["interviewTitle"] == "Barpali weavers, group 2"
+
+
+async def test_the_last_answered_date_ignores_a_row_nobody_answered(monkeypatch):
+    """"Last answered on" AND "Questions answered: 0" COULD PRINT SIDE BY SIDE.
+
+    `_interview_last_answered` maxed `updatedAt` over every response row, so it measured when the
+    sitting was last TOUCHED. A blank row saved after the last real answer moved the printed date
+    forward past it; a sitting of nothing but blank rows printed a date beside a zero.
+
+    The fixture makes the blank row the NEWEST, which is the only arrangement in which a filter that
+    was dropped would still pass.
+    """
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(responses=[
+            _response_row(answerText="Natural indigo.", updatedAt=datetime(2026, 3, 14, 12, 0)),
+            _response_row(answerText="  ", updatedAt=datetime(2026, 4, 30, 18, 0)),
+        ])]},
+    )
+    assert data["interviewLastAnsweredOn"] == "2026-03-14", (
+        "the date must belong to the rows the count counted; 2026-04-30 is the day somebody tabbed "
+        "through a section, which is not a day the sitting was answered"
+    )
+
+
+async def test_an_interview_of_nothing_but_blank_rows_prints_no_date(monkeypatch):
+    """The end of the same rule: nothing answered, so there is no answering date to print."""
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [_interview_row(
+            responses=[_response_row(answerText=None), _response_row(answerText="")], media=[],
+        )]},
+    )
+    assert data["interviewQuestionsAnswered"] == 0
+    assert data["interviewSectionsCovered"] == 0
+    assert "interviewLastAnsweredOn" not in data
+
+
+async def test_no_artisan_answer_or_name_crosses_from_an_interview(monkeypatch):
+    """THE DISCLOSURE TEST, AND IT IS THE REASON THIS MODEL IS ALLOWED TO EXIST AT ALL.
+
+    ``QuestionnaireResponse.answerText`` and ``.notes`` are free text about a NAMED person. A design
+    workshop's stage reads do NOT pass through ``records._redact_sensitive``, a
+    ``DesignWorkshopViewer`` is a grantee, and a hydrated value is a PERMANENT copy the report never
+    re-resolves — so a leak here is not a display bug, it is a disclosure in a document that has been
+    filed. On top of that the schema cannot say WHICH member of a six-person sitting said any given
+    sentence, and ``QuestionnaireQuestion.supersededById`` exists because a prompt is reworded under
+    answers already given ("How many looms?" answered "12", reworded to "How many weavers?").
+
+    ASSERTED OVER THE WHOLE STORED ROW AS SUBSTRINGS, not key by key, because the failure this guards
+    is a key nobody thought of — a sample folded into a note, a prompt appended to a count, a name
+    swept into a sublabel-shaped box. A per-key assertion would pass for every one of those.
+
+    THE NAMES ARE REFUSED TOO, and deliberately not symmetrically with ``tool.usedByArtisans``, which
+    DOES carry names as BULLETS: a tool assignment is an administrative fact, whereas who sat in a
+    room together is a social one — and decisively, a sitting may include artisans who are NOT on
+    this workshop's roster, so naming them would have a submitted report disclose that a particular
+    person from another cluster was interviewed. ``artisanSetKey`` is refused with them: it is the
+    sorted, comma-joined list of artisan IDS, which is the same roster in one string.
+    """
+    row = _interview_row()
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [row]},
+    )
+    stored = " || ".join(f"{k}={v!r}" for k, v in sorted(data.items()))
+    forbidden = {
+        "the answer text": "Twelve, and two of them belong to my brother",
+        "a second answer": "Natural indigo",
+        "the response note": "She hesitated",
+        "the question prompt": "How many looms",
+        "the section title": "Looms and equipment",
+        "an artisan name": "Artisan 3",
+        "the group re-identification key": "art_1,art_2",
+        "the interview's own free prose": "second weaver's daughter",
+        "the reviewer's verdict": "APPROVED",
+        "a media id": "med_q1",
+    }
+    leaked = sorted(what for what, needle in forbidden.items() if needle in stored)
+    assert leaked == [], (
+        f"a questionnaire interview carried {leaked} onto a stage entry. Every one of these is "
+        f"permanent, unredactable and readable by a grantee. Stored row: {stored}"
+    )
+    # And the counts that ARE carried are still there, so this test cannot be satisfied by carrying
+    # nothing at all — which is the way a "nothing leaked" assertion usually goes green.
+    assert data["interviewQuestionsAnswered"] == 3
+    assert data["interviewArtisanCount"] == 6
+
+
+async def test_the_review_verdict_is_live_in_the_sublabel_and_never_on_the_entry(monkeypatch):
+    """``_review_flag`` on the sixth model, asserted the way it is asserted on the other five.
+
+    ``status`` is MUTABLE and a hydrated value is permanent, so a frozen "Awaiting review" would be a
+    false statement about a named reviewer's decision the week after it changed. The verdict is
+    composed on every ``reference_options`` call instead — into the sublabel, where a designer reads
+    it at the moment of choosing.
+    """
+    spec = dw.REFERENCE_MODELS["QuestionnaireInterview"]
+    pending = _interview_row(status="PENDING")
+    assert "Awaiting review" in spec.sublabel(pending)
+    # The sublabel is where the whole identifying set lives, because the picker's label is a bare
+    # title and two sittings in one fortnight can share one.
+    assert "2026-03-14" in spec.sublabel(pending)
+    assert "Barpali" in spec.sublabel(pending)
+    assert "Odia" in spec.sublabel(pending)
+    assert "6 artisans" in spec.sublabel(pending)
+
+    data = await _hydrate(
+        monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
+        rows={"questionnaireinterview": [pending]},
+    )
+    assert not any("review" in str(v).lower() for v in data.values())
+
+
+def test_the_interview_picker_orders_by_title_because_nulls_sort_first_under_desc():
+    """``interviewDate`` DESC would float every UNDATED sitting to the top of the picker.
+
+    ``QuestionnaireInterview.interviewDate`` is nullable and Postgres sorts NULLs FIRST under DESC,
+    so ordering by recency puts the rows carrying the LEAST identifying information above the ones
+    carrying the most. Every other model here orders by its label column ascending; the date is in
+    the sublabel, where it is read.
+    """
+    assert dw.REFERENCE_MODELS["QuestionnaireInterview"].order == {"title": "asc"}
+
+
+def test_the_interview_model_has_no_photograph_and_cannot_be_cascaded_from():
+    """Two absences that are decisions, pinned so that adding either is deliberate.
+
+    ``media_field``: ``MediaFile.questionnaireInterviewId`` exists and is indexed, so
+    ``"questionnaireInterviewId"`` COULD be added to ``_PHOTO_PARENT_COLUMNS`` — the allowlist
+    ``_reference_photos`` interpolates into raw SQL. It is not, because an interview's images are
+    photographs of named artisans mid-interview and the roster already carries each participant's
+    portrait; ``report_builder._images`` dedupes by media id, so the two would not collapse.
+
+    ``artisan_field``/``filter_field``: the link to artisans is a many-to-many, and the filter arm
+    applies a SCALAR column name, so a nested clause is not expressible in the dataclass as it
+    stands. No field declares ``ref_filter_by`` against this model, and a caller that sends
+    ``filterBy`` anyway gets a 422 rather than an unnarrowed list it believes was narrowed.
+    """
+    spec = dw.REFERENCE_MODELS["QuestionnaireInterview"]
+    assert spec.media_field == ""
+    assert "questionnaireInterviewId" not in dw._PHOTO_PARENT_COLUMNS
+    assert spec.artisan_field == "" and spec.filter_field == ""
+    filtered_against = [
+        f"{entity.key}.{f.key}"
+        for _s, entity in all_entities() for f in entity.fields
+        if f.ref_filter_by and f.ref_model == "QuestionnaireInterview"
+    ]
+    assert filtered_against == []
 
 
 async def test_a_fully_documented_product_arrives_whole_and_in_centimetres(monkeypatch):
@@ -2100,6 +2754,394 @@ async def test_a_process_step_row_still_receives_only_the_three_it_should(monkey
     assert "documentedSteps" not in data and "preProcessAvailable" not in data
 
 
+# --------------------------------------------------------------------------------------
+# `documentedFor` has TWO writers, and which one wins depends on the save
+# --------------------------------------------------------------------------------------
+#
+# WHY THIS BLOCK EXISTS: THE MECHANISM WAS DESCRIBED AND NEVER MEASURED. Four places — the two notes
+# in `stage_schema.REFERENCE_HYDRATION`, the mirror of them in `frontend/lib/designWorkshops.ts`, and
+# the docstring of `cascade-process-product-unit.spec.ts`'s last case — said that because hydration
+# walks fields in DECLARATION order and `productRef` is declared immediately before `processRef`,
+# "the product's own answer lands first and this pass sees a filled box and leaves it alone — the
+# designer's pick wins". The first half is true. The conclusion is true of only SOME saves, and the
+# case it is false in is the cascade's ordinary path.
+#
+# `hydrate_entries` has TWO rules, not one. Only-fill-blanks is the rule for an unchanged ref; a ref
+# that has been RE-POINTED clears every single-valued target of its own mapping first and then
+# rewrites them, so that artisan B's name can never be stored beside artisan A's phone. Change the
+# product and the cascade clears the process, the designer re-picks it, and ONE save then carries two
+# re-pointed refs — so `processRef`'s clear pops the `documentedFor` that `productRef` wrote a moment
+# earlier and writes its own. Declaration order decides who writes FIRST; the re-point decides who
+# writes LAST, and last wins.
+#
+# NOTHING IS BROKEN BY THAT, which is why the code is left alone and these tests pin it rather than
+# a fix: both writers name the same product whenever the stored pair is consistent, and the cascade
+# is what keeps it consistent. What differs is the PROVENANCE MODEL on the box, and — on a pair that
+# is NOT consistent, which `reference_options` refuses to offer but nothing refuses to store — WHICH
+# product the box names. `test_a_stale_pair_prints_the_processs_parent` is that case, recorded as a
+# known limit rather than claimed closed.
+#
+# AND IT IS NOT NEW BEHAVIOUR. `existingProduct.artisanName` is the identical shape and predates all
+# of this: `artisanRef` (declared first) and `productRef` both write it, the artisan cascade forces
+# both to be re-pointed in one save exactly as the process cascade does, and the product record's
+# denormalised `artisanName` therefore wins there too. Those three targets — measured off the
+# registry by `test_exactly_three_boxes_have_two_writers` — are the whole population of this rule.
+
+
+def test_exactly_three_boxes_have_two_writers():
+    """The population of the last-writer-wins rule, derived rather than remembered.
+
+    A FOURTH would arrive silently: nothing in `validate_registry` or `validate_reference_carry` has
+    an opinion about two mappings on one entity naming one target, and the value is usually the same
+    string, so the first symptom is a provenance stamp naming the wrong record. Listed here with the
+    declaration indices, because the order is what the notes in `stage_schema` reason from.
+    """
+    doubled: dict[tuple[str, str], list[tuple[int, str, str]]] = {}
+    for _stage, entity in all_entities():
+        order = [f.key for f in entity.fields]
+        for f in entity.fields:
+            for source, target in REFERENCE_HYDRATION.get(f"{entity.key}.{f.key}", {}).items():
+                doubled.setdefault((entity.key, target), []).append(
+                    (order.index(f.key), f.key, source)
+                )
+    two_writers = {k: sorted(v) for k, v in doubled.items() if len(v) > 1}
+    assert two_writers == {
+        # The parent is declared first in all three, which is what the notes rely on for the
+        # only-fill-blanks case and what makes the re-point case the exception rather than the rule.
+        ("traditionalProcess", "documentedFor"): [(0, "productRef", "name"),
+                                                  (1, "processRef", "productName")],
+        ("processStep", "documentedFor"): [(1, "productRef", "name"),
+                                           (2, "processRef", "productName")],
+        ("existingProduct", "artisanName"): [(0, "artisanRef", "name"),
+                                             (1, "productRef", "artisanName")],
+    }, (
+        "a hydration target gained or lost a second writer. Two mappings on one entity writing one "
+        "box is legal and is used three times on purpose, but WHICH of them wins depends on whether "
+        "the ref was re-pointed in that save — see the block comment above. A new one needs the same "
+        "two tests this block gives the other three."
+    )
+
+
+async def test_the_product_the_designer_picked_answers_documented_for(monkeypatch):
+    """The only-fill-blanks case, which is the one the four notes describe correctly.
+
+    A fresh row carrying both refs: `productRef` is declared first, writes the product's own `name`,
+    and `processRef`'s identical pair then finds a filled box and leaves it alone. The stamp is the
+    assertion that matters — the two writers produce the same STRING here, so a test that read only
+    the value would pass whichever of them had won.
+    """
+    for entity_key, sent in (
+        ("traditionalProcess", {"productRef": "prd_1", "processRef": "prc_1"}),
+        ("processStep", {"stepNumber": 1, "productRef": "prd_1", "processRef": "prc_1"}),
+    ):
+        entry = await _hydrate_entry(
+            monkeypatch, entity_key, sent,
+            rows={"productdocumentation": [_product_row()], "process": [_process_row()]},
+        )
+        assert entry.data["documentedFor"] == "Sambalpuri saree", entity_key
+        stamp = entry.hydrated["documentedFor"]
+        assert (stamp.model, stamp.source_key) == ("ProductDocumentation", "name"), entity_key
+
+
+async def test_re_picking_the_process_hands_the_box_to_the_process(monkeypatch):
+    """THE CASCADE'S ORDINARY PATH, AND THE ONE THE NOTES USED TO DESCRIBE WRONGLY.
+
+    Change the product, the cascade clears the process, the designer picks a new one: ONE save with
+    both refs re-pointed. `processRef`'s clear pops the `documentedFor` `productRef` has just written
+    and rewrites it from the PROCESS's copy of its parent's name.
+
+    The value is right — both records name product B, because the cascade only offered B's processes —
+    and the stamp is what shows who actually wrote it. Asserted rather than corrected: making
+    `productRef` win would mean teaching `hydrate_entries` not to clear a box another ref answered in
+    the same save, which changes the artisan cascade too and buys nothing while the pair is consistent.
+    """
+    rows = {
+        "productdocumentation": [_product_row(), _product_row(id="prd_2",
+                                                              productName="Bandha dupatta")],
+        "process": [_process_row(), _process_row(id="prc_2", name="Bandha tying",
+                                                 product=SimpleNamespace(
+                                                     productName="Bandha dupatta"))],
+    }
+    entry = await _hydrate_entry(
+        monkeypatch, "traditionalProcess",
+        {"productRef": "prd_2", "processRef": "prc_2", "documentedFor": "Sambalpuri saree"},
+        rows=rows, previous={"productRef": "prd_1", "processRef": "prc_1"},
+    )
+    assert entry.data["documentedFor"] == "Bandha dupatta"
+    stamp = entry.hydrated["documentedFor"]
+    assert (stamp.model, stamp.source_key) == ("Process", "productName")
+
+
+async def test_a_stale_pair_prints_the_processs_parent(monkeypatch):
+    """A KNOWN LIMIT, RECORDED SO IT IS NOT CLAIMED CLOSED.
+
+    `reference_options` refuses to OFFER a process that does not belong to the chosen product;
+    `coerce_value` checks type and length only, so nothing refuses to STORE the pair. A stale form or
+    a direct API caller can post product B beside a process belonging to product A — and because the
+    re-pointed `processRef` writes last, the box then prints A: the product the designer did NOT
+    choose. Adding `productRef` to the hydration table narrowed the window (it wins whenever the
+    process is unchanged or blank) and did not close it, and the note in `stage_schema` says so now.
+    """
+    rows = {
+        "productdocumentation": [_product_row(), _product_row(id="prd_2",
+                                                              productName="Bandha dupatta")],
+        # `prc_9` is offered under no product the designer can pick: its parent is product A.
+        "process": [_process_row(), _process_row(id="prc_9", name="Stale pick",
+                                                 product=SimpleNamespace(
+                                                     productName="Sambalpuri saree"))],
+    }
+    entry = await _hydrate_entry(
+        monkeypatch, "traditionalProcess",
+        {"productRef": "prd_2", "processRef": "prc_9", "documentedFor": "Sambalpuri saree"},
+        rows=rows, previous={"productRef": "prd_1", "processRef": "prc_1"},
+    )
+    assert entry.data["documentedFor"] == "Sambalpuri saree", (
+        "the process's parent wins a re-pointed save; if this now reads 'Bandha dupatta' the "
+        "last-writer rule has changed and the notes in stage_schema.REFERENCE_HYDRATION, "
+        "frontend/lib/designWorkshops.ts and cascade-process-product-unit.spec.ts all describe the "
+        "old behaviour"
+    )
+
+
+# ── THE HALF-DONE CASCADE: PARENT RE-POINTED, CHILD CLEARED, SAVED ───────────────────────────────
+#
+# The four tests above cover both refs POINTING somewhere. This block covers the state BETWEEN the two
+# halves of the cascade, which is the one the notes described wrongly and no test reached: the browser
+# and (now) the handset clear `processRef` the instant the product changes, and one autosave is enough
+# to store the row in that state.
+#
+# `hydrate_entries` used to skip a blank ref outright (`if not ref_id: continue`), so the clear that
+# pops a re-pointed ref's targets was never reached — while `productRef` rewrote `documentedFor`. The
+# row that got stored described product A's process under product B's name with no ref left to
+# re-resolve it by, and nothing in the repository could flag it: `canonical_divergence` reads only
+# fields carrying a `reference` stamp, the surviving stamps still named process A and still re-resolved
+# to exactly what was stored, and `coerce_value` checks type and length and never coherence.
+#
+# `design_workshops._clear_cascade_orphans` is the fix, and the four tests here are its whole contract:
+# it fires on the cascade, and it does NOT fire on the three neighbouring shapes that look like it.
+
+
+async def test_the_half_done_cascade_clears_the_process_it_no_longer_names(monkeypatch):
+    """THE ROW THIS EXISTS TO STOP BEING WRITTEN, asserted box by box.
+
+    Product A -> process P of A -> change the product to B -> save. `productRef` is re-pointed and
+    `processRef` is gone, so every value copied from P goes with it and the box the designer's OWN
+    pick answers is answered from that pick.
+
+    `documentedFor` IS THE ASSERTION THAT MATTERS. It must read B and it must be stamped to the
+    PRODUCT: the pop runs in a pass BEFORE hydration precisely so the parent's write lands afterwards
+    and is not popped back out. If this reads "Sambalpuri saree" the clear is running too late; if it
+    is missing entirely, it is running too late AND popping the parent's own answer.
+    """
+    rows = {
+        "productdocumentation": [_product_row(id="prd_2", productName="Bandha dupatta")],
+    }
+    stale = {
+        "documentedFor": "Sambalpuri saree",
+        "documentedProcessName": "Tie and dye",
+        "documentedProcessNotes": "Yarn is tied in sections, dyed, untied, washed.",
+        "documentedSteps": "Tying; Dyeing; Washing",
+        "preProcessAvailable": True,
+        "recordMediaNote": "Attached to the process record: 1 video.",
+        "documentedOn": "2025-04-04",
+    }
+    entry = await _hydrate_entry(
+        monkeypatch, "traditionalProcess",
+        {"productRef": "prd_2", **stale},
+        rows=rows,
+        previous={"productRef": "prd_1", "processRef": "prc_1", **stale},
+    )
+    assert entry.data["documentedFor"] == "Bandha dupatta"
+    stamp = entry.hydrated["documentedFor"]
+    assert (stamp.model, stamp.source_key) == ("ProductDocumentation", "name")
+    # Everything the cleared process had answered is gone rather than standing under the new name.
+    left = sorted(k for k in stale if k != "documentedFor" and k in entry.data)
+    assert left == [], f"these still describe the process the row no longer names: {left}"
+
+
+async def test_the_half_done_cascade_clears_a_process_steps_required_name(monkeypatch):
+    """THE SAME RULE ON THE COLLECTION, WHERE THE TARGET IS REQUIRED AND PRINTS IN A TABLE.
+
+    `processStep.name` is `required=True` and a TABLE_COLUMN, so the stale value was the most visible
+    of the lot — a step named after another product's process, in the report's step table, under that
+    product's name. It is cleared, and the blank that replaces it is the recoverable direction: the
+    designer sees it, the completeness score counts it and the next submit refuses it, whereas the
+    stale name is invisible and prints. `validate_entry` has already run by the time hydration writes,
+    which is why this is asserted rather than assumed.
+    """
+    entry = await _hydrate_entry(
+        monkeypatch, "processStep",
+        {"stepNumber": 1, "productRef": "prd_2",
+         "name": "Tie and dye", "description": "Yarn is tied in sections.",
+         "documentedFor": "Sambalpuri saree"},
+        rows={"productdocumentation": [_product_row(id="prd_2", productName="Bandha dupatta")]},
+        previous={"productRef": "prd_1", "processRef": "prc_1", "name": "Tie and dye"},
+    )
+    assert entry.data["documentedFor"] == "Bandha dupatta"
+    assert "name" not in entry.data
+    assert "description" not in entry.data
+    assert entry.data["stepNumber"] == 1, "the designer's own answers are not this rule's business"
+
+
+async def test_unlinking_a_participant_still_keeps_the_name_it_filled_in(monkeypatch):
+    """THE DELIBERATE RULE THE CLEAR MUST NOT WEAKEN, and it is the reason the condition is narrow.
+
+    `StageReferenceField` states it outright: "Only the reference is cleared. The name, village and
+    phone it filled in STAY: they are what the designer confirmed in the room, and a report that loses
+    a participant's name because somebody unlinked a duplicate artisan record is the failure the copy
+    exists to prevent."
+
+    `participant.artisanRef` declares no `ref_filter_by`, so it is not a cascaded child and nothing
+    here can reach it. Asserted anyway, because the cheap version of the orphan clear — "pop on any
+    blank ref that used to name a record" — passes every test in the block above and breaks this one.
+    """
+    entry = await _hydrate_entry(
+        monkeypatch, "participant", {"name": "Latha Devi", "village": "Barpali"},
+        rows={}, previous={"artisanRef": "art_1", "name": "Latha Devi", "village": "Barpali"},
+    )
+    assert entry.data["name"] == "Latha Devi"
+    assert entry.data["village"] == "Barpali"
+
+
+async def test_clearing_the_product_too_leaves_the_row_uniformly_stale(monkeypatch):
+    """A CLEARED PARENT IS NOT THIS RULE'S BUSINESS, and the reason is the defect's own shape.
+
+    What made the half-done cascade worse than plain staleness is that ONE of the seven boxes had a
+    second writer, so the row contradicted ITSELF. With `productRef` blank nothing rewrites
+    `documentedFor`, so all seven go stale together and the row stays a true description of process A
+    — merely not of the row's current pick, which is the documented behaviour of an unlink and is the
+    designer's to correct.
+
+    It is also the clause that makes the undecidable case harmless: `validate_entry` drops blank keys,
+    so "the parent was cleared" and "this build never heard of the parent" are the same absence in
+    `data`. Requiring the parent to be NON-BLANK is what stops a build older than `productRef` from
+    tripping the clear — see the test below.
+    """
+    entry = await _hydrate_entry(
+        monkeypatch, "traditionalProcess",
+        {"documentedFor": "Sambalpuri saree", "documentedProcessName": "Tie and dye"},
+        rows={},
+        previous={"productRef": "prd_1", "processRef": "prc_1",
+                  "documentedFor": "Sambalpuri saree", "documentedProcessName": "Tie and dye"},
+    )
+    assert entry.data["documentedFor"] == "Sambalpuri saree"
+    assert entry.data["documentedProcessName"] == "Tie and dye"
+
+
+async def test_a_build_that_never_sends_the_product_cannot_trip_the_clear(monkeypatch):
+    """A HANDSET OLDER THAN THE CASCADE CLEARS ITS PROCESS AND LOSES NOTHING ELSE.
+
+    `productRef` is new, so a deployed APK sends `processRef` and no product at all. A designer on
+    that build who unlinks the process is performing the ordinary unlink of the test two above, and it
+    must behave like one — not like a cascade, which is a gesture that build cannot even make.
+    """
+    entry = await _hydrate_entry(
+        monkeypatch, "traditionalProcess",
+        {"documentedFor": "Sambalpuri saree", "documentedProcessName": "Tie and dye"},
+        rows={},
+        previous={"processRef": "prc_1", "documentedFor": "Sambalpuri saree",
+                  "documentedProcessName": "Tie and dye"},
+    )
+    assert entry.data["documentedProcessName"] == "Tie and dye"
+
+
+async def test_the_older_artisan_cascade_gets_the_same_treatment(monkeypatch):
+    """THE RULE IS WRITTEN OFF `ref_filter_by`, SO THE CASCADE THAT PREDATES STAGE 5 IS COVERED TOO.
+
+    `existingProduct.productRef` is narrowed by `artisanRef`, and `existingProduct.artisanRef` is a
+    second writer of `artisanName`. So the half-done cascade there has exactly the shape stage 5 has:
+    change the artisan, the product is cleared, `artisanName` is rewritten to artisan B — and the
+    product's name, material, tools, price and remarks stayed artisan A's product's. It was
+    survivable while the visible mismatch was one product name in one cell of a collection; it is the
+    same defect, and it is fixed by the same pass rather than by a stage-5 special case.
+
+    Asserted here rather than left to the general rule, because "the population is whatever the
+    registry declares" is a claim about a loop and this is the case that makes it true of a mapping
+    nobody was thinking about while writing it.
+    """
+    stale = {
+        "name": "Sambalpuri saree",
+        "material": "Cotton yarn",
+        "mainToolsUsed": "Pit loom, bobbin winder",
+        "remarks": "Second-quality weft in one panel.",
+    }
+    entry = await _hydrate_entry(
+        monkeypatch, "existingProduct",
+        {"artisanRef": "art_2", "artisanName": "Latha Devi", **stale},
+        rows={"artisan": [_artisan_row(id="art_2", name="Sita Meher")]},
+        previous={"artisanRef": "art_1", "productRef": "prd_1",
+                  "artisanName": "Latha Devi", **stale},
+    )
+    assert entry.data["artisanName"] == "Sita Meher"
+    left = sorted(k for k in stale if k in entry.data)
+    assert left == [], f"these describe a product documented for the artisan the row dropped: {left}"
+
+
+async def test_a_prototypes_source_product_goes_when_the_artisan_does(monkeypatch):
+    """THE FOURTH CASCADE, WHOSE PARENT WRITES NOTHING — so the row was stale rather than incoherent.
+
+    `prototype.productRef` is narrowed by `artisanRef` and `prototype.artisanRef` has no hydration
+    mapping at all, so nothing rewrote a box beside the stale one. It is popped anyway: "Developed
+    from: <a product documented for the artisan this row no longer names>" is the same wrong
+    attribution one step removed, and a rule that fired on three of four cascades would be a rule
+    nobody could state or predict.
+    """
+    entry = await _hydrate_entry(
+        monkeypatch, "prototype",
+        {"artisanRef": "par_2", "productName": "Sambalpuri saree"},
+        rows={},
+        previous={"artisanRef": "par_1", "productRef": "prd_1",
+                  "productName": "Sambalpuri saree"},
+    )
+    assert "productName" not in entry.data
+
+
+async def test_the_clear_runs_even_when_the_payload_resolves_no_record_at_all(monkeypatch):
+    """THE PLACEMENT, NOT THE RULE — and it is why the pass is not folded into the loop below.
+
+    `hydrate_entries` returns early when no entry names a record it could resolve. A row that goes
+    from "product A, process P" to "product B, no process" DOES resolve one, but the assertion here is
+    about the ordering guarantee rather than about reachability: the pop is a separate pass that runs
+    before both the early return and the write loop, so the parent's own write is the LAST thing to
+    touch `documentedFor` regardless of declaration order.
+
+    Written by re-pointing the product at a record the fake client does not hold. Nothing resolves, so
+    the write loop has nothing to say — and the stale narrative still has to go, because the row now
+    names a product that is not the one the narrative describes.
+    """
+    entry = await _hydrate_entry(
+        monkeypatch, "traditionalProcess",
+        {"productRef": "prd_missing", "documentedFor": "Sambalpuri saree",
+         "documentedProcessName": "Tie and dye"},
+        rows={"productdocumentation": []},
+        previous={"productRef": "prd_1", "processRef": "prc_1",
+                  "documentedFor": "Sambalpuri saree", "documentedProcessName": "Tie and dye"},
+    )
+    assert "documentedProcessName" not in entry.data
+    assert "documentedFor" not in entry.data, (
+        "nothing resolved, so nothing may be written; the box is blank for the designer to answer "
+        "rather than holding another product's process name"
+    )
+
+
+async def test_an_older_client_sending_only_the_process_still_fills_the_box(monkeypatch):
+    """WHY THE CHILD'S PAIR IS KEPT RATHER THAN REMOVED, as an executing case.
+
+    A build that predates the cascade sends `processRef` and no `productRef`. The parent's pair
+    cannot fire, and `processRef`'s `productName` is what stops the box printing blank. (The other
+    reason is archive-wide: `Process.data` must go on producing `productName` or
+    `entry_provenance.canonical_divergence` reports every `documentedFor` stamped before today as
+    diverged — but that is about the LAMBDA's keys, and this is about the mapping that consumes one.)
+    """
+    entry = await _hydrate_entry(
+        monkeypatch, "traditionalProcess", {"processRef": "prc_1"},
+        rows={"process": [_process_row()]},
+    )
+    assert entry.data["documentedFor"] == "Sambalpuri saree"
+    stamp = entry.hydrated["documentedFor"]
+    assert (stamp.model, stamp.source_key) == ("Process", "productName")
+
+
 async def test_a_documented_craft_reaches_the_cover_page_whole(monkeypatch):
     """THE COVER PAGE'S CARRY WAS THE ONE NOBODY EXECUTED.
 
@@ -2273,11 +3315,42 @@ async def test_a_tools_numbered_making_sequence_is_named_and_a_grid_frame_is_not
     )
 
 
-def _widest_media_note(digits: int) -> str:
+#: WHICH SUBJECT WORD EACH NOTE FIELD'S SENTENCE IS BUILT WITH.
+#:
+#: THE SUBJECT IS PART OF THE BOUND, WHICH THIS TEST USED TO ASSUME AWAY. `_media_note` prints
+#: "Attached to the <subject> record: …", so the sentence's fixed cost is the subject's own length —
+#: and measuring every field against one hard-coded "product" happened to be safe only because the
+#: other three subjects ("artisan", "tool", "craft") are no LONGER than it. "interview" is two
+#: characters longer, so the same twelve-digit bound is 202 rather than 200, and a shared intercept
+#: would have declared a real over-run safe. The subject is now measured per field.
+#: The subject word each field's data lambda passes, and WHETHER THAT CALL SITE PASSES A
+#: ``numbered_prefix``. The second half is what separates the bound a field DECLARES from the longest
+#: sentence it can actually be given: the numbered-making clause is 40 characters plus a sixth
+#: printed integer, and exactly one of the five call sites can produce it. Recording it here rather
+#: than in a comment is what lets the two tests below assert the formula AND the headroom, instead of
+#: asserting the formula and leaving a reader to assume it is tight.
+_MEDIA_NOTE_SUBJECTS = {
+    ("participant", "recordMediaNote"): ("artisan", False),
+    ("existingProduct", "recordMediaNote"): ("product", False),
+    # `ToolForm` renames every capture in the making-sequence card to `STAGE_STEP_<n>_<name>` on both
+    # the online upload loop and the queued offline array, which is the only numbered_prefix in use.
+    ("tool", "recordMediaNote"): ("tool", True),
+    ("workshopSetup", "craftMediaNote"): ("craft", False),
+    ("artisanBaseline", "interviewMediaNote"): ("interview", False),
+}
+
+
+def _widest_media_note(digits: int, subject: str = "product", *, numbered: bool = True) -> str:
     """``_media_note``'s widest sentence when every count is ``digits`` digits wide.
 
-    Every type word present and the numbered clause present, which is the only shape in which all
-    six of the sentence's integers are printed at once.
+    Every type word present, and the numbered clause present when ``numbered`` — which is the only
+    shape in which all six of the sentence's integers are printed at once. ``subject`` is the literal
+    the data lambda passes, because it is inside the sentence and therefore inside the bound.
+
+    ``numbered=False`` IS WHAT A CALL SITE THAT PASSES NO ``numbered_prefix`` CAN ACTUALLY BE GIVEN,
+    and four of the five can only be given that. The default stays True because the DECLARED bounds
+    are derived from the widest sentence the function can build for a subject, deliberately — see
+    ``stage_definitions``' note on ``interviewMediaNote`` — and the two tests below want both numbers.
     """
     n = 10 ** digits - 1
     rows = (
@@ -2287,9 +3360,34 @@ def _widest_media_note(digits: int) -> str:
         + [_media_row(mediaType="PDF")] * n
         + [_media_row(mediaType="OTHER")] * n
     )
-    note = dw._media_note("product", rows, numbered_prefix="STAGE_STEP_")
+    note = dw._media_note(subject, rows,
+                          numbered_prefix="STAGE_STEP_" if numbered else "")
     assert note is not None
     return note
+
+
+def test_every_media_note_field_is_measured_against_its_own_subject_word():
+    """The map above must name every field a ``_media_note`` sentence actually lands in.
+
+    Derived from the hydration table rather than typed twice: a source key whose value is a
+    ``_media_note`` sentence is one of the two the lambdas produce, so a sixth reference model that
+    carries a note and is not measured below fails here instead of shipping an unmeasured bound.
+    """
+    landing: set[tuple[str, str]] = set()
+    for path, mapping in REFERENCE_HYDRATION.items():
+        entity_key, _, _field_key = path.partition(".")
+        for source, target in mapping.items():
+            if source in {"recordMediaNote", "craftMediaNote", "interviewMediaNote"}:
+                landing.add((entity_key, target))
+    # `traditionalProcess.recordMediaNote` is deliberately absent from the map: its sentence is
+    # composed by `_process_media_note`, which returns None until `MediaFile` gains a `processId`.
+    landing.discard(("traditionalProcess", "recordMediaNote"))
+    unmeasured = sorted(landing - set(_MEDIA_NOTE_SUBJECTS))
+    assert unmeasured == [], (
+        f"these boxes receive a _media_note sentence and no subject word is recorded for them: "
+        f"{unmeasured}. Add each to _MEDIA_NOTE_SUBJECTS with the literal its data lambda passes, "
+        f"so the bound below is measured rather than extrapolated from another model's."
+    )
 
 
 def test_the_media_note_cannot_overrun_the_bound_its_field_declares():
@@ -2322,23 +3420,109 @@ def test_the_media_note_cannot_overrun_the_bound_its_field_declares():
         f"printed in it; a different slope means a count was added or removed, and the bound below "
         f"is extrapolated from this slope, so it has to be re-derived rather than nudged"
     )
-    intercept = widths[1] - 6
 
     # Twelve digits: 999,999,999,999 files of ONE type on ONE record. `_media_note`'s own docstring
     # calls a roster of forty long-documented artisans the worst case in the repository.
-    unreachable = 6 * 12 + intercept
-    for entity_key, field_key in (
-        ("participant", "recordMediaNote"),
-        ("existingProduct", "recordMediaNote"),
-        ("tool", "recordMediaNote"),
-        ("workshopSetup", "craftMediaNote"),
-    ):
+    #
+    # THE INTERCEPT IS PER SUBJECT NOW, and that is the change: the sentence's fixed cost includes
+    # the subject word, so a single "product"-derived intercept quietly under-measured the one field
+    # whose subject is longer than it. `interviewMediaNote` declares 202 for exactly this reason and
+    # the assertion below is what derives the two extra characters rather than trusting them.
+    for (entity_key, field_key), (subject, _numbered) in sorted(_MEDIA_NOTE_SUBJECTS.items()):
+        intercept = len(_widest_media_note(1, subject)) - 6
+        unreachable = 6 * 12 + intercept
         bound = _field(entity_key, field_key).max_length
         assert bound and unreachable <= bound, (
             f"{entity_key}.{field_key} declares max_length={bound}. `_media_note` builds "
             f"6 * digits + {intercept} characters, so coerce_value would REFUSE it at "
             f"{(bound - intercept) // 6 + 1} digits per count"
         )
+
+
+def test_the_media_note_headroom_is_measured_rather_than_implied():
+    """WHICH OF THE FIVE BOUNDS ARE TIGHT AND WHICH ARE SLACK, ASSERTED INSTEAD OF ASSUMED.
+
+    The test above derives every declared bound from the WIDEST sentence ``_media_note`` can build for
+    a subject — all five type words AND the numbered-making clause, six printed integers. That is the
+    right thing to declare and it is not the right thing to believe about a particular field, because
+    only ONE of the five call sites passes a ``numbered_prefix``: ``tool.recordMediaNote``, for
+    ``ToolForm``'s ``STAGE_STEP_<n>`` sequence. The other four cannot produce the clause at all, so
+    their reachable worst case is 40 characters and one integer shorter than the number they declare.
+
+    ── WHY THIS TEST EXISTS AT ALL ──────────────────────────────────────────────────────────────
+    ``interviewMediaNote``'s comment claimed 202 was derived EXACTLY for its subject ("6*12 + 128",
+    plus two for the two extra letters of "interview") when 128 is the numbered-clause intercept and
+    that field passes no prefix. The number was right, the reasoning was not, and a reader trusting
+    the reasoning would tighten the bound to a value the formula does not support — or widen the wrong
+    one. So the split is measured here per field: the formula bound, the reachable bound, and the gap
+    between them, with the gap ASSERTED to be zero exactly where the clause is reachable.
+
+    Slack is the safe direction and is deliberately not trimmed: ``coerce_value`` REFUSES an
+    over-length value rather than truncating it, so a bound one character short leaves the box blank
+    and paints an error on a field the designer never touched. What is refused is a bound that nobody
+    can account for.
+    """
+    # EXTRAPOLATED FROM A MEASURED SLOPE AND AN INTERCEPT, never built at twelve digits — the same
+    # method the test above uses and for the same reason: a note at 10^12 files per type would be
+    # 5 x 10^12 fixture rows. The slopes are measured here rather than asserted from arithmetic, so a
+    # count added to or removed from either sentence shape fails this instead of skewing it.
+    slopes = {
+        numbered: {
+            len(_widest_media_note(d + 1, "product", numbered=numbered))
+            - len(_widest_media_note(d, "product", numbered=numbered))
+            for d in (1, 2, 3, 4)
+        }
+        for numbered in (True, False)
+    }
+    assert slopes == {True: {6}, False: {5}}, (
+        f"the sentence prints {slopes} integers' worth of digits per digit of width. Six with the "
+        f"numbered clause and five without it is what the bounds below are extrapolated from; a "
+        f"different slope means a count was added or removed and every bound has to be re-derived"
+    )
+
+    measured: dict[tuple[str, str], tuple[int, int, int]] = {}
+    for key, (subject, numbered) in sorted(_MEDIA_NOTE_SUBJECTS.items()):
+        declared = _field(*key).max_length
+        assert declared, f"{key} declares no max_length"
+        formula = 6 * 12 + (len(_widest_media_note(1, subject)) - 6)
+        integers = 6 if numbered else 5
+        intercept = len(_widest_media_note(1, subject, numbered=numbered)) - integers
+        measured[key] = (declared, integers * 12 + intercept, formula)
+
+    # 1. THE INVARIANT, WHICH IS THE ONLY THING A BOUND HAS TO SATISFY: no field may declare less
+    #    than the widest sentence `_media_note` can build for its subject. `coerce_value` refuses
+    #    rather than truncates, so a bound below the formula is a box that blanks itself on a record
+    #    nobody could have predicted.
+    short = {k: v for k, v in measured.items() if v[0] < v[2]}
+    assert short == {}, (
+        f"these declare a bound BELOW the widest sentence _media_note can build for their subject "
+        f"at twelve digits: {short} as (declared, reachable, formula)"
+    )
+
+    # 2. AND THE THREE NUMBERS PER FIELD, PINNED. This is the table the comments have to agree with,
+    #    and the shape of it is the correction: the family does NOT declare "the formula's number for
+    #    my subject". Four fields declare a flat 200 — the formula's number for the LONGEST of their
+    #    four subject words ("artisan" and "product", seven letters) — so `tool` (four letters) and
+    #    `craft` (five) ride on it with a few characters of extra slack. "interview" is NINE letters
+    #    and its formula number is 202, which is the whole of why it is the one field that could not
+    #    simply reuse 200.
+    #
+    #    The (declared - reachable) gap is the numbered-making clause: 40 characters plus a
+    #    twelve-digit sixth integer. Only `tool.recordMediaNote` passes a `numbered_prefix`, so it is
+    #    the only one whose gap is small; the other four cannot print the clause at all.
+    assert measured == {
+        ("participant", "recordMediaNote"): (200, 148, 200),
+        ("existingProduct", "recordMediaNote"): (200, 148, 200),
+        ("tool", "recordMediaNote"): (200, 197, 197),
+        ("workshopSetup", "craftMediaNote"): (200, 146, 198),
+        ("artisanBaseline", "interviewMediaNote"): (202, 150, 202),
+    }, (
+        f"(declared, reachable, formula) per media-note field moved: {measured}. `reachable` is what "
+        f"the call site can actually be given and `formula` is what `_media_note` could build for "
+        f"that subject if it were passed a numbered_prefix. If a subject word changed length, or a "
+        f"call site gained or lost its prefix, re-derive the bound in stage_definitions AND the "
+        f"paragraph beside it — the comment on `interviewMediaNote` quotes these numbers"
+    )
 
 
 def test_the_process_media_note_has_its_own_bound_and_its_own_grammar():
@@ -2804,6 +3988,44 @@ def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
         "Craft": {
             "media": "workshopSetup.craftMediaNote",
             "workshop": "workshopSetup.craftDocumentedAtWorkshop (Workshop.title)",
+        },
+        # THE SIXTH MODEL, AND THE ONLY ROW HERE WHOSE JOIN LOADS CONFIDENTIAL COLUMNS.
+        #
+        # `responses` is the one to weigh before copying this shape. Its reader is a COUNT — three of
+        # them — and to count the answers Prisma loads them: `include` has no scalar `select`, so
+        # `answerText` and `notes` arrive in the API process on every picker keystroke and are
+        # discarded. That is a materially different cost from `media`'s wide `extraMetadata`, and the
+        # right follow-up is a `count_include`/`_count` facility on `ReferenceModel` so the answers
+        # never leave Postgres. It cannot be a third lambda parameter or an injection by
+        # `_reference_data`: `entry_provenance.canonical_divergence` calls `spec.data(rec, photo)` with
+        # exactly two arguments and re-fetches with `spec.include`, and a key that path cannot
+        # recompute is reported to an admin as `diverged` on every audit, for ever.
+        #
+        # NO `location` ROW, because there is no `location` INCLUDE — and that absence is the model's
+        # cleanest refusal rather than an omission. `_reference_place`'s own worked example is this
+        # exact scenario: six artisans interviewed in one afternoon at a cooperative hall, every one
+        # of them drawn on the hall. See the model's own note.
+        "QuestionnaireInterview": {
+            "responses": (
+                "artisanBaseline.interviewSectionsCovered / interviewQuestionsAnswered / "
+                "interviewLastAnsweredOn — three counts, via _interview_* helpers. The nested "
+                "`question` supplies the denormalised sectionCode and nothing else."
+            ),
+            "artisans": (
+                "artisanBaseline.interviewArtisanCount, and the picker sublabel's artisan phrase. "
+                "A COUNT and never the names — see _interview_artisan_count."
+            ),
+            "media": (
+                "artisanBaseline.interviewMediaNote — the only thing that can say the AUDIO "
+                "RECORDING of the sitting exists, since _reference_photos resolves one IMAGE and "
+                "this model declares no media_field at all."
+            ),
+            "workshop": (
+                "artisanBaseline.interviewDocumentedAtWorkshop (Workshop.title). Needed even though "
+                "the field is WORKSHOP-scoped: the scoped:false fallback serves the whole table on "
+                "an unlinked design workshop, so an out-of-cluster sitting can legitimately be "
+                "picked and the printed row must say where it came from."
+            ),
         },
     }
     for model, spec in dw.REFERENCE_MODELS.items():

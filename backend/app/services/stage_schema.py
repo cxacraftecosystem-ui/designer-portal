@@ -1102,11 +1102,111 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "recordMediaNote": "recordMediaNote",
         "name": "documentedProcessName",
         "notes": "documentedProcessNotes",
+        # STILL HERE, AND IT IS NOW THE SECOND WRITER OF `documentedFor` RATHER THAN THE ONLY ONE.
+        # `traditionalProcess.productRef` below writes the same box from the PARENT the designer
+        # actually picked. Two things made keeping this pair mandatory rather than tidy:
+        #
+        #  1. REMOVING `productName` FROM `Process.data` WOULD FALSE-FLAG THE WHOLE ARCHIVE.
+        #     `entry_provenance.canonical_divergence` re-resolves a stamped field by calling
+        #     `spec.data(rec, photo)` and reading `source.get(stamp["refKey"])`. Every
+        #     `documentedFor` hydrated before today carries `refModel="Process"`,
+        #     `refKey="productName"` — so a lambda that stopped producing that key would answer
+        #     `canonical=None` against a populated `stored` and report EVERY such entry as
+        #     `diverged` to an admin, for ever. That is the failure `_media_note`'s docstring and the
+        #     divergence view's own comment each record ("an audit that flags everything flags
+        #     nothing"), and it is unrecoverable without a data migration over stamps.
+        #  2. `validate_reference_carry` REFUSES A PRODUCED-BUT-UNCONSUMED KEY, and `_CARRY_EXEMPT`
+        #     is empty and staying that way.
+        #
+        # TWO WRITERS IS SAFE HERE FOR THE REASON IT IS SAFE ON `existingProduct.artisanName`, and
+        # `hydrate_entries` has TWO rules rather than one — WHICH OF THEM APPLIES DECIDES WHICH
+        # WRITER WINS. This was described here as "the parent lands first and this pass leaves the
+        # filled box alone" until it was measured, and that is only half of it:
+        #
+        #  * ONLY-FILL-BLANKS, when `processRef` is UNCHANGED (or blank, or the client is an older
+        #    build sending no `productRef`). Hydration walks the entity's fields in DECLARATION order
+        #    and `productRef` is declared immediately before `processRef` in both stage-5 entities, so
+        #    the product's own answer lands first and this pass finds a filled box and leaves it
+        #    alone. The designer's pick wins.
+        #  * CLEAR-AND-REWRITE, when `processRef` was RE-POINTED — which is the CASCADE'S ORDINARY
+        #    PATH, because changing the product clears the process and the designer then re-picks it,
+        #    so one save carries two re-pointed refs. `processRef`'s clear pops every single-valued
+        #    target of its own mapping, `documentedFor` included, and rewrites it from `productName`.
+        #    Declaration order decides who writes first; the re-point decides who writes LAST.
+        #  * AND THE THIRD CASE IS THE HALF-DONE CASCADE, which is the one this table got wrong.
+        #    Between clearing the product and re-picking the process — one autosave is enough —
+        #    `processRef` is BLANK, and a blank ref hydrated nothing AND popped nothing, so the six
+        #    boxes below stayed A's while `productRef` rewrote `documentedFor` to B.
+        #    `design_workshops._clear_cascade_orphans` runs before hydration and pops this mapping's
+        #    single-valued targets in exactly that state, so the parent's write lands in an empty box
+        #    rather than beside six stale ones. Read that function before changing any of the three.
+        #
+        # THAT IS LEFT ALONE RATHER THAN FIXED, because both writers name the same product whenever
+        # the stored pair is consistent and the cascade is what keeps it consistent. Two things do
+        # differ: the provenance stamp reads `Process`/`productName` rather than
+        # `ProductDocumentation`/`name`, and on a pair that is NOT consistent — `reference_options`
+        # refuses to offer one, nothing refuses to store one — the box prints the PROCESS's parent,
+        # i.e. not the product the designer chose. Making the parent win would mean teaching
+        # `hydrate_entries` not to clear a box another ref answered in the same save, which changes
+        # the artisan cascade on `existingProduct.artisanName` too. All five cases are pinned by
+        # executing tests in `backend/tests/test_reference_carry.py` (see the block comment above
+        # `test_exactly_three_boxes_have_two_writers`), so the next reader gets the rule from
+        # assertions rather than from this paragraph.
         "productName": "documentedFor",
         "steps": "documentedSteps",
         "preProcessAvailable": "preProcessAvailable",
         "documentedOn": "documentedOn",
     },
+    # ── THE PRINTED PRODUCT NAME HANGS OFF THE PICK THE DESIGNER MADE, NOT OFF ITS CHILD ─────────
+    #
+    # `processRef` is now narrowed by `productRef` (`stage_definitions`, both stage-5 entities), and
+    # `ref_filter_by` names a field OF THE SAME ENTITY — so the sibling is not optional and THREE
+    # representations of one fact necessarily coexist:
+    #
+    #   1. `Process.productId` — non-nullable, the canonical fact.
+    #   2. `documentedFor` — the product's NAME, copied onto the stage row at save time and never
+    #      re-resolved.
+    #   3. `productRef` — the designer's pick, an id.
+    #
+    # They can disagree three ways, and only one of them is audited. TRANSIENTLY, AND THE WINDOW IS
+    # NOW EMPTIED RATHER THAN LEFT FURNISHED: change the product and the cascade clears `processRef`,
+    # so the row holds `productRef=B` and `processRef=null` until it is re-picked. This paragraph used
+    # to say `documentedFor` held "A" through that window and it did not — the parent's own pair
+    # rewrote it to B while the six boxes copied from A's process stood, which is a row describing
+    # A's process under B's name with no ref left to re-resolve it by, and nothing in the repository
+    # can flag that (see `design_workshops._clear_cascade_orphans`, which now empties the child's
+    # copied values whenever a re-pointed parent will rewrite one of them). What the window holds is a
+    # box the designer has been asked to answer, not a sentence about another product.
+    # BY CANONICAL DRIFT:
+    # `Process.productId` is re-pointed on the record page after the row was saved, which is the
+    # never-re-resolve rule working as intended and is what `entry_provenance.canonical_divergence`
+    # exists for — but that audit only covers fields carrying a `reference` provenance stamp, and a
+    # plain `f()` REF field is not hydrated and carries none. BY A STALE FORM: `reference_options`
+    # refuses to OFFER a mismatched pair; nothing refuses to STORE one.
+    #
+    # Hydrating the name from `productRef` — FIRST, because it is declared first — NARROWS the window
+    # in which representation (3) is a write-only shadow of (2), and does not close it. Measured, and
+    # the distinction is the one this table got wrong once: the parent wins whenever `processRef` is
+    # unchanged, blank, or absent, and LOSES whenever `processRef` was re-pointed in the same save,
+    # because a re-pointed ref clears and rewrites its own targets rather than only filling blanks.
+    # The cascade makes that the ordinary path. The values agree unless the stored pair does not, so
+    # what the parent's pair actually buys is: the box is answered when only the product is chosen,
+    # and it is answered from the product the designer picked in every save that does not re-pick the
+    # process. See the note on `processRef` above for the whole rule, and
+    # `test_a_stale_pair_prints_the_processs_parent` for the case that is left open.
+    # It is added BESIDE the pair on `processRef` rather than replacing it:
+    # see the note there for why removing `productName` from `Process.data` would report the whole
+    # archive as diverged. The alternative — a save-time equality refusal — was rejected:
+    # `validate_entry` does no I/O, so it would have to live beside `hydrate_entries`, and it turns a
+    # stale form into a save the designer cannot complete without re-picking.
+    #
+    # THE SOURCE KEY IS `name`, NOT `productName`, and the difference is not cosmetic:
+    # `REFERENCE_MODELS["ProductDocumentation"].data` produces `name` for the product's own name —
+    # `productName` is `REFERENCE_MODELS["Process"].data`'s key for its PARENT's name. Writing
+    # `productName` here hydrates nothing at all, silently, on every save; `validate_reference_carry`
+    # is what says so, and it said so about exactly this line before it was corrected. The identical
+    # shape is already in this table at `prototype.productRef`: `{"name": "productName"}`.
+    "traditionalProcess.productRef": {"name": "documentedFor"},
     # THE DOCUMENTED PROCESS IS THE STAGE'S SUBSTANTIVE NARRATIVE, and it used to contribute a
     # single word. The `Process` table holds five things — a name, free-text notes, a
     # pre-process flag, the product it hangs off, and its own sub-steps — and three of the five
@@ -1133,8 +1233,17 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     "processStep.processRef": {
         "name": "name",
         "notes": "description",
+        # THE SECOND WRITER OF `documentedFor`, and `processStep.productRef` below is the first. The
+        # paragraph two bullets up — "`productName` -> `documentedFor`. Pure provenance, and the
+        # reason it is not optional" — is still why the value crosses at all. What changed is that
+        # the PARENT the designer picks now answers it too, and answers it first. Keeping this pair
+        # is not optional: see the same note on `traditionalProcess.processRef` for the archive-wide
+        # false divergence that dropping `Process.data["productName"]` would cause.
         "productName": "documentedFor",
     },
+    # Source key `name` and not `productName` — the product model's own key for its own name. See
+    # `traditionalProcess.productRef` above, which is the same pair on the other stage-5 entity.
+    "processStep.productRef": {"name": "documentedFor"},
     # NOT WIDENED, AND THE REASON IS NOT THE PHOTOGRAPH RULE. `report_builder.ReferencedRecord`
     # explains why hydration must never seed these two entities' galleries; that reasoning covers
     # the photograph and nothing else, so the rest was decided on its own terms:
@@ -1221,6 +1330,45 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "photoCaption": "productPhotosCaption",
     },
     "prototype.productRef": {"name": "productName"},
+    # ── THE BASELINE CITATION: A SITTING, SUMMARISED, AND NOT ONE WORD ANYBODY SAID ──────────────
+    #
+    # Stage 6 is titled "Existing Products & Artisan Baseline" and had no entity for the artisan
+    # half. `artisanBaseline` is that entity and this is the whole of what it receives: what the
+    # sitting was, when, where, in what language, how many people, how much of the instrument was
+    # answered, when it was last answered, what is attached, and where the record came from. Ten
+    # boxes plus the REF field itself, every one KEY_VALUE — on a singleton `TABLE_COLUMN` is not
+    # merely unsafe but meaningless, since there is no table for a column to be in.
+    #
+    # WHAT IS DELIBERATELY ABSENT, BECAUSE THIS IS THE TABLE A WIDENING WOULD BE WRITTEN INTO.
+    # `QuestionnaireResponse.answerText` and `.notes` never cross, in any form, at any masking, in
+    # any count-with-sample. Four independent reasons, each sufficient: a design workshop's stage
+    # reads do not pass through `records._redact_sensitive` and a `DesignWorkshopViewer` is a
+    # grantee; the schema cannot say WHO in a group answered, so an answer copied onto a page naming
+    # one artisan attributes a sentence to a person who may not have said it, unfalsifiably; the copy
+    # is permanent and one-way, so a withdrawal of consent or a rejected review retracts it from
+    # nothing; and the WORDING is mutable — `QuestionnaireQuestion.supersededById` exists because
+    # "How many looms?" answered "12" was reworded to "How many weavers?" and a ministry report then
+    # stated there were twelve weavers. The prompts and section titles are excluded with them:
+    # prompts without answers answer nothing, prompts with answers are the thing forbidden. Only the
+    # COUNTS cross. The five `_interview_*` helpers in `design_workshops` carry the rest of the
+    # argument, and the per-column refusals are ledgered by name in
+    # `backend/tests/test_reference_carry.py`.
+    "artisanBaseline.interviewRef": {
+        "interviewTitle": "interviewTitle",
+        "interviewDate": "interviewDate",
+        "interviewPlace": "interviewPlace",
+        "interviewLanguage": "interviewLanguage",
+        "interviewArtisanCount": "interviewArtisanCount",
+        "interviewSectionsCovered": "interviewSectionsCovered",
+        "interviewQuestionsAnswered": "interviewQuestionsAnswered",
+        "interviewLastAnsweredOn": "interviewLastAnsweredOn",
+        # A sentence counting the files and never the ids — the gallery rule, and the per-file
+        # entitlement gate. On this model it is the only thing that can say the AUDIO RECORDING of
+        # the sitting exists: `_reference_photos` resolves one IMAGE and no non-image row at all.
+        "interviewMediaNote": "interviewMediaNote",
+        "interviewDocumentedOn": "interviewDocumentedOn",
+        "interviewDocumentedAtWorkshop": "interviewDocumentedAtWorkshop",
+    },
 }
 
 

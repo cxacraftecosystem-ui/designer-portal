@@ -87,6 +87,20 @@ class DwWorkshopSearchRegistryTest {
         // `processName` and `name` — so the stage-5 documented process was in the web's search index
         // and absent from the phone's. See the `documented` rule in `DwWorkshopSearch`.
         "traditionalProcess.processRef" to "documentedProcessName",
+        // Added 2026-08-24, when the table went from eight pairs to eleven: a sixth reference model
+        // and a `productRef` parent on both stage-5 process pickers.
+        //
+        // `interviewTitle` and not `interviewName`: a `QuestionnaireInterview`'s label is its TITLE
+        // (`REFERENCE_MODELS`'s `label` lambda reads `r.title`), so the entity has no `…Name` box for
+        // the two `Name` rules to find.
+        "artisanBaseline.interviewRef" to "interviewTitle",
+        // Both of these land in `documentedFor`, the box that says which product the documented thing
+        // was documented FOR. `processStep` is why the client's rule for it is conditional and not a
+        // fourth spelling: the step declares `documentedFor` AND its own `name`, and its `processRef`
+        // reads that `name`, so an unconditional rule would label every step's process with the
+        // product instead.
+        "traditionalProcess.productRef" to "documentedFor",
+        "processStep.productRef" to "documentedFor",
     )
 
     /**
@@ -113,13 +127,17 @@ class DwWorkshopSearchRegistryTest {
     }
 
     @Test
-    fun `exactly the five models named in the header live outside this registry`() {
-        // The header of [DwWorkshopSearch] names these five as the records the rest of the repository
-        // owns and this device cannot resolve offline. A sixth appearing is not a bug in itself — it
+    fun `exactly the six models named in the header live outside this registry`() {
+        // The header of [DwWorkshopSearch] names these six as the records the rest of the repository
+        // owns and this device cannot resolve offline. A seventh appearing is not a bug in itself — it
         // is a decision nobody has made yet about which box holds ITS hydrated name, and it must not
         // be made by a `removeSuffix` quietly finding something plausible.
+        //
+        // `QuestionnaireInterview` arrived on 2026-08-24 and this assertion is what stopped it being
+        // waved through: its label is a TITLE, so every `…Name` rule missed it and the sitting a
+        // designer cited would have been absent from their own phone's index while the web had it.
         assertEquals(
-            listOf("Artisan", "Craft", "Process", "ProductDocumentation", "ToolDocumentation"),
+            listOf("Artisan", "Craft", "Process", "ProductDocumentation", "QuestionnaireInterview", "ToolDocumentation"),
             refsOutsideTheWorkshop().map { it.refField.refModel }.distinct().sorted(),
         )
     }
@@ -139,13 +157,20 @@ class DwWorkshopSearchRegistryTest {
             // called the production function would agree with any rule it grew, including a wrong
             // one, and the whole job of this test is to hold the derivation against the web's table.
             // So when the `documented…Name` rule was added on 2026-08-16 this line had to be edited
-            // by hand — which is the review step, not an oversight in the design.
+            // by hand — which is the review step, not an oversight in the design. It was edited by
+            // hand again on 2026-08-24 for the `Title` and `documentedFor` rules, for the same reason.
             val stem = site.refField.key.removeSuffix("Ref")
-            val candidates = listOf(
-                stem + "Name",
-                "documented" + stem.replaceFirstChar { it.uppercase() } + "Name",
-                "name",
-            )
+            // `documentedFor` is deliberately NOT offered to every ref: it is reached only for a
+            // cascade parent, read off `refFilterBy` exactly as the production rule reads it. Mirror
+            // the condition too, or this test would pass a rule that relabels `processStep.processRef`.
+            val cascadeParent = site.entity.liveFields.any { it.refFilterBy == site.refField.key }
+            val candidates = buildList {
+                add(stem + "Name")
+                add("documented" + stem.replaceFirstChar { it.uppercase() } + "Name")
+                add(stem + "Title")
+                if (cascadeParent) add("documentedFor")
+                add("name")
+            }
             assertTrue("${site.pair}: the web's box is not one this client would ever try", webKey in candidates)
 
             val values = HashMap<String, JsonElement>()

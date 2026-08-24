@@ -102,15 +102,26 @@ test("nothing is claimed twice, and every refusal carries its reason", () => {
 test("the refusals are the ones that were argued, and the list has not silently grown", () => {
   /*
     PINNED BY NAME, so that "we decided not to" cannot become "we forgot to" by an edit to this
-    table. Two of these four came out of the pin above on its first run rather than out of the brief:
-    `existingProduct.artisanRef` and `prototype.productRef` are ONE-PAIR mappings, which are easy to
-    read past when you are looking for the wide ones, and both are attributions rather than mirrors.
-    Adding a fifth is a decision to be argued in `NOT_EMBEDDED`'s own text and then written here.
+    table. Two of the original four came out of the pin above on its first run rather than out of the
+    brief: `existingProduct.artisanRef` and `prototype.productRef` are ONE-PAIR mappings, which are
+    easy to read past when you are looking for the wide ones, and both are attributions rather than
+    mirrors. Adding another is a decision to be argued in `NOT_EMBEDDED`'s own text and then written
+    here.
+
+    THREE MORE ON 2026-08-24, AND THE PIN ABOVE IS WHAT PRODUCED ALL THREE — a second wave of exactly
+    the failure this file was written for, so the paragraph above is a description of a live habit and
+    not of one bad afternoon. `traditionalProcess.productRef` and `processStep.productRef` are the
+    one-pair parents of the new process cascade, and `artisanBaseline.interviewRef` is the sixth
+    reference model's citation on stage 6's new singleton. None of the three was in either table when
+    it shipped.
   */
   expect(NOT_EMBEDDED.map((entry) => entry.point).sort()).toEqual([
+    "artisanBaseline.interviewRef",
     "existingProduct.artisanRef",
     "processStep.processRef",
+    "processStep.productRef",
     "prototype.productRef",
+    "traditionalProcess.productRef",
     "workshopSetup.craftRef"
   ]);
 });

@@ -904,8 +904,13 @@ class DwParentGroupTest {
 
     @Test
     fun `dwParentGroups declines every entity of the shipped registry that has no parent`() {
-        // The mechanism the test above depends on, stated directly: 38 of the 43 entities take the
+        // The mechanism the test above depends on, stated directly: 39 of the 44 entities take the
         // untouched path, and it is `null` — not a one-group list that happens to look the same.
+        //
+        // 38 of 43 until 2026-08-24, when stage 6 declared the parentless `artisanBaseline` singleton
+        // carrying the questionnaire-interview citation. Counted rather than incremented: the five
+        // that DO take the grouped path are the number this asserts against, and a new entity with a
+        // parent would have to move the other figure instead.
         val schema = shippedRegistry()
         val draft = filledDraft(schema)
         var declined = 0
@@ -923,7 +928,7 @@ class DwParentGroupTest {
                 declined += 1
             }
         }
-        assertEquals(38, declined)
+        assertEquals(39, declined)
     }
 
     // ── The artefact a reader actually opens ─────────────────────────────────────────────────────

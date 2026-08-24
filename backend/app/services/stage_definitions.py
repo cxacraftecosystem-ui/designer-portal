@@ -955,10 +955,42 @@ STAGE_5 = StageSpec(
             # hangs off a product at one cluster, so "Tie and dye" at Bagru and "Tie and dye" at
             # Bhuj are two different sequences under one name and the picker's sublabel is the
             # only thing on screen that separates them.
-            f("processRef", "Documented process", REF, S, ref_model="Process",
+            # ── THE PARENT OF THE PICKER BELOW, AND THE FIELD THAT LOOKED LIKE ONE IS A TRAP ────
+            #
+            # `Process.productId` is NON-NULLABLE and its schema comment says a process "reaches a
+            # workshop only through its parent product": one product, many processes, so the
+            # cascade is the natural one and the process picker was the last unnarrowed child
+            # picker in the registry. Pick the product and the process list holds that product's
+            # documented processes and nothing else.
+            #
+            # WHY A NEW REF FIELD RATHER THAN `ref_filter_by="documentedFor"`. `documentedFor`
+            # below is a `fromref` TEXT box holding the product's NAME, and `validate_registry`
+            # only requires that the field named by `ref_filter_by` EXIST on the entity — it does
+            # not require it to be a REF. So `ref_filter_by="documentedFor"` would pass validation
+            # and then send a product NAME to the endpoint as `filterBy`, where it is treated as an
+            # id and matches nothing: the silent-emptying failure that whole validation block was
+            # written to prevent, arriving through the one door it leaves open.
+            #
+            # THE PICKER NARROWING IS NOT A SAVE-TIME INVARIANT, and this repository's habit is to
+            # assume it is. `reference_options` refuses to OFFER a mismatched pair; nothing refuses
+            # to STORE one — `coerce_value` checks type and length only — so a stale form or a
+            # direct API caller can post `productRef=A` with a process belonging to B.
+            #
+            # HIDDEN, and the alternative is not available: `documentedFor` already prints the
+            # product name, so a printing `productRef` would be a second, possibly-disagreeing
+            # statement of one fact. Tier S and never BASIC — `EntityForm.tsx` picks the
+            # collection's bulk multi-select as the field that is `REF && refModel && !refFilterBy
+            # && tier === "BASIC"`, and a BASIC one here would turn a picker into a "tick thirty
+            # records and make thirty rows" control that means nothing on a singleton either.
+            f("productRef", "Documented product", REF, S, ref_model="ProductDocumentation",
               ref_scope=W_SCOPE, report_role=HIDDEN,
-              help="Choose a process already documented for this workshop. Its name, notes, "
-                   "sub-steps and pre-process answer are filled in below."),
+              help="Which product’s documented process this is. Choosing one narrows the "
+                   "process list below to that product’s documented processes."),
+            f("processRef", "Documented process", REF, S, ref_model="Process",
+              ref_filter_by="productRef", ref_scope=W_SCOPE, report_role=HIDDEN,
+              help="Choose a process already documented for this workshop. Pick the product "
+                   "first to narrow this list. Its name, notes, sub-steps and pre-process "
+                   "answer are filled in below."),
             f("processOverview", "Broad process steps", RICH, B, required=True, report_role=NARR,
               help="The making sequence in outline. Individual steps are recorded below."),
             # NOT `processOverview`, AND THE DISTINCTION IS THE WHOLE POINT. `processOverview`
@@ -1050,10 +1082,24 @@ STAGE_5 = StageSpec(
             # place, which is what makes the wider net readable there and unreadable here. The
             # stored ref is also a join key research follows, so a mis-pick is not just a wrong
             # word in a report — it links this workshop's step to another cluster's record.
-            f("processRef", "Documented process", REF, S, ref_model="Process",
+            # THE PARENT OF THE PICKER BELOW. Same field, same key and same reasoning as
+            # `traditionalProcess.productRef` — see the long note there for why the existing
+            # `documentedFor` TEXT box cannot be the cascade's parent (it holds a NAME, and
+            # `validate_registry` would accept it and then send that name as an id).
+            #
+            # HIDDEN IS THE ONLY ROLE WITH NO LAYOUT CONSEQUENCE HERE. The five declared
+            # `column_width_pct` values on this entity — stepNumber 8 + name 24 + localName 18 +
+            # description 34 + timeTaken 16 — already total EXACTLY 100, so a sixth TABLE_COLUMN
+            # would push the renderer onto its proportional fallback and silently re-lay-out the
+            # process-step tables of documents that are already submitted.
+            f("productRef", "Documented product", REF, S, ref_model="ProductDocumentation",
               ref_scope=W_SCOPE, report_role=HIDDEN,
+              help="Which product’s documented process this step came from. Choosing one "
+                   "narrows the process list below to that product’s documented processes."),
+            f("processRef", "Documented process", REF, S, ref_model="Process",
+              ref_filter_by="productRef", ref_scope=W_SCOPE, report_role=HIDDEN,
               help="Choose a process already documented for this workshop instead of "
-                   "re-describing it."),
+                   "re-describing it. Pick the product first to narrow this list."),
             fromref("name", "Step name", T, B, required=True, report_role=COL,
                     column_width_pct=24.0),
             f("localName", "Local name", T, S, report_role=COL, column_width_pct=18.0),
@@ -1399,6 +1445,204 @@ STAGE_6 = StageSpec(
         "them is still missing."
     ),
     entities=(
+        # ── THE ARTISAN HALF OF THIS STAGE, WHICH THE TITLE HAS PROMISED AND THE REGISTRY LACKED ──
+        #
+        # This stage is called "Existing Products & Artisan Baseline" and its only entity was the
+        # `existingProduct` collection. The artisan half was a hole, and the thing that belongs in it
+        # is a CITATION OF THE BASELINE INSTRUMENT: the stage's own purpose reads "recorded before any
+        # new design work, so the workshop's effect can be measured against it", which is a
+        # description of a baseline.
+        #
+        # ── WHY A NEW ENTITY AND NOT ONE OF THE 22 THAT EXIST ────────────────────────────────────
+        # Each rejection below is a live trap rather than a preference:
+        #
+        #  * `participant` (stage 3) is the obvious answer and the worst one. An interview belongs to
+        #    a SET of artisans (`artisanSetKey` is the sorted, comma-joined ids under a unique
+        #    constraint), so one sitting would be cited on six roster rows and its summary printed six
+        #    times — the defect `REFERENCE_HYDRATION["processStep.processRef"]` refuses `steps` for.
+        #    The roster row is also about the PERSON while the interview is about the SITTING. And
+        #    participant's six TABLE_COLUMN widths already total exactly 100, so nothing there can be
+        #    a column at all.
+        #  * `workshopPlan` (stage 3) is the right SHAPE — a singleton above a collection, where
+        #    `traditionalProcess.processRef` was put so a citation prints once instead of per row —
+        #    but it is "Plan & opening": designer's profile, opening note, officials present. A
+        #    baseline interview filed under the opening ceremony is a category error a reader has to
+        #    unlearn, and its METRIC row is already two-fifths spent against a hard cap of four.
+        #  * `clusterBackground` (stage 4) is about the cluster and the CRAFT — geography, history,
+        #    motifs, GI status. The questionnaire is about individual artisans.
+        #  * `surveySummary`/`surveyPlan` (stages 7–8) are the MARKET survey: consumers, retailers,
+        #    wholesalers, exporters. A different instrument and a different population — the exact
+        #    two-unrelated-things-sharing-one-word confusion stage 7's `placeType` note warns about.
+        #  * `archive` (stage 21) is about files preserved and checksums, not sources cited. Stages
+        #    9–20 and 22 are the workshop's own output; nothing there cites a baseline.
+        #
+        # ── AND IT IS CHEAP AND SAFE, FOR FOUR REASONS THAT ARE WORTH CHECKING BEFORE COPYING IT ──
+        #  1. NO MIGRATION. Entities are not Prisma models — `EntitySpec.name` is a display/model
+        #     name and every value is stored as JSON in `DwStageEntry`. There are ten `Dw…` models in
+        #     the schema and not one of them is a per-entity table.
+        #  2. NOTHING ALREADY SUBMITTED CHANGES. `report_builder` renders singleton content only
+        #     under `if single is not None and singleton_data:`, and a brand-new `entityKey` has zero
+        #     stored rows — so `singleton_data` is empty for every existing workshop, `has_any` is
+        #     unchanged, and every already-filed document renders byte-identical.
+        #  3. STAGE 6 HAD NO SINGLETON, so `StageSpec.singleton` — which returns the FIRST one —
+        #     stays unambiguous. Adding a second singleton to a stage that already has one would not,
+        #     and `WorkshopData.singletons` is keyed by STAGE and not by entity.
+        #  4. It gives the artisan baseline a home for whatever else it legitimately gains later,
+        #     instead of wedging a citation into a stage about the opening ceremony.
+        #
+        # DECLARED FIRST, matching every one of the nine other stages that has a singleton and
+        # matching the order `_render_stage` prints in (singleton, then collections). The form and the
+        # report then agree about what comes first on this stage.
+        single("artisanBaseline", "DwArtisanBaseline", "Artisan baseline", (
+            # ── THE SITTING, NOT THE FORM, AND THE LABEL HAS TO SAY SO ────────────────────────────
+            #
+            # There is exactly ONE global artisan questionnaire — `QuestionnaireSection.code` is
+            # `@unique` and its `sortOrder` is `@@unique` globally — so "choose the questionnaire" is
+            # not a choice. What a designer picks is a sitting: a title, a date, a place, a language,
+            # a named set of artisans and a review status. If this said "questionnaire" the designer
+            # would think they were picking a form. The five reasons this is the GLOBAL instrument's
+            # interview and not the per-workshop custom `Questionnaire` are on
+            # `REFERENCE_MODELS["QuestionnaireInterview"]`; the short version is that the custom form
+            # is the workshop's own METHOD, is already attached through `Questionnaire
+            # .designWorkshopId`, has no `workshopId` for the scope machinery to read, is private by
+            # design, and carries no reviewer's verdict.
+            #
+            # WORKSHOP-SCOPED, because an interview is an EVENT and not an entity. `artisanRef`,
+            # `craftRef` and `toolRef` are ALL because an artisan, a craft and a tool exist
+            # independently of any one study and are legitimately reused across them. There is no
+            # reuse story for a sitting: you cannot use somebody else's afternoon as evidence about
+            # your cluster.
+            #
+            # NO `ref_filter_by`, and it could not have one: `QuestionnaireInterview` has no
+            # `artisanId` column — the link is a many-to-many — and the filter arm applies a scalar
+            # column name. The picker is not on a per-artisan row in any case.
+            f("interviewRef", "Linked questionnaire interview", REF, S,
+              ref_model="QuestionnaireInterview", ref_scope=W_SCOPE, report_role=HIDDEN,
+              help="Choose an artisan questionnaire interview conducted for this workshop. The "
+                   "citation below is filled in from it."),
+            # ── EVERY ONE OF THESE IS KEY_VALUE, AND ON A SINGLETON THAT IS THE ONLY ANSWER ───────
+            #
+            # `ReportRole.TABLE_COLUMN` is defined as "a column when the entity is a collection". A
+            # singleton is rendered through `_render_narrative` plus a `MetricRowBlock` plus a
+            # gallery — there is no table for a column to be in — so this is not a concession to a
+            # width budget, it is the only available role. (KEY_VALUE is `FieldSpec`'s default and is
+            # left implicit, as everywhere else in this file.)
+            #
+            # AND ZERO METRICs, DELIBERATELY. `report_builder` takes `metrics[:4]` and SILENTLY drops
+            # a fifth, so the METRIC row is the singleton analogue of the width budget.
+            # `interviewQuestionsAnswered` and `interviewArtisanCount` read as headline numbers and
+            # are still KEY_VALUE: the block is a citation, not a scoreboard, and keeping all four
+            # slots free means a later, genuinely headline baseline figure does not have to evict a
+            # count to get printed.
+            # THE TITLE IS FREE TEXT AND CROSSES VERBATIM, WHICH IS A NARROWER GUARANTEE THAN THE
+            # ONE BELOW READS AS. `QuestionnaireInterview.title` is typed by a researcher, unbounded
+            # in Postgres, and printed into a submitted document exactly as typed. So the refusal
+            # further down covers the STRUCTURED roster columns — the artisan rows and
+            # `artisanSetKey` — and cannot cover a name somebody typed into the title instead:
+            # "Sita Devi & Ramesh Meher, 12 Mar" defeats it with nothing in the path to notice.
+            # `section_codes_from_title` exists BECAUSE researchers title interviews by content, and
+            # the interview search reads `title` alongside `notes`, so this is a habit rather than a
+            # hypothetical.
+            #
+            # STILL CARRIED, AND NOT REDACTED, ON TWO GROUNDS. It is the model's LABEL COLUMN — the
+            # picker's own trigger text and `referenceDisplayHint`'s probe — so it is what the
+            # designer read on screen before choosing, and a citation with no identifier is not a
+            # citation. And it is an ORDINARY EDITABLE BOX: hydration fills it, the designer can
+            # correct it for this workshop, and the help below asks them to. A machine redaction
+            # could only mangle the legitimate titles, which are the overwhelming majority.
+            #
+            # `interviewPlace` is the same kind of value and the same argument; it is the sitting's
+            # own free-text place, which is a fact about an EVENT rather than about a person.
+            fromref("interviewTitle", "Artisan questionnaire interview", T, S, max_length=220,
+                    help="The interview record's own title, as the researcher typed it. It prints "
+                         "in the report exactly as it stands here — if it names the artisans, "
+                         "shorten it to the sitting."),
+            # TWO DIFFERENT FACTS, and the pair is the point — when the sitting HAPPENED, and (near
+            # the bottom) when somebody TYPED IT IN. `documentedOn` carries the same distinction on
+            # every other model.
+            fromref("interviewDate", "Interview date", DATE, S),
+            fromref("interviewPlace", "Place of the interview", T, S, max_length=220,
+                    help="The sitting’s own free-text place, as the interview record states it."),
+            fromref("interviewLanguage", "Language of the interview", T, S, max_length=80),
+            # THE COUNT AND NEVER THE NAMES. A sitting may cover artisans who are NOT on this
+            # workshop's roster — `record_filters.artisan_workshop_clause` treats "sat in an
+            # interview taken at this workshop" as one of three ways an artisan reaches a workshop —
+            # so naming them would have a submitted report disclose that a particular person from
+            # another cluster was interviewed. The number is load-bearing rather than decorative:
+            # `questionnaire_consolidation` argues that "a quote from a five-person sitting is
+            # different evidence from the same sentence said alone".
+            fromref("interviewArtisanCount", "Artisans in the sitting", INT, S, min_value=0),
+            # "ANSWERED" AND NOT "REACHED", IN BOTH PLACES. The label is the one that prints, and it
+            # used to sit over a help line saying "reached" and over a count that measured neither —
+            # it counted response rows, blank ones included, so this box could read 9 beside
+            # "Questions answered: 0". `_interview_sections_covered` now counts a section the way
+            # `questionnaire._derived_completed_sections` counts it for the View Data matrix: content
+            # recorded, whether as a non-blank answer or as media filed against the section. That
+            # second arm is what makes the number right for an interview captured as one audio clip
+            # per section, which is the app's ordinary way of taking one.
+            fromref("interviewSectionsCovered", "Sections answered", INT, S, min_value=0,
+                    help="Sections of the questionnaire with something recorded against them — an "
+                         "answer typed, or an audio clip or file filed under the section. Blank "
+                         "left by tabbing through a section does not count."),
+            # NO DENOMINATOR AND NO PERCENTAGE COMPLETE. "84 of 112" is refused twice over: the
+            # global instrument is not a relation on the interview so it is not reachable, and the
+            # instrument is EDITABLE (`isActive`, `retiredAt`, `supersededById` on both question
+            # tables) so a denominator frozen at save time silently means "of the 112 active on the
+            # day this was picked" while the report never re-resolves. A frozen ratio against a live
+            # instrument becomes wrong without anybody touching the report.
+            fromref("interviewQuestionsAnswered", "Questions answered", INT, S, min_value=0,
+                    help="Questions with an answer recorded against them. A saved but empty "
+                         "answer is not counted."),
+            fromref("interviewLastAnsweredOn", "Last answered on", DATE, S),
+            # 202 AND NOT 200, AND THE TWO CHARACTERS ARE THE FAMILY FORMULA'S ANSWER FOR A
+            # NINE-LETTER SUBJECT — WHICH IS NOT THE SAME CLAIM AS "the worst case is 202", AND THIS
+            # COMMENT USED TO MAKE THE SECOND ONE. Both halves matter, so both are written down.
+            #
+            # THE FORMULA. `test_the_media_note_cannot_overrun_the_bound_its_field_declares` measures
+            # the WIDEST sentence `_media_note` can build for a subject — every type word present AND
+            # the numbered-making clause present, which is the only shape printing all six of its
+            # integers — and gets `6 * digits + intercept`, the intercept varying with the subject
+            # word because the subject sits inside the sentence. At twelve digits per count that is
+            # 197 for "tool", 198 for "craft", 200 for "artisan" and "product", and 202 here.
+            #
+            # THE OTHER FOUR DECLARE A FLAT 200, which is the formula's number for the LONGEST of
+            # their four subject words — so "tool" and "craft" ride on it with a few characters to
+            # spare. "interview" is two letters longer than the longest of them, which is the whole of
+            # why this is the one field that could not simply reuse 200. That much of the previous
+            # comment was right; what it got wrong is below.
+            #
+            # WHAT THE FORMULA DELIBERATELY OVER-COUNTS, because the previous version of this comment
+            # read as though it did not. Only ONE of the five call sites passes a `numbered_prefix`
+            # (`tool.recordMediaNote`, for `ToolForm`'s `STAGE_STEP_<n>` sequence). The other four —
+            # this one included — cannot produce the numbered clause at all, so they cannot reach the
+            # bound: the clause is 40 characters plus a sixth count. This subject's REACHABLE worst
+            # case at twelve digits is 150 exactly —
+            #     prefix 34 ("Attached to the " 16 + "interview" 9 + " record: " 9)
+            #   + words 47 (" photographs" 12, " videos" 7, " audio notes" 12, " documents" 10,
+            #               " files" 6, each with its leading space)
+            #   + separators 8 + digits 60 (5 x 12) + "." 1
+            # — leaving 52 characters of headroom, and the same asymmetry leaves the artisan and
+            # product notes 52 of theirs and the craft note 54.
+            # `test_the_media_note_headroom_is_measured_rather_than_implied` pins all three numbers
+            # for all five fields, so the next reader gets the split from an assertion rather than
+            # from this paragraph — and finds out immediately if a subject word or a call site moves.
+            #
+            # WHY THE CONSERVATIVE NUMBER IS THE ONE DECLARED. `coerce_value` REFUSES an over-length
+            # value instead of truncating it, so a bound one character short leaves the box blank and
+            # paints an error on a field the designer never touched. A bound tight to 150 would also
+            # break the day this call site gains a `numbered_prefix` or `_MEDIA_NOTE_WORDS` gains a
+            # sixth row — either of which is a one-line change nobody would think to re-derive five
+            # bounds for.
+            fromref("interviewMediaNote", "Media on the interview record", T, S, max_length=202,
+                    help="What the interview record carries — the audio recording of the sitting "
+                         "is the usual one. A sentence counting the files, never the files."),
+            fromref("interviewDocumentedOn", "Interview record entered on", DATE, S),
+            # WHERE THE SITTING CAME FROM, and it is needed even though the picker is
+            # WORKSHOP-scoped: on a design workshop with no linked `Workshop` the picker falls back
+            # to the whole table and reports `scoped: false`, so an out-of-cluster sitting can
+            # legitimately be picked and the printed row must then say so.
+            fromref("interviewDocumentedAtWorkshop", "Documented under", T, S, max_length=220),
+        )),
         many("existingProduct", "DwExistingProduct", "Existing products", (
             # THE CASCADE. Pick the artisan, and the product dropdown below holds that artisan's
             # documented products and nothing else.

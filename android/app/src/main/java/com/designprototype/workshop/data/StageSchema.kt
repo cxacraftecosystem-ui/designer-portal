@@ -1468,6 +1468,12 @@ private fun recordLabel(refModel: String?): String = when (refModel) {
     "Process" -> "process"
     "ProductDocumentation" -> "product"
     "ToolDocumentation" -> "tool"
+    // THE SIXTH MODEL, ADDED 2026-08-24 WITH THE STAGE-6 BASELINE CITATION. "interview" and not
+    // "questionnaire": there is exactly ONE global instrument, so what the designer picked is a
+    // SITTING, and calling it a questionnaire tells them they chose a form. Without this entry the
+    // eleven hydrated boxes of `artisanBaseline` all read "From the linked record" — the fallback
+    // doing what it is for (an UNKNOWN model) on a model this build knows by name.
+    "QuestionnaireInterview" -> "interview"
     else -> "linked"
 }
 

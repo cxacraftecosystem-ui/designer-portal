@@ -511,13 +511,20 @@ object DwWorkshopSearch {
      *  * `processRef` → `documentedProcessName` — the same spelling under the `documented` prefix an
      *    entity uses when its hydrated boxes describe a record documented ELSEWHERE, rather than
      *    something observed at this workshop (see below); then
+     *  * `interviewRef` → `interviewTitle` — the same stem trade for a model whose label column is
+     *    a TITLE and not a name (added 2026-08-24 with the sixth reference model);
+     *  * `documentedFor` — the box a stage-5 process picker's PARENT product writes into, reached
+     *    only when this field is a cascade parent (added 2026-08-24 with the product→process
+     *    cascade); then
      *  * plain `name`, which is how it spells the only one.
      *
-     * On the registry as it stands that reproduces the web's table entry for entry, for all eight of
+     * On the registry as it stands that reproduces the web's table entry for entry, for all eleven of
      * its rows (`workshopSetup.craftRef`→craftName, `participant.artisanRef`→name,
      * `processStep.processRef`→name, `tool.toolRef`→name, `existingProduct.artisanRef`→artisanName,
      * `existingProduct.productRef`→name, `prototype.productRef`→productName,
-     * `traditionalProcess.processRef`→documentedProcessName). A ref that grows a hydrated name
+     * `traditionalProcess.processRef`→documentedProcessName,
+     * `traditionalProcess.productRef`→documentedFor, `processStep.productRef`→documentedFor,
+     * `artisanBaseline.interviewRef`→interviewTitle). A ref that grows a hydrated name
      * spelled some fourth way gets no hint and is left out of the index, which is the honest silence
      * decision 4 asks for rather than a wrong label.
      *
@@ -541,6 +548,25 @@ object DwWorkshopSearch {
      * every entity that adopts the prefix, so the next `documented…Ref` needs no edit here — which
      * is the property `DwReferenceField` refused to give up when it declined to mirror the web.
      *
+     * ── WHY `Title` AND `documentedFor` HAD TO BE ADDED, 2026-08-24 ───────────────────────
+     *
+     * THE SAME PARITY DEFECT AS 2026-08-16, TWICE OVER, and again caught by the registry test rather
+     * than in a courtyard. The table went from eight rows to eleven: a sixth reference model
+     * (`QuestionnaireInterview`) and both stage-5 process pickers gaining a `productRef` parent.
+     *
+     * The sixth model's label is its TITLE — `REFERENCE_MODELS`'s `label` lambda reads `r.title` — so
+     * `artisanBaseline` spells the hydrated name `interviewTitle` and the two `…Name` rules could not
+     * reach it. The web hit the identical wall and answered it the identical way, by adding
+     * `interviewTitle` to `referenceDisplayHint`'s source list.
+     *
+     * `documentedFor` is the one that could not be a bare fourth spelling, and the reason is worth
+     * recording: `processStep` declares `documentedFor` AND its own `name`, and its `processRef`
+     * resolves through `name`. Appending `documentedFor` to the list unconditionally would therefore
+     * have relabelled every step's process with its product — turning a missing hint into a wrong
+     * one, which decision 4 rates as the worse outcome. The cascade-parent condition is read off
+     * `refFilterBy`, so it stays a rule derived from the registry and needs no edit here when the
+     * next cascade is declared.
+     *
      * THE GUARD IS NOT OPTIONAL. This runs only for a model that is NOT an entity of this registry.
      * Without it, a `prototype.sketchRef` whose sketch row is missing from the draft would fall
      * through to the prototype's OWN `name` and index the prototype's name as the sketch's label —
@@ -558,7 +584,23 @@ object DwWorkshopSearch {
         // `processRef` → `documentedProcessName`. Built from the same stem, so it costs nothing on an
         // entity that does not use the prefix — `entity.field(key)` simply finds no such box.
         val documented = "documented" + stem.replaceFirstChar { it.uppercase() } + "Name"
-        for (key in listOf(derived, documented, "name")) {
+        // `interviewRef` -> `interviewTitle`, for a model whose label column is a TITLE rather than a
+        // name. The same stem trade as `derived`, so it costs nothing on a model labelled `name`.
+        val titled = stem + "Title"
+        // `documentedFor` -- reached ONLY for a cascade PARENT, and which fields those are is read off
+        // the registry rather than listed here: a parent is a field that some other live field's
+        // `refFilterBy` points at. The condition is what keeps this correct on `processStep`, which
+        // declares BOTH `documentedFor` and its own `name`; unconditionally, that step's `processRef`
+        // would resolve through `documentedFor` and label the process with the product's name.
+        val cascadeParent = entity.liveFields.any { it.refFilterBy == field.key }
+        val candidates = buildList {
+            add(derived)
+            add(documented)
+            add(titled)
+            if (cascadeParent) add("documentedFor")
+            add("name")
+        }
+        for (key in candidates) {
             val target = entity.field(key)?.takeIf { !it.deprecated } ?: continue
             val type = DwFieldType.of(target.type)
             if (type != DwFieldType.TEXT && type != DwFieldType.LONG_TEXT) continue

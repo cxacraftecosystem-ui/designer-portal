@@ -1298,8 +1298,19 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
   either — but a stale number in a comment is what a reader trusts instead of counting, and this one
   has now been stale twice. Measured with
   `python -c "import app.services.stage_definitions; from app.services.stage_schema import
-  REFERENCE_HYDRATION; print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"` → 108, of which
-  `participant.artisanRef` is 25.)
+  REFERENCE_HYDRATION; print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"` → 122 across
+  ELEVEN mappings, of which `participant.artisanRef` is 26.)
+
+  109 pairs / 8 mappings on 2026-08-24 morning, when `participant.artisanRef` gained the masked
+  `aadhaarNumber`. 122 pairs / 11 mappings the same day, and the +13 is two separate changes:
+
+   * `artisanBaseline.interviewRef` is NEW and carries 11 — the questionnaire-interview citation on
+     stage 6's new artisan-baseline singleton. It is the sixth external reference model.
+   * `traditionalProcess.productRef` and `processStep.productRef` are NEW and carry 1 each — the
+     product that now NARROWS both stage-5 process pickers, and answers `documentedFor` FIRST. The
+     identical pair stays on both `processRef` mappings: it is a SECOND writer of that one box, not
+     a replaced one, and the server's table says why removing it would report the whole archive as
+     diverged. A duplicated pair is exactly the kind of thing a hand-copy "tidies" away.
 */
 const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
   // The craft record in full. Two of the five things the crafts page collects used to cross; the
@@ -1453,6 +1464,51 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     preProcessAvailable: "preProcessAvailable",
     documentedOn: "documentedOn"
   },
+  // ── THE PRODUCT THAT NARROWS BOTH PROCESS PICKERS, AND ANSWERS `documentedFor` FIRST ──────────
+  // Both stage-5 process pickers are now narrowed by a `productRef` sibling (`ref_filter_by` names a
+  // field of the SAME entity, so the sibling is not optional), which means three representations of
+  // "which product this process belongs to" coexist: the canonical non-nullable `Process.productId`,
+  // the copied `documentedFor` name, and the designer's picked id.
+  //
+  // WHICH WRITER WINS DEPENDS ON THE SAVE, and this comment used to claim otherwise. Hydration walks
+  // fields in DECLARATION order and `productRef` is declared just before `processRef` in both
+  // entities, so the parent answers FIRST — and the child then finds a filled box and leaves it alone
+  // ONLY while the child's own ref is unchanged. A re-pointed ref clears and rewrites its own targets
+  // instead of only filling blanks (`hydrateFromReference`'s `replaced` branch here, and the server's
+  // matching pop), so on the cascade's ordinary path — product changed, process cleared and re-picked
+  // in one save — the CHILD writes `documentedFor` last. Both name the same product while the stored
+  // pair is consistent; on a stale pair the box prints the process's parent rather than the product
+  // the designer chose. The server's `REFERENCE_HYDRATION` carries the full rule and
+  // `backend/tests/test_reference_carry.py` pins all five cases.
+  //
+  // AND THERE IS A SIXTH STATE, WHICH IS THE ONE BETWEEN THE CASCADE'S TWO HALVES. Changing the
+  // product CLEARS the process (`StageReferenceField`'s filter effect), and one autosave is enough to
+  // store the row before it is re-picked. A blank ref used to hydrate nothing AND pop nothing, so the
+  // six boxes copied from the old process stood while `productRef` rewrote `documentedFor` — a row
+  // describing product A's process under product B's name, with no ref left to re-resolve it by and
+  // nothing able to flag it (`canonical_divergence` reads only fields carrying a `reference` stamp,
+  // and the surviving stamps still named process A and still re-resolved to exactly what was stored).
+  //
+  // `design_workshops._clear_cascade_orphans` closes it, ON THE SERVER AND ONLY THERE, which is a
+  // deliberate placement rather than a gap on this side. The pop needs `previous` beside the incoming
+  // row to tell "the parent was re-pointed" from "this build never sent the parent" — a distinction no
+  // client has, because `validate_entry` drops blank keys and the two are the same absence on the
+  // wire. So the browser's filter effect clears the ID and says so, the handset does the same
+  // (`dwCascadeClearsChild`), and one writer on the side holding the evidence settles the values for
+  // both. The consequence to know about: between the clear and the save the row shows a process's name
+  // with no process linked, which is what both clients' notices exist to explain — a designer who
+  // retypes those boxes instead has TYPED them, and a typed value is not one hydration may overwrite.
+  //
+  // BOTH WRITERS ARE KEPT DELIBERATELY. Dropping `productName` from the server's `Process` data
+  // lambda would make `canonical_divergence` answer `canonical: null` for every `documentedFor`
+  // stamped before today and report the whole archive as diverged. The server's
+  // `REFERENCE_HYDRATION` carries that argument in full.
+  //
+  // SOURCE KEY `name`, NOT `productName`: the product model's data lambda produces `name` for its
+  // own name — `productName` is the PROCESS model's key for its parent's name. The identical shape
+  // is at `prototype.productRef` below. Writing the wrong one here hydrates nothing, silently.
+  "traditionalProcess.productRef": { name: "documentedFor" },
+  "processStep.productRef": { name: "documentedFor" },
   "existingProduct.artisanRef": { name: "artisanName" },
   "existingProduct.productRef": {
     name: "name",
@@ -1499,7 +1555,37 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     documentedOn: "documentedOn",
     photoCaption: "productPhotosCaption"
   },
-  "prototype.productRef": { name: "productName" }
+  "prototype.productRef": { name: "productName" },
+  // ── THE BASELINE CITATION ON STAGE 6'S NEW ARTISAN-BASELINE SINGLETON ─────────────────────────
+  // The GLOBAL artisan questionnaire's INTERVIEW — a sitting, not a form. There is exactly one global
+  // instrument (`QuestionnaireSection.code` is unique and its sortOrder is globally unique), so what a
+  // designer picks is the afternoon: a title, a date, a place, a language, a named set of artisans.
+  // Not the per-workshop custom `Questionnaire`, which is the designer's own method, is already
+  // attached through `designWorkshopId`, has no `workshopId` for the scope machinery to read, is
+  // private by design and carries no reviewer's verdict.
+  //
+  // COUNTS AND NEVER ANSWERS. `QuestionnaireResponse.answerText` and `.notes` do not cross in any
+  // form: a workshop's stage reads do not pass through the record path's redaction, the schema cannot
+  // say who in a group answered, the copy is permanent and one-way, and a question's WORDING is
+  // mutable ("How many looms?" answered "12", reworded to "How many weavers?"). The artisans' names
+  // and `artisanSetKey` are excluded with them — a sitting may cover artisans who are not on this
+  // workshop's roster. The server's `REFERENCE_MODELS["QuestionnaireInterview"]` carries the whole
+  // argument; this copy exists only so the boxes fill in at the keyboard.
+  "artisanBaseline.interviewRef": {
+    interviewTitle: "interviewTitle",
+    interviewDate: "interviewDate",
+    interviewPlace: "interviewPlace",
+    interviewLanguage: "interviewLanguage",
+    interviewArtisanCount: "interviewArtisanCount",
+    interviewSectionsCovered: "interviewSectionsCovered",
+    interviewQuestionsAnswered: "interviewQuestionsAnswered",
+    interviewLastAnsweredOn: "interviewLastAnsweredOn",
+    // A sentence counting the files and never the ids. On this model it is the only thing that can
+    // say the audio recording of the sitting exists: one IMAGE per record is all the picker resolves.
+    interviewMediaNote: "interviewMediaNote",
+    interviewDocumentedOn: "interviewDocumentedOn",
+    interviewDocumentedAtWorkshop: "interviewDocumentedAtWorkshop"
+  }
 };
 
 /** MULTI_ENUM, TAGS and IMAGE_LIST hold a list; everything else holds one value. */
@@ -1692,11 +1778,26 @@ export function hydrateFromReference(
  *
  * The name is already on the row, because hydration put it there. This reads it back out through the
  * SAME mapping, so the hint and the fill can never disagree about which box holds the name.
+ *
+ * ── THE PROBE LIST IS SOURCE KEYS, AND A MODEL WHOSE LABEL IS NOT CALLED `name` FALLS THROUGH ────
+ *
+ * `interviewTitle` was added on 2026-08-24 with the sixth reference model, and it is worth saying
+ * why it had to be: a `QuestionnaireInterview`'s label is its TITLE — `REFERENCE_MODELS`'s own
+ * `label` lambda reads `r.title` — so `artisanBaseline.interviewRef` carries no `name` key at all
+ * and this function answered "". The picker's trigger would then have shown a designer the raw cuid
+ * of the sitting they picked last week, which is the exact bug the paragraph above says this
+ * function exists to end, reintroduced by a model whose label column is spelled differently.
+ *
+ * Kept as an explicit list rather than "the first entry of the mapping": dict order is not a
+ * contract, and `existingProduct.productRef`'s first pair happens to be the product's name only by
+ * accident of how it was typed. Kept as SOURCE keys rather than target keys for the reason the
+ * paragraph above gives — on `existingProduct` the target `name` means the product and the target
+ * `artisanName` means the person, and only the source side says which.
  */
 export function referenceDisplayHint(entity: DwEntity, refField: DwField, row: DwEntryData): string {
   const mapping = DW_REFERENCE_HYDRATION[`${entity.key}.${refField.key}`];
   if (!mapping) return "";
-  for (const sourceKey of ["name", "craftName"]) {
+  for (const sourceKey of ["name", "craftName", "interviewTitle"]) {
     const targetKey = mapping[sourceKey];
     if (!targetKey) continue;
     const text = inputValue(row[targetKey]).trim();

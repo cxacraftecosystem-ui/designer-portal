@@ -88,14 +88,25 @@ function shortDate(iso?: string): string {
   return `${parsed.getDate()} ${month}`;
 }
 
-/** The record a hydrated value came out of, in the words a designer uses for it. */
+/**
+ * The record a hydrated value came out of, in the words a designer uses for it.
+ *
+ * WORD-FOR-WORD THE SAME TABLE AS ANDROID'S `recordLabel` in `StageSchema.kt`, and the two must stay
+ * identical: a designer who reads "From the interview record" on a laptop and "From the linked
+ * record" on the handset for the same field has been shown two products. `QuestionnaireInterview`
+ * was added to both on 2026-08-24 with the stage-6 baseline citation — without it the eleven
+ * hydrated boxes of `artisanBaseline` fell to the "linked" fallback, which exists for a model the
+ * build has never heard of and not for one it can name. "interview" and not "questionnaire": there
+ * is exactly one global instrument, so what was picked is a SITTING.
+ */
 function recordName(refModel?: string | null): string {
   const named: Record<string, string> = {
     Artisan: "artisan",
     Craft: "craft",
     Process: "process",
     ProductDocumentation: "product",
-    ToolDocumentation: "tool"
+    ToolDocumentation: "tool",
+    QuestionnaireInterview: "interview"
   };
   return (refModel && named[refModel]) || "linked";
 }

@@ -95,6 +95,12 @@ import java.time.format.DateTimeFormatter
  * product gets selected, and a wrong join key is materially worse than a missing one because nothing
  * downstream can tell it is wrong.
  *
+ * AND WHEN THE PARENT MOVES, THE CHILD GOES WITH IT — see [dwCascadeClearedMessage]. Withholding the
+ * list before the parent is chosen and clearing the choice when the parent changes are the same rule
+ * read forwards and backwards; this client honoured the first for a release and not the second, so a
+ * process picked under product A sat on a row that had since been changed to product B, offerable by
+ * nothing and refused by nothing.
+ *
  * ── OFFLINE ───────────────────────────────────────────────────────────────────────────────────
  *
  * A designer in a courtyard with no signal still has to be able to pick an artisan, so the list is
@@ -522,6 +528,62 @@ internal fun DwReferenceSelectField(
     }
 
     /**
+     * Whether the clear below has fired and not yet been answered, so the row can SAY so.
+     *
+     * Composition-scoped like [lastHydration], and losing it on process death is the safe direction
+     * for the same reason: the id is already gone from the row, so all that is lost is the sentence
+     * explaining why the box is empty — and an empty cascaded box under a parent the designer just
+     * changed is the one blank on this form that explains itself.
+     */
+    var cascadeCleared by remember(field.key) { mutableStateOf(false) }
+
+    /**
+     * The parent this field's current choice was made under — see [dwCascadeClearedMessage].
+     *
+     * SEEDED FROM THE FIRST COMPOSITION'S PARENT AND NOT FROM BLANK, which is the whole of the
+     * false-positive guard. A saved row arrives with the artisan and the product both stored and
+     * agreeing; a draft rehydrating from disk and a stage re-read do the same. Starting at `""` would
+     * read every one of those as "the parent just changed" and clear a link the designer made a
+     * fortnight ago, on a form they have only opened. The browser's effect seeds its own `lastFilter`
+     * ref identically and says so.
+     */
+    val lastParentId = remember(field.key) { mutableStateOf(parentId) }
+
+    /**
+     * DROP A CHILD ITS PARENT NO LONGER ADMITS — the handset's counterpart to the browser's clear.
+     *
+     * Keyed on [parentId] ALONE, deliberately. Including the child's value would re-run this on the
+     * clear it has just performed; the browser's effect excludes it from its dependency list for the
+     * same reason and with the same comment.
+     *
+     * THE ID IS ALL THIS CLEARS, and the boxes it filled in are left standing for the save to settle.
+     * That is not an oversight and it is not the browser's rule being copied blind: those boxes may
+     * hold a spelling the designer corrected by hand, [hydrationPatch] cannot tell that from a value
+     * it wrote, and the SERVER can — `design_workshops._clear_cascade_orphans` sees `previous`
+     * alongside the incoming row and pops exactly the mapping's own targets when a re-pointed parent
+     * is about to rewrite one of them. One writer for that decision, on the side that has the
+     * evidence, and both clients get it identically. [dwCascadeClearedMessage] says so on the row
+     * rather than letting the values change under the designer without explanation.
+     *
+     * NO PROMPT, matching the browser: the embedded record form below is re-keyed by this clear too,
+     * and the press that moved the parent has already asked about every registered form innermost
+     * first. Asking again here would be a second prompt for one act.
+     */
+    LaunchedEffect(parentId) {
+        val moved = lastParentId.value != parentId
+        // Recorded whether or not anything is cleared: the NEXT change has to be measured against the
+        // parent on the row now, not against the one this field was first composed under.
+        lastParentId.value = parentId
+        if (!dwCascadeClearsChild(field.refFilterBy, moved, selectedId)) return@LaunchedEffect
+        onChange(null)
+        // A create still waiting to be described was made under the OLD parent, and the refresh
+        // landing a moment later would fill this row in from a record the cascade has just ruled
+        // out. `choose("")` supersedes it on the same grounds.
+        pendingHydration = ""
+        cascadeCleared = true
+    }
+
+    /**
      * Fill the row in from a record created here, once the server has described it.
      *
      * Runs the SAME [hydrationPatch] the picker's own `onSelect` runs, with the same [lastHydration]
@@ -640,6 +702,9 @@ internal fun DwReferenceSelectField(
      * overwrite a value the designer has since typed by hand.
      */
     fun choose(chosen: String, known: DwReferenceOption? = null) {
+        // The designer has answered the cascade — by picking from the new list or by clearing the
+        // field themselves — so the sentence explaining the empty box has been read and is retired.
+        cascadeCleared = false
         if (chosen.isBlank()) {
             onChange(null)
             // Unlinking supersedes a create still waiting to be described. Left armed, the refresh
@@ -714,6 +779,23 @@ internal fun DwReferenceSelectField(
             },
             onSelect = { chosen -> choose(chosen) }
         )
+
+        // A polite live region rather than a toast, for the reason the scan panel's refusals give:
+        // this is something the designer has to act on, and a message that leaves after four seconds
+        // leaves an unexplained empty box behind it.
+        if (cascadeCleared) {
+            Text(
+                dwCascadeClearedMessage(parentField?.label.orEmpty()),
+                color = MaterialTheme.field.onWarningContainer,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+                    .background(MaterialTheme.field.warningContainer, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+        }
 
         /*
          * THE SAME PICK, FROM A CARD IN THE DESIGNER'S HAND.
@@ -1250,6 +1332,63 @@ internal const val DW_SCAN_UNSENT_WORKSHOP_MESSAGE =
         "on this row has been changed. Send the workshop when there is signal, then read it again."
 
 /**
+ * THE PARENT MOVED AND THE CHILD IT NARROWED IS NO LONGER OFFERABLE, so it is dropped and said.
+ *
+ * The counterpart of the browser's clear in `StageReferenceField.tsx`, and this client had NOTHING
+ * in its place. The handset honoured the narrowing — it withholds the dropdown while the parent is
+ * blank and sends `filterBy` so the server cannot offer another product's process — and then let the
+ * already-chosen child stand when the parent changed underneath it. Pick product A, pick process P
+ * of A, change the product to B, and `processRef` still held P: a stored pair the server does not
+ * refuse (`coerce_value` checks type and length, never coherence) and `reference_options` would
+ * never have OFFERED, with `hydrationPatch` rewriting `documentedFor` to B beside `name`,
+ * `description` and the rest still copied from A's process. Nothing on screen said so.
+ *
+ * WHY IT WAS SURVIVABLE AND STOPPED BEING SO. The only cascade used to be
+ * `existingProduct.artisanRef -> productRef` on a collection row, where the mismatch was one product
+ * name in one cell. The same rule now governs stage 5's substantive narrative and the stored
+ * `processRef` join key, so the same silence produces a paragraph about one product's process
+ * printed under another's name.
+ *
+ * ── THE DECISION IS A PURE FUNCTION AND THE EFFECT IS THREE LINES ────────────────────────────────
+ *
+ * For the reason `DwReferenceScanTest`'s own header gives: everything worth pinning here is decided
+ * before a pixel is drawn, and there is no Compose runtime in this module's unit tests. So the rule
+ * lives in [dwCascadeClearsChild], which takes the declaration, whether the parent moved and what the
+ * child holds — and the `LaunchedEffect` does nothing but observe the parent, call it, and act.
+ *
+ * THE "MOVED" ARGUMENT IS A COMPARISON THE CALLER MAKES, and it must be made against the parent this
+ * field was LAST COMPOSED under rather than against a blank. A saved row arrives with parent and child
+ * both stored and agreeing, and so does a draft rehydrating from disk or a stage being re-read;
+ * starting from `""` would read every one of those as a change and clear a link made a fortnight ago
+ * on a form the designer has only opened. The browser's effect seeds its own `lastFilter` ref
+ * identically and says so.
+ */
+internal fun dwCascadeClearsChild(
+    refFilterBy: String,
+    parentMoved: Boolean,
+    selectedId: String,
+): Boolean = refFilterBy.isNotBlank() && parentMoved && selectedId.isNotBlank()
+
+/**
+ * The sentence that goes with the clear — see [dwCascadeClearsChild].
+ *
+ * IT SAYS WHAT WILL HAPPEN TO THE BOXES, and that last clause is the part a shorter message would
+ * drop. The clear takes the ID and leaves the values, and the SAVE takes the values
+ * (`design_workshops._clear_cascade_orphans`), so between the two the row shows a process's name with
+ * no process linked. Saying so is what stops that reading as a bug the designer should work around by
+ * retyping the boxes — which would defeat the clear, because a typed value is not a value hydration
+ * may overwrite.
+ */
+internal fun dwCascadeClearedMessage(cascadeLabel: String): String {
+    val moved = cascadeLabel.takeIf { it.isNotBlank() }
+        ?.let { "The ${it.lowercase()} on this row" }
+        ?: "The record this list narrows to"
+    return "$moved changed, so the choice made under the previous one was cleared — this list now " +
+        "holds only records filed under the new one. Pick from it; what the old choice filled in is " +
+        "cleared when the row is saved."
+}
+
+/**
  * THE ROW MOVED WHILE THE LOOKUP WAS IN THE AIR, so the answer that came back is about a question
  * this row no longer asks.
  *
@@ -1259,8 +1398,10 @@ internal const val DW_SCAN_UNSENT_WORKSHOP_MESSAGE =
  * to B during those seconds would otherwise have A's product linked to B's row — and HYDRATED onto
  * it, so B's row would then carry A's product's measurements. That is one artisan's work under
  * another's name, which is the failure this file's header and the server's own `filter_by` clause
- * both exist to prevent, and on this client nothing else would catch it: unlike the browser,
- * [DwReferenceSelectField] has no effect that clears a child when its parent changes.
+ * both exist to prevent. It is now the SECOND guard on that path rather than the only one —
+ * [DwReferenceSelectField] clears the child when its parent changes, as the browser does — and it is
+ * still needed, because the two catch different halves: the clear fires on the row moving, this
+ * fires on an ANSWER arriving about a row that has already moved, and neither implies the other.
  *
  * IT COVERS EVERY ANSWER AND NOT ONLY THE PICK, which is where it differs in REACH — not in rule —
  * from `commitScan` in `StageReferenceField.tsx`, whose refusals are rendered by a separate scanner

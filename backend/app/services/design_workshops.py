@@ -438,6 +438,248 @@ def _linked_artisan_names(tool: Any) -> str | None:
     return "\n".join(sorted(names)) or None
 
 
+# ── THE FIVE THINGS A QUESTIONNAIRE SITTING CAN SAY ABOUT ITSELF WITHOUT QUOTING ANYBODY ──────
+#
+# READ THIS BEFORE ADDING A SIXTH. `QuestionnaireResponse.answerText` and `.notes` are free text
+# about a NAMED person, a design workshop's stage reads do NOT pass through
+# `records._redact_sensitive`, a `DesignWorkshopViewer` is a grantee, and a hydrated value is a
+# PERMANENT copy the report never re-resolves. On top of that the schema cannot say WHO in a
+# six-person sitting said any given sentence (`QuestionnaireInterviewArtisan` is a many-to-many and
+# `questionnaire_consolidation` refuses to guess), and `QuestionnaireQuestion.supersededById` exists
+# because a prompt is REWORDED under answers already given — "How many looms?" answered "12",
+# reworded to "How many weavers?", and a ministry report now states there are twelve weavers.
+#
+# So these five functions COUNT and never quote. Each is total in its keys the way every data lambda
+# in this file is: `_ProbeRow.__getattr__` answers None for every attribute, so each takes `... or []`
+# and `_interview_last_answered` guards the empty `max()`. Five separate in-memory walks over lists
+# Prisma has already loaded, matching the one-helper-per-key precedent (`_media_note`, `_step_lines`,
+# `_linked_artisan_names`) — a tuple-returning helper cannot be unpacked inside a lambda.
+#
+# ZERO IS RETURNED RATHER THAN None, and it is a statement rather than a gap. An interview with
+# nothing answered is a sitting that produced no evidence, which is exactly what a citation should
+# say; and `hydrate_entries` writes 0 (`value in (None, "")` is False for it) so the box prints it.
+# This is the `age`/`experienceYears` rule — zero is a real value and `or` would lose it — and it is
+# the opposite of `_interview_questions_answered`'s own non-blank test one function down, where `""`
+# is a saved row with nothing in it.
+def _interview_artisan_count(interview: Any) -> int:
+    """How many artisans sat in one questionnaire interview.
+
+    THE COUNT AND NEVER THE NAMES, and this is deliberately NOT symmetrical with
+    `_linked_artisan_names` above. A tool assignment is an administrative fact; who sat in a room
+    together is a social one. Decisively, a sitting may cover artisans who are NOT on this
+    workshop's roster — `record_filters.artisan_workshop_clause` treats "sat in an interview taken
+    at this workshop" as one of the three ways an artisan reaches a workshop, so the set is wider
+    than the roster by construction — and naming them would have a submitted report disclose that a
+    particular person from another cluster was interviewed, on a page that has no business naming
+    them.
+
+    IT IS LOAD-BEARING AND NOT DECORATION. `questionnaire_consolidation`'s opening argument is that
+    "a quote from a five-person sitting is different evidence from the same sentence said alone, and
+    a view that flattens the two is not citable". This number is the part of that distinction a
+    report can carry.
+    """
+    return len(getattr(interview, "artisans", None) or [])
+
+
+def _interview_artisan_phrase(interview: Any) -> str | None:
+    """"6 artisans" for the picker's sublabel, or None for a sitting with none recorded.
+
+    None rather than "0 artisans": the sublabel is a `_joined` list of identifying facts and a zero
+    there reads as a defect in the picker rather than as a fact about the sitting. The DATA key uses
+    the number, where a 0 is an answer; a sublabel is a label.
+    """
+    total = _interview_artisan_count(interview)
+    if not total:
+        return None
+    return f"{total} artisan" if total == 1 else f"{total} artisans"
+
+
+def _norm_section_code(value: Any) -> str:
+    """A section code normalised the way ``questionnaire._norm_code`` normalises it.
+
+    Uppercase, alphanumerics only, and it must STAY that spelling: it is what makes a clip filename's
+    leading token comparable with a `QuestionnaireQuestion.sectionCode`, and the route this function
+    is written to agree with normalises both ends the same way. Spelled out here rather than imported
+    because that helper lives in an API route module a service must not import from.
+    """
+    return "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
+
+
+# The app writes a questionnaire recording as
+# `SECTION_QUESTION_INTERVIEWNAME_DURATIONHHMMSS_DATETIMEDDMMYYYYHHMM` — see
+# `questionnaireClipBaseName` in MainActivity.kt, which uppercases and strips every token and joins
+# exactly five of them. The DURATION slot is the discriminator: six digits in the fourth position is
+# a shape an uploaded photograph ("IMG_2031.jpg") cannot accidentally satisfy, and it survives the
+# repository's filename sanitiser truncating the trailing stamp.
+_CLIP_DURATION_SLOT = 3
+_CLIP_MIN_TOKENS = 5
+# The sentinel that token builder substitutes when it has NO section (and, for a whole-section
+# recording, in the QUESTION slot). It is an admission of ignorance rather than a code, and counting
+# it would add a phantom section to every sitting whose clips were recorded without one.
+_CLIP_UNKNOWN_TOKEN = "SEC"
+
+
+def _interview_clip_section_code(row: Any) -> str:
+    """The section code an app-recorded questionnaire clip names in its filename, or ``""``."""
+    name = str(getattr(row, "originalFilename", "") or "")
+    tail = name.rsplit("/", 1)[-1]
+    stem = name[: len(name) - len(tail.rsplit(".", 1)[-1]) - 1] if "." in tail else name
+    parts = stem.split("_")
+    if len(parts) < _CLIP_MIN_TOKENS:
+        return ""
+    duration = parts[_CLIP_DURATION_SLOT]
+    if len(duration) != 6 or not duration.isdigit():
+        return ""
+    code = _norm_section_code(parts[0])
+    return "" if code == _CLIP_UNKNOWN_TOKEN else code
+
+
+def _interview_sections_covered(interview: Any) -> int | None:
+    """How many distinct sections of the instrument the sitting has content recorded in.
+
+    WRITTEN TO THE REPOSITORY'S OWN DEFINITION OF A COVERED SECTION, WHICH IT USED TO CONTRADICT
+    TWICE OVER. ``questionnaire._derived_completed_sections`` — the function behind the per-artisan
+    and per-workshop View Data matrix — counts a section when it has a NON-EMPTY response, or media
+    tagged with that section's question or code, or an audio clip whose filename leads with the
+    section code. This counted DISTINCT `sectionCode` over response rows, answered or blank, and both
+    errors that produced had a reader:
+
+      * A BLANK ROW COUNTED. The app writes one when a researcher opens a section, tabs through it
+        and saves, so the printed pair "Sections answered: 9 / Questions answered: 0" was reachable —
+        `_interview_questions_answered` one function down has always required a non-blank answer, and
+        two boxes side by side in one `KeyValueBlock` disagreeing about whether anything was said is
+        worse than either number alone.
+      * THE APP'S PRIMARY CAPTURE MODE COUNTED AS ZERO. An interview captured as one AUDIO CLIP PER
+        SECTION has its section signal in the clip FILENAME and may have no response rows at all, so
+        the report printed "Sections answered: 0" for a sitting the View Data matrix showed as
+        covering nine — a number in a ministry document contradicting the screen it was checked
+        against.
+
+    ── THREE ARMS, AND WHY THE FOURTH CANNOT BE HERE ────────────────────────────────────────────
+    `entry_provenance.canonical_divergence` re-resolves a stamped field by calling
+    `spec.data(rec, photo)` with exactly two arguments and re-fetching with `spec.include`, so
+    everything this reads must hang off the interview row. That admits:
+
+      1. `responses` -> `question.sectionCode`, non-blank answers only. The DENORMALISED column,
+         which is why the include stops at `question` and does not nest `section`.
+      2. `media` -> `extraMetadata.sectionCode`, and `extraMetadata.questionId` resolved through the
+         questions THIS ROW's own responses carry.
+      3. `media` -> the clip filename, via `_interview_clip_section_code`.
+
+    The route has a fourth: `section_codes_from_title`, the best-effort scan of the interview TITLE
+    that is the only signal for recordings made before the filename nomenclature existed. It needs
+    the set of REAL section codes to reject unrelated words, `QuestionnaireSection` is not reachable
+    from this row, and a title scan with no valid-code filter would read "Rudraprayag G,H,I" as
+    whatever its letters happen to be. So it is refused rather than approximated, and this count can
+    therefore READ LOW against the matrix on pre-nomenclature sittings. That is the safe direction:
+    the arm the route itself calls best-effort is the one left out.
+
+    Arm 3 also differs from the route in KIND and not only in reach: the route validates the leading
+    token against the real code list, and this validates the FILENAME SHAPE instead (see
+    `_interview_clip_section_code`), because the code list is not reachable either. So a clip naming
+    a section that has since been deleted counts here and not there.
+
+    ``None`` RATHER THAN AN UNDERSTATEMENT, and only for one narrow case: a media row tagged with a
+    `questionId` whose question has no response row on this interview. Nothing on this row can say
+    which section that question belongs to, and the box prints a bare number a reader will take as
+    the whole truth — so rather than a floor dressed as a count, the field hydrates nothing and
+    prints nothing. `hydrate_entries` skips a `None`, and `_has_value`/`isFilled` leave the box
+    blank, which is the one honest answer available.
+
+    NO ARCHIVE TO FALSE-FLAG. Changing what a data lambda produces reports every already-stamped
+    entry as `diverged` for ever — the failure `_media_note`'s docstring records — and that is only
+    survivable here because `QuestionnaireInterview` is new in this same change and no entry carries
+    a `refModel="QuestionnaireInterview"` stamp yet. It will not be survivable a second time.
+    """
+    covered: set[str] = set()
+    section_by_question: dict[str, str] = {}
+    for row in (getattr(interview, "responses", None) or []):
+        question = getattr(row, "question", None)
+        code = _norm_section_code(getattr(question, "sectionCode", None))
+        if not code:
+            continue
+        # Filed under BOTH spellings of the join: the response row carries the question ID as a
+        # column, the included question carries it as its own id, and the media rows below are
+        # tagged with whichever the writing form had in hand.
+        for candidate in (getattr(row, "questionId", None), getattr(question, "id", None)):
+            if candidate:
+                section_by_question[str(candidate)] = code
+        if str(getattr(row, "answerText", "") or "").strip():
+            covered.add(code)
+    unresolved: set[str] = set()
+    for row in (getattr(interview, "media", None) or []):
+        meta = _meta(row)
+        code = _norm_section_code(meta.get("sectionCode"))
+        if not code:
+            question_id = str(meta.get("questionId") or "")
+            code = section_by_question.get(question_id, "")
+            if not code and question_id:
+                unresolved.add(question_id)
+        if not code:
+            code = _interview_clip_section_code(row)
+        if code:
+            covered.add(code)
+    if unresolved:
+        return None
+    return len(covered)
+
+
+def _interview_questions_answered(interview: Any) -> int:
+    """How many questions the sitting actually answered.
+
+    NON-BLANK RATHER THAN ``is not None``, AND THE DIFFERENCE IS THE POINT. An empty string is a
+    saved response row with nothing in it — the interviewer opened the question and moved on — and
+    counting it would overstate the evidence. Compare `age`/`experienceYears`, where zero is a real
+    value and an `or` would lose it: there the falsy value is an answer, here it is the absence of
+    one.
+
+    NO DENOMINATOR, AND "84 of 112" IS REFUSED ON TWO INDEPENDENT GROUNDS. It is not reachable — the
+    global instrument is not a relation on the interview, and `entry_provenance.canonical_divergence`
+    calls `spec.data(rec, photo)` with exactly two arguments, so nothing can be injected for it to
+    read. And it would be false if it were: both question tables carry `isActive`, `retiredAt` and
+    `supersededById`, so a denominator frozen at save time silently means "of the 112 active on the
+    day this was picked" while the report never re-resolves. A frozen ratio against a live, editable
+    instrument becomes wrong without anybody touching the report.
+    """
+    return sum(
+        1 for r in (getattr(interview, "responses", None) or [])
+        if str(getattr(r, "answerText", "") or "").strip()
+    )
+
+
+def _interview_last_answered(interview: Any) -> str | None:
+    """The ISO date the sitting was last ANSWERED, or None when nothing has been.
+
+    NON-BLANK ROWS ONLY, AND THE FIELD IS CALLED "Last answered on". This used to max `updatedAt`
+    over EVERY response row, which made it "last TOUCHED": `answerText` is nullable, the app writes a
+    blank row when a researcher opens a section and tabs through it, and the route's own answered-set
+    (`_answered_question_ids` in `questionnaire.py`) filters `(answerText or "").strip()` for exactly
+    that reason. So "Last answered on: 14 Mar 2026" could print in the same `KeyValueBlock` as
+    "Questions answered: 0" — the same non-blank/any-row split, and the same self-contradicting pair,
+    that `_interview_sections_covered` above was carrying.
+
+    The filter is spelled identically to `_interview_questions_answered`'s on purpose: the two boxes
+    are the COUNT and the DATE of one set of rows, and a reader is entitled to assume the date
+    belongs to the rows that were counted. As above, this is safe to change only because no entry
+    carries a `QuestionnaireInterview` provenance stamp yet.
+
+    THE EMPTY ``max()`` IS THE WHOLE REASON THIS IS A FUNCTION AND NOT AN EXPRESSION.
+    `reference_data_keys` calls every data lambda with a `_ProbeRow`, whose `responses` is None, so
+    an inline `max(...)` would raise `ValueError` at import of the test that asks the registry what
+    it carries — and a lambda that is not total in its keys is the failure `validate_reference_carry`
+    exists to catch, arriving as a crash instead of a report.
+    """
+    stamps = [
+        getattr(r, "updatedAt", None)
+        for r in (getattr(interview, "responses", None) or [])
+        if str(getattr(r, "answerText", "") or "").strip()
+    ]
+    stamps = [s for s in stamps if s is not None]
+    if not stamps:
+        return None
+    return _iso_date(max(stamps))
+
+
 def _process_media_note(process: Any) -> str | None:
     """How much footage the process record carries, as a sentence, or ``None`` when it carries none.
 
@@ -1164,7 +1406,32 @@ class ReferenceModel:
     # falls back to the whole table rather than to nothing.
     workshop_where: Callable[[str], dict[str, Any]] | None = None
     # The column that narrows this model to one artisan, for the cascading pickers.
+    #
+    # THE VALUE ARRIVING IN `filterBy` MAY NOT BE AN ARTISAN ID AT ALL — at stage 13 the maker is
+    # chosen from the ROSTER, so the same-named `artisanRef` holds a `DwParticipant` entry id — and
+    # `_artisan_id_behind` is what resolves the two into one. That resolution is the ONLY thing that
+    # separates this from `filter_field` below, which is why they are two attributes rather than one
+    # with a flag.
     artisan_field: str = ""
+    # The column that narrows this model to one parent record of some OTHER kind — `Process.productId`
+    # for the process pickers, whose parent is a `ProductDocumentation` and not an artisan.
+    #
+    # ── WHY THIS IS NOT `artisan_field` REUSED, MEASURED RATHER THAN ASSUMED ─────────────────────
+    # `_artisan_id_behind` HAPPENS to pass a product id through unchanged: it does
+    # `db.dwstageentry.find_unique(where={"id": candidate})`, misses, and returns the candidate. So
+    # the artisan arm would appear to work for a product cascade — while relying on a `DwStageEntry`
+    # id never colliding with a `ProductDocumentation` id, and on a lookup whose whole meaning is "is
+    # this a roster entry" being asked about a product. Worse, its OTHER branch is a real hazard: a
+    # roster entry with no artisan behind it returns None, and `reference_options` answers that with
+    # an EMPTY list on purpose — so a product id that ever did collide with a hand-typed roster
+    # entry's id would empty a picker with `filtered: true` beside it. The gate is on WHICH COLUMN the
+    # cascade names, not on a miss.
+    #
+    # ONE COLUMN PER MODEL, NOT PER FIELD, and that is a real limit: `ref_filter_by` names a sibling
+    # field and the server never learns which model that sibling points at, so a model narrowable two
+    # ways cannot be expressed here. Declaring both attributes is therefore refused at import (see
+    # the check under `REFERENCE_MODELS`) rather than resolved by a silent precedence rule.
+    filter_field: str = ""
     # The MediaFile foreign key naming this model, for the one photograph the picker shows.
     media_field: str = ""
 
@@ -1716,6 +1983,23 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         order={"name": "asc"},
         search_fields=("name",),
         workshop_where=lambda wid: {"workshopId": wid},
+        # ── THE PROCESS PICKER IS NARROWED BY THE PRODUCT, AND THIS IS THE HALF THAT MAKES IT WORK ──
+        #
+        # `Process.productId` is NON-NULLABLE and its schema comment says a process "reaches a
+        # workshop only through its parent product": one product, many processes. Both stage-5
+        # process pickers now declare `ref_filter_by="productRef"`, and without this column the
+        # filter arm in `reference_options` would raise 422 "Process cannot be filtered by another
+        # record" on every open of either picker — i.e. the whole of stage 5's process linkage dead
+        # for every designer, which is the same shape of failure as the `media`-include 500 recorded
+        # at the top of this block.
+        #
+        # ONE EXTRA CLAUSE ON AN EXISTING INDEX (`@@index([productId])`), and it is in the WHERE
+        # rather than applied to the page after it comes back: `REFERENCE_LIMIT_DEFAULT` is 50, so a
+        # client-side narrowing would take 50 rows of the workshop's whole process list and then
+        # filter them, showing an EMPTY picker for any product whose processes all sort after row 50
+        # — an empty list that reads as "nothing was documented" for records that exist. The cascade
+        # therefore makes truncation less likely, not more.
+        filter_field="productId",
         label=lambda r: str(r.name or ""),
         sublabel=lambda r: _joined(_rel(r, "product", "productName"), _review_flag(r)),
         # THREE KEYS, NOT ONE, and the third is what the sublabel above already shows.
@@ -1849,7 +2133,199 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "craftPhotoCaption": photo.caption if photo else None,
         },
     ),
+    # ── THE SIXTH MODEL: A QUESTIONNAIRE SITTING, WHICH IS THE ONLY CITABLE EVIDENCE ABOUT PEOPLE ──
+    #
+    # WHICH QUESTIONNAIRE, BECAUSE THERE ARE TWO AND THEY ARE DIFFERENT THINGS. This is the GLOBAL
+    # artisan questionnaire, not the per-workshop custom `Questionnaire` a designer authors from the
+    # .xlsx pro-forma. Five reasons, each independently sufficient:
+    #
+    #  1. THE CUSTOM FORM IS THE WORKSHOP'S METHOD, NOT THE CLUSTER'S EVIDENCE, and it is authored by
+    #     the same person writing the report. The registry already has a home for it: stage 7's
+    #     `surveyPlan.questionnaire` (RICH, required, "The questions to be asked") plus
+    #     `questionnaireFile`. A reference exists to stop a designer retyping facts from a record that
+    #     ALREADY HOLDS THEM; nobody retypes their own form, they upload it.
+    #  2. IT IS ALREADY ATTACHED. `Questionnaire.designWorkshopId` points at `DesignWorkshop` with
+    #     `onDelete: SetNull`. A REF field would be a second, competing attachment path with two
+    #     writers and no arbitration — and only-fill-blanks would refuse to correct the loser.
+    #  3. THE WORKSHOP-SCOPE MACHINERY WOULD SILENTLY LIE. `reference_options` passes
+    #     `record.workshopId` — the link to the repository `Workshop`. `Questionnaire` has no
+    #     `workshopId`; it has `designWorkshopId`, keyed on `DesignWorkshop.id`. A `workshop_where` on
+    #     it would match nothing while `_reference_payload` reported `scoped: true` — a picker that
+    #     reads as an empty repository, which is how a designer concludes the record was never made
+    #     and types the whole thing in by hand.
+    #  4. IT IS PRIVATE. `schema.prisma` records that the whole four-table custom design exists to
+    #     stop "a designer's private sections" leaking into screens that are not about them, and a
+    #     picker whose ALL fallback serves the whole table is exactly such a screen.
+    #  5. IT IS UNREVIEWED — no `status`, no `reviewedById` — so `_review_flag` would have no verdict
+    #     to print beside four reviewed records. `QuestionnaireInterview` has all four review columns.
+    #
+    # AND THE PICKABLE ROW IS THE SITTING, NOT THE FORM. `QuestionnaireSection.code` is `@unique` and
+    # `sortOrder` is `@@unique` GLOBALLY, so there is exactly ONE global instrument and "choose the
+    # questionnaire" is not a choice a designer can make. What they choose is a sitting: a title, a
+    # date, a place, a language, a named set of artisans, a review status and its own `workshopId`.
+    # The label must therefore say INTERVIEW and not QUESTIONNAIRE, or the designer thinks they are
+    # picking a form.
+    #
+    # `questionnaire_forms.py` and its routes and schemas belong to the concurrent template-reuse
+    # workflow. This model touches none of it.
+    "QuestionnaireInterview": ReferenceModel(
+        delegate="questionnaireinterview",
+        # `title` ASCENDING, AND `interviewDate` DESCENDING IS A TRAP RATHER THAN A PREFERENCE.
+        # `interviewDate` is NULLABLE and Postgres sorts NULLs FIRST under DESC, so ordering by
+        # recency floats every undated interview to the top of the picker — the rows carrying the
+        # least identifying information above the ones carrying the most. Every other model here
+        # orders by its label column ascending; the date is in the sublabel, where it is read.
+        order={"title": "asc"},
+        search_fields=("title", "place", "language"),
+        # WORKSHOP-SCOPED, ON THE PLAIN COLUMN, AND THE REPOSITORY ALREADY SETTLED THIS.
+        # `record_filters.workshop_clause` serves "the questionnaire's interview scan" through the
+        # plain-`workshopId` branch and says so in its own docstring.
+        #
+        # DO NOT COPY `_artisan_workshop_where`'s TWO-ARMED OR. Its two arms are two SPELLINGS OF ONE
+        # FACT ("this artisan was documented at this workshop"), one of them a legacy route.
+        # `{"artisans": {"some": {"artisan": {"workshopId": wid}}}}` would be a DIFFERENT FACT — "this
+        # sitting covered somebody who is documented here" — and it would put an interview conducted
+        # in 2023 in another state into this workshop's picker because one of its six artisans has
+        # since been enrolled, inviting a designer to cite another cluster's sitting as their
+        # fortnight's evidence. Note the direction the repository itself infers in:
+        # `record_filters.artisan_workshop_clause` derives the ARTISAN from the interview's workshop,
+        # never the interview's workshop from its artisans.
+        #
+        # THE LEGACY-NULL GAP IS REAL AND IS REPORTED, NOT HIDDEN. `workshopId` is nullable and every
+        # interview recorded before that column has NULL, so those rows do not appear in a scoped
+        # picker. The remedy is to set the workshop ON THE INTERVIEW — a column that exists and a form
+        # that writes it — not to guess it from the artisan set. On a design workshop with no linked
+        # `Workshop`, `reference_options` already falls back to the whole table and reports
+        # `scoped: false` so the form can label the list truthfully.
+        workshop_where=lambda wid: {"workshopId": wid},
+        # FOUR RELATIONS, AND THE COST OF THE FIRST ONE IS STATED RATHER THAN GLOSSED.
+        #
+        # `responses` -> `question`: two extra indexed reads for the whole page
+        # (`@@unique([interviewId, questionId])`, `@@index([questionId])`), issued as one
+        # `WHERE interviewId IN (…)` bounded by `REFERENCE_LIMIT_MAX` — not an N+1. `question` is
+        # needed only for the DENORMALISED `sectionCode`, so the nesting stops there.
+        #
+        #   THIS IS THE ONE INCLUDE IN THE REGISTRY WHOSE LOADED ROWS ARE CONFIDENTIAL. To COUNT the
+        #   answers, Prisma loads them: `include` has no scalar `select` here, so `answerText` arrives
+        #   in the API process and is discarded — a genuinely different cost from the `media` include's
+        #   wide `extraMetadata`. The right follow-up is a `count_include`/`_count` facility on
+        #   `ReferenceModel` so the answers never leave Postgres. It CANNOT be a third lambda parameter
+        #   or an injection by `_reference_data`: `entry_provenance.canonical_divergence` calls
+        #   `spec.data(rec, photo)` with exactly two arguments and re-fetches with `spec.include`, and
+        #   a key that path cannot recompute is reported to an admin as `diverged` on every audit for
+        #   ever — the failure `_media_note`'s docstring records.
+        #
+        # `artisans`: three columns, the cheapest join in the file, and it is here for a COUNT ONLY.
+        # `media`: the count behind `interviewMediaNote`, and this is the model where that note matters
+        # most — an interview's characteristic attachment is the AUDIO RECORDING of the sitting, and
+        # `_reference_photos` resolves one IMAGE and no non-image row at all, so without the note the
+        # recording exists on the record and nothing printed could say so.
+        # `workshop`: for `interviewDocumentedAtWorkshop`. Safe by the same check `Craft.workshop`
+        # passed — nothing at render time reads `row.workshop` (`_reference_place` reads `location` and
+        # `place` and nothing else), so this include cannot change what an already-submitted document
+        # prints. It is needed EVEN THOUGH the field is WORKSHOP-scoped, because the `scoped: false`
+        # fallback serves the whole table on an unlinked design workshop, so an out-of-cluster sitting
+        # CAN legitimately be picked and the printed row must then say where it came from.
+        #
+        # NO `location` INCLUDE, AND THIS IS THE MODEL WHERE THAT MATTERS MOST. `_reference_place`'s
+        # own docstring uses this exact scenario as its example — "a researcher interviews six artisans
+        # in one afternoon at a cooperative hall" — so reading the device fix would draw all six on the
+        # hall. `place` is the free-text sitting place and is the right answer;
+        # `_reference_place` returns `(row.place, "", "")` for every model but `Artisan`. An interview
+        # also has no STATED address to carry: it is an event, not a residence, so the
+        # artisan/product/tool pattern of four stated columns plus a subject pin has no analogue here.
+        include={"responses": {"include": {"question": True}},
+                 "artisans": True,
+                 "media": True,
+                 "workshop": True},
+        # NO `media_field`, AND IT IS A DECISION RATHER THAN AN ABSENCE. `MediaFile
+        # .questionnaireInterviewId` exists and is indexed, so `"questionnaireInterviewId"` COULD be
+        # added to `_PHOTO_PARENT_COLUMNS` — and should not be. An interview's images are photographs
+        # of named artisans mid-interview; the roster already carries each participant's portrait
+        # through `participant.photo`, and `report_builder._images` dedupes by MEDIA ID so the two
+        # would not collapse. Widening a raw-SQL allowlist for a picture the report does not need is
+        # the wrong trade. `Process` is the precedent for a reference model with no photograph.
+        #
+        # NO `artisan_field` AND NO `filter_field`, SO THIS MODEL CANNOT BE CASCADED FROM — and that
+        # is enforced rather than hoped for. `QuestionnaireInterview` has no `artisanId` column; the
+        # link is `QuestionnaireInterviewArtisan`, a many-to-many, and the filter arm applies
+        # `{column: parent_id}` — a scalar column name — so a nested `{"artisans": {"some": …}}` is not
+        # expressible in this dataclass as it stands. The field therefore declares no `ref_filter_by`,
+        # and a caller that sends one gets the 422 the code already raises rather than an unnarrowed
+        # list it believes was narrowed. (Deliberately unlike the process/product cascade below, where
+        # the parent column exists and is non-nullable.)
+        label=lambda r: str(r.title or ""),
+        sublabel=lambda r: _joined(_iso_date(r.interviewDate), r.place, r.language,
+                                   _interview_artisan_phrase(r), _review_flag(r)),
+        # ── A FLAT CITATION SUMMARY, AND THE HIERARCHY EXPLICITLY DOES NOT CROSS ──────────────────
+        #
+        # A reference carries a FLAT dict and a questionnaire is sections -> questions -> hundreds of
+        # answers. Both ways of faking that shape are refused. Newline-joined lines (the `_step_lines`
+        # trick) work for a process because a process has ~10 sub-steps describing a TECHNIQUE;
+        # applied here they print an entire interview — every question and every answer — inside a
+        # ministry report, on a permanent copy. A TAGS list reaches `format_value` as
+        # `", ".join(...)`, the run-on line `_step_lines` was created to avoid. And `_reference_data`
+        # flattens every string in the payload anyway, so structure would not survive the crossing
+        # even if it were wanted.
+        #
+        # What crosses is therefore: what the sitting was, when, where, in what language, how many
+        # people, how much of the instrument was answered, when it was last answered, what is
+        # attached, and where the record came from. `interviewDate` and `interviewDocumentedOn` are
+        # TWO DIFFERENT FACTS, exactly as `documentedOn` is elsewhere: when the sitting happened, and
+        # when somebody typed it in.
+        #
+        # WHAT IS NOT HERE, so that each absence is a decision on the record. The five helpers above
+        # carry the argument for the answers themselves. Also refused: the artisans' NAMES (a sitting
+        # may cover artisans who are not on this roster); `artisanSetKey` (a `String? @unique` that a
+        # "carry the scalars" instinct sweeps in without noticing — it is the sorted, comma-joined
+        # list of ARTISAN IDS, a group re-identification key in one string, smuggling exactly the
+        # roster the names refusal excludes); `notes` (unbounded free prose about a GROUP of which the
+        # report may name one, so "the second weaver's daughter" can be neither attributed nor
+        # redacted — unlike `Artisan.notes`, whose subject is the one person named on the row it lands
+        # on); `status`/`reviewNotes`/`reviewedById`/`reviewedAt` (MUTABLE — live in the sublabel via
+        # `_review_flag`, never written onto an entry); `QuestionnaireSectionStatus` (an
+        # administrator's verdict on a NAMED artisan's data quality, and not reachable from this row in
+        # any case); media ids and URLs (entitlement-gated per file — the FACT of the footage crosses
+        # as `interviewMediaNote` and nothing else); the interviewer's identity as a field
+        # (`hydrate_entries` already stamps `HydrationSource(author_id=row.createdById)`, which is who
+        # SAVED the record and not a claim about who conducted the sitting — the distinction
+        # `_measurement_method_note` exists to keep); and `extraMetadata`.
+        data=lambda r, _photo: {
+            "interviewTitle": r.title,
+            "interviewDate": _iso_date(r.interviewDate),
+            "interviewPlace": r.place,
+            "interviewLanguage": r.language,
+            "interviewArtisanCount": _interview_artisan_count(r),
+            "interviewSectionsCovered": _interview_sections_covered(r),
+            "interviewQuestionsAnswered": _interview_questions_answered(r),
+            "interviewLastAnsweredOn": _interview_last_answered(r),
+            "interviewMediaNote": _media_note("interview", _rel_obj(r, "media")),
+            "interviewDocumentedOn": _iso_date(r.recordedAt),
+            "interviewDocumentedAtWorkshop": _rel(r, "workshop", "title"),
+        },
+    ),
 }
+
+
+# ── A MODEL MAY BE CASCADED FROM ONE PARENT, AND THE SECOND DECLARATION IS REFUSED AT IMPORT ──────
+#
+# `ref_filter_by` names a SIBLING FIELD and the server never learns which model that sibling points
+# at, so the filter column is a property of the MODEL. A model declaring both `artisan_field` and
+# `filter_field` would therefore have to be resolved by a precedence rule invisible from the
+# registry: the picker would narrow by the wrong parent, `_reference_payload` would report
+# `filtered: true`, and the only symptom would be a designer choosing another record's child. At
+# import rather than at the first call, for the reason `_FORMATS`' own check gives: every process
+# that imports this module runs it, and only the tests run `validate_reference_carry`.
+_TWO_PARENTS = sorted(
+    model for model, spec in REFERENCE_MODELS.items() if spec.artisan_field and spec.filter_field
+)
+if _TWO_PARENTS:
+    raise RuntimeError(
+        "REFERENCE_MODELS " + ", ".join(_TWO_PARENTS) + " declare both artisan_field and "
+        "filter_field; a model can be cascaded from ONE parent because ref_filter_by names a "
+        "sibling field and never says which model it points at. Split the model or extend "
+        "reference_options to take the parent's model from the registry."
+    )
 
 
 class _ProbeRow:
@@ -2023,7 +2499,16 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
 
     filtered = False
     if filter_by:
-        if not spec.artisan_field:
+        # THE PARENT COLUMN COMES FROM THE MODEL, AND WHICH OF THE TWO IT IS DECIDES WHETHER THE
+        # VALUE NEEDS RESOLVING. `artisan_field` is the artisan cascade, whose `filterBy` may be
+        # either an `Artisan` id (stage 6) or a `DwParticipant` roster-entry id (stage 13);
+        # `filter_field` is any other parent — `Process.productId` — whose id is already the id the
+        # column holds. Sending a product id through `_artisan_id_behind` would appear to work (it
+        # misses the `DwStageEntry` lookup and returns the candidate) while relying on two ids never
+        # colliding, and its None branch would EMPTY a picker that says it is filtered. See the two
+        # attributes' own comments on `ReferenceModel`.
+        parent_column = spec.filter_field or spec.artisan_field
+        if not parent_column:
             # A filter this model cannot honour is reported rather than ignored. Silently
             # dropping it would serve the whole table to a picker the designer believes is
             # narrowed to one artisan, and the wrong product would be chosen without a hint.
@@ -2031,14 +2516,16 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{model} cannot be filtered by another record",
             )
-        artisan_id = await _artisan_id_behind(str(record.id), str(filter_by))
-        if artisan_id is None:
+        parent_id: str | None = str(filter_by)
+        if parent_column == spec.artisan_field:
+            parent_id = await _artisan_id_behind(str(record.id), str(filter_by))
+        if parent_id is None:
             # The filter names a roster entry that was typed in by hand, so there is no artisan
             # record and therefore no documented products to attribute to them. An empty list is
             # the honest answer; falling back to every product would invite the designer to
             # attach another artisan's work to this one.
             return _reference_payload(model, scope, scoped, True, [], truncated=False)
-        clauses.append({spec.artisan_field: artisan_id})
+        clauses.append({parent_column: parent_id})
         filtered = True
 
     term = (search or "").strip()
@@ -2467,6 +2954,120 @@ class PendingEntry:
     hydrated: dict[str, "entry_provenance.HydrationSource"] = dataclass_field(default_factory=dict)
 
 
+def _clear_cascade_orphans(entries: list[PendingEntry]) -> None:
+    """Drop a cascaded child's copied values when its PARENT was re-pointed and the child is gone.
+
+    ── THE ROW THIS EXISTS TO STOP BEING WRITTEN ────────────────────────────────────────────────
+    Stage 5's `processRef` is narrowed by `productRef` (`ref_filter_by`), so changing the product
+    clears the process — that is the cascade, and both clients do it. The save that follows carries
+    `productRef=B` and no `processRef` at all, and `hydrate_entries` used to skip a blank ref
+    entirely (`if not ref_id: continue`), so the clear-and-rewrite that pops a re-pointed ref's
+    targets was never reached. What got stored was:
+
+        documentedFor              product B      (rewritten by `traditionalProcess.productRef`)
+        documentedProcessName      product A's process
+        documentedProcessNotes     product A's process
+        documentedSteps            product A's process
+        preProcessAvailable        product A's process
+        recordMediaNote            product A's process
+        documentedOn               product A's process
+        processRef                 null
+
+    i.e. stage 5's substantive narrative describing A's process under B's product name, with no ref
+    left to re-resolve it by. `processStep` got the same treatment on its `name` — a REQUIRED
+    TABLE_COLUMN that prints in the report's step table — and on its `description`.
+
+    THIS IS WORSE THAN THE STALENESS IT REPLACED, WHICH IS WHY IT IS A DEFECT AND NOT A TRADE.
+    Before `productRef` existed, `documentedFor` had exactly ONE writer, so all seven boxes went
+    stale TOGETHER and the row stayed internally consistent — a true description of A's process,
+    merely not of the row's current pick. Adding a second writer to one of the seven made the row
+    contradict itself, and nothing can flag it: `entry_provenance.canonical_divergence` only checks
+    fields that carry a `reference` stamp, the surviving stamps still name process A and still
+    re-resolve to exactly the values stored, and `coerce_value` checks type and length and never
+    coherence. An audit that looks at every box and reports nothing is the worst available outcome.
+
+    ── THE CONDITION IS DELIBERATELY NARROW, AND EACH CLAUSE EXCLUDES A CASE THAT MUST NOT FIRE ──
+    A child field with a `ref_filter_by`, blank now, naming a record before, whose parent is NOW
+    NON-BLANK AND DIFFERENT. That is exactly the state in which a second writer will rewrite one of
+    the child's targets in this same save, and:
+
+    * A PLAIN UNLINK IS UNTOUCHED — the parent has not moved, so nothing fires. `StageReferenceField`
+      states that rule deliberately ("Only the reference is cleared. The name, village and phone it
+      filled in STAY: they are what the designer confirmed in the room"), and it is not weakened
+      here: a designer unlinking a duplicate artisan keeps the participant's name.
+    * A CLEARED PARENT IS UNTOUCHED. `productRef` blank hydrates nothing, so `documentedFor` is not
+      rewritten and the row is uniformly stale rather than self-contradictory — which is the
+      pre-existing, documented behaviour and not this function's business.
+    * A CLIENT THAT DOES NOT KNOW THE PARENT FIELD CANNOT TRIP IT. `validate_entry` drops blank keys,
+      so "cleared" and "never sent" are the same absence in `data` and no guard can tell them apart.
+      Requiring the parent to be NON-BLANK now is what makes that undecidable case harmless: a build
+      older than `productRef` sends no such key, the parent reads blank, and nothing fires.
+
+    ── WHY IT IS A SEPARATE PASS AND NOT A BRANCH IN THE LOOP BELOW ─────────────────────────────
+    Hydration walks fields in DECLARATION order and `productRef` is declared immediately before
+    `processRef` in both stage-5 entities. Popping inside that walk would run AFTER the parent had
+    already written `documentedFor=B` and would pop it straight back out, leaving the box the
+    designer's own pick had just answered EMPTY. Clearing everything first and letting the ordinary
+    loop write afterwards is order-independent: the parent fills the box whether it was re-pointed
+    (clear-and-rewrite) or merely unchanged (only-fill-blanks, and the box is now blank).
+
+    It also has to run BEFORE `hydrate_entries`' `if not wanted: return`, because the payload that
+    clears BOTH refs resolves no records at all and would otherwise leave the whole stale set
+    standing.
+
+    ── WHAT IT LEAVES FOR THE DESIGNER, SAID PLAINLY ────────────────────────────────────────────
+    A REQUIRED target can end up blank: `processStep.name` is required, and there is no new record to
+    refill it from — the designer has to re-pick the process, which is what both clients' cascade
+    notice already tells them to do ("the previous choice was cleared — pick one from the new list").
+    `validate_entry` has already run by the time hydration writes, so a SUBMIT carrying this shape
+    stores the blank rather than refusing it. That is the recoverable direction and the same one
+    `coerce_value`'s rejected-hydration rule takes: a blank box is visible on the form, counts
+    against the completeness score, and is refused by the next submit, whereas a name belonging to
+    another product's process is invisible and prints. The `replaced` branch below has always had
+    this property; it simply never showed, because a re-point always had a record to rewrite from.
+
+    Galleries and other multi-valued targets are exempt, matching that branch: they hold the
+    photographs the designer took at the workshop and there is no second copy of those anywhere.
+
+    ── IT IS GENERAL, AND THE FOUR CASCADED CHILDREN ARE NOT ALL THE SAME SHAPE ──────────────────
+    Written off `ref_filter_by` rather than against stage 5, so the population is whatever the
+    registry declares — today `traditionalProcess.processRef`, `processStep.processRef`,
+    `existingProduct.productRef` and `prototype.productRef`, pinned as a list by
+    `cascade-process-product-unit.spec.ts`. Three of the four are the shape described above: the
+    parent is itself a second writer of one of the child's boxes (`documentedFor` twice,
+    `existingProduct.artisanName` once), so the half-done cascade produced a row that contradicted
+    itself. `prototype.productRef` is the fourth and its parent writes nothing, so its stale
+    `productName` was merely stale — and it is popped anyway, because "Developed from: <a product
+    documented for the artisan this row no longer names>" is the same wrong attribution one step
+    removed, and a rule that fired on three of four cascades would be a rule nobody could state.
+    """
+    for item in entries:
+        for spec in item.entity.fields:
+            mapping = REFERENCE_HYDRATION.get(f"{item.entity.key}.{spec.key}")
+            if not mapping or not spec.ref_filter_by:
+                continue
+            if item.data.get(spec.key):
+                continue
+            if not str(item.previous.get(spec.key) or ""):
+                continue
+            parent_now = str(item.data.get(spec.ref_filter_by) or "")
+            if not parent_now or parent_now == str(item.previous.get(spec.ref_filter_by) or ""):
+                continue
+            for target_key in mapping.values():
+                target = item.entity.field(target_key)
+                if target is None or target.type.is_multi:
+                    continue
+                # Deprecated targets are cleared too, for the reason the `replaced` branch gives:
+                # refusing to put NEW data into a retired field is not a reason to keep another
+                # record's data there, and the value still travels in `data`.
+                item.data.pop(target_key, None)
+                # AND ITS PROVENANCE STAMP WITH IT. Leaving the stamp would attribute whatever lands
+                # in the box next — the parent's rewrite, or a value the designer types — to the
+                # recorder of a record this row no longer names, and would leave
+                # `canonical_divergence` re-resolving a field against a record the row dropped.
+                item.previous_provenance.pop(target_key, None)
+
+
 def _has_value(value: Any) -> bool:
     if value is None:
         return False
@@ -2506,6 +3107,11 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
     A reference whose record has been deleted hydrates nothing and is left exactly as it is —
     which is the whole point of having copied the fields in the first place.
 
+    A CASCADED CHILD THAT THE PARENT'S MOVE CLEARED IS THE ONE BLANK REF THAT DOES NOT MEAN "LEAVE
+    IT ALONE", and :func:`_clear_cascade_orphans` runs first to deal with it. A blank ref hydrates
+    nothing, so without that pass the row kept every value copied from the record it no longer names
+    WHILE the parent rewrote one of them — see that function for the row it produced.
+
     EVERY WRITE IS RECORDED ON ``item.hydrated`` AS IT HAPPENS, naming the record and column the
     value came from and that record's author. This is the only moment at which a hydrated value is
     distinguishable from a typed one — a second later they are the same string in ``data`` — and it
@@ -2514,6 +3120,10 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
     what is actually stored: a value ``coerce_value`` rejects is not written and is not stamped, so
     the provenance map can never claim authorship of a field that stayed blank.
     """
+    # FIRST, AND BEFORE THE EARLY RETURN BELOW — see :func:`_clear_cascade_orphans` for why the
+    # order and the placement are both load-bearing.
+    _clear_cascade_orphans(entries)
+
     wanted: dict[str, set[str]] = {}
     for item in entries:
         for spec in item.entity.fields:

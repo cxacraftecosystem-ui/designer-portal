@@ -228,6 +228,26 @@ class DwReferenceCarryParityTest {
             "photoCaption" to "productPhotosCaption",
         ),
         "prototype.productRef" to mapOf("name" to "productName"),
+        // Added 2026-08-24 with the product->process cascade. One pair each, and both land in the same
+        // box: `documentedFor` says which product the documented thing was documented FOR.
+        "traditionalProcess.productRef" to mapOf("name" to "documentedFor"),
+        "processStep.productRef" to mapOf("name" to "documentedFor"),
+        // Added 2026-08-24 with the sixth reference model. Eleven pairs, every one of them a fact
+        // ABOUT the sitting and not an answer GIVEN in it: no question text, no response, no
+        // respondent name. The server's `REFERENCE_MODELS["QuestionnaireInterview"]` argues why.
+        "artisanBaseline.interviewRef" to mapOf(
+            "interviewTitle" to "interviewTitle",
+            "interviewDate" to "interviewDate",
+            "interviewPlace" to "interviewPlace",
+            "interviewLanguage" to "interviewLanguage",
+            "interviewArtisanCount" to "interviewArtisanCount",
+            "interviewSectionsCovered" to "interviewSectionsCovered",
+            "interviewQuestionsAnswered" to "interviewQuestionsAnswered",
+            "interviewLastAnsweredOn" to "interviewLastAnsweredOn",
+            "interviewMediaNote" to "interviewMediaNote",
+            "interviewDocumentedOn" to "interviewDocumentedOn",
+            "interviewDocumentedAtWorkshop" to "interviewDocumentedAtWorkshop",
+        ),
     )
 
     @Test
@@ -315,7 +335,22 @@ class DwReferenceCarryParityTest {
         "existingProduct.artisanName" to
             "artisanRef maps name→artisanName and productRef maps artisanName→artisanName. " +
             "Defensible — a designer who picks only the documented product should still get the " +
-            "maker's name — but see the test's note on what it costs on this surface."
+            "maker's name — but see the test's note on what it costs on this surface.",
+        // Both stage-5 process pickers, 2026-08-24. `productRef` maps name→documentedFor and
+        // `processRef` maps productName→documentedFor, so the parent and the child both name the
+        // product. WHICH ONE WINS WAS MEASURED, not assumed, and it is NOT the declaration order the
+        // comments used to claim: re-pointing the product forces the process to be re-picked, so one
+        // save carries two re-pointed refs, `hydrate_entries` clears and rewrites for both, and
+        // `processRef` writes last. They agree whenever the pair is consistent. They do not when it
+        // is stale — a process still belonging to the previously chosen product prints THAT product's
+        // name — which is recorded as an open limit on the server side rather than fixed here.
+        "traditionalProcess.documentedFor" to
+            "productRef maps name→documentedFor and processRef maps productName→documentedFor. " +
+            "processRef writes last and wins; consistent pairs agree, a stale pair prints the " +
+            "process's own parent.",
+        "processStep.documentedFor" to
+            "The same collision as traditionalProcess.documentedFor, on the collection rather than " +
+            "the singleton, with the same winner and the same stale-pair limit."
     )
 
     @Test

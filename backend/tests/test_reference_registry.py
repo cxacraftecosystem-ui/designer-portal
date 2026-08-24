@@ -336,6 +336,17 @@ def test_the_roster_picker_is_the_one_artisan_field_that_is_not_scoped():
         ("prototype", "productRef", "ProductDocumentation"),
         ("tool", "toolRef", "ToolDocumentation"),
         ("processStep", "processRef", "Process"),
+        # THE STAGE-5 SINGLETON'S OWN PROCESS PICKER, which this list has been missing since the
+        # singleton was given a ref field: `processStep.processRef` was here and its sibling on
+        # `traditionalProcess` was not, so a widening that touched one and not the other was
+        # invisible to the one test whose subject is "the records the requirement named".
+        ("traditionalProcess", "processRef", "Process"),
+        # The two parents added with the process cascade. Four product pickers exist now; these two
+        # are the ones whose child is a process rather than a prototype.
+        ("traditionalProcess", "productRef", "ProductDocumentation"),
+        ("processStep", "productRef", "ProductDocumentation"),
+        # The sixth external reference model, on stage 6's new artisan-baseline singleton.
+        ("artisanBaseline", "interviewRef", "QuestionnaireInterview"),
     ],
 )
 def test_the_records_the_requirement_named_are_selectable(entity_key, field_key, model):
@@ -344,10 +355,65 @@ def test_the_records_the_requirement_named_are_selectable(entity_key, field_key,
     assert spec.ref_model == model
 
 
-def test_both_product_pickers_cascade_from_the_artisan_on_their_own_row():
+def test_the_two_artisan_fed_product_pickers_cascade_from_the_artisan_on_their_own_row():
+    """RENAMED FROM `test_both_product_pickers_cascade_from_the_artisan_on_their_own_row`, which
+    became a false statement rather than merely a stale name: there are FOUR product pickers now and
+    only two of them hang off an artisan. The other two are the parents of the process pickers below.
+    """
     for entity_key in ("existingProduct", "prototype"):
         spec = _field(entity_key, "productRef")
         assert spec.ref_filter_by == "artisanRef", entity_key
+
+
+def test_both_process_pickers_cascade_from_the_product_on_their_own_row():
+    """`Process.productId` is NON-NULLABLE — a process reaches a workshop only through its parent
+    product — so one product has many processes and the cascade is the natural one.
+
+    THE SIBLING MUST BE A REF, AND THAT IS THE HALF `validate_registry` CANNOT CHECK. It only
+    requires that the field named by `ref_filter_by` EXIST on the entity, so
+    `ref_filter_by="documentedFor"` — the `fromref` TEXT box holding the product's NAME, sitting a
+    few lines away in both entities — would pass validation and then send a product name to the
+    endpoint as `filterBy`, where it is treated as an id and matches nothing. An empty picker that
+    reads as an empty repository is the exact failure that validation block was written to prevent,
+    arriving through the one door it leaves open. So the type is asserted here.
+    """
+    for entity_key in ("traditionalProcess", "processStep"):
+        spec = _field(entity_key, "processRef")
+        assert spec.ref_filter_by == "productRef", entity_key
+        parent = _field(entity_key, "productRef")
+        assert parent.type is FieldType.REF, entity_key
+        assert parent.ref_model == "ProductDocumentation", entity_key
+        # A wider parent than the child it narrows would be incoherent: the product picker must not
+        # offer a product whose processes the process picker would then refuse to show.
+        assert parent.ref_scope == spec.ref_scope == REF_SCOPE_WORKSHOP, entity_key
+        # HIDDEN is the only role with no layout consequence. `documentedFor` already prints the
+        # product name, so a printing `productRef` would be a second, possibly-disagreeing statement
+        # of one fact — and on `processStep` the five declared column widths already total exactly
+        # 100, so a sixth TABLE_COLUMN would re-lay-out tables in submitted documents.
+        assert parent.report_role is ReportRole.HIDDEN, entity_key
+        # Tier S and never BASIC: `EntityForm.tsx` picks the collection's bulk multi-select as THE
+        # field that is `REF && refModel && !refFilterBy && tier === "BASIC"`, and a BASIC parent
+        # here would turn a picker into a "tick thirty records and make thirty rows" control.
+        assert parent.tier is not Tier.BASIC, entity_key
+
+
+def test_the_cascade_parent_is_never_the_text_box_that_holds_the_parents_name():
+    """Stated once over the whole registry, because the trap is not specific to stage 5.
+
+    Every `ref_filter_by` in the registry must name a REF field. `validate_registry` checks only
+    that the named field exists, and the difference between "exists" and "is a REF" is a picker that
+    silently sends a NAME where an id is expected and shows nothing at all.
+    """
+    for _stage, entity in all_entities():
+        for f in entity.fields:
+            if not f.ref_filter_by:
+                continue
+            parent = entity.field(f.ref_filter_by)
+            assert parent is not None and parent.type is FieldType.REF, (
+                f"{entity.key}.{f.key} is filtered by {f.ref_filter_by!r}, which is not a REF field "
+                f"— so the client would send that box's TEXT as filterBy and the picker would be "
+                f"permanently empty"
+            )
 
 
 def test_the_text_a_reference_fills_in_is_kept_and_says_so():
@@ -399,6 +465,15 @@ def test_the_picker_comes_before_the_fields_it_fills_in():
         ("TRADITIONAL_PROCESS_BASELINE", "tool", "toolRef", "name"),
         ("EXISTING_PRODUCTS_BASELINE", "existingProduct", "productRef", "name"),
         ("WORKSHOP_PLAN_PARTICIPANTS_OPENING", "participant", "artisanRef", "name"),
+        # THE CASCADE'S PARENT COMES BEFORE ITS CHILD, and the child before the boxes it fills.
+        # `awaitingCascade` fetches NOTHING while the parent is blank, so a parent declared below the
+        # picker it narrows is a picker that is dead until the designer scrolls back up.
+        ("TRADITIONAL_PROCESS_BASELINE", "traditionalProcess", "productRef", "processRef"),
+        ("TRADITIONAL_PROCESS_BASELINE", "traditionalProcess", "processRef",
+         "documentedProcessName"),
+        ("TRADITIONAL_PROCESS_BASELINE", "processStep", "productRef", "processRef"),
+        ("TRADITIONAL_PROCESS_BASELINE", "processStep", "processRef", "name"),
+        ("EXISTING_PRODUCTS_BASELINE", "artisanBaseline", "interviewRef", "interviewTitle"),
     ):
         entity = stage(stage_key).entity(entity_key)
         keys = [f.key for f in entity.fields]

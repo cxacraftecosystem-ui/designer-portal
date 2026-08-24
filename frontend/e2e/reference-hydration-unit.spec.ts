@@ -323,3 +323,118 @@ test("an unmapped field or an unfilled row hints nothing rather than something w
   expect(referenceDisplayHint(PARTICIPANT, ARTISAN_REF, {})).toBe("");
   expect(referenceDisplayHint(PARTICIPANT, ARTISAN_REF, { name: "   " })).toBe("");
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The sixth model: a questionnaire sitting, whose carry is mostly COUNTS
+ *
+ * WHY THIS NEEDS ITS OWN BLOCK. Every other mapping in the table carries prose and dates, so the
+ * loop's blank test (`raw === null || raw === undefined || raw === ""`) never had to distinguish
+ * "nothing" from "zero". This one carries three integers, and one of them is legitimately 0: a
+ * sitting that answered nothing is exactly the citation a reader most needs to see for what it is.
+ * A falsy test here would drop it, the box would sit empty at the keyboard, and then the SERVER
+ * would write 0 at save — so the value a designer watched fail to appear would appear anyway, on a
+ * different surface, which is the drift this whole hand-copied table is guarded against.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Stage 6's new artisan-baseline singleton, cut to the boxes these tests read. */
+const ARTISAN_BASELINE: DwEntity = {
+  key: "artisanBaseline",
+  name: "DwArtisanBaseline",
+  cardinality: "SINGLETON",
+  title: "Artisan baseline",
+  description: "",
+  parent: "",
+  labelField: "",
+  fields: [
+    field("interviewRef", "REF", { refModel: "QuestionnaireInterview" }),
+    field("interviewTitle", "TEXT"),
+    field("interviewDate", "DATE"),
+    field("interviewPlace", "TEXT"),
+    field("interviewLanguage", "TEXT"),
+    field("interviewArtisanCount", "INT"),
+    field("interviewSectionsCovered", "INT"),
+    field("interviewQuestionsAnswered", "INT"),
+    field("interviewLastAnsweredOn", "DATE"),
+    field("interviewMediaNote", "TEXT"),
+    field("interviewDocumentedOn", "DATE"),
+    field("interviewDocumentedAtWorkshop", "TEXT")
+  ]
+};
+
+const INTERVIEW_REF = ARTISAN_BASELINE.fields[0];
+
+const SITTING = option("interview-1", {
+  interviewTitle: "Barpali weavers, group 2",
+  interviewDate: "2026-03-14",
+  interviewPlace: "Barpali",
+  interviewLanguage: "Odia",
+  interviewArtisanCount: 6,
+  interviewSectionsCovered: 9,
+  interviewQuestionsAnswered: 84,
+  interviewLastAnsweredOn: "2026-03-15",
+  interviewMediaNote: "Attached to the interview record: 1 photograph, 1 audio note.",
+  interviewDocumentedOn: "2026-03-16",
+  interviewDocumentedAtWorkshop: "Sambalpuri Ikat cluster survey, Barpali"
+});
+
+test("a chosen questionnaire interview fills the citation and carries no answer", () => {
+  const patch = hydrateFromReference(ARTISAN_BASELINE, INTERVIEW_REF, SITTING, {}, "");
+
+  expect(patch).toEqual({
+    interviewTitle: "Barpali weavers, group 2",
+    interviewDate: "2026-03-14",
+    interviewPlace: "Barpali",
+    interviewLanguage: "Odia",
+    interviewArtisanCount: 6,
+    interviewSectionsCovered: 9,
+    interviewQuestionsAnswered: 84,
+    interviewLastAnsweredOn: "2026-03-15",
+    interviewMediaNote: "Attached to the interview record: 1 photograph, 1 audio note.",
+    interviewDocumentedOn: "2026-03-16",
+    interviewDocumentedAtWorkshop: "Sambalpuri Ikat cluster survey, Barpali"
+  });
+
+  // ELEVEN KEYS AND NOT ONE MORE, which is the assertion rather than a side effect of `toEqual`.
+  // The server's payload for this model is composed from a lambda that reads the responses relation,
+  // and the answers themselves are LOADED to be counted. A key that ever appeared beside these —
+  // a sample answer, a prompt, an artisan name, the `artisanSetKey` — would be written onto the
+  // entry by this loop, permanently, because hydration is never re-resolved.
+  expect(Object.keys(patch)).toHaveLength(11);
+});
+
+test("a sitting that answered nothing writes zero, not nothing", () => {
+  // `0` is a statement about the evidence; a blank is the absence of one. The server writes 0 for
+  // the same three keys (`value in (None, "")` is False for it), so a falsy test here would put the
+  // two surfaces permanently out of step on the most citable fact in the block.
+  const empty = option("interview-2", {
+    interviewTitle: "Sonepur weavers, first visit",
+    interviewArtisanCount: 0,
+    interviewSectionsCovered: 0,
+    interviewQuestionsAnswered: 0
+  });
+  expect(hydrateFromReference(ARTISAN_BASELINE, INTERVIEW_REF, empty, {}, "")).toEqual({
+    interviewTitle: "Sonepur weavers, first visit",
+    interviewArtisanCount: 0,
+    interviewSectionsCovered: 0,
+    interviewQuestionsAnswered: 0
+  });
+});
+
+test("re-pointing at a thinner sitting clears what the new one cannot answer", () => {
+  // The clearing rule, on the model where leaving a stale value is worst: 84 questions answered
+  // beside a different sitting's title is a citation that cites nothing, and only-fill-blanks would
+  // refuse to correct it at save.
+  const row: DwEntryData = hydrateFromReference(ARTISAN_BASELINE, INTERVIEW_REF, SITTING, {}, "");
+  const thinner = option("interview-3", { interviewTitle: "Barpali weavers, group 3" });
+  const patch = hydrateFromReference(ARTISAN_BASELINE, INTERVIEW_REF, thinner, row, "interview-1");
+
+  expect(patch.interviewTitle).toBe("Barpali weavers, group 3");
+  expect(patch.interviewQuestionsAnswered).toBeNull();
+  expect(patch.interviewArtisanCount).toBeNull();
+  expect(patch.interviewMediaNote).toBeNull();
+});
+
+test("the picker's trigger shows the sitting's title, not the interview id", () => {
+  const row = hydrateFromReference(ARTISAN_BASELINE, INTERVIEW_REF, SITTING, {}, "");
+  expect(referenceDisplayHint(ARTISAN_BASELINE, INTERVIEW_REF, row)).toBe("Barpali weavers, group 2");
+});

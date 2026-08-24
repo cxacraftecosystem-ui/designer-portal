@@ -418,8 +418,18 @@ export function addressListRole(entity: DwEntity, field: DwField): AddressFieldR
  * field a designer types — is NOT in the list and must never be: it is not a reference to a
  * `Workshop` row at all, and a dropdown there would refuse a workshop that has no `Workshop` record
  * yet, which is most of them on the day they start. Measured against the bundled schema dump
- * (`registry_to_dict()`), the two keys below are the only fields in the registry that carry a
+ * (`registry_to_dict()`), the three keys below are the only fields in the registry that carry a
  * referenced record's workshop TITLE.
+ *
+ * THE THIRD KEY ARRIVED WITH THE SIXTH REFERENCE MODEL, AND A STANDING TRIPWIRE IS WHAT FOUND IT.
+ * `artisanBaseline.interviewDocumentedAtWorkshop` is filled from `_rel(r, "workshop", "title")` on
+ * `REFERENCE_MODELS["QuestionnaireInterview"]` — the same lambda shape as the other two — so it is
+ * the same box holding the same kind of string, and it was declared while this list said "two".
+ * Because the match is by EXACT KEY it did not fail loudly: the field simply rendered as a prose box
+ * with a dictation button while its two siblings rendered a searchable list of `Workshop` rows, and
+ * a title typed into it is a title no group-by can match — the whole defect this role exists for,
+ * reappearing on the one field nobody had added. `stage-input-methods-unit.spec.ts`'s
+ * "STANDING TRIPWIRE" case is what named it; that is what a tripwire read off the registry is for.
  *
  * THE CONTROL IS NOT ACTUALLY CLOSED, and that is the other half of the answer: `StageWorkshopField`
  * offers the list first and keeps a "type a title that is not in the list" escape hatch, because the
@@ -431,7 +441,11 @@ export function addressListRole(entity: DwEntity, field: DwField): AddressFieldR
  * reach Android from the same asset. Until then this is one key list in one file, so that the day it
  * lands, one function dies.
  */
-const WORKSHOP_TITLE_FIELD_KEYS = new Set(["documentedAtWorkshop", "craftDocumentedAtWorkshop"]);
+const WORKSHOP_TITLE_FIELD_KEYS = new Set([
+  "documentedAtWorkshop",
+  "craftDocumentedAtWorkshop",
+  "interviewDocumentedAtWorkshop"
+]);
 
 export function workshopTitleRole(field: DwField): boolean {
   if (field.type !== "TEXT" || field.deprecated) return false;

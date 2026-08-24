@@ -100,10 +100,16 @@ from app.services.stage_schema import (
 )
 
 STAGE = "WORKSHOP_SETUP"
-#: Stage 6 declares NO singleton entity at all, and neither do 11–17. It is here because "hang the
-#: container on the stage's singleton row" could not have served a third of the stages, and this
-#: feature has to work on all of them.
-STAGE_WITHOUT_SINGLETON = "EXISTING_PRODUCTS_BASELINE"
+#: Stages 11-17 declare NO singleton entity at all. It is here because "hang the container on the
+#: stage's singleton row" could not have served a third of the stages, and this feature has to work
+#: on all of them.
+#:
+#: THIS USED TO BE STAGE 6 AND MOVED ON 2026-08-24. Stage 6 gained the `artisanBaseline` singleton
+#: with the questionnaire-interview citation, so it is no longer an example of anything this
+#: constant is for — and the assertion below (`.singleton is None`) is what said so rather than
+#: leaving the constant quietly lying about the registry. Stage 11 is the first of the seven that
+#: still have none.
+STAGE_WITHOUT_SINGLETON = "SKETCH_DEVELOPMENT"
 
 
 def _field(key="looms", label="How many looms?", **kw) -> CustomFieldSpec:

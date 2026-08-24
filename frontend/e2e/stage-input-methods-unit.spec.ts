@@ -418,12 +418,17 @@ const ANDROID_API = ANDROID("data/WorkshopRepositoryApi.kt");
 const ANDROID_REPO = ANDROID("data/WorkshopRepository.kt");
 const ANDROID_FORMS = ANDROID("MainActivity.kt");
 
-test("the two boxes that hold a workshop's TITLE get the list, and the one that holds a title does not", () => {
-  // The two hydration targets: `participant.documentedAtWorkshop` ("Documented at workshop") and
-  // `workshopSetup.craftDocumentedAtWorkshop` ("Workshop the craft was documented at"). Both are
-  // filled from `Workshop.title`, so what a designer types over them is a title nothing can match.
+test("the boxes that hold a workshop's TITLE get the list, and the one that holds a title does not", () => {
+  // The three hydration targets: `participant.documentedAtWorkshop` ("Documented at workshop"),
+  // `workshopSetup.craftDocumentedAtWorkshop` ("Workshop the craft was documented at") and
+  // `artisanBaseline.interviewDocumentedAtWorkshop` ("Documented under"). All three are filled from
+  // `Workshop.title`, so what a designer types over them is a title nothing can match.
   expect(workshopTitleRole(field("documentedAtWorkshop", "TEXT"))).toBe(true);
   expect(workshopTitleRole(field("craftDocumentedAtWorkshop", "TEXT"))).toBe(true);
+  // THE THIRD, added with the sixth reference model. It reached the registry while the key list said
+  // two, and because the match is by exact key the only symptom was a prose box where its two
+  // siblings are lists. The tripwire below is what named it.
+  expect(workshopTitleRole(field("interviewDocumentedAtWorkshop", "TEXT"))).toBe(true);
 
   // THE TRAP, PINNED. `workshopSetup.workshopTitle` is the DESIGN workshop's own title — a required
   // cover field a designer types, and not a reference to a `Workshop` row at all. A dropdown there
@@ -439,7 +444,7 @@ test("the two boxes that hold a workshop's TITLE get the list, and the one that 
   expect(workshopTitleRole(field("documentedAtWorkshop", "LONG_TEXT"))).toBe(false);
 });
 
-test("STANDING TRIPWIRE: the registry declares exactly those two workshop-title fields, both TEXT", () => {
+test("STANDING TRIPWIRE: the registry declares exactly those three workshop-title fields, all TEXT", () => {
   /*
    * The exact-key list is only safe while it is complete, and completeness is a fact about the
    * registry. Read off the bundled dump, so a THIRD field that carries a referenced record's workshop
@@ -463,6 +468,10 @@ test("STANDING TRIPWIRE: the registry declares exactly those two workshop-title 
     }
   }
   expect(found.sort()).toEqual([
+    // Added 2026-08-24 with `REFERENCE_MODELS["QuestionnaireInterview"]`. It is a THIRD field
+    // carrying a referenced record's workshop title, this test is what said so, and the key list in
+    // `stageFieldRoles.ts` was widened in the same change rather than the expectation alone.
+    "artisanBaseline.interviewDocumentedAtWorkshop:TEXT",
     "participant.documentedAtWorkshop:TEXT",
     "workshopSetup.craftDocumentedAtWorkshop:TEXT"
   ]);
