@@ -1910,8 +1910,15 @@ model DesignWorkshop {
 /// The sentence is corrected rather than deleted because the DIVISION it describes still holds and
 /// is the whole reason the queue is a second table: an ASK and its refusal are auditable history
 /// and are kept for ever, a GRANT is current fact and is deleted when it ends. Granting a request
-/// writes a row HERE, through `services/design_workshop_viewers.replace_viewers`, so there is
-/// still exactly one way to be a viewer.
+/// writes a row HERE, so there is still exactly one way to be a viewer: this table, and nothing
+/// else, is what any read gate consults.
+///
+/// TWO SERVICES WRITE IT AND THAT IS NOT A SECOND WAY IN. `design_workshop_viewers.replace_viewers`
+/// is the admin screen's whole-set save and is the ONLY place a row is REMOVED;
+/// `design_workshop_grants._write_the_viewer_row` adds exactly one row for one redeemed join card,
+/// validated by importing that same module's eligibility check. A redemption may not use the
+/// whole-set save: it would delete the viewers it had not read (a concurrent redeemer's) and
+/// re-create the ones an admin had just removed. See that function.
 ///
 /// Removing a viewer therefore DELETES the row rather than revoking it, which is the one place
 /// this departs from the sibling table's "nothing is ever deleted". A grant here carries no
@@ -1922,8 +1929,8 @@ model DesignWorkshopViewer {
   userId           String
   /// WHO THIS ROW CAME FROM — requirement 4's provenance slot, and it now has TWO kinds of answer.
   /// An admin ticking a box on the viewers screen: that admin. A JOIN CARD redeemed in a courtyard:
-  /// the account that MINTED the card, which `services/design_workshop_grants.redeem` passes to
-  /// `replace_viewers` as `granted_by_id`.
+  /// the account that MINTED the card, which `services/design_workshop_grants._write_the_viewer_row`
+  /// sets in the same statement that creates the row.
   ///
   /// BE HONEST ABOUT THE LIMIT, because this trail will be read as more than it is: a token names
   /// its ISSUER, not necessarily the person who physically handed the card over. SINGLE-USE is what
@@ -2054,7 +2061,7 @@ enum DwAccessRequestSource {
 ///
 /// Keeping them apart also keeps the promise that there is ONE way to be a viewer. Nothing reads
 /// this table to decide access: `load_workshop_or_404` still asks `has_viewer_grant` and nothing
-/// else, and granting a request calls `replace_viewers`, so a GRANTED row here is a receipt for a
+/// else, and granting a request writes exactly one row in it, so a GRANTED row here is a receipt for a
 /// write that happened over there.
 ///
 /// -- IDEMPOTENCY IS THE UNIQUE BELOW, NOT A SERVICE CHECK -------------------------------------
@@ -2084,17 +2091,59 @@ model DesignWorkshopAccessRequest {
   status DwAccessRequestStatus @default(PENDING)
   source DwAccessRequestSource
 
-  /// THE CODE AS IT WAS SCANNED, stored in its canonical `DPW1:G:...:CHCK` form and NULL for a
-  /// MANUAL ask. Kept as the string rather than reduced to the `source` beside it so an admin can
-  /// compare it against the card in front of them, and so a support conversation about a misprinted
-  /// batch has something to look at. It carries no identity data by construction — see
-  /// `frontend/lib/workshopCodes.ts`, which refuses at runtime to encode anything that is not
-  /// shaped like an id this repository issues, naming Aadhaar and Pehchan numbers specifically.
+  /// THE CODE AS IT WAS SCANNED, and NULL for a MANUAL ask. Kept as a string rather than reduced to
+  /// the `source` beside it so an admin can compare it against the card in front of them, and so a
+  /// support conversation about a misprinted batch has something to look at.
+  ///
+  /// **TWO GRAMMARS NOW REACH THIS COLUMN AND THEY ARE STORED DIFFERENTLY. READ BOTH.**
+  ///
+  /// * A v1 RECORD code, `DPW1:G:<workshopId>:CHCK`, is stored WHOLE, in its canonical form. It
+  ///   carries no identity data by construction — see `frontend/lib/workshopCodes.ts`, which
+  ///   refuses at runtime to encode anything not shaped like an id this repository issues, naming
+  ///   Aadhaar and Pehchan numbers specifically — and it is not a credential: "a typo detector and
+  ///   nothing more ... anyone can compute a valid check for any id".
+  ///
+  /// * A v2 JOIN CARD, `DPW2:J:<workshopId>.<secret>:CHCK`, is **NEVER STORED WHOLE**, because that
+  ///   sentence is FALSE of it: the 22-character secret IS the credential. `redeem` stores a
+  ///   REDACTED form — `DPW2:J:<workshopId>.…<last4>:CHCK` — which is enough for an admin to match
+  ///   the card in somebody's hand and useless if this table leaks. `RecordAccessToken.secretHash`
+  ///   is where the card is actually identified.
+  ///
+  /// If you are about to "canonicalise" this column by storing whatever the client sent: don't.
+  /// That turns an access-administration table into a list of live keys.
   scannedCode String?
 
   /// What the requester wants to say to the admin ("Rekha asked me to join stage 4"). Optional: a
   /// bare ask is legitimate, and demanding a sentence is how people stop asking.
   note String?
+
+  /// WHICH JOIN CARD THIS ROW'S LATEST SCAN PRESENTED, and NULL for every row filed before join
+  /// cards existed and for every MANUAL ask. MUTABLE, unlike `DesignWorkshopViewer.tokenId`: the
+  /// unique index below means a second scan has no second row to write, so the re-scan upgrade path
+  /// updates this column in place. The two `tokenId` columns are two questions — that one is
+  /// write-once INDUCTION provenance ("they arrived on Rekha's card, late"), this one is the LATEST
+  /// redemption ("this is the card that upgraded them").
+  ///
+  /// It is also the discriminator for "a card decided this, not a person": `decidedById` is already
+  /// nullable for a DELETED admin, so without this column the two are indistinguishable on the
+  /// screen. `DwAccessRequestSource` deliberately gains no TOKEN value — this names WHICH card,
+  /// which is strictly more informative, and a new enum value silently grows a case in every
+  /// exhaustive match over `source` in three clients. A redemption IS a scan.
+  tokenId String?
+
+  /// WHEN THE HANDSET SAYS THE CARD WAS SCANNED. **EVIDENCE, NEVER AUTHORITY.**
+  ///
+  /// The handset clock is untrusted, and this column is what makes that statement checkable rather
+  /// than a hope: "who was first" is decided by SERVER ARRIVAL at
+  /// `RecordAccessToken.usesConsumed` and by nothing else, so no comparison anywhere may read this
+  /// column to decide an outcome. An admin working the queue reads it beside `createdAt` and can
+  /// see for themselves that a card was scanned at 09:00 and only reached the server at 14:00.
+  ///
+  /// DELIBERATELY WEAKER THAN `DwReviewRating.ratedAt`, which `design_ratings._is_stale_delivery`
+  /// DOES compare to decide whether a write applies. Keeping them different is the point: there a
+  /// wrong device clock costs one rating, here it would let somebody win a single-use seat by
+  /// winding their phone's date back.
+  scannedAt DateTime?
 
   decidedById  String?
   decidedAt    DateTime?
@@ -2113,6 +2162,9 @@ model DesignWorkshopAccessRequest {
   /// SetNull, matching `DesignWorkshopViewer.grantedBy`: the decision must outlive the admin who
   /// made it. "Who refused this" is worth having and is not worth an outage.
   decidedBy   User? @relation("DwAccessRequestDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  /// SetNull: a redemption whose token row has been hand-deleted is still a redemption that
+  /// happened, and this table is history that is kept for ever.
+  token       RecordAccessToken? @relation("RecordAccessTokenRequests", fields: [tokenId], references: [id], onDelete: SetNull)
 
   /// ONE ASK PER PERSON PER WORKSHOP. This is the whole idempotency guarantee — see the header.
   /// THERE IS NO "HAS THIS PERSON ALREADY ASKED" PROBE, AND THERE MUST NOT BE ONE. The request
@@ -2130,6 +2182,377 @@ model DesignWorkshopAccessRequest {
   /// See the long note on `DwStageEntry.createdById` for the decision this follows.
   @@index([requestedById])
   @@index([decidedById])
+  /// The token pointer, for the onDelete action above and for the admin's one genuinely useful
+  /// read: every ask that came off one printed batch.
+  @@index([tokenId])
+}
+
+/// THE TEN RECORD TYPES A `DPW` CODE CAN NAME, in `frontend/lib/workshopCodes.ts`'s `TYPE_LETTER`
+/// declaration order.
+///
+/// AN ELEVENTH HAND-KEPT COPY OF THAT LIST. It is pinned by
+/// `tests/test_design_workshop_grant_tokens.py::test_the_record_type_enum_matches_the_code_letters`
+/// against the letter table the grammar itself uses, exactly as `DwWorkshopCodesTest.kt` pins the
+/// letters on Android — otherwise a type added there and forgotten here is a code that encodes and
+/// a card that cannot be issued.
+///
+/// **ONLY `DESIGN_WORKSHOP` CAN GRANT MEMBERSHIP TODAY, AND THAT IS A FACT ABOUT THE SCHEMA RATHER
+/// THAN A POLICY.** Of the ten, only `designWorkshop` (`DesignWorkshopViewer`) and `workshop`
+/// (`WorkshopAssignment`) have a per-record membership table at all. The other eight are gated by
+/// `records.owned_or_granted_where`, which is ACCOUNT-level, so for them there is nothing to be
+/// inducted into and a code can only ever be a pointer. The token mechanism is generic from day one
+/// because adding this column later means an ALTER whose backfill default would lie; the MEMBERSHIP
+/// half is implemented for `DESIGN_WORKSHOP` and drops onto `WORKSHOP` next with no schema change.
+/// `mint_grant` REFUSES the other eight rather than minting a card that silently admits nobody.
+enum DwCodeRecordType {
+  ARTISAN
+  CRAFT
+  WORKSHOP
+  PRODUCT
+  PROCESS
+  TOOL
+  QUESTIONNAIRE
+  MEDIA
+  DESIGN_WORKSHOP
+  PROTOTYPE
+}
+
+/// WHAT ONE REDEMPTION GOT. Two values, and there is deliberately no REFUSED: a refusal writes
+/// nothing at all, because a row per forged string is a table anybody can grow.
+///
+/// FULL means a seat was consumed and a `DesignWorkshopViewer` row exists. PROVISIONAL means the
+/// card was genuine and the seat was gone — requirement 6 — so the scanner was NOT refused and holds
+/// a capture-only foothold instead. Refusing them and orphaning the fieldwork they captured in a
+/// courtyard is the outcome this enum exists to make impossible.
+enum DwTokenRedemptionOutcome {
+  FULL
+  PROVISIONAL
+}
+
+/// WHY A REDEMPTION LANDED WHERE IT DID, for the admin reading the queue.
+///
+/// `OK` is the only one that pairs with FULL. `ALREADY_SPENT` is the late-comer of requirement 6.
+/// `EXPIRED` is a genuine scan that reached the server after the card's date — judged by SERVER
+/// arrival, the same authority that decides order, so a device clock cannot buy an extension.
+/// `INELIGIBLE` is the one nobody expects and it must not be silent: THE REDEEMER'S OWN ACCOUNT
+/// cannot hold a viewer row — off the ACTIVE designer roster, barred by the platform allow-list, or
+/// a role that cannot run a workshop at all. It becomes a provisional foothold plus a queue entry
+/// rather than a refusal in a courtyard about an empanelment nobody present can restore, and the
+/// card's seat is NOT spent (eligibility is checked before the seat is taken).
+///
+/// ⚠ IT USED TO MEAN SOMETHING WIDER AND WORSE: the whole-set viewer save was validated, so a
+/// COLLEAGUE'S lapsed empanelment refused an unrelated person's induction. That save is no longer on
+/// the redemption path — see `DesignWorkshopViewer` — so this reason now means exactly what it says.
+enum DwTokenRedemptionReason {
+  OK
+  ALREADY_SPENT
+  EXPIRED
+  INELIGIBLE
+}
+
+/// A PRINTED JOIN CARD: the one thing in this repository where possession of a string is what
+/// admits somebody.
+///
+/// -- WHAT CHANGED, AND WHY EVERY OLD COMMENT ABOUT CODES IS STILL TRUE -------------------------
+///
+/// Everything already written about the scanned code — "the four check characters are FNV-1a, the
+/// algorithm ships to every browser, anyone can compute a valid check for any id", "it is a typo
+/// detector and nothing more. It is not a signature and must never be described as one" — stays
+/// **TRUE OF THE RECORD-NAMING CODE**, `DPW1:<letter>:<recordId>:CHCK`, and is **FALSE OF THIS
+/// TABLE**. The two are different grammars on purpose: a join card is `DPW2:J:<recordId>.<secret>`
+/// and the authority is the 110-bit `secret`, not the check characters, which remain a typo detector
+/// on the new grammar exactly as they were on the old one.
+///
+/// **NO ENDPOINT MAY EVER TREAT "PRESENTED A SYNTACTICALLY VALID RECORD CODE" AS GROUNDS FOR
+/// ACCESS.** The moment one does, the FNV check becomes a credential and every browser holds the
+/// forgery algorithm. That is why a join card has its own LETTER (`J`) that is deliberately absent
+/// from `TYPE_LETTER`: a card is not a record, must never be resolvable by the record-lookup path,
+/// and cannot be confused for one by any decoder in any of the three clients.
+///
+/// -- THE SECRET IS NOT IN THIS TABLE -----------------------------------------------------------
+///
+/// `secretHash` is SHA-256 of the secret and `secretLast4` is the tail an admin needs to match a
+/// card against a row. **THE SECRET ITSELF IS RETURNED ONCE, AT MINT, AND IS NEVER STORED**, so a
+/// database dump, a replica, a backup or a log line is not a bundle of live keys. This is the one
+/// place this schema holds a credential and it holds it the way a password table does.
+///
+/// -- WHY THERE IS NO SIGNATURE -----------------------------------------------------------------
+///
+/// Unforgeability is 110 bits of CSPRNG output in a UNIQUE-indexed column, not a MAC. Single use,
+/// arrival-order adjudication, the late-comer path and revocation ALL require server state per card
+/// no matter what, so once the server must load this row to answer at all, putting the same claims
+/// in the card too buys nothing on the server and costs eighty characters of QR, a signing key, a
+/// key-distribution story and two crypto ports. `JWT_SECRET` is specifically not the key: it is
+/// constrained to HMAC (`_ALLOWED_JWT_ALGORITHMS`), offline verification would mean shipping it in
+/// an APK, and it already derives `SECRETS_ENCRYPTION_KEY`. The `DPW2` version number is the forward
+/// door if a later wave wants offline verification.
+model RecordAccessToken {
+  /// An ordinary internal cuid, and — unlike the secret — NOT a credential. It is what an admin's
+  /// revoke button names and what `DesignWorkshopViewer.tokenId` points at.
+  id String @id @default(cuid())
+
+  /// WHICH KIND OF RECORD THIS CARD ADMITS TO. An enum and not TEXT on `DwAccessRequestStatus`'s
+  /// stated reasoning: it decides WHICH membership table is consulted, and a typo'd value would be
+  /// a card that admits to nothing while looking perfectly valid.
+  recordType DwCodeRecordType
+  /// NO FOREIGN KEY, and that is the PRICE of one generic table instead of ten rather than an
+  /// oversight. Ten per-type token tables would be ten copies of the redemption logic; one
+  /// polymorphic column costs referential integrity on this column alone. It is affordable ONLY
+  /// because a card confers nothing by itself: redemption re-reads the record, refuses a missing or
+  /// soft-deleted one, and only then writes the membership table — so an orphaned token is inert
+  /// rather than dangerous. A hard DELETE of a workshop therefore leaves dead cards; they admit
+  /// nobody.
+  recordId String
+
+  /// SHA-256 (hex, lower case) OF THE SECRET. The lookup key, and UNIQUE because that is what makes
+  /// a card unforgeable: 110 bits of `secrets` output in an indexed column, so a guess costs exactly
+  /// what a right answer costs and there are 2^110 of them.
+  ///
+  /// THIS USED TO SAY "with no oracle but a rate-limited authenticated endpoint" AND THAT WAS FALSE.
+  /// Nothing in this repository rate-limits anything: `app/scale/rate_limit.py` is dead code whose
+  /// flag defaults off, no rate-limit middleware is installed, and nginx carries no `limit_req` —
+  /// `core/config.py` says so in as many words. The entropy is the whole argument and it does not
+  /// need the limiter; see `services/design_workshop_grants.py`'s ENUMERATION section for why that
+  /// distinction matters to whoever adds the next redemption outcome.
+  secretHash  String
+  /// The last four characters of the secret, for the admin's list only. Four characters of a
+  /// 110-bit secret is 20 bits — useless to a guesser and exactly enough to match a row against the
+  /// card in somebody's hand.
+  secretLast4 String
+
+  /// WHOSE CARD THIS IS — requirement 4. SetNull, matching `DesignWorkshopViewer.grantedById` and
+  /// `DesignWorkshopAccessRequest.decidedById`: the decision must outlive the admin who made it,
+  /// and "who let them in" is not worth an outage. Losing the account does not lose the whole
+  /// trail — this row and every `DesignWorkshopViewer.tokenId` pointing at it survive, so "which
+  /// card let this person in" is still answerable when "whose account" is not. RESTRICT would
+  /// invent a new permanently-unclearable reason an account cannot be deleted, which this
+  /// repository consistently refuses.
+  issuedById String?
+
+  /// **SINGLE USE IS THE DATABASE DEFAULT, NOT A SERVICE CONVENTION** — and NULL means unlimited.
+  ///
+  /// ONE column, and deliberately not a policy enum beside a count: two spellings of "single use"
+  /// is the "two places to look" this repository refuses. Only an ADMIN may send anything but 1,
+  /// enforced in `mint_grant` because the schema cannot see the actor's role. The reason is not
+  /// tidiness: a designer cannot create a workshop, so letting them mint a card that admits
+  /// arbitrarily many people would hand them the membership power they are denied.
+  maxUses Int? @default(1)
+
+  /// THE SEAT ALLOCATOR, AND NOT A CACHED `COUNT(*)`.
+  ///
+  /// It looks like the counter column this repository normally refuses, and the difference is the
+  /// statement that maintains it: ONE conditional compare-and-swap UPDATE, whose row lock is what
+  /// makes SERVER ARRIVAL ORDER decide who gets the full grant. There is no read-then-write and
+  /// therefore no window of the kind that has already shipped a double-filed government record
+  /// here. `RecordAccessTokenRedemption` remains the audit trail and may legitimately EXCEED this
+  /// number, because a provisional late-comer files a redemption row without consuming a seat.
+  usesConsumed Int @default(0)
+
+  /// NOT NULL, unlike almost every other date in this schema. A join card is a bearer credential
+  /// that spends a fortnight in a workshop and then lives in somebody's bag for ever; a card with
+  /// no end date is a permanent key to a workshop, printed on paper, that nobody remembers exists.
+  /// `mint_grant` defaults it to +14 days. Expiry is judged by SERVER time at arrival, the same
+  /// authority that decides order and for the same reason.
+  expiresAt DateTime
+
+  revokedAt   DateTime?
+  revokedById String?
+
+  /// For the admin's list — "stage-4 batch, 20 cards printed 24 Aug". NEVER shown to a scanner: it
+  /// would be a channel for a sentence the refusal vocabulary has not been written for.
+  label String?
+
+  createdAt DateTime @default(now())
+
+  issuedBy  User? @relation("RecordAccessTokenIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  revokedBy User? @relation("RecordAccessTokenRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  redemptions        RecordAccessTokenRedemption[]     @relation("RecordAccessTokenRedemptions")
+  viewersInducted    DesignWorkshopViewer[]            @relation("RecordAccessTokenViewers")
+  accessRequests     DesignWorkshopAccessRequest[]     @relation("RecordAccessTokenRequests")
+  provisionalMembers DesignWorkshopProvisionalMember[] @relation("DwProvisionalMemberToken")
+
+  /// THE LOOKUP, AND THE UNFORGEABILITY. Unique because two cards must never hash alike, and
+  /// because redemption's only read is `WHERE secretHash = $1` — an equality hit on a btree, so a
+  /// wrong guess costs the same one indexed probe as a right one.
+  @@unique([secretHash])
+  /// The admin screen, column for column: every card for one record, newest first.
+  @@index([recordType, recordId, createdAt])
+  /// The two account pointers, indexed for the onDelete actions they are on the wrong end of rather
+  /// than for a read. See the long note on `DwStageEntry.createdById`.
+  @@index([issuedById])
+  @@index([revokedById])
+}
+
+/// ONE ACCOUNT'S ONE REDEMPTION OF ONE CARD — the audit trail, and the untrusted-clock evidence.
+///
+/// -- WHY THIS IS NOT `DesignWorkshopAccessRequest` --------------------------------------------
+///
+/// That table's unique index is `(workshop, requester)`, which is the right idempotency for an ASK
+/// and the wrong one for a SEAT. The guarantee needed here is `(token, user)`: without it, one
+/// person with two handsets spends a multi-use card twice, and a replayed offline delivery spends a
+/// single-use card a second time. Both indexes are needed and they are different indexes, so they
+/// are different tables. The queue row is still written — see
+/// `DesignWorkshopAccessRequest.tokenId` — because that is where an admin already looks.
+///
+/// -- THE UNTRUSTED CLOCK, DONE PROPERLY -------------------------------------------------------
+///
+/// `serverArrivedAt` IS THE AUTHORITY. `scannedAtClient` is EVIDENCE beside it and nothing else:
+/// ordering by a number a phone's settings screen can change hands the grant to whoever winds their
+/// clock back furthest, which is exactly the spoof the requirement names. So this table records
+/// BOTH, plus a monotonic clock that cannot be wound back:
+/// `scannedAtElapsedSec`/`syncedAtElapsedSec` are Android's `SystemClock.elapsedRealtime`, from which
+/// the server derives a clock-independent estimate — `serverArrivedAt - (syncedAtElapsedSec -
+/// scannedAtElapsedSec)`. A wall-clock change cannot forge that; a REBOOT invalidates it, which
+/// `bootId` is what makes visible. `clockJumpObserved` is the handset saying `ACTION_TIME_CHANGED`
+/// fired between the scan and the sync. Every one of them is shown in the queue and none of them
+/// decides anything.
+///
+/// -- WHAT IS NEVER WRITTEN --------------------------------------------------------------------
+///
+/// A row for a secret that resolves to nothing. A refusal writes NOTHING, because a table anybody
+/// can grow by posting random strings is a denial-of-service with an audit trail attached.
+model RecordAccessTokenRedemption {
+  id String @id @default(cuid())
+
+  tokenId String
+  userId  String
+
+  outcome DwTokenRedemptionOutcome
+  reason  DwTokenRedemptionReason
+
+  /// WHAT THE HANDSET SAYS. All nullable: the web client has no monotonic clock to report and an
+  /// online scan has nothing to reconstruct. Absent evidence is honest; a zero would not be.
+  scannedAtClient DateTime?
+
+  /// THE MONOTONIC CLOCK, IN **SECONDS**, at the scan and at the sync — Android's
+  /// `SystemClock.elapsedRealtime`, which cannot be wound back without root and is therefore the
+  /// only device-reported time worth anything. Their difference is how long ago the scan really
+  /// happened, from which the server derives a clock-independent estimate:
+  /// `serverArrivedAt - (syncedAtElapsedSec - scannedAtElapsedSec)`.
+  ///
+  /// **SECONDS AND NOT MILLISECONDS, AND `Int` AND NOT `BigInt`, FOR TWO REASONS THAT POINT THE SAME
+  /// WAY.** `elapsedRealtime` is reported in milliseconds, and a 32-bit `Int` of milliseconds
+  /// overflows at 24.8 days of uptime — which a field handset genuinely reaches — so milliseconds
+  /// would have had to be `BigInt`. A NULLABLE `BigInt` cannot be generated by this project's Prisma
+  /// Python client (0.15.0): `prisma generate` fails with an empty error, which is measured rather
+  /// than assumed — `MediaFile.sizeBytes` is a NON-NULL `BigInt` and generates perfectly well.
+  /// Seconds in an `Int` reach 68 years of uptime, and this evidence is read by a human deciding
+  /// "was this scanned hours or days before it arrived", where a millisecond means nothing.
+  scannedAtElapsedSec Int?
+  syncedAtElapsedSec  Int?
+
+  /// Because a REBOOT resets the monotonic clock and would otherwise make the estimate above
+  /// silently nonsense. Two elapsed readings are only comparable within one boot.
+  bootId            String?
+  /// The handset saying `ACTION_TIME_CHANGED` fired between the scan and the sync. NOT an
+  /// accusation: a phone that finds a network after two days offline legitimately jumps.
+  clockJumpObserved Boolean @default(false)
+
+  /// WHAT THE SERVER SAYS, AND THE ONLY TIME ANYTHING IS DECIDED BY. Not `@default(now())`: it is
+  /// set explicitly from the one value the whole redemption is judged against, so the row cannot
+  /// disagree with the decision it records.
+  serverArrivedAt DateTime
+
+  token RecordAccessToken @relation("RecordAccessTokenRedemptions", fields: [tokenId], references: [id], onDelete: Cascade)
+  /// Cascade, matching `DesignWorkshopViewer.user`: a redemption is not research anybody recorded,
+  /// and RESTRICT would add a reason an account cannot be deleted that no screen can clear.
+  user  User              @relation("RecordAccessTokenRedemptionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// **THE SEAT GUARANTEE'S SECOND HALF.** One row per (card, person): the same person redeeming
+  /// twice — a replayed offline delivery, a second handset — collides here and returns the FIRST
+  /// outcome without touching `usesConsumed`. Enforced by Postgres and not by a check in the
+  /// service, for the reason `DesignWorkshopAccessRequest`'s header gives: a read-then-write is two
+  /// round trips with a window in the middle.
+  @@unique([tokenId, userId])
+  /// "Everybody this batch of cards let in", newest first — the screen that undoes a leaked print
+  /// run. Its leading column is also what the `tokenId` CASCADE walks.
+  @@index([tokenId, serverArrivedAt])
+  @@index([userId])
+}
+
+/// SOMEBODY WHO SCANNED A GENUINE JOIN CARD WHOSE SEAT WAS GONE, AND WAS NOT REFUSED.
+///
+/// -- WHY THIS IS A THIRD TABLE AND NOT A `level` COLUMN ON `DesignWorkshopViewer` -------------
+///
+/// **THIS IS THE MOST IMPORTANT DECISION IN THIS MIGRATION AND IT MUST NOT BE "SIMPLIFIED".**
+///
+/// `has_viewer_grant` reads the EXISTENCE of a `DesignWorkshopViewer` row and is consulted from
+/// four places — `design_workshops.load_workshop_or_404`, `design_ratings`,
+/// `routes/questionnaire_forms`, and `design_workshop_access` itself. A `level` column on that table
+/// would mean every one of those four reads admits an UNADJUDICATED SCAN until all four are
+/// individually taught the difference, and two of them do not go through the predicate at all
+/// (`questionnaire_forms._visible_questionnaire_where` writes the relation filter by hand, and
+/// `records._design_workshop_media_branches` follows `visible_to_clause`). Miss one and a forged
+/// card reads another designer's fieldwork, or an artisan's recorded voice.
+///
+/// A separate table cannot fail that way. **NOTHING THAT DECIDES READ ACCESS CONSULTS THIS TABLE,
+/// and no query anywhere joins it to `DesignWorkshopViewer`.** A provisional member is, to every
+/// existing read, a stranger — which is the correct default and the only one that is safe to land
+/// without editing four other modules.
+/// `tests/test_design_workshop_provisional_isolation.py` is the tripwire.
+///
+/// The schema comment on `DesignWorkshopViewer` is the second argument: a viewer row is CURRENT FACT
+/// that is DELETED when access ends, which is the opposite of what a provisional foothold needs.
+///
+/// -- WHAT IT IS FOR ---------------------------------------------------------------------------
+///
+/// CAPTURE ONLY. It exists so a designer who scanned a spent card in a courtyard is not refused and
+/// does not lose the fieldwork they captured offline: their own rows are accepted, attributed to
+/// them, and kept. It never reads existing workshop content, and no read gate is satisfiable offline
+/// by an unadjudicated scan — which is what makes the forged-card case harmless: a forger gains a
+/// blank local workspace and their own data refused on sync.
+///
+/// It is ALWAYS accompanied by a PENDING `DesignWorkshopAccessRequest`, so the person appears in the
+/// queue an admin already works from with ZERO query changes.
+///
+/// -- THREE THINGS DELETE THIS ROW, AND MISSING ANY ONE OF THEM IS A CONTRADICTION -------------
+///
+/// A row here beside a `DesignWorkshopViewer` row for the same pair is the state that makes
+/// `request_payload` report `requesterHasAccess: true` AND `requesterIsProvisional: true` at once,
+/// and makes `may_capture`'s arms disagree about which fact admitted somebody. So:
+///
+///  1. An admin's GRANT promotes them: `decide`'s GRANT arm writes the viewer row and deletes this.
+///  2. An admin's REFUSAL deletes it too, or the refusal is a lie — they would keep capturing.
+///  3. **A LATER VALID SCAN THAT GRANTS IN FULL deletes it**, which is requirement 6's "a later
+///     valid scan upgrades them" happening with no admin in it. `design_workshop_grants.redeem`
+///     does this inside the same transaction as the viewer row. It was missing, and the result was
+///     exactly the contradiction above: scan a spent card, then a fresh one, and the person was in
+///     both membership tables.
+///
+/// Nothing they captured is destroyed by any of the three: `DwStageEntry` cascades from
+/// `DesignWorkshop`, not from this row.
+model DesignWorkshopProvisionalMember {
+  designWorkshopId String
+  userId           String
+
+  /// THE CARD THEY ARRIVED ON — honestly the SPENT one ("they came on Rekha's card, late").
+  /// Nullable so the relation can be SetNull, and because an admin may one day place somebody here
+  /// by hand.
+  viaTokenId String?
+
+  /// WHY THEY ARE HERE, copied from the redemption so the capture gate never has to join two tables
+  /// to answer one question.
+  reason DwTokenRedemptionReason
+
+  /// EVIDENCE, NEVER AUTHORITY — the same rule as `DesignWorkshopAccessRequest.scannedAt`, and the
+  /// same reason: `serverArrivedAt` is what any comparison reads.
+  scannedAtClient DateTime?
+  serverArrivedAt DateTime
+
+  createdAt DateTime @default(now())
+
+  designWorkshop DesignWorkshop     @relation("DesignWorkshopProvisionalMembers", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  user           User               @relation("DwProvisionalMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  token          RecordAccessToken? @relation("DwProvisionalMemberToken", fields: [viaTokenId], references: [id], onDelete: SetNull)
+
+  /// The pair IS the identity, matching `DesignWorkshopViewer`: one foothold per person per
+  /// workshop, so a second late scan collides rather than stacking a row.
+  @@id([designWorkshopId, userId])
+  /// "Which workshops is this account holding provisional captures in" — the client's own
+  /// self-description read, and the one the capture gate makes.
+  @@index([userId])
+  @@index([viaTokenId])
 }
 
 /// One record of one entity of one stage. A SINGLETON entity has exactly one row per workshop;

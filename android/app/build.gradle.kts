@@ -576,8 +576,142 @@ dependencies {
      * better than ZXing does. That trade is the document's and is unchanged — the typed box stays
      * on every surface, a photograph can be retaken and re-read, and the decode ladder in
      * `DwQrDecode` re-tries at higher resolution before giving up.
+     *
+     * ── AND THERE IS NOW A LIVE FRAME, WHICH MOVES THAT REGRESSION RATHER THAN SETTLING IT ─────
+     *
+     * The clause above was written when the only camera path was a shutter press, and the CameraX
+     * block below has added a live one. Re-read on 2026-08-24 rather than recalled: ML Kit's bundled
+     * barcode reader is **9,898,786 bytes** (`com.google.mlkit:barcode-scanning:17.3.0`) against
+     * this line's **607,650** — sixteen times the size, for a symbol that a designer is holding
+     * inside a reticle. The unbundled `play-services-mlkit-barcode-scanning:18.3.1` is **519,271
+     * bytes** and is still disqualified for the reason that has never changed: it fetches its model
+     * on first use, and first use is a courtyard that has had no signal for two days, where the
+     * failure reads as a broken camera.
+     *
+     * TWO THINGS THE LIVE PATH DOES THAT MAKE THE TRADE BETTER, NOT WORSE. The frame is CROPPED to
+     * the reticle before ZXing sees it (`dwQrCropInBuffer`), so the binarizer never looks at the
+     * courtyard — which is `DW_QR_SAMPLE_LADDER`'s own insight applied at capture instead of after.
+     * And a miss costs 33 ms rather than a retake, so thirty attempts a second replace three per
+     * shutter press. The one thing that has NOT changed is the only reason this line is here at all:
+     * ZXing is pure Java, so `DwQrLiveFrameTest` runs the shipping live decoder on the desktop over
+     * symbols this app's own `DwQrEncode` produced. Choosing ML Kit forfeits the only accuracy
+     * evidence a repository with no handset can produce.
      */
     implementation("com.google.zxing:core:3.5.3")
+
+    /**
+     * THE LENS — a live preview, bound to the BACK camera by this application rather than by
+     * whatever the system camera app last opened.
+     *
+     * ── WHY THIS ARRIVED, AND IT IS NOT THE MEASUREMENT THE DECISION DOCUMENT ASKED FOR ────────
+     *
+     * `docs/DECISION-qr-scanning-on-android.md` lists "the arrival of CameraX or any live-preview
+     * scanning, which is the one capability deliberately not built here" as a REVIEW TRIGGER, and
+     * this block fires it by name. It also fires three more of its clauses at once: a further change
+     * to the QR dependency area, a new mount of the scanning control, and a change to every scanner
+     * header — `data/DwQrDecode.kt`, `ui/designworkshop/WorkshopCodesScreen.kt` and
+     * `ui/RecordCodeLookup.kt` each asserted "no CameraX / no live preview" as a DECISION, and all
+     * three have been corrected in the same change as this line rather than left to contradict it.
+     *
+     * WHAT REOPENED IT IS A DEFECT THE STILL PATH CANNOT FIX. `ActivityResultContracts.TakePicture()`
+     * hands off to the system camera app, which reopens whatever lens it last used; the lens cannot
+     * be forced through that contract at all, so designers were met by the FRONT camera and there was
+     * no flag to set. `bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, …)` is chosen by
+     * this app, on every bind, and cannot drift. The reticle, the sweep and live detection are what
+     * the requirement asked for; the back lens is why it could not be declined.
+     *
+     * ── THE FOUR LINES, AND WHAT ELSE ARRIVES WITH THEM ────────────────────────────────────────
+     *
+     * Sizes read off `dl.google.com/dl/android/maven2` on 2026-08-24 — never inferred from a version
+     * bump, which is what that document requires of a size claim:
+     *
+     *     androidx.camera:camera-core:1.5.3                            1,184,683 bytes
+     *     androidx.camera:camera-camera2:1.5.3                           604,031
+     *     androidx.camera:camera-lifecycle:1.5.3                          50,554
+     *     androidx.camera:camera-compose:1.5.3                            45,173
+     *     androidx.camera.viewfinder:viewfinder-compose:1.5.3  (transitive) 66,485
+     *     androidx.camera.viewfinder:viewfinder-core:1.5.3      (transitive) 90,373
+     *     androidx.camera.featurecombinationquery:…:1.5.3        (transitive) 18,525
+     *     androidx.lifecycle:lifecycle-livedata:2.8.7            (transitive) 57,494
+     *     androidx.concurrent:concurrent-futures-ktx:1.1.0       (transitive)  5,605
+     *                                                          ─────────────────────
+     *                                                          2,122,923  (2.02 MiB)
+     *
+     * The last two are the ONLY genuinely new non-camera rows and they were checked against
+     * `android/deps.txt` rather than assumed: `lifecycle-livedata-CORE:2.8.7` is already there
+     * (fourteen times), the full `lifecycle-livedata` is not, and `concurrent-futures-ktx` is not.
+     * Everything else CameraX asks for already resolves on `releaseRuntimeClasspath` —
+     * `concurrent-futures:1.1.0` (deps.txt line 64), `tracing:1.2.0` (line 104), `jspecify:1.0.0`
+     * (line 596), the empty `listenablefuture` stub already forced to `9999.0`,
+     * `kotlinx-coroutines-android` (already forced to 1.9.0, above camera-core's 1.8.1 request),
+     * `fragment:1.5.7` and `appcompat:1.6.1` (arriving via credentials → biometric).
+     *
+     * `lifecycle-livedata` arrives because `CameraInfo.getTorchState()` is a `LiveData<Integer>` and
+     * is read to drive the torch button. That is not an accident of the dependency graph — a torch
+     * button whose lit state comes from a local boolean goes wrong for real: `enableTorch` is
+     * asynchronous and the platform turns the torch off on unbind, so a stale `true` leaves a lit
+     * icon over a dark frame. `DwQrLiveScanner` reads the platform's own state instead.
+     *
+     * ── 1.5.3 AND NOT 1.6.x, MEASURED FROM THE AARs' OWN METADATA ─────────────────────────────
+     *
+     * `META-INF/com/android/build/gradle/aar-metadata.properties`, unzipped out of three
+     * `camera-core` artifacts:
+     *
+     *     1.4.2  minCompileSdk 34   minAndroidGradlePluginVersion 1.0.0
+     *     1.5.3  minCompileSdk 35   minAndroidGradlePluginVersion 8.6.0
+     *     1.6.1  minCompileSdk 36   minAndroidGradlePluginVersion 8.9.1
+     *
+     * This build is `compileSdk = 35` on AGP 8.7.3, so 1.6.x FAILS the metadata check outright — it
+     * would require a compileSdk and an AGP bump in the same commit as a scanner, on a release path
+     * that also carries R8 keep rules, four-ABI packaging, a vendored 37 MB AAR and a signing
+     * arrangement built to fail loudly. Two changes, two commits. 1.4.2 clears the check and its
+     * `camera-core` is 246 KB smaller, and it is still the wrong choice: its `camera-compose` is a
+     * 1,449-byte STUB against 1.5.3's real 45,173-byte module, so 1.4.2 forces `camera-view` and
+     * `PreviewView` instead of the Compose viewfinder. That is the deciding fact, not the version.
+     *
+     * ── `camera-compose` AND NOT `camera-view`, WHICH WOULD HAVE COST NO NEW ARTIFACT ──────────
+     *
+     * `appcompat:1.6.1` and `fragment:1.5.7` are already on the release classpath, so `PreviewView`
+     * was free. `CameraXViewfinder` is taken anyway because it is a Compose composable in a codebase
+     * that is Compose all the way down, and because wrapping a `PreviewView` in an `AndroidView`
+     * inside a `Dialog` is the shape that produces the black-first-frame reports. What it does NOT
+     * buy is the reticle mapping: see `dwQrCropInBuffer`, which uses `ImageProxy.cropRect` and a
+     * `ViewPort` rather than the coordinate transformer, and says why.
+     *
+     * ── THE APK COST IS AN ESTIMATE AND IS LABELLED AS ONE ────────────────────────────────────
+     *
+     * NOT MEASURED. `docs/R8-MEASUREMENT.md` establishes that only a packaged-APK read counts here,
+     * and the command is:
+     *
+     *     ./gradlew :app:assembleRelease
+     *     stat -c %s app/build/outputs/apk/release/app-release.apk
+     *
+     * (Written as two lines with the file named rather than as one line with a glob, because a glob
+     * before `.apk` spells the end of a block comment and silently ate this whole paragraph once.)
+     *
+     * What can be said with evidence: release R8 is ON (`isMinifyEnabled` + `isShrinkResources`
+     * below), and unlike every previous size decision in this file CameraX is pure JVM bytecode —
+     * no `.so`, no model asset — so R8 can actually reach it, where that document records "99.5% of
+     * the cost is in rows R8 is structurally unable to shrink" for ML Kit and sherpa. The nearest
+     * precedent there ("five ML Kit artifacts bring roughly 1 MB of Java/Kotlin … 214,881 bytes —
+     * R8 ate almost all of it") will FLATTER CameraX, though: ML Kit's Java was mostly unreached
+     * API surface, whereas `camera-core` plus `camera-camera2` is a pipeline entered wholesale
+     * through `bindToLifecycle` whose ~100 device-quirk classes are reached by enumeration. Estimate
+     * +700 KB to +1.2 MB of dex, which against the last measured shipping figure
+     * (`docs/ASR-RUNTIME-MEASUREMENT.md` row E, 66,056,244 bytes) is 1.1%–1.8%. Do not quote it as
+     * a measurement.
+     *
+     * ── NO NEW PERMISSION AND NOTHING NEW IN THE INSTALL DIALOG ───────────────────────────────
+     *
+     * All five CameraX manifests were unzipped and read: `camera-core` contributes only a DISABLED,
+     * unexported `androidx.camera.core.impl.MetadataHolderService`, and the rest contribute only
+     * `<uses-sdk android:minSdkVersion="23"/>`, which the merger discards under this module's 26.
+     * No `uses-permission`, no `uses-feature`. `android.permission.CAMERA` was already declared.
+     */
+    implementation("androidx.camera:camera-core:1.5.3")
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-compose:1.5.3")
 
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")

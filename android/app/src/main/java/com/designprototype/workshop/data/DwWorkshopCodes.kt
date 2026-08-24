@@ -548,6 +548,22 @@ enum class DwDecodeRefusal {
 
     /** Ours and well-formed, but the check does not agree with the id. */
     CHECK_FAILED,
+
+    /**
+     * Ours, and it is a JOIN CARD rather than a code naming a record — see [WORKSHOP_JOIN_LETTER].
+     *
+     * ANSWERED BY LETTER AND **BEFORE** THE VERSION GATE, which is the whole point of it existing.
+     * A join card is written at version 2, so without this branch a genuine one fell into
+     * [NEWER_VERSION] and every handset in the field told the person holding it to "update the app
+     * to read it" — with no newer app to update to, and a perfectly good card in their hand. It is
+     * not [UNKNOWN_RECORD_TYPE] either: `J` is not an unknown record type, it is deliberately not a
+     * record type at all.
+     *
+     * A caller that can act on a join card should not reach this: [readWorkshopScan] dispatches on
+     * the letter first and hands the card to the redemption path. This is the sentence for the
+     * callers that only ever open records.
+     */
+    JOIN_CARD,
 }
 
 sealed interface DwDecodeResult {
@@ -592,6 +608,23 @@ fun decodeWorkshopCode(input: String?): DwDecodeResult {
         return DwDecodeResult.Refused(
             DwDecodeRefusal.NOT_A_WORKSHOP_CODE,
             "That is not a workshop card or tag. Workshop codes begin “DPW” followed by a version number."
+        )
+    }
+
+    if (parts[1] == WORKSHOP_JOIN_LETTER) {
+        // A JOIN CARD MET BY THE RECORD PARSER, AND IT IS ANSWERED BEFORE THE VERSION GATE — the
+        // same ordering `design_workshop_access.decode_design_workshop_code` keeps, for the same
+        // reason: the honest next action does not depend on the version. This is a credential, not a
+        // locator; nothing in [DwWorkshopRecordType] can resolve it, and it must never be filed as an
+        // ask when the holder could simply have been let in.
+        //
+        // ⚠ THE CODE IS NOT ECHOED AND MUST NEVER BE. Every other refusal in this file may quote
+        // what was read; this one carries a live 110-bit secret.
+        return DwDecodeResult.Refused(
+            DwDecodeRefusal.JOIN_CARD,
+            "That is a join card, not a card that names a record — scanning it puts you on the " +
+                "workshop rather than opening anything. Scan it from a design workshop's Cards & " +
+                "tags screen, or from the code panel on Search."
         )
     }
     // `Number(versionText)` and not `toIntOrNull()`, which is the trap here. The digits come off a
@@ -672,6 +705,286 @@ fun decodeWorkshopCode(input: String?): DwDecodeResult {
         ref = DwWorkshopCodeRef(recordType = recordType, id = id),
         code = "$prefix:$typedCheck"
     )
+}
+
+// --------------------------------------------------------------------------------------
+// The JOIN CARD: a second grammar, and the only string in this file that is a credential
+// --------------------------------------------------------------------------------------
+
+/**
+ * The payload version a JOIN CARD is written at.
+ *
+ * ── WHY 2 AND NOT A NEW LETTER ON v1, WHICH IS THE SAME ARGUMENT THE SERVER MAKES ────────────
+ *
+ * `backend/app/services/design_workshop_grants.py` chose a new VERSION so that a build which had
+ * already shipped would answer "that card was printed by a newer version of the app" — the right
+ * sentence, on every handset in the field, for free. **THAT PLAN ONLY WORKS IF THERE IS A NEWER
+ * VERSION TO UPDATE TO, AND THERE WAS NOT.** This build is it: the letter is answered before the
+ * version gate (see [DwDecodeRefusal.JOIN_CARD]) and the card is redeemed rather than refused.
+ *
+ * DELIBERATELY NOT ADDED TO [SUPPORTED_VERSIONS]. That set gates [decodeWorkshopCode], which returns
+ * a [DwWorkshopCodeRef] — a RECORD and a record type. A join card resolves to neither, and widening
+ * that set would put a version into the record parser whose only letter is one no record type has.
+ */
+const val WORKSHOP_JOIN_CODE_VERSION = 2
+
+/**
+ * **J for Join, AND IT IS DELIBERATELY ABSENT FROM [DwWorkshopRecordType].**
+ *
+ * A join card is a credential, not a locator. Keeping this letter out of the record-type enum is
+ * what makes it structurally impossible for the record-lookup path to resolve one: there is no entry
+ * for [DwWorkshopRecordType.ofLetter] to find.
+ *
+ * ⚠ `J` IS RESERVED. Do not spend it on a record type later. The ten letters in use are
+ * A C W D S T Q M G P, and `J` now means "this is a credential".
+ */
+const val WORKSHOP_JOIN_LETTER = "J"
+
+/**
+ * The alphabet a card's secret is drawn from — Crockford base32, the same one the check characters
+ * use, so a card carries one character set and not two.
+ */
+private const val JOIN_SECRET_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+/** 22 characters of that alphabet is 110 bits, which is the entire security argument for a card. */
+private const val JOIN_SECRET_LENGTH = 22
+
+/**
+ * The shape of a whole secret after folding. Exactly the alphabet, exactly the length — a secret one
+ * character short is not a near miss and there is nothing to be tolerant of.
+ */
+private val JOIN_SECRET_PATTERN = Regex("^[" + JOIN_SECRET_ALPHABET + "]{" + JOIN_SECRET_LENGTH + "}$")
+
+/** Why a join card could not be read. Every one of these is a statement about the STRING. */
+enum class DwJoinCardRefusal {
+    /** Nothing was typed or scanned. */
+    EMPTY,
+
+    /** Whatever this is, it did not come from this application at all. */
+    NOT_A_JOIN_CARD,
+
+    /** Ours, and a code that NAMES a record rather than admitting anybody. */
+    RECORD_TAG,
+
+    /** A join card written by a build newer than this one. */
+    NEWER_VERSION,
+
+    /** Ours and well-formed, but it names a workshop that exists on one device only. */
+    DEVICE_LOCAL,
+
+    /** Ours, but the wrong number of parts, or an id or secret that is not a whole one. */
+    MALFORMED,
+
+    /** Ours and well-formed, but the check characters do not agree with the payload. */
+    CHECK_FAILED,
+}
+
+/** What [decodeWorkshopJoinCard] made of a string. */
+sealed interface DwJoinCardDecode {
+    /**
+     * A readable join card.
+     *
+     * @property workshopId the workshop it admits to, lower-cased — for keying a queue row and for
+     *   showing which workshop is being joined. It is NOT authority for anything.
+     * @property code the CANONICAL card, **including the live secret**. This is the string the
+     *   redemption route is given and it is the only value in this file that is a credential.
+     *
+     * ⚠ DO NOT LOG [code], DO NOT PUT IT IN A REFUSAL MESSAGE, AND DO NOT SHOW IT ON A SCREEN THAT
+     * IS NOT DELIBERATELY SHOWING A CARD. `redacted_code` on the server exists for this reason.
+     */
+    data class Ok(val workshopId: String, val code: String) : DwJoinCardDecode
+
+    data class Refused(val reason: DwJoinCardRefusal, val message: String) : DwJoinCardDecode
+}
+
+/**
+ * Does this string CLAIM to be a join card? Read from the letter alone, and it reads no secret.
+ *
+ * The dispatch predicate for [readWorkshopScan]: a scan is either a record code or a join card, and
+ * the two have different parsers, different endpoints and different sentences. Deciding which by the
+ * LETTER rather than by the version is what stops a v2 card being reported as a v1 card from the
+ * future — the dead end that shipped.
+ */
+fun looksLikeJoinCard(input: String?): Boolean {
+    val raw = (input ?: "").filterNot { isJsSpace(it) }.uppercase()
+    val parts = raw.split(":")
+    return parts.size == 4 &&
+        parts[0].startsWith(WORKSHOP_CODE_NAMESPACE) &&
+        parts[1] == WORKSHOP_JOIN_LETTER
+}
+
+/**
+ * Read a scanned or typed JOIN CARD. A PORT of `design_workshop_grants.decode_join_code`.
+ *
+ * ── IT HAS TO AGREE WITH THAT FUNCTION CHARACTER FOR CHARACTER ────────────────────────────────
+ *
+ * Not merely on which cards it accepts — on the CANONICAL string it produces, because that string is
+ * what is posted and the server recomputes the check over its own canonical form. The three places
+ * the two languages could part company are the same three [decodeWorkshopCode] documents: the
+ * whitespace rule (see [isJsSpace]), the 32-bit hash (see [workshopCodeCheck]), and the version
+ * spelling — which cannot bite here, because a join card is refused unless its version is exactly
+ * [WORKSHOP_JOIN_CODE_VERSION].
+ *
+ * ── THE CONFUSABLE FOLD IS APPLIED TO THE SECRET AND NOT TO THE ID ────────────────────────────
+ *
+ * The asymmetry the server states, for the same reason: the secret is drawn from an alphabet with no
+ * `I`, `L`, `O` or `U`, so a `0` in it can only ever be a misread `O` — while a cuid legitimately
+ * contains both `0` and `o`, so "correcting" one would corrupt an id that was typed correctly.
+ *
+ * ── AND THE CHECK IS STILL ONLY A TYPO DETECTOR ───────────────────────────────────────────────
+ *
+ * Said here because this is the one grammar in the file where somebody might hope otherwise. The
+ * four characters are FNV-1a and the algorithm ships in this APK and in every browser. They catch a
+ * card read one character wrong, which is what a courtyard produces. **They cannot catch a forgery.**
+ * What catches a forgery is the 110-bit secret failing to match a row, and that only happens ONLINE
+ * — which is why nothing on this device ever treats a well-formed card as admission.
+ *
+ * PURE — no network, no clock, no randomness — so `DwJoinCardTest` pins it.
+ */
+fun decodeWorkshopJoinCard(input: String?): DwJoinCardDecode {
+    val raw = (input ?: "").filterNot { isJsSpace(it) }.uppercase()
+    if (raw.isEmpty()) {
+        return DwJoinCardDecode.Refused(DwJoinCardRefusal.EMPTY, "Nothing was scanned or typed.")
+    }
+
+    val parts = raw.split(":")
+    if (parts.size != 4 || !parts[0].startsWith(WORKSHOP_CODE_NAMESPACE)) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.NOT_A_JOIN_CARD,
+            "That is not a workshop join card. Join cards begin “DPW”; a shop barcode, a payment " +
+                "code or a web address will not let you into a workshop."
+        )
+    }
+
+    val versionText = parts[0].substring(WORKSHOP_CODE_NAMESPACE.length)
+    if (versionText.isEmpty() || !versionText.all { it in '0'..'9' }) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.NOT_A_JOIN_CARD,
+            "That is not a workshop join card. Join cards begin “DPW” followed by a version number."
+        )
+    }
+    // `toDouble` and not `toIntOrNull`, on [decodeWorkshopCode]'s reasoning: the digits come off a
+    // card, so "DPW02" is a version-2 card typed by somebody being careful and four hundred nines is
+    // a corrupted scan. Neither should be reported as a damaged card for the wrong reason.
+    val version = versionText.toDouble()
+
+    if (parts[1] != WORKSHOP_JOIN_LETTER) {
+        // OURS AND WELL FORMED, but it NAMES a record. Named separately from "not one of ours"
+        // because somebody scanning the workshop's own tag when they were handed a join card needs
+        // to be told which card to look for, not that their scanner is broken.
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.RECORD_TAG,
+            "That code belongs to this application but is not a join card — it names a record. " +
+                "Scan the join card you were handed, the one printed to let somebody in."
+        )
+    }
+    if (version != WORKSHOP_JOIN_CODE_VERSION.toDouble()) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.NEWER_VERSION,
+            "That join card was printed against a code format this version of the app does not " +
+                "read. Update the app, or ask an administrator to add you from the workshop's " +
+                "viewers screen."
+        )
+    }
+
+    val body = parts[2]
+    if (body.count { it == '.' } != 1) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.MALFORMED,
+            "This join card is damaged or was typed incompletely. Check it against the card, " +
+                "character by character."
+        )
+    }
+    val idText = body.substringBefore('.')
+    val secretText = body.substringAfter('.')
+
+    val workshopId = idText.lowercase()
+    // BEFORE the pattern below, which a `dwlocal-`/`local-` id passes perfectly well.
+    if (workshopId.startsWith(WEB_DEVICE_LOCAL_ID_PREFIX) || workshopId.startsWith(DW_LOCAL_ID_PREFIX)) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.DEVICE_LOCAL,
+            "That card names a workshop that had not been shared yet when it was printed — it only " +
+                "ever meant anything on the device that made it. Ask whoever created the workshop " +
+                "to sync their device and print a fresh card."
+        )
+    }
+    if (!ID_PATTERN.matches(workshopId)) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.MALFORMED,
+            "This join card is damaged or was typed incompletely — the identifier in it is not a " +
+                "whole one. Check it against the card."
+        )
+    }
+
+    val secret = buildString(secretText.length) {
+        for (character in secretText) append(CHECK_CONFUSABLES[character] ?: character)
+    }
+    if (!JOIN_SECRET_PATTERN.matches(secret)) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.MALFORMED,
+            "This join card is damaged or was typed incompletely — the part after the full stop is " +
+                "not a whole one. Read it off the card again, character by character."
+        )
+    }
+
+    val typedCheck = buildString(parts[3].length) {
+        for (character in parts[3]) append(CHECK_CONFUSABLES[character] ?: character)
+    }
+    val prefix = WORKSHOP_CODE_NAMESPACE + WORKSHOP_JOIN_CODE_VERSION + ":" +
+        WORKSHOP_JOIN_LETTER + ":" + idText + "." + secret
+    if (typedCheck.length != CHECK_LENGTH || typedCheck != workshopCodeCheck(prefix)) {
+        return DwJoinCardDecode.Refused(
+            DwJoinCardRefusal.CHECK_FAILED,
+            "This join card does not check out, so one of its characters is wrong. Read it off the " +
+                "card again, character by character."
+        )
+    }
+
+    return DwJoinCardDecode.Ok(workshopId = workshopId, code = prefix + ":" + typedCheck)
+}
+
+/**
+ * The ONE front door for anything a camera read or a person typed: a record code, or a join card.
+ *
+ * ── WHY THE DISPATCH IS HERE AND NOT AT EACH CALL SITE ────────────────────────────────────────
+ *
+ * There are two scan surfaces (a workshop's Cards & tags screen and the code panel on Search) and
+ * four routes into each (live camera, photograph, picked picture, typed box). Deciding "is this a
+ * join card" eight times over is how one of the eight comes to disagree — and the failure mode is
+ * specific and bad: whichever surface got it wrong tells the person holding a genuine card to update
+ * an app that has no update.
+ */
+sealed interface DwWorkshopScan {
+    /** A code that NAMES a record. [ref] is a locator and confers nothing. */
+    data class RecordCode(val ref: DwWorkshopCodeRef, val code: String) : DwWorkshopScan
+
+    /** A JOIN CARD. [card] carries a live secret — see [DwJoinCardDecode.Ok]. */
+    data class JoinCard(val card: DwJoinCardDecode.Ok) : DwWorkshopScan
+
+    /** Neither, with the sentence written by whichever parser was the right one to ask. */
+    data class Refused(val message: String) : DwWorkshopScan
+}
+
+/**
+ * Read whatever arrived, and say which of the two kinds of string it is.
+ *
+ * THE JOIN PARSER IS ASKED FIRST AND ONLY WHEN [looksLikeJoinCard] SAYS SO, so a record code is
+ * still refused by the record parser's own sentences and nothing about the fourteen record types
+ * changes. A string that claims the `J` letter is answered entirely by the join parser, including
+ * its refusals: "read the card again" is the right advice for a mistyped join card and "update the
+ * app" never is.
+ */
+fun readWorkshopScan(input: String?): DwWorkshopScan {
+    if (looksLikeJoinCard(input)) {
+        return when (val decoded = decodeWorkshopJoinCard(input)) {
+            is DwJoinCardDecode.Ok -> DwWorkshopScan.JoinCard(decoded)
+            is DwJoinCardDecode.Refused -> DwWorkshopScan.Refused(decoded.message)
+        }
+    }
+    return when (val decoded = decodeWorkshopCode(input)) {
+        is DwDecodeResult.Ok -> DwWorkshopScan.RecordCode(decoded.ref, decoded.code)
+        is DwDecodeResult.Refused -> DwWorkshopScan.Refused(decoded.message)
+    }
 }
 
 // --------------------------------------------------------------------------------------
@@ -762,6 +1075,32 @@ fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
 }
 
 /**
+ * ⚠ RETIRED ON 2026-08-24. NO PRODUCTION CALL SITE REACHES THIS FUNCTION ANY MORE.
+ *
+ * ── WHAT IT WAS, AND WHAT REPLACED IT ─────────────────────────────────────────────────────────
+ *
+ * This was the answer a scanned `DPW1:G:…` card got: "this version of the app cannot open a design
+ * workshop from a code". It was honest and it was a DEAD END. A designer handed a card by the
+ * colleague standing next to them — which is the entire situation the card exists for — was told the
+ * app could not act on it and sent to go and find an administrator.
+ *
+ * It has been replaced by a real join path, `ui/DwWorkshopJoin.kt`, which posts the ask to
+ * `POST /design-workshop-access/requests` and shows THAT ROUTE'S OWN sentence. The route was shipped
+ * and had no client at all; the refusal below was never the server's limit, only this app's.
+ *
+ * ── WHY THE FUNCTION IS STILL HERE ────────────────────────────────────────────────────────────
+ *
+ * `DwWorkshopCodesTest` pins its wording by value, character for character, and that test file
+ * belongs to a wave that is not this one. Deleting the function would break a build for a reason
+ * that has nothing to do with the change. It goes when the test that pins it goes — together, in one
+ * change, by whoever owns both. DO NOT CALL IT: the join path is [designWorkshopJoinAskingMessage]
+ * and `dwJoinDesignWorkshop`.
+ *
+ * Everything below this line is the argument as it stood, kept because the reversal is only legible
+ * beside it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────────────────
+ *
  * What to say when a design-workshop code is READ SUCCESSFULLY and this build still cannot act on it.
  *
  * A DIFFERENT SITUATION FROM [unresolvedWorkshopCodeMessage], AND THE DIFFERENCE IS WHOSE LIMIT IT
@@ -789,6 +1128,91 @@ fun designWorkshopCodeNotOpenableMessage(): String =
         "opened from the design workshop list. If a colleague has just shared this one with you and " +
         "it is not in your list yet, only an admin can add you to it, so send them the code and ask " +
         "to be put on it."
+
+/**
+ * What to say the moment a design-workshop card has been read and the ask is going out.
+ *
+ * A TRANSIENT SENTENCE AND THE ONLY ONE THIS FILE WRITES ABOUT JOINING. The sentence a designer is
+ * LEFT with comes from the server — `design_workshop_access.py`'s `RECEIVED_DETAIL`, shown as given,
+ * for the reason that module states at length: one reply for all seven of its outcomes, because a
+ * confirmation that varied by outcome would let anybody read the existence of a workshop off the
+ * wording. This one covers the second in between.
+ *
+ * IT DOES NOT SAY THE WORKSHOP EXISTS and it does not say anybody has been asked yet. It says what
+ * the card IS and what is happening — both of which are true whatever the id turns out to name.
+ *
+ * IT ALSO DOES NOT SAY "OPENING THE WORKSHOP". Being put on a workshop is not the same act as
+ * opening one, an admin still has to decide, and a sentence that blurred the two would leave a
+ * designer waiting for a screen that is not coming.
+ */
+fun designWorkshopJoinAskingMessage(): String =
+    "That card is for a design workshop. Asking to be put on it…"
+
+/**
+ * What a design workshop's own card is FOR, printed and on screen beside the symbol.
+ *
+ * ── THE ONE RECORD TYPE WHOSE CODE IS ABOUT PEOPLE ────────────────────────────────────────────
+ *
+ * Every other code in this grammar NAMES a record. A design workshop's code is the one somebody is
+ * handed in order to be let in, so it is the one whose card needs a sentence about what happens
+ * next — and the two halves of that sentence are the two things a designer holding it gets wrong.
+ *
+ * FIRST HALF: SCANNING **THIS** CARD ASKS, IT DOES NOT ADMIT. An administrator decides. Saying so on
+ * the card is what stops somebody scanning it, seeing nothing appear, and scanning it again.
+ *
+ * ⚠ AND IT NOW HAS TO SAY WHICH CARD IT IS TALKING ABOUT, because a card that DOES admit exists:
+ * [designWorkshopJoinCardPurposeMessage]. Both are printed for the same workshop and both are a
+ * square of black and white to whoever is holding one, so a sentence that did not name the
+ * difference would be read as a statement about the other card half the time — describing a live
+ * credential as "not a password", or describing an induction as a request nobody will answer.
+ *
+ * SECOND HALF: THE CODE IS NOT A KEY AND MUST NEVER BE DESCRIBED AS ONE. The four check characters
+ * are FNV-1a over the payload and the algorithm ships in every browser, so — in
+ * `design_workshop_access.py`'s own words — "anyone can compute a valid check for any id" and a valid
+ * code is "EVIDENCE for the admin reading the queue and nothing else". A card described as a key is
+ * a card people treat as a secret, and treating a printed line as a secret is how somebody comes to
+ * believe a photograph of it was safe.
+ */
+fun designWorkshopCardPurposeMessage(): String =
+    "This is the workshop's own tag, not a join card. Scanning it asks an administrator to put " +
+        "somebody on the workshop — it does not let them in by itself, and it is not a password: " +
+        "the code is a reference with a check digit, so anybody who has it can only ask, exactly " +
+        "as they could by typing the code. To put somebody on straight away, print a join card " +
+        "below instead."
+
+/**
+ * What a JOIN CARD is for, printed and on screen beside its symbol.
+ *
+ * ── IT IS THE OPPOSITE SENTENCE FROM [designWorkshopCardPurposeMessage], AND THAT IS THE POINT ─
+ *
+ * That one is about the workshop's TAG, which names the workshop and lets somebody ASK. This is
+ * about a card whose 110-bit secret IS the credential: scanning it puts the holder on the workshop
+ * with no administrator in the loop, exactly as if an admin had ticked their name. Printing the two
+ * with the same sentence would be the worst possible outcome — either a real credential described as
+ * harmless, or an induction described as a request nobody will answer.
+ *
+ * ── SO IT SAYS THE THREE THINGS A PERSON HOLDING ONE HAS TO KNOW ──────────────────────────────
+ *
+ *  1. IT LETS SOMEBODY IN. No admin, no waiting, no queue.
+ *  2. IT IS A KEY, SO IT IS SPENT AND IT IS NOT SHAREABLE. One card, one person, by default — and
+ *     "do not photograph it" is said out loud, because a printed line people are told is safe is how
+ *     somebody comes to put a credential in a group chat. The v1 tag's own sentence argues at length
+ *     that a code with a check digit must never be described as a key; this card must never be
+ *     described as anything else.
+ *  3. IT RUNS OUT. A card is good for weeks, not for ever, which is what stops one living in a bag.
+ *
+ * It does NOT promise the scan will succeed. Somebody else may have used the card first, and the
+ * honest answer to that is the server's — see `DwJoinCardOutcome`.
+ */
+fun designWorkshopJoinCardPurposeMessage(): String =
+    "This card lets ONE person onto this workshop, straight away and with no administrator " +
+        "involved. Treat it like a key: hand it to the person it is for, do not photograph it or " +
+        "send it in a message, and do not leave it where it can be copied. Once somebody has used " +
+        "it, it will not let anybody else in, and it stops working after a few weeks."
+
+/** Said before the network is touched, so the panel is not blank while a card is being redeemed. */
+fun designWorkshopJoinCardRedeemingMessage(): String =
+    "That is a join card. Putting you on the workshop…"
 
 // --------------------------------------------------------------------------------------
 // The rows a tag is printed for

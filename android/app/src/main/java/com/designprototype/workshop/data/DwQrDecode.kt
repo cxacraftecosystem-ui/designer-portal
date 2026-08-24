@@ -8,10 +8,16 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
+import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Reading a QR code off a PICTURE — one the camera just took, or one somebody was sent.
@@ -29,19 +35,45 @@ import kotlinx.coroutines.withContext
  * that is now in an office two districts away — in every one of those there is no card to read from,
  * and the app either decodes the picture or the record cannot be opened at all.
  *
- * ── WHAT THE CAMERA PATH IS, AND WHAT IT DELIBERATELY IS NOT ──────────────────────────────────
+ * ── THERE ARE NOW TWO CAMERA PATHS, AND THIS HEADER USED TO SAY THERE WAS ONLY ONE ────────────
  *
- * IT TAKES A PHOTOGRAPH AND DECODES IT. There is no live preview and no frame loop, which means no
- * CameraX (four more artifacts) and no analyser plumbing. That is the same shape
- * `DwIdentityCardControl` already uses for a document held under a lens, on the same handsets, and
- * it works there.
+ * WHAT THIS SECTION SAID UNTIL 2026-08-24, kept so the reversal is legible rather than mysterious:
  *
- * The cost is stated rather than hidden: a live scanner reads a code the moment it lines up, while
- * this needs a deliberate shutter press and gives back a refusal a second later if the frame was
- * poor. What buys that back is the LADDER below — a failed read is retried at full resolution before
- * anybody is told anything — and the fact that retaking a photograph costs two seconds. When a
- * measurement of how long designers actually spend on this exists, which is the condition the
- * decision document names, a live preview is the next thing to add and CameraX is what it costs.
+ *     "IT TAKES A PHOTOGRAPH AND DECODES IT. There is no live preview and no frame loop, which
+ *      means no CameraX (four more artifacts) and no analyser plumbing. … When a measurement of how
+ *      long designers actually spend on this exists, which is the condition the decision document
+ *      names, a live preview is the next thing to add and CameraX is what it costs."
+ *
+ * CameraX has been added and a live preview exists — `ui/DwQrLiveScanner.kt`, four artifacts,
+ * 2,059,824 measured AAR bytes. What reopened it was NOT the measurement that clause asked for. It
+ * was a defect the still path cannot fix at all: `ActivityResultContracts.TakePicture()` hands off
+ * to the SYSTEM camera app, which reopens whatever lens it last used, so designers were met by the
+ * FRONT camera and the lens cannot be forced through that contract. A live preview bound with an
+ * explicit `CameraSelector.DEFAULT_BACK_CAMERA` is chosen by this app, per bind, and cannot drift.
+ *
+ * THE STILL PATH IS NOT REPLACED AND MUST NOT BE. It is the live scanner's own fallback in four
+ * situations, each of which really happens: the camera permission is refused; the handset reports no
+ * rear lens; `bindToLifecycle` throws or the camera is held by another app; and the live loop has
+ * been looking at a code for twenty seconds without reading it — where a full-resolution still and
+ * [DW_QR_SAMPLE_LADDER] are genuinely better than another thirty frames of the same blur. The
+ * PICKED-image path is not a fallback for anything and is the one route a typed code cannot replace
+ * — see the paragraph above.
+ *
+ * ── WHAT THE LIVE PATH SHARES WITH THIS ONE, AND THE ONE HINT IT DELIBERATELY DROPS ───────────
+ *
+ * Same library, same `POSSIBLE_FORMATS = [QR_CODE]` narrowing, same parser afterwards
+ * ([decodeWorkshopCode]) — so a payment QR is refused by one sentence however it arrived. The one
+ * divergence is TRY_HARDER, which is ON here and OFF on the live path. The reason is in this file's
+ * own words below: it "costs milliseconds on a still picture that is already in memory". At thirty
+ * frames a second those milliseconds ARE the frame budget, and the next frame is a better retry
+ * than a harder look at this one. A still picture gets no next frame, so it keeps the flag.
+ *
+ * The live path's pure half lives at the bottom of THIS file — [dwQrCropInBuffer],
+ * [dwQrCompactLuminance] and [DwQrLiveDecoder] — for the reason the ladder is pure: so it can be
+ * asserted on a machine with no handset. `DwQrLiveFrameTest` pushes symbols made by this app's own
+ * [DwQrEncode] through the live decoder over a synthetic Y plane whose row stride is deliberately
+ * wider than its width, which is the shape a real handset hands over and the one a naive
+ * implementation gets wrong.
  *
  * ── THE LADDER, AND WHY A FIRST FAILURE IS NOT AN ANSWER ──────────────────────────────────────
  *
@@ -302,3 +334,379 @@ suspend fun dwReadQrPicture(
             DwQrReadResult.Unreadable(error.message?.takeIf { it.isNotBlank() } ?: DW_QR_UNREADABLE_PICTURE)
         }
     )
+
+// ======================================================================================
+// THE LIVE PATH — the pure half
+// ======================================================================================
+
+/**
+ * Reading a QR out of a CAMERA FRAME rather than out of a file: everything below this line.
+ *
+ * ── WHY IT IS IN THIS FILE AND NOT IN A NEW ONE ───────────────────────────────────────────────
+ *
+ * It was designed as `data/DwQrFrame.kt` and it is here instead for one reason worth writing down:
+ * the wave that added the live scanner owns this file and may not create new files under `data/`.
+ * NOTHING ELSE ARGUES FOR THE SPLIT ANYWAY — the still path and the live path are one decoder with
+ * two front doors, they share the QR_CODE narrowing and the "hand the raw text to
+ * [decodeWorkshopCode] and judge nothing here" rule, and the one place they differ (TRY_HARDER) is
+ * an argument that reads better beside the flag it is about than in a second file. If a later wave
+ * does split them, move the whole block and keep the header's cross-references.
+ *
+ * ── PURE, AND WHY THAT IS THE WHOLE POINT ─────────────────────────────────────────────────────
+ *
+ * Not one line below touches an Android class. `ImageProxy`, `ImageAnalysis` and the lens live in
+ * `ui/DwQrLiveScanner.kt`; what arrives here is a [java.nio.ByteBuffer] of luminance, two strides
+ * and a rectangle. `IdentityCardRecognizer`'s header states the limit that makes this matter: ML Kit
+ * "cannot run in a JVM unit test … every claim about recognition ACCURACY is therefore a hardware
+ * claim that has not been made yet". ZXing is pure Java, so the two things a live scanner actually
+ * gets wrong — the row stride, and the correspondence between the box drawn on screen and the region
+ * the decoder looks at — are both asserted on this machine, on every build, by `DwQrLiveFrameTest`.
+ *
+ * WHAT IS STILL A HARDWARE CLAIM AND IS NOT MADE ANYWHERE: whether ZXing reads a bent card in
+ * courtyard light off a live frame. `build.gradle.kts` records that as the accepted regression
+ * against ML Kit and it is unchanged by any of this.
+ */
+
+/** A rectangle in whole pixels of a camera buffer. Half-open: [left, left + width). */
+data class DwQrCrop(val left: Int, val top: Int, val width: Int, val height: Int) {
+    internal val right: Int get() = left + width
+    internal val bottom: Int get() = top + height
+    internal val isEmpty: Boolean get() = width <= 0 || height <= 0
+}
+
+/**
+ * A rectangle as FRACTIONS of the box a designer is looking at — 0 at the left/top edge, 1 at the
+ * right/bottom.
+ *
+ * Fractions and not pixels, because the box on screen and the buffer under it are two different
+ * resolutions and the scanner must never have to know both. See [dwQrCropInBuffer].
+ */
+data class DwQrFraction(val left: Float, val top: Float, val right: Float, val bottom: Float)
+
+/**
+ * How far outside the drawn reticle the decoder still looks, as a fraction of the reticle's own side.
+ *
+ * NOT DECORATION, AND NOT GENEROSITY EITHER — it is the answer to the one failure in a live scanner
+ * that is INVISIBLE. If the region the decoder reads is even slightly smaller than the box drawn on
+ * screen, a designer lines a code up perfectly inside a box the app is not looking at, and nothing
+ * anywhere reports it: the code simply does not read, which is indistinguishable from a bad card.
+ * Every rounding in [dwQrCropInBuffer] is therefore outward and the rectangle is inflated by this
+ * much first, so "inside the box" is always inside the crop and never merely nearly inside it.
+ *
+ * The cost of the margin is the opposite failure and it is bounded and benign: the binarizer sees a
+ * little courtyard around the card. 12% of a reticle that is itself a fraction of the frame is
+ * nothing beside the whole-frame decode this replaces.
+ */
+const val DW_QR_RETICLE_MARGIN: Float = 0.12f
+
+/**
+ * The smallest crop worth decoding, in pixels on a side.
+ *
+ * `DwQrDecodeTest` measures the reader's floor at TWO pixels per module and the largest symbol this
+ * app prints is version 6 at 41 modules, so 82 pixels is the arithmetic floor. 96 is that with a
+ * little room, and below it the honest answer is to decode the whole displayed rectangle instead —
+ * slower, never wrong — rather than to hand ZXing a crop it cannot resolve a module in.
+ */
+private const val DW_QR_MIN_CROP: Int = 96
+
+/**
+ * Where in a camera buffer the box drawn on screen actually is.
+ *
+ * ── THE PROBLEM THIS SOLVES ───────────────────────────────────────────────────────────────────
+ *
+ * Three coordinate spaces are in play and they are all different. The designer sees a Compose box
+ * with a reticle in it. The buffer handed to the analyser is some other resolution entirely
+ * ([bufferWidth] × [bufferHeight]). And the part of that buffer the viewfinder is actually SHOWING is
+ * [displayed] — `ImageProxy.getCropRect()`, which CameraX fills in from the `ViewPort` the use cases
+ * were bound with, so that what the preview shows and what the analyser receives are the same
+ * picture. Without that ViewPort those two are allowed to differ and this function would be a guess;
+ * `DwQrLiveScanner` binds one for exactly this reason and nothing else.
+ *
+ * ── WHY NOT THE COORDINATE TRANSFORMER ────────────────────────────────────────────────────────
+ *
+ * `viewfinder-compose` hands over a surface-to-view `Matrix` and inverting it is the textbook route.
+ * It is NOT used, deliberately, and the reason is what happens when it is wrong: the matrix maps into
+ * the PREVIEW stream, the analyser reads a DIFFERENT stream, and a mismatch produces a crop in the
+ * wrong place that reports nothing at all — the invisible failure again, on a repository with no
+ * handset to notice it on. Fractions of the displayed rectangle plus [DW_QR_RETICLE_MARGIN] need no
+ * matrix, are exact for a reticle expressed against the same box the viewfinder fills, and are
+ * asserted here on the JVM. The transformer is the better answer the day somebody can hold a phone.
+ *
+ * ── THE ROTATION, WHICH IS THE ONLY GENUINELY SUBTLE PART ─────────────────────────────────────
+ *
+ * The buffer is NEVER rotated — rotating a 1280×720 luminance plane per frame is the most expensive
+ * line in a naive implementation and buys nothing, because ZXing's finder-pattern search is
+ * rotation-invariant for QR. So rotation enters HERE and nowhere else: [rotationDegrees] is how far
+ * clockwise the buffer is turned to become the picture on screen, and this maps a rectangle back the
+ * other way. A centred square reticle comes out the same under all four angles, which is exactly why
+ * the test uses an OFF-CENTRE rectangle — a centred one would pass with the rotation ignored.
+ *
+ * @return the rectangle to decode, or null when the answer cannot be computed honestly. NULL MEANS
+ *   "decode the whole displayed rectangle", never "guess" — see [DW_QR_MIN_CROP].
+ */
+fun dwQrCropInBuffer(
+    reticle: DwQrFraction,
+    displayed: DwQrCrop,
+    rotationDegrees: Int,
+    bufferWidth: Int,
+    bufferHeight: Int,
+    margin: Float = DW_QR_RETICLE_MARGIN,
+): DwQrCrop? {
+    if (bufferWidth <= 0 || bufferHeight <= 0) return null
+    // The displayed rectangle has to be a real part of the buffer. A camera implementation that
+    // reported one outside it would otherwise be trusted into an ArrayIndexOutOfBounds two functions
+    // later, in a frame callback, on a handset.
+    if (displayed.isEmpty) return null
+    if (displayed.left < 0 || displayed.top < 0) return null
+    if (displayed.right > bufferWidth || displayed.bottom > bufferHeight) return null
+    if (rotationDegrees != 0 && rotationDegrees != 90 && rotationDegrees != 180 && rotationDegrees != 270) return null
+
+    val safeMargin = if (margin.isFinite() && margin >= 0f) margin else 0f
+    val inflated = reticle.inflated(safeMargin) ?: return null
+    val inBuffer = inflated.unrotated(rotationDegrees)
+
+    // OUTWARD ON EVERY EDGE — floor the near edges, ceil the far ones. Rounding to nearest would put
+    // the crop half a pixel inside the drawn box on two edges out of four, which is the whole class
+    // of error the margin above exists to make impossible.
+    val left = displayed.left + floor(inBuffer.left * displayed.width).toInt()
+    val top = displayed.top + floor(inBuffer.top * displayed.height).toInt()
+    val right = displayed.left + ceil(inBuffer.right * displayed.width).toInt()
+    val bottom = displayed.top + ceil(inBuffer.bottom * displayed.height).toInt()
+
+    val clampedLeft = left.coerceIn(displayed.left, displayed.right)
+    val clampedTop = top.coerceIn(displayed.top, displayed.bottom)
+    val clampedRight = right.coerceIn(clampedLeft, displayed.right)
+    val clampedBottom = bottom.coerceIn(clampedTop, displayed.bottom)
+
+    val width = clampedRight - clampedLeft
+    val height = clampedBottom - clampedTop
+    if (width < DW_QR_MIN_CROP || height < DW_QR_MIN_CROP) return null
+    // A crop that is the whole picture is not worth the arithmetic — say so by answering null and
+    // letting the caller read the displayed rectangle it already has.
+    if (width >= displayed.width && height >= displayed.height) return null
+    return DwQrCrop(clampedLeft, clampedTop, width, height)
+}
+
+/** This rectangle grown by [margin] of its own side on every edge, clamped to the unit square. */
+private fun DwQrFraction.inflated(margin: Float): DwQrFraction? {
+    if (!left.isFinite() || !top.isFinite() || !right.isFinite() || !bottom.isFinite()) return null
+    if (right <= left || bottom <= top) return null
+    val growX = (right - left) * margin
+    val growY = (bottom - top) * margin
+    return DwQrFraction(
+        left = (left - growX).coerceIn(0f, 1f),
+        top = (top - growY).coerceIn(0f, 1f),
+        right = (right + growX).coerceIn(0f, 1f),
+        bottom = (bottom + growY).coerceIn(0f, 1f),
+    )
+}
+
+/**
+ * This rectangle, read in SCREEN space, expressed in the UNROTATED buffer's own space.
+ *
+ * [rotationDegrees] is clockwise, buffer to screen, so this applies the inverse. Derived rather than
+ * copied: take a point (u, v) in the buffer's unit square and ask where a clockwise turn puts it.
+ *
+ *  * 90 degrees — the buffer's top-left corner ends up top-RIGHT, so screen = (1 − v, u), and
+ *    inverting that gives u = screenY, v = 1 − screenX.
+ *  * 180 degrees — screen = (1 − u, 1 − v), which is its own inverse.
+ *  * 270 degrees — the buffer's top-left ends up bottom-LEFT, so screen = (v, 1 − u), inverting to
+ *    u = 1 − screenY, v = screenX.
+ *
+ * The min/max wrappers are not defensive padding: two of the three cases flip an axis, which swaps
+ * which of the pair is the smaller number, and a rectangle whose left exceeds its right is the sort
+ * of thing that produces a negative width four lines later.
+ */
+private fun DwQrFraction.unrotated(rotationDegrees: Int): DwQrFraction = when (rotationDegrees) {
+    90 -> DwQrFraction(left = top, top = 1f - right, right = bottom, bottom = 1f - left).ordered()
+    180 -> DwQrFraction(left = 1f - right, top = 1f - bottom, right = 1f - left, bottom = 1f - top).ordered()
+    270 -> DwQrFraction(left = 1f - bottom, top = left, right = 1f - top, bottom = right).ordered()
+    else -> this.ordered()
+}
+
+private fun DwQrFraction.ordered(): DwQrFraction = DwQrFraction(
+    left = min(left, right),
+    top = min(top, bottom),
+    right = max(left, right),
+    bottom = max(top, bottom),
+)
+
+/**
+ * Copy the luminance of [crop] out of a camera plane into a tightly packed byte array.
+ *
+ * ── ROW STRIDE IS THE BUG EVERY IMPLEMENTATION OF THIS HAS ────────────────────────────────────
+ *
+ * `Image.Plane.getRowStride()` is the number of bytes from the start of one row to the start of the
+ * next, and it is at least the width — on a great many handsets it is strictly greater, because the
+ * capture buffer is padded to an alignment. Treating the plane as tightly packed produces an image
+ * sheared a few pixels further to the left on every row, which decodes to NOTHING on those handsets
+ * and perfectly on the ones where the stride happens to equal the width. That is the worst shape a
+ * defect can have in this repository: correct on the machine of whoever wrote it, silent in a
+ * courtyard. `DwQrLiveFrameTest` therefore builds its synthetic plane with a stride WIDER than its
+ * width, and would pass with a tightly-packed reader only if that padding were removed.
+ *
+ * `pixelStride` is 1 on the Y plane of every YUV_420_888 device anybody here has read about, and is
+ * honoured anyway — because "every device anybody has read about" is not a claim this machine can
+ * check, and the loop costs the same either way.
+ *
+ * ── ABSOLUTE INDEXING, AND ONE ALLOCATION-FREE BUFFER ─────────────────────────────────────────
+ *
+ * `ByteBuffer.get(index)` rather than the relative `get()`, so this neither reads nor moves the
+ * buffer's position and can be called twice on one frame without a rewind. [into] is supplied by the
+ * caller and REUSED across frames: at thirty frames a second a fresh array per frame is a megabyte a
+ * second of garbage on a handset that is also holding Compose and a workshop draft.
+ *
+ * @return false when the arguments do not describe a readable region — a short buffer, a crop
+ *   outside it, or an [into] too small. FALSE IS NOT AN ERROR; it is the analyser's cue to skip this
+ *   frame, and the next one arrives in 33 ms.
+ */
+fun dwQrCompactLuminance(
+    source: ByteBuffer,
+    rowStride: Int,
+    pixelStride: Int,
+    crop: DwQrCrop,
+    into: ByteArray,
+): Boolean {
+    if (crop.isEmpty || crop.left < 0 || crop.top < 0) return false
+    if (rowStride <= 0 || pixelStride <= 0) return false
+    if (into.size < crop.width * crop.height) return false
+    // The last byte this would read, computed before reading any of them. A frame whose buffer is
+    // shorter than its own strides claim is a frame to drop, not a frame to crash on.
+    val lastIndex = (crop.bottom - 1).toLong() * rowStride + (crop.right - 1).toLong() * pixelStride
+    if (lastIndex >= source.capacity().toLong()) return false
+
+    var out = 0
+    for (row in crop.top until crop.bottom) {
+        var index = row * rowStride + crop.left * pixelStride
+        var column = 0
+        while (column < crop.width) {
+            into[out++] = source.get(index)
+            index += pixelStride
+            column++
+        }
+    }
+    return true
+}
+
+/**
+ * ZXing on one live frame — QR only, TRY_HARDER off, one reader and no allocation per call.
+ *
+ * ── A SHARED READER, WHICH THE FILE ABOVE ARGUES AGAINST, AND WHY IT IS RIGHT HERE ────────────
+ *
+ * `ZxingQrImageDecoder.decodeBitmap` says "MultiFormatReader is NOT shared between calls … this can
+ * be entered from two surfaces at once (a scan running while a paste is decoded)". Both halves of
+ * that are true of the STILL path and neither is true here. An `ImageAnalysis` analyser is invoked
+ * serially on one executor, and one instance of this class belongs to one analyser and outlives no
+ * scanner — so there is exactly one caller, and the alternative is thirty reader constructions a
+ * second. A CLASS and not an `object` is what keeps that promise: an `object` would be shared across
+ * two scanners the day a second one is mounted, which is the very hazard the still path names.
+ *
+ * ── TRY_HARDER IS OFF, WHICH IS THE ONE PLACE THE TWO PATHS DIVERGE ───────────────────────────
+ *
+ * The still path's own comment gives the reason to keep it there and to drop it here: it "costs
+ * milliseconds on a still picture that is already in memory", and at thirty frames a second those
+ * milliseconds are the frame budget. The next frame is the retry, and it is a better one — the hand
+ * has moved, the focus has settled, the glare is somewhere else.
+ *
+ * PURE JAVA ALL THE WAY DOWN, so `DwQrLiveFrameTest` runs the real shipping decoder on the desktop.
+ */
+class DwQrLiveDecoder {
+
+    private val reader = MultiFormatReader().apply {
+        setHints(
+            mapOf(
+                // The same narrowing the still path makes, for the same reason it gives: every other
+                // symbology ZXing can read is something a designer might point a phone at BY MISTAKE,
+                // and the honest answer for a courier label is "no QR code", not "not a workshop code".
+                DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+            )
+        )
+    }
+
+    /** One reusable buffer for the compacted crop, grown only when a bigger crop arrives. */
+    private var scratch = ByteArray(0)
+
+    /** A byte array of at least [size] bytes, reused between frames. */
+    fun luminanceBuffer(size: Int): ByteArray {
+        if (size <= 0) return ByteArray(0)
+        if (scratch.size < size) scratch = ByteArray(size)
+        return scratch
+    }
+
+    /**
+     * The QR payload in [luminance], or null — which is the ORDINARY answer, thirty times a second,
+     * for every frame that does not happen to contain a code.
+     *
+     * [luminance] may be longer than `width * height`; only the first `width * height` bytes are
+     * read, which is what lets [luminanceBuffer] hand back one oversized array for a whole session.
+     */
+    fun decode(luminance: ByteArray, width: Int, height: Int): String? {
+        if (width <= 0 || height <= 0) return null
+        if (luminance.size < width * height) return null
+        val source = PlanarYUVLuminanceSource(
+            luminance,
+            width,
+            height,
+            0,
+            0,
+            width,
+            height,
+            // No mirroring. The BACK lens is bound explicitly and its frames are not mirrored; a
+            // front-lens fallback is not mirrored in the BUFFER either — only the preview is — so
+            // flipping here would break the one case it looks like it is for.
+            false,
+        )
+        val text = runCatching { reader.decodeWithState(BinaryBitmap(HybridBinarizer(source))).text }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+        // `reset()` after every attempt, hit or miss: the reader caches per-image state and this
+        // instance is about to be handed the next frame.
+        runCatching { reader.reset() }
+        return text
+    }
+}
+
+/**
+ * How much of the shorter side of the viewfinder the reticle occupies.
+ *
+ * 0.72 rather than something smaller, for a reason that is about paper rather than taste: the cards
+ * this app prints are cut to 26mm and are read at arm's length, so a small central square would ask a
+ * designer to bring a 26mm card within a few centimetres of the lens — inside the minimum focus
+ * distance of most of this fleet. A generous box is a box a designer can actually fill IN FOCUS.
+ */
+const val DW_QR_RETICLE_SIDE_FRACTION = 0.72f
+
+/**
+ * The reticle as fractions of the viewfinder box: a centred square on the shorter side.
+ *
+ * IT LIVES HERE AND NOT IN `ui/DwQrLiveScanner.kt`, WHICH IS WHERE IT IS USED, for one reason: a
+ * JVM test must be able to load the class that holds it, and the scanner's file facade carries
+ * top-level properties that touch Android types. Beside the crop arithmetic it pairs with, it can
+ * be asserted on the desktop — which is the whole point of it being a function at all.
+ *
+ * PURE, AND THAT IS THE WHOLE REASON IT IS A FUNCTION. This one value is read by exactly two
+ * consumers — the Canvas that DRAWS the box and the analyser that CROPS to it — and if they ever
+ * disagree the failure is invisible: a designer lines a code up inside a box the app is not looking
+ * at, and the code simply does not read. One pure function, one call site per frame, and
+ * `DwQrLiveFrameTest` asserts the correspondence end to end.
+ *
+ * @return null when the box has not been measured yet. The analyser reads that as "no reticle", which
+ *   means decode the whole frame — slower, never wrong. It must NEVER mean "guess a rectangle".
+ */
+fun dwQrReticleFraction(
+    boxWidth: Int,
+    boxHeight: Int,
+    sideFraction: Float = DW_QR_RETICLE_SIDE_FRACTION,
+): DwQrFraction? {
+    if (boxWidth <= 0 || boxHeight <= 0) return null
+    if (!sideFraction.isFinite() || sideFraction <= 0f || sideFraction > 1f) return null
+    val side = minOf(boxWidth, boxHeight) * sideFraction
+    val halfWidthFraction = (side / 2f) / boxWidth
+    val halfHeightFraction = (side / 2f) / boxHeight
+    return DwQrFraction(
+        left = (0.5f - halfWidthFraction).coerceIn(0f, 1f),
+        top = (0.5f - halfHeightFraction).coerceIn(0f, 1f),
+        right = (0.5f + halfWidthFraction).coerceIn(0f, 1f),
+        bottom = (0.5f + halfHeightFraction).coerceIn(0f, 1f),
+    )
+}

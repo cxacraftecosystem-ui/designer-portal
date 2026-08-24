@@ -71,6 +71,31 @@ class _Viewers:
         return list(self.rows)
 
 
+class _Provisional:
+    """The provisional-foothold delegate, and it is ALWAYS EMPTY here.
+
+    ``decide`` clears a capture-only foothold on both arms — a grant promotes the person, a refusal
+    has to actually take the foothold away or the refusal is a lie on the screen. Neither is what
+    THIS module is about, so the delegate exists to be reached and to answer "there was nothing to
+    clear", which is the ordinary case: somebody an admin is deciding who never scanned a spent card.
+
+    It records what it was asked to delete anyway, because a ``delete_many`` here whose ``where`` had
+    drifted off the (workshop, requester) pair would be silently deleting the wrong person's
+    foothold, and that is worth one assertion in the module that owns the behaviour
+    (``test_design_workshop_provisional_isolation``) plus a place to look here.
+    """
+
+    def __init__(self) -> None:
+        self.deletes: list[dict[str, Any]] = []
+
+    async def find_many(self, where: dict[str, Any]) -> list[Any]:
+        return []
+
+    async def delete_many(self, where: dict[str, Any]) -> int:
+        self.deletes.append(dict(where))
+        return 0
+
+
 def _row(*, requester_role: str, status: str = "PENDING") -> SimpleNamespace:
     """One queue row as ``find_unique(..., include=_QUEUE_INCLUDE)`` hands it back."""
     return SimpleNamespace(
@@ -80,6 +105,12 @@ def _row(*, requester_role: str, status: str = "PENDING") -> SimpleNamespace:
         status=status,
         source="SCAN",
         scannedCode="DPW1:G:CMDECIDEGUARD00000000000A:AAAA",
+        # The two columns a redemption writes. NULL here on purpose: this row is a v1 RECORD-tag ask
+        # typed by a person, which is what these tests are about, and a join card's redemption is a
+        # different module's subject. They are present rather than absent because `request_payload`
+        # projects the row it is given and a missing column is a 500 on an admin screen.
+        tokenId=None,
+        scannedAt=None,
         note="Rekha asked me",
         createdAt=datetime.now(UTC),
         decidedById=None,
@@ -104,7 +135,11 @@ def _decide(monkeypatch: pytest.MonkeyPatch, row: Any, viewers: _Viewers) -> tup
     """
     requests = _Requests(row)
     monkeypatch.setattr(
-        access, "db", SimpleNamespace(designworkshopaccessrequest=requests, designworkshopviewer=viewers)
+        access, "db", SimpleNamespace(
+            designworkshopaccessrequest=requests,
+            designworkshopviewer=viewers,
+            designworkshopprovisionalmember=_Provisional(),
+        )
     )
     result = asyncio.run(
         access.decide(
@@ -132,7 +167,11 @@ def test_a_requester_who_became_an_admin_cannot_be_refused(monkeypatch, role):
     monkeypatch.setattr(
         access,
         "db",
-        SimpleNamespace(designworkshopaccessrequest=requests, designworkshopviewer=_Viewers()),
+        SimpleNamespace(
+            designworkshopaccessrequest=requests,
+            designworkshopviewer=_Viewers(),
+            designworkshopprovisionalmember=_Provisional(),
+        ),
     )
 
     with pytest.raises(HTTPException) as refusal:
@@ -199,7 +238,11 @@ def test_a_requester_who_still_holds_a_viewer_row_cannot_be_refused(monkeypatch)
     monkeypatch.setattr(
         access,
         "db",
-        SimpleNamespace(designworkshopaccessrequest=requests, designworkshopviewer=viewers),
+        SimpleNamespace(
+            designworkshopaccessrequest=requests,
+            designworkshopviewer=viewers,
+            designworkshopprovisionalmember=_Provisional(),
+        ),
     )
 
     with pytest.raises(HTTPException) as refusal:
@@ -227,7 +270,11 @@ def test_the_creator_arm_is_asked_the_same_way(monkeypatch):
     monkeypatch.setattr(
         access,
         "db",
-        SimpleNamespace(designworkshopaccessrequest=requests, designworkshopviewer=_Viewers()),
+        SimpleNamespace(
+            designworkshopaccessrequest=requests,
+            designworkshopviewer=_Viewers(),
+            designworkshopprovisionalmember=_Provisional(),
+        ),
     )
 
     with pytest.raises(HTTPException) as refusal:

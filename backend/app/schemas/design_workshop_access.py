@@ -18,6 +18,8 @@ design workshop is met ONE AT A TIME by scanning the card in front of you. A lis
 way to carry the per-workshop scanned code that is the entire point of the ask.
 """
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 #: The longest ``scannedCode`` this body will carry.
@@ -59,6 +61,20 @@ class DesignWorkshopAccessRequestIn(BaseModel):
     workshopId: str = Field(min_length=1, max_length=200)
     scannedCode: str | None = Field(default=None, max_length=MAX_SCANNED_CODE)
     note: str | None = Field(default=None, max_length=MAX_NOTE)
+    #: When the DEVICE says the code was scanned, in UTC. Optional, and untrusted.
+    #:
+    #: The redemption path already records this; the ASK path was carrying it as a SENTENCE inside
+    #: ``note``, which an admin can read and nothing can sort, compare or age. A designer who scans a
+    #: card in a courtyard with no signal and syncs two days later files a request that looks, to the
+    #: queue, like it was made on the day it arrived.
+    #:
+    #: IT IS EVIDENCE AND NEVER AUTHORITY, exactly as ``scannedCode`` is. A handset clock is settable
+    #: by its holder, so this may not order two asks against each other and may not decide who was
+    #: first at anything — ``createdAt``, written by the server on arrival, is the only clock that
+    #: adjudicates. What this buys is an admin reading the queue being able to see that an ask is
+    #: older than its arrival, which is the difference between "this person waited two days" and
+    #: "this person asked just now".
+    scannedAt: datetime | None = None
 
 
 class DesignWorkshopAccessDecisionIn(BaseModel):

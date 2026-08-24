@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -37,12 +38,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.designprototype.workshop.data.DwDecodeResult
 import com.designprototype.workshop.data.DwWorkshopCodeRef
 import com.designprototype.workshop.data.DwWorkshopRecordType
+import com.designprototype.workshop.data.DwWorkshopScan
 import com.designprototype.workshop.data.WorkshopRepository
-import com.designprototype.workshop.data.decodeWorkshopCode
-import com.designprototype.workshop.data.designWorkshopCodeNotOpenableMessage
+import com.designprototype.workshop.data.designWorkshopJoinAskingMessage
+import com.designprototype.workshop.data.designWorkshopJoinCardRedeemingMessage
+import com.designprototype.workshop.data.readWorkshopScan
 import com.designprototype.workshop.data.unresolvedWorkshopCodeMessage
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
@@ -83,6 +85,25 @@ import retrofit2.HttpException
  * ZXing (0.58 MB, pure Java, no Play Services) is the dependency, which is what
  * `docs/DECISION-qr-scanning-on-android.md` decided in the first place and never built.
  *
+ * ── AND THE CAMERA IS NOW A LIVE ONE, WHICH FIXED A DEFECT RATHER THAN ADDING A FLOURISH ────
+ *
+ * [DwQrLiveScanControl] sits above [DwQrScanControl] on this panel. The reason is not that a live
+ * preview is nicer: `ActivityResultContracts.TakePicture()` hands off to the SYSTEM camera app,
+ * which reopens whatever lens IT last used, so pressing "Scan a code" showed designers the FRONT
+ * camera and no argument to that contract can change it. `DwQrLiveScanner` binds
+ * `CameraSelector.DEFAULT_BACK_CAMERA` explicitly, per bind.
+ *
+ * BOTH OF THE OLD BUTTONS ARE STILL HERE AND STILL UNCHANGED. The photograph is the better tool for
+ * a small or dim code — it decodes at full resolution and walks `DW_QR_SAMPLE_LADDER` — and the
+ * picked picture is the route nothing else replaces. Three doors, and the typed box below them is
+ * the fourth.
+ *
+ * ── AND A SCANNED DESIGN-WORKSHOP CARD NOW DOES SOMETHING ───────────────────────────────
+ *
+ * It used to be answered by `designWorkshopCodeNotOpenableMessage()`, which said this build could not
+ * act on it. It can: `POST /design-workshop-access/requests` was shipped with no client, and
+ * `ui/DwWorkshopJoin.kt` is now that client. See [RecordCodeOutcome.Join].
+ *
  * THE TYPED BOX IS STILL THE GUARANTEED PATH and is still never hidden. It needs no permission, no
  * lens and no library, and it is the only route that works on a card whose QR is smudged while the
  * characters printed under it are not.
@@ -107,6 +128,22 @@ sealed interface RecordCodeOutcome {
     data class Found(val ref: DwWorkshopCodeRef, val hit: RecordCodeHit) : RecordCodeOutcome
 
     data class Refused(val message: String) : RecordCodeOutcome
+
+    /**
+     * A DESIGN-WORKSHOP card, which is the one code in this grammar that is about PEOPLE rather than
+     * about a record.
+     *
+     * A MARKER AND NOT A MESSAGE, deliberately. [lookUpRecordCode] is a suspend function with a
+     * repository and nothing else — no Android context, no scope — and the join path needs a context
+     * (a queue on disk, a connectivity check, a fresh token). So this arm carries the workshop id and
+     * the CALLER performs the act. Both callers are screens that have a context; putting the act
+     * behind this function would have meant widening a signature that fourteen other record types are
+     * perfectly served by.
+     *
+     * It also keeps the anti-enumeration discipline intact by construction: this outcome says nothing
+     * at all about whether the workshop exists, because nothing has been asked yet.
+     */
+    data class Join(val workshopId: String) : RecordCodeOutcome
 }
 
 /** Join the parts of a supporting line, dropping the ones this record does not carry. */
@@ -157,23 +194,27 @@ suspend fun lookUpRecordCode(repository: WorkshopRepository, ref: DwWorkshopCode
             // the grammar with the browser's workshop card, and the compiler stopped here rather than
             // letting a `G` code fall into somebody else's branch.
             //
-            // IT REFUSES INSTEAD OF RESOLVING, and that is a decision rather than a stub.
-            // `repository.designWorkshop(id)` would answer perfectly well and this panel would then
-            // show a title and an Open button — but Open reports through `onOpen(recordType.wire, id)`
-            // into `MainActivity.searchRecordEntryMode`, whose `else` is `EntryMode.ARTISAN`. A
-            // designer who scanned a workshop card would be shown the right workshop and then handed
-            // its id AS AN ARTISAN, which is the wrong-record failure this whole feature exists to
-            // remove, arriving one press after a correct scan. Routing a scanned workshop to the
-            // workshop it names is real work in `MainActivity` and is not done here.
+            // IT USED TO REFUSE, AND THE REFUSAL WAS THE FEATURE'S DEAD END. The clause that stood
+            // here read: "IT REFUSES INSTEAD OF RESOLVING, and that is a decision rather than a
+            // stub — `repository.designWorkshop(id)` would answer perfectly well and this panel would
+            // then show a title and an Open button, but Open reports through `onOpen(...)` into
+            // `MainActivity.searchRecordEntryMode`, whose `else` is `EntryMode.ARTISAN`", so a
+            // scanned workshop would have been opened AS AN ARTISAN one press later. That reasoning
+            // is still entirely correct — and it was an argument against OPENING the workshop, which
+            // was never what a person handed this card wants. They want to be ON it.
             //
-            // THE WORDS ARE NOT WRITTEN HERE, deliberately: every sentence a code can produce lives in
-            // `DwWorkshopCodes` next to the grammar it is about, because each one has to be argued
-            // against the browser's copy and pinned to it. This one names what this BUILD cannot do
-            // and never claims the workshop exists — see [designWorkshopCodeNotOpenableMessage],
-            // which also explains why it is not `unresolvedWorkshopCodeMessage`: nothing was asked
-            // here, so "no design workshop you can open matches that code" would not be true.
-            DwWorkshopRecordType.DESIGN_WORKSHOP ->
-                return RecordCodeOutcome.Refused(designWorkshopCodeNotOpenableMessage())
+            // SO IT ASKS. `POST /design-workshop-access/requests` has been shipped the whole time
+            // with no client on any surface; `ui/DwWorkshopJoin.kt` is now that client. Nothing here
+            // opens anything, so the `EntryMode.ARTISAN` trap is not merely avoided — it is not on
+            // this path at all.
+            //
+            // NO SENTENCE IS WRITTEN HERE. [RecordCodeOutcome.Join] carries an id and the caller
+            // performs the act, and the words a designer is left with are the SERVER'S, shown as
+            // given — see `dwJoinDesignWorkshop`. That is not a style choice: the route answers one
+            // sentence for all seven of its outcomes precisely so that nobody can read the existence
+            // of a workshop off the wording, and a client that improved the copy for one branch would
+            // undo it.
+            DwWorkshopRecordType.DESIGN_WORKSHOP -> return RecordCodeOutcome.Join(ref.id)
         }
         RecordCodeOutcome.Found(ref, hit)
     } catch (e: HttpException) {
@@ -203,16 +244,114 @@ fun RecordCodeLookupPanel(
     onOpen: (recordType: String, recordId: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var typed by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var refusal by remember { mutableStateOf<String?>(null) }
     var found by remember { mutableStateOf<RecordCodeOutcome.Found?>(null) }
+    /**
+     * The join path's own answer — rendered in the same panel and never mixed with [found].
+     *
+     * A THIRD SLOT AND NOT A REUSE OF [found], because a join has no record to open: [found] renders
+     * an "Open …" button, and offering one for a workshop nobody has been admitted to yet would be
+     * the same lie the old refusal was written to avoid. It is not [refusal] either — a queued or
+     * accepted ask is not a refusal, and rendering it in the amber box would tell a designer their
+     * card had failed when it had worked.
+     */
+    var joined by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * Whether [joined] describes actual membership, which is the ONE thing that changes its colour.
+     *
+     * FALSE FOR EVERY ASK AND FOR A PROVISIONAL FOOTHOLD, and true only for the server's `FULL` and
+     * `ALREADY_A_MEMBER`. `design_workshop_grants` insists on this in terms: any UI over a provisional
+     * outcome "must keep the state visibly and persistently provisional … and must never dress it as
+     * membership", because somebody can work for days into a workspace that turns out to be nothing.
+     * Green is the strongest thing this panel can say, so it is spent only where it is literally true.
+     */
+    var inducted by remember { mutableStateOf(false) }
+
+    /**
+     * Ask to be put on the workshop a scanned card names.
+     *
+     * WRITTEN DOWN BEFORE THE NETWORK IS TOUCHED, inside `dwJoinDesignWorkshop`. The offline case is
+     * not an error path here: a card is handed over in a courtyard, and the scan plus the time it
+     * happened are kept on the device and sent when signal returns. See `ui/DwWorkshopJoin.kt`.
+     */
+    /**
+     * Redeem a JOIN CARD. **This is an induction, not an ask** — no administrator has to decide.
+     *
+     * THE OTHER HALF OF THE FEATURE, AND IT HAD NO CLIENT AT ALL. `POST
+     * /design-workshop-access/redemptions` shipped complete — single-use seats decided by a
+     * compare-and-swap, a 30-day offline sync grace, a provisional foothold for the late-comer — and
+     * nothing anywhere called it; a genuine `DPW2:J:…` card scanned here was answered "update the app
+     * to read it", against an app that did not exist. See `ui/DwJoinCard.kt`.
+     *
+     * WRITTEN DOWN BEFORE THE NETWORK IS TOUCHED, inside `dwScanJoinCard`, exactly as [join] is: a
+     * card handed over in a courtyard with no signal is queued with the time it happened and sent when
+     * signal returns, and the flush that does that is process-wide rather than tied to this screen.
+     */
+    fun redeemJoinCard(workshopId: String, canonicalCode: String) {
+        busy = true
+        refusal = null
+        found = null
+        inducted = false
+        joined = designWorkshopJoinCardRedeemingMessage()
+        scope.launch {
+            when (val outcome = dwScanJoinCard(context, workshopId, canonicalCode)) {
+                // THE SERVER'S SENTENCE, SHOWN AS GIVEN. Three of its answers are deliberately
+                // distinguishable and three are deliberately identical; rewriting either half here
+                // would undo a decision made on purpose. See `DwJoinCard.kt`.
+                is DwJoinOutcome.Inducted -> {
+                    joined = outcome.message
+                    inducted = outcome.fullMember
+                }
+                is DwJoinOutcome.Queued -> joined = outcome.message
+                is DwJoinOutcome.Refused -> {
+                    joined = null
+                    refusal = outcome.message
+                }
+                // UNREACHABLE ON THIS PATH — `dwScanJoinCard` never asks — and written out rather
+                // than left to an `else` so that a new arm on `DwJoinOutcome` fails the compiler here
+                // instead of falling into a branch somebody else wrote.
+                is DwJoinOutcome.Asked -> joined = outcome.detail
+            }
+            busy = false
+        }
+    }
+
+    fun join(workshopId: String, canonicalCode: String) {
+        busy = true
+        refusal = null
+        found = null
+        inducted = false
+        joined = designWorkshopJoinAskingMessage()
+        scope.launch {
+            when (val outcome = dwJoinDesignWorkshop(context, workshopId, canonicalCode)) {
+                // THE SERVER'S SENTENCE, SHOWN AS GIVEN — see `DwWorkshopJoin.kt`'s rule 1.
+                is DwJoinOutcome.Asked -> joined = outcome.detail
+                is DwJoinOutcome.Queued -> joined = outcome.message
+                is DwJoinOutcome.Refused -> {
+                    joined = null
+                    refusal = outcome.message
+                }
+                // UNREACHABLE ON THIS PATH — the ASK route cannot admit anybody — and written out
+                // rather than left to an `else` so that the compiler, and not a reader, is what
+                // notices if the two paths are ever crossed.
+                is DwJoinOutcome.Inducted -> {
+                    joined = outcome.message
+                    inducted = outcome.fullMember
+                }
+            }
+            busy = false
+        }
+    }
 
     /**
      * Resolve whatever was read or typed — ONE route for both.
      *
-     * A scanned payload goes through [decodeWorkshopCode] exactly as a typed one does. That is the
+     * A scanned payload goes through `readWorkshopScan` exactly as a typed one does. That is the
      * whole reason this takes a string rather than the scanner calling its own resolver: a payment
      * QR photographed by mistake must be refused by the same sentence a mistyped code is, and a
      * second parser is how the two come to disagree about the same card.
@@ -222,15 +361,48 @@ fun RecordCodeLookupPanel(
         busy = true
         // Cleared BEFORE the request, not after it: the seconds a lookup takes are exactly when the
         // previous code's Open button would otherwise still be sitting under this one's spinner, one
-        // press away from opening the wrong record.
+        // press away from opening the wrong record. `joined` is cleared for the same reason and it is
+        // the more dangerous of the two: "an administrator can now see that you have asked to join"
+        // left standing under a second card would be a claim about the wrong workshop.
         refusal = null
         found = null
+        joined = null
         scope.launch {
-            when (val decoded = decodeWorkshopCode(input)) {
-                is DwDecodeResult.Refused -> refusal = decoded.message
-                is DwDecodeResult.Ok -> when (val answer = lookUpRecordCode(repository, decoded.ref)) {
+            // ONE FRONT DOOR FOR BOTH GRAMMARS. `readWorkshopScan` decides by the LETTER whether this
+            // is a code that names a record or a JOIN CARD, and a join card must not reach
+            // `decodeWorkshopCode`: that parser gates on `SUPPORTED_VERSIONS`, so a genuine v2 card
+            // used to be answered "update the app to read it" with no newer app in existence. See
+            // `DwWorkshopCodes.readWorkshopScan` and `DwJoinCard.kt`.
+            when (val scan = readWorkshopScan(input)) {
+                is DwWorkshopScan.Refused -> refusal = scan.message
+                is DwWorkshopScan.JoinCard -> {
+                    // THE CARD IS NOT PUT IN THE BOX, which is the opposite of what the record path
+                    // does one branch down and is deliberate: a join card's payload is a live
+                    // credential, and the box is a visible, screenshot-able, copyable field that also
+                    // survives the next recomposition. A record code is a locator and showing it back
+                    // is a kindness; showing this one back would be leaving a key on the table.
+                    typed = ""
+                    redeemJoinCard(scan.card.workshopId, scan.card.code)
+                    return@launch
+                }
+                is DwWorkshopScan.RecordCode -> when (val answer = lookUpRecordCode(repository, scan.ref)) {
                     is RecordCodeOutcome.Found -> found = answer
                     is RecordCodeOutcome.Refused -> refusal = answer.message
+                    // THE CANONICAL CODE AND NOT WHAT WAS TYPED. `decodeWorkshopCode` returns the
+                    // code re-spelled in its canonical form — upper case, no grouping spaces — and the
+                    // server decodes `scannedCode` with its own copy of this grammar. Sending "dpw1
+                    // g…" as a designer typed it would be refused by a 422 about the body for no
+                    // reason at all.
+                    is RecordCodeOutcome.Join -> {
+                        typed = scan.code
+                        // THE CANONICAL CODE IS PASSED, NOT READ BACK OUT OF `typed`. It is the same
+                        // string a line above, and it would still be a mistake to read it from state:
+                        // the box is also the designer's own field, and a value that travels to the
+                        // server through a text box somebody can be typing in is a value that can
+                        // change between the write and the read.
+                        join(answer.workshopId, scan.code)
+                        return@launch
+                    }
                 }
             }
             busy = false
@@ -266,8 +438,33 @@ fun RecordCodeLookupPanel(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
-            // THE SCANNER ABOVE THE BOX, because it is the faster route when it applies and the box
-            // is what you fall back to. Both are always present; neither is hidden by the other.
+            /*
+             * THE SCANNER ABOVE THE BOX, because it is the faster route when it applies and the box
+             * is what you fall back to. Both are always present; neither is hidden by the other.
+             *
+             * TWO CONTROLS AND NOT ONE, AND THAT IS A WAVE BOUNDARY RATHER THAN A DESIGN. The live
+             * scanner belongs INSIDE `DwQrScanControl` — one control, three surfaces, one refusal
+             * wording, which is that file's own stated rule — and that file is not this wave's to
+             * edit. Mounting it beside the existing control is the additive move: nothing about the
+             * photograph or the picked-picture routes changes, no refusal sentence is duplicated
+             * (`DwQrLiveScanControl` uses `DwCameraRefusal.kt`'s), and the next wave's change is one
+             * call and one deletion.
+             */
+            DwQrLiveScanControl(
+                enabled = !busy,
+                onText = { text ->
+                    typed = text
+                    refusal = null
+                    found = null
+                    joined = null
+                    lookUp(text)
+                },
+                onRefusal = { message ->
+                    found = null
+                    joined = null
+                    refusal = message
+                },
+            )
             DwQrScanControl(
                 enabled = !busy,
                 onText = { text ->
@@ -277,10 +474,12 @@ fun RecordCodeLookupPanel(
                     typed = text
                     refusal = null
                     found = null
+                    joined = null
                     lookUp(text)
                 },
                 onRefusal = { message ->
                     found = null
+                    joined = null
                     refusal = message
                 },
             )
@@ -320,6 +519,45 @@ fun RecordCodeLookupPanel(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
+
+            /*
+             * THE JOIN ANSWER, in the neutral container and not the green one.
+             *
+             * NOT `successContainer`, deliberately. Green says "done", and nothing is done: an
+             * administrator has still to decide, and on the offline branch nothing has even been sent.
+             * The server's own sentence is conditional for exactly this reason — "IF that workshop
+             * exists and you are not already on it" — and painting a conditional green is how a
+             * designer comes to stop waiting for the thing they are waiting for.
+             */
+            joined?.let {
+                /*
+                 * GREEN FOR EXACTLY ONE OUTCOME, AND NEUTRAL FOR EVERY OTHER. `inducted` is true only
+                 * when the server said the person is on the workshop — see that state's own comment
+                 * for why a PROVISIONAL foothold must not borrow this colour. An ask is never green.
+                 */
+                Text(
+                    it,
+                    color = if (inducted) {
+                        MaterialTheme.field.onSuccessContainer
+                    } else {
+                        MaterialTheme.field.body
+                    },
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Polite }
+                        .background(
+                            if (inducted) {
+                                MaterialTheme.field.successContainer
+                            } else {
+                                MaterialTheme.field.surface200
+                            },
+                            RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
 
             refusal?.let {
                 Text(

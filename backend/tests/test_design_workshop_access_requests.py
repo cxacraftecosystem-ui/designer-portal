@@ -605,9 +605,12 @@ def test_granting_a_request_puts_the_designer_on_the_workshop_for_real(client, w
 def test_granting_leaves_the_viewers_already_on_the_workshop_alone(client, world):
     """A grant ADDS. It must not be a whole-set replace that quietly removes everybody else.
 
-    ``replace_viewers`` takes the COMPLETE set, so the one way to get this wrong is to hand it the
-    requester alone — which reads as "grant this person" and means "and revoke the rest of the
-    team". A workshop with a co-designer already on it is the only fixture that can catch it.
+    THE MECHANISM CHANGED AND THIS TEST DID NOT, WHICH IS THE POINT OF IT. It used to describe the
+    hazard as "``replace_viewers`` takes the COMPLETE set, so the one way to get this wrong is to hand
+    it the requester alone" — grant now goes through ``add_one_viewer`` instead, precisely so that
+    whole-set call is not on this path at all. The property under test is unchanged and is the reason
+    the mechanism moved: a grant ADDS. A workshop with a co-designer already on it is still the only
+    fixture that can catch the regression, whichever function is doing the adding.
     """
     workshop_id = _make_workshop(world, "Grant beside an existing viewer")
     seated = client.put(
@@ -632,10 +635,12 @@ def test_granting_an_account_that_cannot_hold_a_viewer_row_is_refused_by_the_mec
 ):
     """A researcher's request is filed, and granting it is refused with the viewers screen's own 422.
 
-    THIS IS THE TEST THAT THE GRANT REALLY GOES THROUGH ``replace_viewers``. Everything else about a
-    grant — a viewer row, a workshop the designer can open — could also be produced by a private
-    insert here. This could not: the refusal, its status code and its sentence all belong to that
-    module, which reads the eligibility SET (a researcher outranks nobody into it) and both rosters.
+    THIS IS THE TEST THAT THE GRANT REALLY GOES THROUGH THE VIEWERS MODULE'S OWN RULE — it said
+    ``replace_viewers`` until the grant path moved to ``add_one_viewer``, and the argument survives the
+    rename because it was never about which function: everything else about a grant — a viewer row, a
+    workshop the designer can open — could also be produced by a private insert here. This could not:
+    the refusal, its status code and its sentence all belong to that eligibility rule, which reads the
+    eligibility SET (a researcher outranks nobody into it) and both rosters.
     If somebody ever replaces the call with an insert, this is what goes red, and the failure will
     read "a researcher was given access to a design workshop".
 

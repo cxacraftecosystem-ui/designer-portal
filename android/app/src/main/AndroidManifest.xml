@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Reading whether there is a usable network, which this app has always done and has never
+         declared. `ConnectivityObserver.isOnline` (data/Offline.kt) calls `getActiveNetwork` and
+         `getNetworkCapabilities`, and `DwInductionFlusher` now also calls
+         `registerDefaultNetworkCallback`; all three require this permission. It has been arriving by
+         manifest merge from a transitive library, which is the same defect the two undeclared test
+         dependencies in `backend/pyproject.toml` are documented for — it works on every build anybody
+         has made and nothing in this repository asks for it, so a dependency change can remove it and
+         the symptom is a SecurityException in the offline queue.
+
+         A NORMAL permission: not requested at runtime, not shown in the install dialog, no prompt. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -51,6 +63,23 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- Starts the offline induction flush at process start. IT STORES AND SERVES NOTHING.
+
+             A provider declared here is instantiated by the platform before the first activity, which
+             is the earliest ordinary place code can run in an app with no `Application` subclass —
+             the same mechanism `androidx.startup` and WorkManager use, and the reason this is a
+             provider rather than a hook in `MainActivity`. See `ui/DwInductionFlusher.kt`: a card
+             scanned with no signal has to be sent when signal RETURNS, not when somebody happens to
+             reopen the scanner, and `dwJoinQueuedMessage` promises exactly that.
+
+             `exported="false"` and every data method answers null/0, so this adds no API surface. The
+             authority is namespaced under the application id so two builds can be installed side by
+             side without the "provider authority already in use" install failure. -->
+        <provider
+            android:name="com.designprototype.workshop.ui.DwInductionFlushProvider"
+            android:authorities="${applicationId}.inductionflush"
+            android:enabled="true"
+            android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
