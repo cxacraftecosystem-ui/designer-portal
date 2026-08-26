@@ -96,10 +96,13 @@ class DwSketchRectifyFieldTest {
      * photographed, and because the web's `offersSketchRectify` reaches the same two places from the
      * same regex — two clients offering a feature in different places is worse than either choice.
      *
-     * The other six FILE fields in the registry are refused, and the refusals are the load-bearing
-     * half: `sanctionDocument`, `questionnaireFile`, `measurementSheet`, `modelFile`,
-     * `certificateFile` and `checksumManifest` are all places a PNG of a straightened sheet has no
-     * business being written.
+     * EVERY OTHER FILE FIELD IN THE REGISTRY IS REFUSED, and the refusals are the load-bearing half:
+     * a PNG of a straightened sheet has no business being written into a sanction letter, a
+     * questionnaire, a designer's CV, a measurement sheet, a 3D model or a checksum manifest. They
+     * are deliberately not listed one by one. The body below sweeps EVERY field of EVERY entity in
+     * the bundled asset and asserts the offered set is exactly those two, so a name list up here
+     * asserts nothing the test does not — it only goes stale, which it did: it read "the other six
+     * FILE fields" until `designerCv` and `surveyDocument` landed and neither appeared in it.
      */
     @Test
     fun `exactly two fields in the bundled registry offer it`() {

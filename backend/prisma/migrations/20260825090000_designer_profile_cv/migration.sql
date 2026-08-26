@@ -1,0 +1,82 @@
+-- The designer's CV, as a media id on their profile, so it can be rendered on the Designer Page and
+-- carried into every report they generate.
+--
+-- =============================================================================================
+-- WHY A MEDIA ID AND NOT A URL, WHICH IS THE ONLY DECISION IN THIS FILE
+-- =============================================================================================
+--
+-- "DesignerProfile" already holds two of these -- "photoMediaId" and "signatureMediaId" -- and the
+-- rule they were written under is stated in frontend/lib/designers.ts and is worth restating in the
+-- SQL where somebody will next meet the column: a URL stored in one of these columns would be a
+-- PRE-SIGNED LINK, and a pre-signed link expires. A report generated three months after the upload
+-- would print a broken figure, and nothing on the row would say why -- the column would look
+-- perfectly populated. A media id is resolved through "MediaFile" at render time, by the same
+-- MediaResolver every stage photograph goes through, so it either resolves or it honestly does not.
+--
+-- NO FORMAT IS CONSTRAINED HERE, and that is deliberate rather than an omission. Whether the file is
+-- a PDF is a fact about the "MediaFile" row this column points at, and a CHECK constraint here would
+-- be a second opinion about a file this table cannot see. The question that actually matters -- can
+-- it be rendered inline -- is answered at render time from the stored mime type: application/pdf is
+-- embedded, and anything else (.docx, .odt) is offered as a download. That is the same split the
+-- market-survey document upload uses, and it is the reason the requirement reads "rendering is not
+-- mandatory for non-PDF document formats".
+--
+-- NOT A TYPED FOREIGN KEY, matching its two siblings exactly. "MediaFile" reaches a designer profile
+-- only through the "linkedRecordType"/"linkedRecordId" string pair, with the tag "designerProfile".
+-- That tag is deliberately absent from the backend's ORPHAN_FK_FIELDS, which is what stops a profile
+-- document surfacing on the admin hub's "recovered recordings" table as though its parent record had
+-- been deleted. Adding a real FK here would either contradict that arrangement for one of the three
+-- columns, or oblige the other two to change with it -- and the other two are already printed from.
+--
+-- =============================================================================================
+-- WHY THERE IS NO BACKFILL, AND WHY THAT IS THE WHOLE OF THE RISK ANALYSIS
+-- =============================================================================================
+--
+-- There is nothing to backfill from. No CV has ever been uploaded, because before this change there
+-- was nowhere to put one: no column, no field on the update body, no control on either client. The
+-- column is therefore NULL on every existing row by construction, not by choice, and every existing
+-- profile renders and prints exactly as it did yesterday.
+--
+-- The one consequence worth naming is on the READ side and it is a non-event: "profile_payload"
+-- serialises every name in PROFILE_FIELDS, so both clients gain a "cvMediaId": null key. Android
+-- decodes the profile with a data class whose fields are nullable with defaults, and an added
+-- nullable key is exactly the shape kotlinx.serialization ignores gracefully in either direction --
+-- an OLD handset that has never heard of the key drops it, and a NEW handset reading an OLD server
+-- that does not send it defaults it. So the fleet needs no coordination for this column, which is
+-- not true of the registry change shipping alongside it (see the note at the bottom).
+--
+-- =============================================================================================
+-- ADDITIVE, IDEMPOTENT, AND ROLLING BACK
+-- =============================================================================================
+--
+-- One nullable column. No existing column is added to, dropped, retyped or re-defaulted, no
+-- constraint is relaxed and no index is added -- deliberately, not incidentally: nothing filters,
+-- sorts or joins on this column. It is read by id, on a row the reader already has, and resolved in
+-- a media pass that already runs.
+--
+-- Rolling back is:
+--
+--   ALTER TABLE "DesignerProfile" DROP COLUMN "cvMediaId";
+--
+-- and nothing else references it. Worth stating plainly because this repository's deploy shape gives
+-- it teeth: pushing `main` deploys with no test gate, and migrations have no automatic rollback -- so
+-- a migration whose entire content is one reversible DDL statement is a deliberate property of this
+-- change rather than a coincidence of it being small.
+--
+-- IF NOT EXISTS for 20260822120000's stated reason, which still holds: this lands in a wave where
+-- several agents apply migrations against one local Postgres, so a half-applied run followed by a
+-- re-run is a realistic Tuesday.
+--
+-- ---------------------------------------------------------------------------------------------
+-- ONE THING SHIPPING BESIDE THIS FILE THAT IS *NOT* IN IT, so nobody looks for it here.
+-- ---------------------------------------------------------------------------------------------
+--
+-- The same change adds "designerCv" (and eighteen other boxes) to the stage registry, and the
+-- registry is Python literals rather than a table -- so it needs no migration and gets none. What it
+-- DOES need is the bundled Android asset re-dumped and the APK re-cut, because registry_version() is
+-- the refetch signal for a file compiled into the handset. That is an Android release, not a
+-- database migration, and conflating the two is how a fleet ends up rendering last release's form
+-- against this release's server.
+
+-- AlterTable
+ALTER TABLE "DesignerProfile" ADD COLUMN IF NOT EXISTS "cvMediaId" TEXT;

@@ -46,7 +46,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, GripVertical, Plus, Trash2 } from "lucide-react";
 
 import { FieldInput, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
 import {
@@ -61,6 +61,7 @@ import { fieldFormatError } from "@/components/designworkshop/stageFieldFormats"
 import { StageReferenceMultiPicker } from "@/components/designworkshop/StageReferenceField";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { moveIndex, useDragReorder } from "@/components/hooks/useDragReorder";
 import { FLASH_MS } from "@/components/hooks/useRevealRow";
 import { findMissingViews } from "@/lib/imageQuality";
 import { FIELD_ANCHOR_ATTRIBUTE, ROW_ANCHOR_ATTRIBUTE, type StageFocus } from "@/lib/workshopSearch";
@@ -978,6 +979,166 @@ export function removalIsADeletion(removed: DwRow | undefined, held: ReadonlySet
   return held?.has(removed._clientKey) ?? false;
 }
 
+/**
+ * One collection row's stable identity, as {@link CollectionTable} has always computed it.
+ *
+ * LIFTED TO MODULE SCOPE RATHER THAN LEFT IN THE COMPONENT, because it is now an input to a `useMemo`
+ * (the drag ids) and a closure re-created on every render cannot be a dependency of one — the memo
+ * would either be re-computed on every keystroke of a 244-row workshop or lie about why it was not.
+ * It closes over nothing, so there was never a reason for it to be inside.
+ *
+ * THE FALLBACK IS POSITIONAL AND THAT IS THE LEAST BAD OPTION. `blankRow()` always mints a
+ * `_clientKey` and every row the server has ever seen carries an `_entryId`, so `index-n` is reached
+ * only by a row that has neither — a hand-built fixture, or a draft migrated from before client keys
+ * existed. It is stable enough for React's `key` and for one drag gesture, which is all either needs.
+ */
+function keyOf(row: DwRow, index: number): string {
+  return row._clientKey ?? row._entryId ?? `index-${index}`;
+}
+
+/**
+ * The most rows one stage save may carry — `MAX_STAGE_ROWS` in
+ * `backend/app/schemas/design_workshops.py`.
+ *
+ * `StageSaveIn._bound_rows` refuses a payload with more entries than this, and the refusal is a 422
+ * over the WHOLE stage rather than over the row that crossed the line: nothing on the stage saves,
+ * including the twenty fields the designer typed in the same sitting. The count is ENTRIES IN ONE
+ * REQUEST, which for this form is every collection row on the stage, plus one entry per singleton
+ * entity, plus the designer's own `_custom` container — so a single table can never see the total from
+ * inside itself. It is handed the total instead: {@link stageEntryBudget} counts the payload on the
+ * stage page, which owns every list, and {@link CollectionTable} thresholds on THAT and not on the
+ * length of the one array it was given.
+ *
+ * IT IS STATED ON SCREEN BECAUSE RULE 10 SAYS SO. A cap nobody is told about is a save that begins
+ * failing for a reason the designer cannot see, on the workshop with the most work in it — and it is
+ * not a theoretical ceiling: the flagship workshop already carries 244 rows.
+ */
+const STAGE_ROW_CAP = 500;
+
+/**
+ * Where the sentence starts appearing — 90% of the cap.
+ *
+ * Early enough that a designer still has room to act on it (move a list to another stage, or split
+ * the workshop) rather than being told at the moment the save stops working, which is a warning with
+ * no remedy left in it.
+ */
+const STAGE_ROW_CAP_NOTICE_AT = Math.floor(STAGE_ROW_CAP * 0.9);
+
+/**
+ * How many of a bulk add's refused records are named in the sentence, before "and N more".
+ *
+ * Six, which is `ReportChart`'s figure for its "Not shown:" line, and the same argument: enough that a
+ * designer who ticked ten and lost four can see all four, short enough that the sentence stays a
+ * sentence when a picker serving `REFERENCE_PAGE_MAX` (200) options has 180 of them refused.
+ */
+const DROPPED_NAMES_SHOWN = 6;
+
+/**
+ * What one save of a WHOLE stage would carry, counted in the unit {@link STAGE_ROW_CAP} is counted in.
+ *
+ * ── WHY THIS EXISTS, AND THE SILENCE IT ENDS ─────────────────────────────────────────────────────
+ *
+ * {@link CollectionTable}'s cap sentence used to threshold on `rows.length` — the length of THIS list
+ * — while `StageSaveIn._bound_rows` refuses on the length of the whole payload. A stage carrying
+ * three collections of 200 rows sends 600-odd entries, so every save 422s over the whole stage, and
+ * no single list comes within a hundred rows of the 450 the sentence fires at: NO SENTENCE APPEARED
+ * ANYWHERE. That is precisely the rule-10 silence the sentence was written to prevent, arriving on the
+ * workshop with the most work in it — the one whose saves stop first.
+ *
+ * A table cannot close that from inside itself. It is handed one entity's rows and has never been
+ * told what else the stage declares. The stage page owns `collections`, `singleton` and `custom`, so
+ * it is the only thing that CAN count the payload, and this is what it counts with. A pure function
+ * beside the component rather than anything inside it, for the reason {@link rowsTheServerCouldHold}
+ * is one: the page calls it once for the whole stage and hands the one answer to every table, where a
+ * per-table derivation would be n copies of the same arithmetic free to disagree about the total.
+ *
+ * ── IT COUNTS WHAT `buildStageEntries` ACTUALLY SENDS, ARM FOR ARM ───────────────────────────────
+ *
+ * `lib/designWorkshopStore.ts` builds the payload in three arms and this mirrors all three:
+ *
+ *   * every COLLECTION row, one entry each — `rows.forEach` / `entries.push` at
+ *     `designWorkshopStore.ts:3585-3586`;
+ *   * one entry per SINGLETON entity — `entries.push` at `:3575`, gated on `!neverRead || answered`;
+ *   * one entry for the designer's own `_custom` container — `:3668`, gated on the container having
+ *     keys AND `!neverRead || answered`.
+ *
+ * So a stage's payload is ALWAYS bigger than the sum of its lists, and bigger by up to one entry per
+ * singleton entity plus one for `_custom`. `emptiedEntities` is bounded separately by the same 500 and
+ * is not counted here: it is a list of entity KEYS, never rows, and a stage cannot declare more
+ * entities than it can hold rows.
+ *
+ * ── AND WHERE IT CANNOT BE CERTAIN IT SAYS SO, RATHER THAN GUESSING ──────────────────────────────
+ *
+ * Both non-row arms are gated on `neverRead` — `serverLoadedAt === null` on the BANKED DRAFT — which
+ * is a fact about IndexedDB and not about anything on screen. A blank singleton and a
+ * present-but-blank `_custom` container are therefore SENT by a stage this browser has read and
+ * WITHHELD by one it has never downloaded, and this function will not pretend to know which. It
+ * returns both bounds: `otherCertain` counts only the non-row entries that go up whatever this browser
+ * has read (the answered ones), `other` counts what a read stage sends. The gap is at most one per
+ * singleton plus one for `_custom`, and `stage_schema` validates that a stage declares at most one
+ * singleton — so at most two — and the sentence prints a RANGE across it rather than a number it
+ * cannot stand behind. A figure a designer cannot trust, at the moment they are deciding whether to
+ * keep recording, is worse than a range that is honest about its own width.
+ *
+ * `carried` — {@link DwDraftStage.unknownSingleton} — deliberately does NOT enter this count, and that
+ * is a fact about the store rather than an approximation. Every site that writes `unknownSingleton`
+ * stamps `serverLoadedAt` in the same object literal (`designWorkshopStore.ts:2418`+`:2427`, `:2771`,
+ * `:3093`), so a non-empty `carried` implies the stage HAS been read — and a read stage sends its
+ * singleton entry whether anything in it is answered or not. Carried keys change what is INSIDE an
+ * entry; they can never change whether there is one.
+ */
+export type StageEntryBudget = {
+  /** Every collection row on the stage, this list's included. Exact — the page owns every array. */
+  rows: number;
+  /** The non-row entries a stage this browser HAS read sends: one per singleton, one for `_custom`. */
+  other: number;
+  /** How many of `other` are sent whatever this browser has read. Equal to `other` ⇒ exact. */
+  otherCertain: number;
+  /** `other` in the designer's own words, for the breakdown sentence. Empty when `other` is 0. */
+  otherLabel: string;
+};
+
+export function stageEntryBudget(
+  entities: readonly DwEntity[],
+  collections: Record<string, DwRow[]>,
+  /** Per-entity, as `splitSingletons` returns it — NOT the flat map the form binds to. */
+  singletons: Record<string, DwEntryData>,
+  custom: DwEntryData
+): StageEntryBudget {
+  let rows = 0;
+  let singletonEntries = 0;
+  let singletonAnswered = 0;
+  for (const entity of entities) {
+    if (entity.cardinality === "SINGLETON") {
+      singletonEntries += 1;
+      // `some(isFilled)` and NEVER a test of the container: a singleton map has keys the moment a form
+      // was rendered over it, so `Object.keys(...).length` would report every stage as answered and
+      // collapse the two bounds onto the wrong one. `isFilled` is character-for-character the server's
+      // `_is_filled`, which is the same test `buildStageEntries` applies at `:3557`.
+      if (Object.values(singletons[entity.key] ?? {}).some((value) => isFilled(value))) singletonAnswered += 1;
+      continue;
+    }
+    rows += (collections[entity.key] ?? []).length;
+  }
+  /*
+    THE `_custom` ARM IS GATED ON THE CONTAINER HAVING KEYS AND NOT ON ITS BEING ANSWERED, because
+    that is the store's own gate: `plan_custom_write` treats "no entry" and "an entry carrying `{}`"
+    as two different instructions, so a browser holding a keyed-but-blank container on a READ stage
+    sends an entry that clears the row. It counts towards the cap exactly like any other entry.
+  */
+  const customEntry = Object.keys(custom).length > 0 ? 1 : 0;
+  const customCertain = customEntry && Object.values(custom).some((value) => isFilled(value)) ? 1 : 0;
+  const parts: string[] = [];
+  if (singletonEntries > 0) parts.push(singletonEntries === 1 ? "this stage's own fields" : "this stage's own field sets");
+  if (customEntry) parts.push("its custom questions");
+  return {
+    rows,
+    other: singletonEntries + customEntry,
+    otherCertain: singletonAnswered + customCertain,
+    otherLabel: parts.join(" and ")
+  };
+}
+
 export function CollectionTable({
   entity,
   rows,
@@ -988,7 +1149,8 @@ export function CollectionTable({
   disabled,
   stageKey,
   capture,
-  focus
+  focus,
+  stageEntries
 }: {
   entity: DwEntity;
   rows: DwRow[];
@@ -1018,6 +1180,17 @@ export function CollectionTable({
    * would be wrong.
    */
   provenance?: Record<string, Record<string, DwFieldStamp>>;
+  /**
+   * What one save of the WHOLE stage would carry — {@link stageEntryBudget}'s answer, from the page.
+   *
+   * REQUIRED, WITH NO DEFAULT, and that is the point of it. The `500` is a bound on the payload and
+   * not on this array, so a table left to guess from `rows.length` is a table that stays silent on
+   * exactly the stage where the cap bites — three lists of 200 rows refuses every save and no list
+   * reaches the threshold. There is one call site (the stage page) and it is the only surface that can
+   * answer this, so the prop is required: an omission is a compile error rather than a screen that
+   * says nothing.
+   */
+  stageEntries: StageEntryBudget;
 }) {
   const { primary, advanced } = useMemo(() => splitByTier(formFields(entity)), [entity]);
   /**
@@ -1046,7 +1219,6 @@ export function CollectionTable({
     focus?.entityKey === entity.key ? focus.rowKey : null
   );
 
-  const keyOf = (row: DwRow, index: number) => row._clientKey ?? row._entryId ?? `index-${index}`;
 
   /**
    * OPEN ONE ROW AND CLOSE WHICHEVER WAS OPEN — after asking anything mounted inside it.
@@ -1133,33 +1305,276 @@ export function CollectionTable({
     return refs.length === 1 ? refs[0] : null;
   }, [entity]);
 
+  /* ══════════════════════════════════════════════════════════════════════════════════════════════
+     THE 500-ENTRY CAP, COUNTED IN THE UNIT THE SERVER COUNTS IT IN — RULE 10
+     ══════════════════════════════════════════════════════════════════════════════════════════════
+
+     ── WHAT WAS WRONG WITH COUNTING THIS LIST ─────────────────────────────────────────────────────
+
+     This block used to threshold on `rows.length`, and the cap it was describing has never been a
+     bound on `rows`. `MAX_STAGE_ROWS` is enforced by `StageSaveIn._bound_rows` over `entries` — the
+     WHOLE payload — so the case where it actually bites is the one where no single list is anywhere
+     near it: three collections of 200 rows is 600-odd entries, every save 422s over the entire stage,
+     and at 200 rows each no list reached the 450 the sentence fired at. Nothing appeared on any
+     screen. The one arrangement that made the notice necessary was the one that silenced it.
+
+     So the number now comes from {@link stageEntryBudget}, computed once on the stage page — the only
+     surface that can see every list, the stage's own fields and the designer's custom questions at
+     the same time — and every control here thresholds on the STAGE total. That includes Add and the
+     bulk picker: the budget is the stage's, so a list holding three rows is at the cap when the stage
+     is, and closing Add on it while the sentence explains why is the honest reading of that.
+
+     ── AND THE SENTENCE THAT USED TO BE HERE MADE A CLAIM THAT WAS FALSE ──────────────────────────
+
+     It said that at exactly 500 rows in one list "the save may still land", because `_bound_rows`
+     refuses more than 500 rather than 500. The arithmetic was right about the server and wrong about
+     the payload: 500 collection rows plus one entry for an answered singleton plus one for a `_custom`
+     container is 502, which is refused — and a stage with an answered singleton or any custom answer
+     is the ordinary stage, not an unusual one. The claim was therefore false almost every time it was
+     drawn. It is only sayable at all once the whole payload is counted, which is what `stageTotal` is,
+     and it is said in the `full` branch below where it is finally true.
+
+     ── THE RANGE, AND WHY IT IS NOT A GUESS DRESSED UP ───────────────────────────────────────────
+
+     `stageEntryBudget` returns two bounds because two of the payload's arms are gated on a fact that
+     lives in IndexedDB and not on screen (see its header). The width is at most two entries. The
+     THRESHOLDS use the upper bound, deliberately: a warning that arrives late is the failure this
+     whole block exists to prevent, and being two rows early at a 500-row ceiling costs a designer
+     nothing. The SENTENCE prints the range, because a number this component cannot stand behind is
+     the thing the previous version was faulted for.
+  */
+  const rowsHere = rows.length;
+  /** This stage's rows that are NOT in this list. Clamped: the page derives both from one `collections`. */
+  const rowsElsewhere = Math.max(0, stageEntries.rows - rowsHere);
+  /** The most a save could carry — used for every threshold, so the notice is never late. */
+  const stageTotal = stageEntries.rows + stageEntries.other;
+  /** The least it could carry. Equal to `stageTotal` whenever the budget is exact. */
+  const stageFloor = stageEntries.rows + stageEntries.otherCertain;
+  const stageExact = stageEntries.other === stageEntries.otherCertain;
+  /** An en dash, not a hyphen: this is a range between two numbers, not a compound word. */
+  const stageHeld = stageExact ? `${stageTotal}` : `${stageFloor}–${stageTotal}`;
+  /** Rows that certainly fit. Derived from the upper bound, so it never promises room that is not there. */
+  const stageRoom = Math.max(0, STAGE_ROW_CAP - stageTotal);
+  const blankEntries = stageEntries.other - stageEntries.otherCertain;
+
+  /**
+   * A bulk add this list could not take in full — the fact, in the designer's words.
+   *
+   * STATE RATHER THAN DERIVED, because it is a fact about an ACT and nothing on screen still carries
+   * it: the rows that were refused were never created, so there is nothing to look at and count. The
+   * dictation refusal in `FieldInput` is the same shape for the same reason.
+   *
+   * Cleared by the next bulk add that fits, and by nothing else. It stays true after a deletion —
+   * "these names were not added" does not stop having happened because room appeared afterwards, and
+   * a sentence that vanished on the next keystroke would be one a designer never got to read.
+   */
+  const [bulkRefusal, setBulkRefusal] = useState<string | null>(null);
+
+  /**
+   * Add every ticked record as a row — UP TO WHAT FITS, and say what did not.
+   *
+   * ── THE FENCE THIS USED TO JUMP IN ONE PRESS ───────────────────────────────────────────────────
+   *
+   * The picker serves up to `REFERENCE_PAGE_MAX` (200) options and this appended every one of them
+   * unconditionally, while the only guard anywhere near it was `disabled={disabled || rowsAtCap}` on
+   * the trigger. So at 300 rows — below the notice threshold, nothing on screen — ticking 200 names
+   * landed the stage on 500-plus entries in a single press, with no warning at press time and no
+   * sentence afterwards until the designer tried to save and got a 422 over the whole stage.
+   *
+   * ── TAKE WHAT FITS AND NAME WHAT DID NOT, which is this repository's settled answer here ───────
+   *
+   * `MediaCaptureField.acceptFiles` makes the same choice against the same kind of ceiling and its
+   * argument transfers whole: a REFUSAL at this door is a picker that appears to do nothing, and a
+   * SILENT truncation is the failure every rule-10 line in this file exists to rule out. There is
+   * somebody to tell, right now, before anything is written — so the honest act is to take the rows
+   * that fit, leave the list valid, and name the count that did not make it and why.
+   *
+   * AND IT NAMES THE RECORDS, up to a readable few. "40 were not added" tells a designer who ticked
+   * 200 nothing about which 40 to re-pick, and they cannot go and look: the picker clears `picked` and
+   * closes itself the moment it calls this, so its ticks are gone from the screen along with the panel.
+   * Reopening it would tick back the ones that LANDED and leave the rest bare, which is an answer — but
+   * an answer that costs a second trip through a 200-row panel, and one nobody thinks to make unless
+   * they were told there was something to look for. Six then "and N more" is the shape
+   * `ReportChart`'s "Not shown:" line already uses for the same problem; a 200-name sentence in a
+   * `role="status"` region is not readable by anyone, sighted or listening.
+   *
+   * `stageRoom` AND NOT `STAGE_ROW_CAP - rows.length`: the budget being spent is the stage's, so a
+   * roster with room in its own list has none at all when the stage's other lists have filled it.
+   */
   function addFromReferences(options: DwReferenceOption[]) {
     if (!bulkField) return;
-    const created = options.map((option) => {
+    const taken = options.slice(0, stageRoom);
+    const dropped = options.slice(stageRoom);
+    const refused = dropped.length;
+    const created = taken.map((option) => {
       const row = blankRow();
       // Hydrated exactly as a single pick is, through the same table, so a roster built in one go
       // and one built name by name hold identical records. The server re-hydrates at save either
       // way; this is what makes the thirty rows readable before then.
       return { ...row, ...hydrateFromReference(entity, bulkField, option, row, ""), [bulkField.key]: option.id };
     });
-    onRowsChange([...rows, ...created]);
+    // GUARDED, so a press that could take nothing does not commit an identical array: `onRowsChange`
+    // is the page's `patchCollection`, whose own guard is a value comparison, but arming an autosave
+    // and a `removedFrom` decision over a no-op is work nobody asked for.
+    if (created.length) onRowsChange([...rows, ...created]);
     // Deliberately NOT opened: thirty freshly expanded panels is not a form, it is a wall. Each row
     // already shows its name and its required-field count, which is what a designer checks next.
     setOpenKey(null);
+    setBulkRefusal(
+      refused === 0
+        ? null
+        : `Added ${taken.length} of the ${options.length} records you chose. ` +
+            `${refused === 1 ? "The other one was" : `The other ${refused} were`} not added: this stage was already ` +
+            `holding ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry — counted across every list on ` +
+            `it together — so there was room for ${stageRoom} more. Not added: ` +
+            `${dropped
+              .slice(0, DROPPED_NAMES_SHOWN)
+              .map((option) => option.label)
+              .join(", ")}` +
+            `${refused > DROPPED_NAMES_SHOWN ? ` and ${refused - DROPPED_NAMES_SHOWN} more` : ""}. Nothing has been ` +
+            `recorded for ${refused === 1 ? "it" : "them"} — choose ${refused === 1 ? "it" : "them"} again after ` +
+            `deleting rows here or in another of this stage's lists, or record ${refused === 1 ? "it" : "them"} on ` +
+            `another stage.`
+    );
   }
+
+  /* ══════════════════════════════════════════════════════════════════════════════════════════════
+     REORDERING A COLLECTION'S ROWS — A PLUS, TWO ARROWS, A GRIP, AND ONE COMMIT BEHIND ALL OF THEM
+     ══════════════════════════════════════════════════════════════════════════════════════════════
+
+     The owner asked on 2026-08-25 for reordering to be served by "a plus button, up down arrows and
+     drag and drop as well". Two of the three were already here — the Add button in the header, the
+     two arrows on every row — and this is the third. It is the SAME gesture the custom-sections
+     editor got, through `components/hooks/useDragReorder.ts`, and not a second implementation of it:
+     `components/sketches/RankableList.tsx` is the first renderer over that hook, `CustomSectionsEditor`
+     the second, this is the third. Read that hook's header before changing anything here — it carries
+     the five rules that make the gesture honest (rectangles snapshotted at pointerdown; the
+     ARRANGEMENT snapshotted with them so a gesture whose ground moved is abandoned rather than
+     guessed at; nothing committed until release; every move announced in words; teardown on unmount),
+     and each of them is a bug already paid for once.
+
+     ── THE ORDER IS EXPRESSIBLE ALL THE WAY TO THE PRINTED REPORT ─────────────────────────────────
+
+     That is the only reason any of these controls may exist. A control that appeared to arrange a
+     report and did not would be worse than no control at all, so the chain was read end to end
+     rather than assumed, and it is written down here to be re-checked rather than re-derived:
+
+       * `buildStageEntries` (`lib/designWorkshopStore.ts`) sends `ordinal: rowIndex` — the ARRAY
+         ORDER at send time, deliberately not any stored `_ordinal`.
+       * `save_stage` (`backend/app/services/design_workshops.py`) writes it:
+         `ordinal = entry.ordinal if entry.ordinal is not None else index`, and the UPDATE branch's
+         four columns are exactly `{data, ordinal, deletedAt}` + provenance.
+       * `entry_rows` reads the stage back with `order={"ordinal": "asc"}`.
+       * `assemble_workshop_data` — the report builder's own input — sorts `entries` by `r.ordinal`
+         before grouping them into `collections`, and nothing in `report_model.py` sorts again.
+
+     So the row a designer drags to the top is the row that prints first in the .docx, and the same
+     number is what `design_ratings` calls `placedPosition` and what the provenance page prints as
+     "row 3". `StageEntryIn.ordinal` says so in the request schema in as many words: "orders a
+     collection's rows and is what a client sends after a drag-to-reorder."
+
+     ── AND A REORDER IS A CHANGE, SO IT HAS TO REACH THE DRAFT ────────────────────────────────────
+
+     It does, through the one path every field edit already uses: `onRowsChange` → the stage page's
+     `patchCollection` → `setCollections`, which the page's autosave effect watches. There is no
+     `markDirty` to call on this screen — the stage form replaced the unsaved-changes prompt with the
+     draft store plus a flush before every navigation (decision 6 in the stage page's header), so
+     "dirty" here means `dirtyAt` on the banked draft. What makes a reorder visible to that effect is
+     that its guard is a VALUE comparison, `sameSnapshot` → `sameStoredValue`, and `sameStoredValue`
+     walks an array INDEX BY INDEX: two rows in a new order genuinely differ from the banked snapshot,
+     so the write is armed and `dirtyAt` set exactly as typing into a box would set it. If that guard
+     is ever made cheaper — lengths, a set of ids, a per-row hash compared unordered — a reorder
+     becomes invisible to it, the arrangement never reaches IndexedDB or the wire, and these controls
+     become the lie the previous paragraph exists to rule out. This comment is the one that says so.
+
+     ── WHY THE ARROWS ARE THE PRIMARY PATH ───────────────────────────────────────────────────────
+
+     A drag is a pointer gesture: unreachable from a keyboard, from a switch device and from a screen
+     reader. So the arrows are never hidden or disabled in favour of the grip, the grip answers the
+     arrow keys too, and an arrow press announces itself in the hook's own words rather than silently.
+
+     ── ANDROID DELIBERATELY HAS NO GRIP, AND THAT DIVERGENCE IS RECORDED RATHER THAN COPIED ───────
+
+     `ui/designworkshop/StageScreen.kt` says so at its collection list: "Reorder is two arrow buttons
+     rather than a drag handle, and that is a dependency decision as much as an ergonomic one: a
+     reorderable LazyColumn means either a third-party library or a hand-rolled …". So the two clients
+     agree on the ARROWS, which is the path every designer has, and the web adds a third affordance
+     the handset does not — an addition, not a disagreement, and the report is identical either way
+     because both write the same `ordinal`. What they must NOT diverge on is the semantics of a move,
+     and until now they did: the handset does `reordered.add(target, reordered.removeAt(index))` — a
+     move — while these arrows swapped two elements in place. Identical for the ±1 an arrow asks for,
+     and this file now expresses it the same way the handset does, so the drag and the phone cannot
+     mean two different things by "put this third".
+
+     ── WHY NOTHING HERE IS A `useCallback`, unlike the sections editor ────────────────────────────
+
+     That screen owns its list in `useState` and commits through updater functions, so its callbacks
+     can genuinely be stable across renders. Here `rows` and `onRowsChange` are PROPS — the stage page
+     owns the array — so a memo over them would be rebuilt on every render anyway and would only hide
+     that fact. The hook keeps the in-flight drag in its own `useState`, so a fresh handler object per
+     render costs nothing and loses nothing.
+  */
+
+  /** The rows' drag ids, which are their React keys: one identity, so the two cannot disagree. */
+  const dragIds = useMemo(() => rows.map(keyOf), [rows]);
+
+  /**
+   * The one commit both the arrows and the drag go through.
+   *
+   * `moveIndex` — the hook's own pure helper — rather than the swap this function used to do. For the
+   * ±1 the arrows ask for, a swap and a move are the same operation; for a drag across five rows a
+   * swap is not a reorder at all, and letting the two paths write through two different array
+   * operations is exactly how they would drift into disagreeing about what "move this to position 2"
+   * means.
+   *
+   * THE ORDINAL IS NOT STORED ON THE ROW HERE, and that is not an omission. It is rewritten from the
+   * array order at send time by `buildStageEntries`, and a row carrying a stale `_ordinal` after a
+   * move would be sorted straight back to where it came from the next time the stage was read — the
+   * reorder would look like it had not taken. `entryDataOf` strips `_ordinal` on the way out for the
+   * same reason.
+   */
+  function commitMove(from: number, to: number) {
+    if (from === to) return;
+    if (from < 0 || from >= rows.length) return;
+    if (to < 0 || to >= rows.length) return;
+    onRowsChange(moveIndex(rows, from, to));
+  }
+
+  const drag = useDragReorder({
+    order: dragIds,
+    // A save in flight, or no entitlement to edit this stage. The hook refuses to start a gesture,
+    // and the grip is rendered disabled beside the arrows for the same `disabled` — a control that
+    // looked live and did nothing is the failure this pair avoids.
+    locked: Boolean(disabled),
+    labelFor: (key) => {
+      // BY KEY, NOT BY THE INDEX THE CALLER HAPPENED TO HOLD. `announceMove` is called after a
+      // commit, when this render's `rows` still describes the OLD arrangement; looking the row up by
+      // its key finds the right row either side of that commit, where an index would name the row it
+      // swapped with and announce the wrong title.
+      const index = dragIds.indexOf(key);
+      const row = rows[index];
+      return row ? rowTitle(entity, row, index) : entity.title;
+    },
+    onReorder: commitMove
+  });
 
   function move(index: number, delta: number) {
     const target = index + delta;
     if (target < 0 || target >= rows.length) return;
-    const next = [...rows];
-    [next[index], next[target]] = [next[target], next[index]];
-    // The ordinal is rewritten from the ARRAY ORDER on save, not stored per row here — a row
-    // carrying a stale `_ordinal` after a swap would be re-sorted back to where it came from the
-    // next time the stage was loaded.
-    onRowsChange(next);
+    commitMove(index, target);
+    // BOTH PATHS SPEAK ALIKE. The drag announces itself from inside the hook; an arrow press has to
+    // say the same sentence by hand, or the PRIMARY path is the silent one — the reader who cannot
+    // use the pointer gesture is precisely the reader who needs to hear where the row went.
+    // `announceMove` is the hook's own wording, so the two cannot drift into two vocabularies.
+    drag.announceMove(dragIds[index], target);
   }
 
   function addRow() {
+    // The button is already `disabled` at the cap, and this says so a second time on purpose: the same
+    // budget bounds three controls now (this, the bulk picker, the sentence), and a fourth path added
+    // later that forgets the gate would take the stage over the line silently. One row, so there is
+    // nothing to report — the sentence above the list is already saying why nothing can be added.
+    if (stageRoom < 1) return;
     const row = blankRow();
     onRowsChange([...rows, row]);
     // Opened immediately: adding a row and being shown a collapsed empty strip makes the button
@@ -1180,6 +1595,86 @@ export function CollectionTable({
     if (openKey && removed && keyOf(removed, index) === openKey) setOpenKey(null);
   }
 
+  /**
+   * The cap, said out loud once it is within reach — RULE 10. Three states, and they are not the same
+   * fact: the stage is over the line, it is exactly on it, or it is close enough to act on.
+   *
+   * THRESHOLDED ON THE STAGE TOTAL, NEVER ON `rows.length` — the whole argument is in the block above
+   * `addFromReferences`. `over` means a save of this stage is refused as it stands; `full` means it
+   * still lands and one more row does not; `near` starts at 90% of the cap, early enough that a
+   * designer can still move a list to another stage rather than being told at the moment saving stops.
+   *
+   * WHERE THE OTHER ROWS ARE IS PART OF THE SENTENCE. "This list holds 470" is not actionable when the
+   * remedy — delete rows, or move some of this to another stage — may belong to a different list
+   * entirely; "470 of the 500 one save can carry — 200 in this list, 269 in this stage's other lists and
+   * 1 for this stage's own fields" tells the designer where to go.
+   */
+  const capState: "over" | "full" | "near" | null =
+    stageTotal > STAGE_ROW_CAP
+      ? "over"
+      : stageTotal >= STAGE_ROW_CAP
+        ? "full"
+        : stageTotal >= STAGE_ROW_CAP_NOTICE_AT
+          ? "near"
+          : null;
+  /** Add and the bulk picker are closed on every list of a stage that has no room for one more row. */
+  const rowsAtCap = capState === "over" || capState === "full";
+  const capBreakdown = [
+    `${rowsHere} in this list`,
+    rowsElsewhere > 0 ? `${rowsElsewhere} in this stage's other lists` : null,
+    stageEntries.other > 0 ? `${stageEntries.other} for ${stageEntries.otherLabel}` : null
+  ]
+    .filter((part): part is string => part !== null)
+    .reduce((sentence, part, index, parts) =>
+      index === 0 ? part : index === parts.length - 1 ? `${sentence} and ${part}` : `${sentence}, ${part}`
+    );
+  /*
+    THE WIDTH OF THE RANGE IS EXPLAINED WHERE THE RANGE IS PRINTED, or it reads as a component that
+    cannot count. It is never more than two entries and it is always the same two: a blank singleton
+    and a keyed-but-blank custom container are sent by a stage this browser has downloaded and withheld
+    by one it has not, and nothing on this screen distinguishes those two stages.
+  */
+  const rangeWhy = stageExact
+    ? ""
+    : ` A range because ${blankEntries} of those entries ${blankEntries === 1 ? "is" : "are"} blank: a blank one is ` +
+      `sent by a stage this browser has already downloaded and withheld by one it has never read, and which of the two ` +
+      `this is cannot be seen from the form.`;
+  const capNotice =
+    capState === null
+      ? null
+      : capState === "over"
+        ? `This stage holds ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry — ${capBreakdown}. ` +
+          `${
+            stageFloor > STAGE_ROW_CAP
+              ? "It is over that cap, so every save of this stage is being refused as a whole"
+              : "It may already be over that cap, and if it is, every save of this stage is refused as a whole"
+          }: a 422 over the stage, not over the row that crossed the line, so nothing on it can be sent — including ` +
+          `answers typed into other lists. Adding is closed on every list of this stage. Nothing already recorded is ` +
+          `lost: delete rows from this stage's lists, or record the rest on another stage.${rangeWhy}`
+        : capState === "full"
+          ? `This stage holds ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry — ${capBreakdown}. That ` +
+            `is the cap exactly: this stage still saves, and one more row does not, so adding is closed on every list ` +
+            `of it. Delete a row here or in another of this stage's lists to make room, or record the rest on another ` +
+            `stage.${rangeWhy}`
+          : `This stage holds ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry, counted across every ` +
+            `list on it together — ${capBreakdown}. There is room for ${stageRoom} more row` +
+            `${stageRoom === 1 ? "" : "s"} anywhere on this stage, this list included. Over the cap the stage refuses ` +
+            `to save as a whole, not just the list that crossed the line.${rangeWhy}`;
+
+  /**
+   * The two sentences this table's status region carries, newest fact first.
+   *
+   * ONE REGION AND ONE BOX FOR BOTH, rather than a second amber block: they are two halves of one
+   * subject and a designer who has just been told 40 names were refused needs the stage's total in the
+   * same breath. Keyed by a constant so React reuses each paragraph across renders — a key derived from
+   * the text would remount the node on every recount and, inside a live region, re-announce a sentence
+   * that had not changed.
+   */
+  const statusNotices = [
+    bulkRefusal ? { key: "bulk", text: bulkRefusal } : null,
+    capNotice ? { key: "cap", text: capNotice } : null
+  ].filter((notice): notice is { key: string; text: string } => notice !== null);
+
   return (
     <section className="panel p-4">
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -1196,16 +1691,88 @@ export function CollectionTable({
               // a participant counted twice in every table the report prints.
               alreadyChosen={rows.map((row) => inputValue(row[bulkField.key])).filter(Boolean)}
               onAdd={addFromReferences}
-              disabled={disabled}
+              /*
+                CLOSED AT THE CAP AND BOUNDED BELOW IT, and the two halves are both needed. `rowsAtCap`
+                is the stage's total, so this trigger is shut on a roster of three rows when the stage's
+                other lists have spent the budget. Below the cap the trigger is live — and it can serve
+                up to `REFERENCE_PAGE_MAX` (200) options in one press, which is why `addFromReferences`
+                bounds what it takes instead of trusting this flag: 300 rows plus 200 names is over the
+                line in a single press, from a state in which this gate is legitimately open.
+              */
+              disabled={disabled || rowsAtCap}
               triggerLabel={`Add several from ${bulkField.label.toLowerCase()}`}
             />
           ) : null}
-          <button type="button" className="field-button" disabled={disabled} onClick={addRow}>
+          {/* THE ADD CONTROL, AND ITS LABEL SAYS WHAT IT ADDS rather than "Add" or "New row": in a
+              stage carrying three collections, three identical buttons name nothing. The text is the
+              entity's own singular title, so it is the registry's word and not this file's.
+
+              NOTHING MAY BE ADDED INSIDE THIS BUTTON. Its accessible name is its rendered text, and
+              `e2e/stage19-attendance-signature.spec.ts` matches it exactly (`/^Add certificates &
+              attendance$/i`) — an sr-only hint tucked in here would rename the control and break that
+              assertion. The cap sentence is a sibling below for exactly that reason. */}
+          <button type="button" className="field-button" disabled={disabled || rowsAtCap} onClick={addRow}>
             <Plus className="h-4 w-4" aria-hidden />
             Add {entity.title.replace(/s$/, "").toLowerCase()}
           </button>
         </div>
       </header>
+
+      {/*
+        WHY A DRAG DID SOMETHING, IN WORDS — the consumer half of `useDragReorder`'s rule 4.
+
+        ALWAYS MOUNTED, whether or not it holds anything: assistive technology announces mutations
+        only inside a region that already existed when the page settled, which is the rule `Toast`'s
+        always-mounted viewport follows and the reason a region created at the moment of the
+        announcement says nothing at all. One region per table, because one table is one list — and a
+        stage renders one `CollectionTable` per collection, so two lists never share a region and an
+        announcement about a prototype cannot be cut off mid-sentence by one about a cost line.
+      */}
+      <p aria-live="polite" className="sr-only">
+        {drag.announcement}
+      </p>
+
+      {/*
+        THE CAP AND THE REFUSED BULK ADD — rule 10, in a region that is MOUNTED BEFORE IT HAS ANYTHING
+        TO SAY.
+
+        The `role="status"` used to be on the amber box itself, so the region came into existence in the
+        same commit as its first sentence — and assistive technology announces mutations only inside a
+        region that ALREADY EXISTED when the page settled. A designer using a screen reader therefore
+        heard nothing at all: not the cap arriving, and not the forty roster names a bulk add had just
+        declined to take. That is the same defect the drag announcement above is mounted-always to avoid,
+        and the rule `Toast`'s permanently-present viewport follows.
+
+        So the region is this wrapper, which never unmounts, and the box is inserted INTO it. The wrapper
+        carries no styling and no margin, so an empty one occupies nothing; `mb-3` lives on the box, or a
+        table with nothing to say would still push its list down. `role="status"` rather than `alert`
+        because nothing is broken and nothing has been lost — the sentences say what will not fit, and
+        interrupting a designer mid-sentence over a ceiling they have not reached yet is not warranted.
+
+        Amber-100 over amber-800 because those are the two rungs of the brand amber that pair
+        (`amber-50`/`amber-200` are stock Tailwind and do not), and the triangle is decorative and drawn
+        once for the box — the sentences carry the whole message.
+
+        A LIVE COUNT IS ACCEPTED HERE AND WOULD NOT BE EVERYWHERE. `role="status"` implies
+        `aria-atomic`, so the whole box is re-read whenever either sentence changes — and the cap
+        sentence carries a number that moves. That is the shape §17 forbids for a scroll-position
+        readout, and the difference is what makes it right here: this number changes only when somebody
+        deliberately adds or deletes a row, it exists only inside the last 10% of the allowance, and the
+        thing being announced is the consequence of the act just performed. A continuous readout would
+        have to be `aria-live="off"` with the sentence said some other way.
+      */}
+      <div role="status">
+        {statusNotices.length ? (
+          <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
+            <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
+            <div className="grid min-w-0 flex-1 gap-2">
+              {statusNotices.map((notice) => (
+                <p key={notice.key}>{notice.text}</p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       {rows.length === 0 ? (
         <p className="rounded-md border border-dashed border-line-200 bg-surface-50 px-4 py-6 text-center text-sm text-ink-muted">
@@ -1220,13 +1787,47 @@ export function CollectionTable({
             const panelId = `row-${entity.key}-${rowKey}`;
             const progress = rowProgress(entity, row);
             const rowErrors = errorsByIndex?.[index];
+            const rowShift = drag.shiftFor(rowKey);
+            const rowDragging = drag.draggingKey === rowKey;
             return (
-              <li key={rowKey} className="rounded-md border border-line-200 bg-card">
+              <li
+                key={rowKey}
+                ref={drag.registerRow(rowKey)}
+                /*
+                  The transform is INLINE because it is a live pixel offset, and `transition-transform`
+                  is a CLASS because the global reduced-motion rules in `globals.css` can zero a CSS
+                  transition for both of their sources — the OS preference and the in-app toggle — and
+                  cannot reach an inline style. That is also why there is no framer-motion here: it
+                  would write the same property from JavaScript and the two would fight over it.
+
+                  The dragged row is lifted with a ring rather than dimmed: a translucent row over
+                  another row is unreadable at this density, and the ring is the half a reduced-motion
+                  reader still gets once the slide has been zeroed.
+                */
+                style={rowShift ? { transform: `translateY(${rowShift}px)` } : undefined}
+                className={
+                  rowDragging
+                    ? "relative z-10 rounded-md border border-line-200 bg-card shadow-panel ring-2 ring-purple-600/40 transition-transform"
+                    : "relative rounded-md border border-line-200 bg-card transition-transform"
+                }
+              >
                 <div className="flex flex-wrap items-center gap-2 px-3 py-2">
                   {/* The ordinal comes from the array position and is printed on the row, so the
-                      list and any reference to it ("prototype 3") name the same thing. */}
+                      list and any reference to it ("prototype 3") name the same thing — and it is the
+                      same number `save_stage` stores as `ordinal`, the provenance page prints as
+                      "row 3" and the report prints these rows in.
+
+                      AND IT IS SAID IN WORDS FOR ANYONE WHO CANNOT SEE THE LIST. A bare "3" in a chip
+                      is announced as "3", with nothing to attach it to: a rank that exists only as a
+                      place in a visual list is one a screen-reader user cannot read back, which is
+                      exactly the question a reorderable list has to be able to answer. The digit is
+                      hidden from the accessibility tree and the sentence stands in for it, so the
+                      number is announced once rather than twice. */}
                   <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-field-200 text-xs font-semibold text-ink-700">
-                    {index + 1}
+                    <span aria-hidden>{index + 1}</span>
+                    <span className="sr-only">
+                      Position {index + 1} of {rows.length}.
+                    </span>
                   </span>
                   <button
                     type="button"
@@ -1254,6 +1855,41 @@ export function CollectionTable({
                     </span>
                   ) : null}
                   <div className="flex shrink-0 items-center gap-1">
+                    {/*
+                      THE GRIP ANSWERS THE KEYBOARD TOO, even though the two arrows beside it already
+                      do. It is the affordance that LOOKS like reordering, so a reader who finds it
+                      must not have to go and find two other buttons — and a handle that swallowed the
+                      arrow keys while doing nothing would read as broken.
+
+                      `touch-none` is what stops the browser claiming the gesture as a scroll before
+                      the first `pointermove` arrives. On the handset-shaped screens a designer
+                      actually arranges prototypes on, that is the difference between a working drag
+                      and one that silently does nothing — and silently doing nothing on touch is why
+                      the hook uses pointer events rather than the HTML5 drag API in the first place.
+
+                      DISABLED BELOW TWO ROWS, because there is then nothing to reorder; the arrows
+                      are disabled at the ends of the list for the same reason. The wording is
+                      `CustomSectionsEditor`'s, verbatim, so the same gesture is described the same way
+                      wherever it appears.
+                    */}
+                    <button
+                      type="button"
+                      className="grid h-8 w-8 cursor-grab touch-none place-items-center rounded-md border border-line-200 text-ink-500 transition hover:bg-surface-50 active:cursor-grabbing disabled:opacity-40"
+                      aria-label={`Reorder ${rowTitle(entity, row, index)} — drag, or use the arrow keys`}
+                      disabled={disabled || rows.length < 2}
+                      {...drag.handleProps(rowKey)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          move(index, -1);
+                        } else if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          move(index, 1);
+                        }
+                      }}
+                    >
+                      <GripVertical className="h-4 w-4" aria-hidden />
+                    </button>
                     <button
                       type="button"
                       className="grid h-8 w-8 place-items-center rounded-md border border-line-200 text-ink-700 transition hover:bg-surface-50 disabled:opacity-40"
@@ -1369,7 +2005,16 @@ export function CollectionTable({
           when something was actually deleted. */}
       {rows.length ? (
         <p className="mt-3 text-xs text-ink-500">
-          Reordering and deleting take effect when the stage is saved. Nothing is written until then.
+          Reordering and deleting take effect when the stage is saved. Nothing is written until then.{" "}
+          {/* THE SECOND SENTENCE IS WHY THE CONTROLS EXIST, and it is a claim that was read end to
+              end before it was made — see the reorder block above for the four hops from this array
+              to the printed table. Telling a designer the order matters when it did not would be the
+              worse error of the two, so if that chain is ever broken this sentence comes out with it.
+              The third sentence names the three ways in, because a grip is only obvious to somebody
+              who already knows it is there: the owner asked for all three affordances, and a designer
+              on a laptop reaches for a different one than a designer on a touchscreen. */}
+          The order here is the order these rows print in the report. Use the up and down arrows, the
+          arrow keys, or drag a row by its handle.
         </p>
       ) : null}
     </section>

@@ -1,10 +1,23 @@
 "use client";
 
 import { motion, type Variants } from "framer-motion";
-import { Check, Compass, Microscope, ShieldCheck } from "lucide-react";
+import { Check, Compass, Microscope, PenTool, ShieldCheck } from "lucide-react";
 
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
+import { STAGE_COUNT_WORD } from "@/components/hero/workshopArc";
 
+/**
+ * ⚠ THERE WAS NO DESIGNER CARD, on a section headed "Built for the whole team", on the marketing
+ * page of a product whose second half is a design & prototype workshop. `AccessLadder.tsx` records
+ * the identical defect in its own file — its ladder had six rows for seven roles, and the missing
+ * one was DESIGNER — with the reason it survives so long: nothing looks broken. There is simply one
+ * fewer card than there are audiences, and the audience that is absent is the only one that cannot
+ * notice on their own behalf.
+ *
+ * The row is third rather than last because that is where it sits on the ladder in the section above
+ * (researcher, then designer, then professor and the admins), and two orderings of the same set of
+ * people on one page is how a reader stops trusting either.
+ */
 const AUDIENCES = [
   {
     icon: Compass,
@@ -20,6 +33,16 @@ const AUDIENCES = [
       "Structured questionnaires per artisan set",
       "Collaboration requests and grants",
       "Download, comment and edit sharing tiers"
+    ]
+  },
+  {
+    icon: PenTool,
+    title: "Designers",
+    copy: "Run a design & prototype workshop end to end, and sign the document it produces.",
+    points: [
+      `${STAGE_COUNT_WORD} stages, filled with no signal and resumed where you left off`,
+      "Sketches, prototypes, and a ranking that is your colleagues' judgement",
+      "A submission-ready .docx or PDF, from the server or from the phone"
     ]
   },
   {
@@ -61,7 +84,9 @@ export default function TeamSection() {
           Built for the whole team.
         </motion.h2>
 
-        <div className="mt-12 grid gap-5 md:grid-cols-3">
+        {/* Four cards, so two-up before four-up: at `md` a three-column grid would have left the
+            fourth card alone on a row of its own, two thirds empty. */}
+        <div className="mt-12 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
           {AUDIENCES.map((audience) => (
             <motion.div
               key={audience.title}

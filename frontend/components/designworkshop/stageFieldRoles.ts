@@ -12,8 +12,10 @@
  * matter entirely, which is why nothing in the OCR path commits without a human pressing Confirm.
  *
  * {@link addressListRole} AND {@link workshopTitleRole} ARE THE TWO THAT COULD REFUSE AN ANSWER, so
- * neither guesses at all: between them they match eight exact keys and no pattern. Their own doc
- * blocks carry the reasoning and the measurement behind those lists.
+ * neither guesses at all: between them they match eleven exact keys and no pattern — eight parts of
+ * an address and three names for the workshop a record was documented at. Their own doc blocks carry
+ * the reasoning and the measurement behind those lists, and the figure here is the sum of the two
+ * `const`s rather than a separate claim: count it from them, never from this line.
  *
  * THE EIGHTH DOES NOT GUESS EITHER, and the difference is worth naming because it is the shape the
  * other five would like to be. {@link measurableLengthFields} never looks at a key: it asks whether
@@ -313,8 +315,9 @@ export function sketchSourceFields(entity: DwEntity): DwField[] {
  * split one state across four spellings in every group-by and export, the way craft names did before
  * title-casing". The record page honours that with two dependent `Select`s and a digits-only PIN box.
  * The workshop rendered the same eleven facts as bare text inputs with a dictation button beside
- * them, and a stage entry is a FROZEN COPY — nothing re-resolves it later, so a district typed under
- * the wrong state is in the ministry's document for good. `DwLocationField.kt` puts the cost in this
+ * them — thirteen boxes, once stage 3's designer pair is counted — and a stage entry is a FROZEN
+ * COPY: nothing re-resolves it later, so a district typed under the wrong state is in the ministry's
+ * document for good. `DwLocationField.kt` puts the cost in this
  * app's own live data: "fifteen live records that put Rajasthani artisans in West Bengal precisely
  * because a form captured a coordinate and let a human type the administrative half from memory."
  *
@@ -322,11 +325,30 @@ export function sketchSourceFields(entity: DwEntity): DwField[] {
  * REFUSES INPUT: a closed dropdown cannot be answered with a name it does not offer. The registry's
  * eleven address fields are spelled exactly two ways — `state`/`district`/`pincode` on `participant`
  * and `workshopSetup`, and the same three under a `record` prefix on `existingProduct` and `tool`,
- * which is the by-value copy of the linked record's STATED address. Nothing else in the registry's
- * 570 fields is named any of those six things (measured against the bundled schema dump, which is a
- * pure `registry_to_dict()`), so there is no third spelling to catch and no near-miss to guess at. A
- * loose regex here would eventually put a dropdown of Indian states on a field about the state of a
- * loom, which is the one class of wrong answer this file's header refuses.
+ * which is the by-value copy of the linked record's STATED address.
+ *
+ * AND THERE IS A THIRD SPELLING, which this table missed until 2026-08-26: `designerState` and
+ * `designerPincode` on stage 3's `workshopPlan`, where a designer types their OWN address. They were
+ * added as a PAIR and have to stay one — `addressSibling` finds the state by key, so a PIN code
+ * admitted without its state compiles, looks wired, and silently runs no postal-zone check at all,
+ * which is a worse state than the plain box it replaced. `workshopPlan` declares no designer
+ * DISTRICT, so the state box there has nothing to clear and `StageAddressField` draws it with a null
+ * `districtField`; that arm exists and is exercised by the same registry.
+ *
+ * `designerCity` AND `designerAddress` STAY PROSE, written down here so the omission reads as a
+ * decision rather than the same oversight repeated: there is no closed list for either of them to
+ * join. A village or town name is free text on the record page too, and a street address is a street
+ * address.
+ *
+ * MEASURED AGAINST THE BUNDLED SCHEMA DUMP, which is a pure `registry_to_dict()`: it holds 635 field
+ * entries under 509 distinct keys, and exactly fifteen of them could be an administrative address by
+ * name — the eleven above, the two designer boxes, `designerCity`, and `surveyPlace.cityDistrict`,
+ * which is one prose line reading "City / District" and not a district box. Those figures are a
+ * measurement and they drift, which is why the STANDING TRIPWIRE in
+ * `e2e/stage-input-methods-unit.spec.ts` sweeps that set on every run rather than trusting this
+ * paragraph: a fourth spelling is a thing the registry can grow and this table cannot notice. A loose
+ * regex here would go the other way and eventually put a dropdown of Indian states on a field about
+ * the state of a loom, which is the one class of wrong answer this file's header refuses.
  *
  * DISTRICT REQUIRES ITS STATE ON THE SAME ENTITY, for the reason the record page clears one when the
  * other changes: "Districts are only meaningful per state — several names are shared by two states —
@@ -340,14 +362,18 @@ export function sketchSourceFields(entity: DwEntity): DwField[] {
  */
 export type AddressListRole = "state" | "district" | "pincode";
 
-/** The six exact keys, and which part of the address each names. */
+/** The eight exact keys, and which part of the address each names. */
 const ADDRESS_FIELD_KEYS: Record<string, AddressListRole> = {
   state: "state",
   recordState: "state",
+  designerState: "state",
   district: "district",
   recordDistrict: "district",
   pincode: "pincode",
-  recordPincode: "pincode"
+  recordPincode: "pincode",
+  // NEVER WITHOUT `designerState` ABOVE IT. See the doc block: a PIN code whose state sibling is
+  // missing still gets the numeric keypad and the digits-only strip, and quietly gets no zone check.
+  designerPincode: "pincode"
 };
 
 /** The sibling address field of a given part, or null when this entity does not declare one. */

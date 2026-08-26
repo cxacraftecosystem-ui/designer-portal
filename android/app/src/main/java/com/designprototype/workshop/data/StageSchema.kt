@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicReference
  * `stage_schema.py` line for line.
  *
  * WHY THERE IS NO PER-STAGE FORM CODE ANYWHERE IN THIS APP. The requirements document defines 22
- * stages holding hundreds of typed fields across 43 entities, and the tiers within them move between
+ * stages holding hundreds of typed fields across dozens of entities, and the tiers within them move between
  * studies. Hand-writing 22 forms means every registry edit is an app release, and — worse — it means
  * the phone, the web form, the validator and the report writer each carry their own opinion about what
  * stage 14 contains. They would drift, and the first anyone would notice is a ministry report with an empty
@@ -143,6 +143,39 @@ data class EnumOption(
     val label: String = "",
 )
 
+/**
+ * THE CEILING A MULTI-VALUED FIELD IS HELD TO WHERE THE REGISTRY DECLARES NONE — enforced, never
+ * printed.
+ *
+ * The twin of `DEFAULT_MAX_ITEMS` at backend/app/services/stage_schema.py:1764, and a twin rather
+ * than a guess: `coerce_value` reads `spec.max_items or DEFAULT_MAX_ITEMS` and then REFUSES an array
+ * longer than that instead of trimming it (stage_schema.py:1822, under a comment headed "A REFUSAL,
+ * NOT A TRUNCATION"), while `save_stage` restores the rejected key from `previous`. So a client that
+ * reads an absent [FieldDto.maxItems] as "no ceiling at all" does not cost the designer the surplus
+ * photographs — it costs them the whole field's write, with the bytes already copied into the
+ * workshop's media directory. That is what this client did until 2026-08-26; see the ceiling block
+ * in `ui/designworkshop/DwMediaCapture.kt`.
+ *
+ * IT IS ENFORCED AND NEVER PRINTED, which is both halves of docs/DESIGN_WORKSHOP.md:229-232 — a
+ * client "must neither read the absence as no limit nor print a number it did not read". Drawing
+ * "up to 200" on a gallery the registry said nothing about would be this client inventing a number
+ * the server owns and may change without a `registry_version()` bump. So the always-visible "up to
+ * N" hint is gated on the DECLARED value alone, and the trim that stops an array growing past this
+ * ceiling still SAYS what it dropped, worded without the number.
+ */
+const val DW_DEFAULT_MAX_ITEMS: Int = 200
+
+/**
+ * The ceiling actually enforced for a multi-valued field, from whatever [FieldDto.maxItems] holds.
+ *
+ * One function rather than the same `takeIf` written out at each call site: the callers are the
+ * capture card's trim, [DwPhotoIntake.appendMediaRef], the TAGS and MULTI_ENUM controls in
+ * `FieldRenderer.kt`, and [DwValues.coerceHydrated] — every path that can put entries into a
+ * multi-valued field. The defect this closes was those surfaces disagreeing about what an absent cap
+ * meant, so the list is deliberately exhaustive: a new one that does not call this is the bug.
+ */
+fun dwEffectiveMaxItems(declared: Int): Int = declared.takeIf { it > 0 } ?: DW_DEFAULT_MAX_ITEMS
+
 /** One typed field of one entity — the unit [FieldRenderer] dispatches on. */
 @Serializable
 data class FieldDto(
@@ -216,6 +249,39 @@ data class FieldDto(
      */
     val refHydration: Map<String, String> = emptyMap(),
     val maxLength: Int = 0,
+    /**
+     * HOW MANY ENTRIES A MULTI-VALUED FIELD MAY HOLD — IMAGE_LIST, TAGS, MULTI_ENUM.
+     *
+     * ABSENT (0) MEANS "the server's own default", which is [DW_DEFAULT_MAX_ITEMS] = 200, and NOT
+     * "unbounded". `field_to_dict` emits the key only when the registry declares one, and the two
+     * things that follow from that must not be traded for each other: the absence is ENFORCED as 200
+     * ([dwEffectiveMaxItems]) and never PRINTED as 200. A cap drawn on screen has to be the cap that
+     * will be enforced, and 200 is the server's business to change — so the "up to N" sentence is
+     * gated on this value being non-zero, while the trim that holds an array to the ceiling is not.
+     * Reading the absence as no ceiling at all is the OTHER half of the pair
+     * docs/DESIGN_WORKSHOP.md:229-232 forbids, and it is the half both clients did until 2026-08-26.
+     *
+     * READ BY EVERY CONTROL THAT CAN GROW A MULTI-VALUED FIELD, AND BY NOTHING AT ALL BEFORE
+     * 2026-08-25. The capture card came first (2026-08-25); the photo intake, the TAGS box and the
+     * MULTI_ENUM pair followed on 2026-08-26, which is when the last write path that could overrun a
+     * gallery was closed. Enumerated as a RULE rather than as a list of three, because this sentence
+     * has already gone stale once by naming surfaces: anything that appends to one of these fields
+     * owes it [dwEffectiveMaxItems], and the test for a new one is whether it can make an array
+     * longer. `coerce_value` REFUSES an over-long array rather than trimming it — deliberately,
+     * because silently keeping the first N of a list the client believes it stored is exactly the
+     * "Stage saved, and the photographs are gone" failure that module refuses everywhere — but with
+     * no client reading the key, that refusal was the only thing enforcing it. A designer could
+     * photograph twenty-five motifs onto a twenty-photograph gallery, watch every one import into the
+     * draft, sync, and have the field refused with the work already done and nothing saying which
+     * five to drop. Worse on a handset than on the web: the import has already copied the bytes into
+     * the workshop's media directory by then.
+     *
+     * NOT PART OF `registry_version()`, so a field gaining or losing a cap does not invalidate
+     * cached drafts. That is the server's call and is correct — the value already stored is still
+     * the value stored — but it means a phone that has not refetched enforces the PREVIOUS cap, and
+     * the server is the authority either way.
+     */
+    val maxItems: Int = 0,
     /**
      * THE SERVER WILL KEEP ONLY THE MASK OF AN IDENTITY NUMBER IN THIS FIELD, WHATEVER IS SENT.
      *
@@ -343,7 +409,9 @@ data class SchemaResponse(
  * straight into a Kotlin enum makes that a `SerializationException` that fails the WHOLE registry,
  * so one new type on the server would blank all 22 stages on every handset that had not updated.
  * [of] degrades the unknown token to [TEXT] instead, which captures the answer as a string — the
- * server will coerce or drop it, and the other 495 fields keep working.
+ * server will coerce or drop it, and every other field in the registry keeps working. (NO COUNT:
+ * this said "the other 495" until 2026-08-26, when the bundled asset held 635 — a figure that has
+ * moved with every registry edit since it was written, and the argument never needed it.)
  */
 enum class DwFieldType {
     TEXT, LONG_TEXT, RICH_TEXT, INT, DECIMAL, MONEY, PERCENT, DATE, TIME, BOOL, ENUM, MULTI_ENUM,
@@ -822,6 +890,23 @@ object DwValues {
             if (type == DwFieldType.MULTI_ENUM && field.options.isNotEmpty() &&
                 items.any { token -> field.options.none { it.value == token } }
             ) return null
+            // AND THE CEILING, REFUSED WHOLE FOR THE SAME REASON AS THE UNKNOWN TOKEN ABOVE.
+            //
+            // This was the FOURTH write path that could put an over-cap array into a draft, and the
+            // last one closed (2026-08-26). It is the quietest of the four because it neither appends
+            // nor asks: hydration REPLACES the field from a referenced record, and that record's own
+            // gallery answers to its own cap, so a source holding fifty photographs can reach a target
+            // declared at twenty without anybody choosing anything.
+            //
+            // REFUSED RATHER THAN TRIMMED, which is the opposite of what the capture card does, and
+            // deliberately. `hydrate_entries` says of this exact case that "a value `coerce_value`
+            // rejects is not written and is not stamped, so the provenance map can never claim
+            // authorship of a field that stayed blank" — so the server's answer here is a blank field,
+            // and a handset that instead stored a trimmed copy would hold a value the server refused,
+            // attributed to a record it no longer matches, until the next save lost the whole field.
+            // The card trims because a designer is standing there choosing files and can be told what
+            // did not fit; nothing is being chosen here, so there is nobody to tell.
+            if (items.size > dwEffectiveMaxItems(field.maxItems)) return null
             return JsonArray(items.map { JsonPrimitive(it) })
         }
 
@@ -1818,6 +1903,63 @@ data class StageListDto(
 data class DesignWorkshopCreateBody(
     val title: String,
     val templateId: String = "DCH_STANDARD",
+    /**
+     * THE DESIGNER THIS WORKSHOP IS FOR — the one field in this body that changes what the finished
+     * report SAYS rather than what it is filed under.
+     *
+     * ── THE DEFECT IT CLOSES ────────────────────────────────────────────────────────────────────
+     *
+     * `seed_designer_prefill` copies a `DesignerProfile` into stage 1 and stage 3, and until this
+     * field could be SENT the profile it copied was always the CREATOR'S. For an admin opening a
+     * workshop on somebody else's behalf that is the wrong person's name on a ministry document,
+     * and it is not hypothetical: `require_designer` admits ADMIN, `GET /designers/me/profile`
+     * upserts a profile row for any admin who so much as opens the Designer Profile screen, and
+     * `prefill_from_profile`'s tail fallback then writes `profile.user.name` — so an admin who has
+     * never filled anything in still lands their own account name on the promoted `designerName`
+     * column. The server grew this field, with `assert_designer_may_be_named` and
+     * `attach_the_named_designer` behind it, and NEITHER CLIENT COULD SEND IT; this is the handset
+     * half of reaching it, and `DwCreateBody.designerUserId` in `frontend/lib/designWorkshops.ts`
+     * is the browser's.
+     *
+     * ── OPTIONAL, AND ABSENT MEANS "NOBODY NAMED" ───────────────────────────────────────────────
+     *
+     * Absent leaves the pre-field behaviour bit for bit — the creator's profile is copied — which is
+     * what makes the field additive for a handset that has not adopted it and for a server that has
+     * never heard of it. A workshop is opened in a room on day one and the admin may genuinely not
+     * know yet who will run it, and the offline create cannot reach the eligibility picker at all.
+     *
+     * BLANK IS ABSENT TOO, and the server says so: the route reads `(payload.designerUserId or
+     * "").strip() or None`, so an empty picker is "nobody named" and not an account whose id is the
+     * empty string. Sending null is nevertheless the honest spelling from here, and
+     * `dwNamedDesignerId` (`ui/designworkshop/WorkshopListScreen.kt`) is what folds one into the
+     * other before it reaches this body or the local draft.
+     *
+     * ── NAMING SOMEBODY ALSO PUTS THEM ON THE WORKSHOP ──────────────────────────────────────────
+     *
+     * The create route grants them a `DesignWorkshopViewer` row in the same call, under the same
+     * eligibility rule `WorkshopViewersScreen` applies — `assert_designer_may_be_named` delegates to
+     * the same `_assert_every_id_may_be_granted` the viewers PUT uses, so the two cannot drift. An
+     * ineligible id (a lapsed empanelment, a suspended account) refuses the WHOLE create with a 422
+     * naming the account, and the question is asked ABOVE the create so a refusal leaves no orphan
+     * record. On this client that 422 arrives as a permanent refusal through `classifyCreate` in the
+     * dialog and through `refusal(...)` in `WorkshopSync`'s create arm.
+     *
+     * ── IT IS OMITTED FROM THE WIRE WHEN UNSET, AND THAT WAS CHECKED RATHER THAN ASSUMED ────────
+     *
+     * `ApiClient.retrofit` serialises with `ApiClient.json`, which leaves `encodeDefaults` at
+     * kotlinx's default of false AND sets `explicitNulls = false` — two independent reasons a
+     * property still holding this null is left out of the body entirely. That is what keeps this
+     * handset compatible with an API that predates the field: `APIModel` is `extra="forbid"` on the
+     * server, so a deployment that has never heard of `designerUserId` would answer 422 "Extra
+     * inputs are not permitted" to the whole create, and a phone updates when it next sees wifi
+     * while the API updates when somebody deploys it. See [StageEntryBody.merge], which carries the
+     * same argument for the same reason.
+     *
+     * NOT ON THE UPDATE PATH. PATCH is closed to this field — `DesignWorkshopUpdate` has no such
+     * member and `APIModel` is `extra="forbid"` — because naming the designer is a CREATE-time act
+     * by construction: it decides whose profile is copied into stage 1 before stage 1 exists.
+     */
+    val designerUserId: String? = null,
     val craftName: String? = null,
     val clusterName: String? = null,
     val state: String? = null,

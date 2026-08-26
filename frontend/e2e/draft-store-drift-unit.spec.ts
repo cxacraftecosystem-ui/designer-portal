@@ -396,6 +396,9 @@ function draftWith(stages: Record<string, DwDraftStage>): DwDraft {
       title: "Bhujodi",
       templateId: "DCH_STANDARD",
       status: "DRAFT",
+      // Create-only, and this draft is already on the server (`remoteId` above), so the honest
+      // value is null — see `headerOf` for why an adopted workshop never carries one.
+      designerUserId: null,
       craftName: null,
       clusterName: null,
       state: null,

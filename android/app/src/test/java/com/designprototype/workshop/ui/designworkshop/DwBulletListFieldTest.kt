@@ -247,26 +247,41 @@ class DwBulletListFieldTest {
     }
 
     /**
-     * The number pad, and the microphone taken off the same three boxes.
+     * The number pad, and the microphone taken off EVERY box the registry declares a PIN code on.
      *
-     * [dwNumericTextField] is the one predicate on this surface that reads a KEY rather than a
-     * declaration, which is why it is pinned here by name in both directions. Over-matching is the
-     * expensive direction: a name or a place behind a number pad is a box a designer cannot answer.
+     * SWEPT BY DECLARATION, NOT BY NAME, and the naming is what went wrong. [dwNumericTextField] used
+     * to hold a set of key names; the registry then declared `workshopPlan.designerPincode`, nothing
+     * widened the set, and that box opened the alphabetic keyboard and kept the dictation microphone
+     * on the handset. This test stayed green through all of it, because it asserted only that three
+     * NAMED keys were IN the numeric set — a field falling OUT of the set was invisible to both halves
+     * of it, and out is the direction that broke. So the expectation is derived from the asset now:
+     * every field carrying `text_format = PINCODE` has to come back numeric, whatever it is called and
+     * however many of them the registry grows to.
+     *
+     * EVERY PINCODE FIELD IN THE ASSET IS TEXT TODAY, which is what lets the sweep be unconditional.
+     * The predicate is type-gated on purpose (see the test below), so a `PINCODE` declared on some
+     * other type would fail HERE rather than pass — and that failure is a question for the registry,
+     * not a licence to loosen this: an INT box already has a pad of its own, and two arms of the
+     * renderer both choosing the keyboard is the thing the gate prevents.
      */
     @Test
-    fun `the pincode boxes get the number pad and nothing shaped unlike one does`() {
+    fun `every box the registry declares a pincode on gets the number pad`() {
         val numeric = allLiveFields.filter { (_, field) -> dwNumericTextField(field) }.map { it.first }
-        listOf(
-            "participant.pincode",
-            "tool.recordPincode",
-            "existingProduct.recordPincode",
-        ).forEach { key ->
-            assertTrue("$key must open the number pad — it is $numeric", key in numeric)
+        val declared = allLiveFields.filter { (_, field) -> field.format == "PINCODE" }.map { it.first }
+        // Anti-vacuity, and not a formality: if `format` ever stops arriving under that name — a wire
+        // rename, an edit to `FieldDto` — `declared` is empty, every assertion below passes trivially,
+        // and the number pad is gone from every PIN code in the app with a green suite to say so.
+        assertTrue(
+            "the bundled registry declares no PINCODE field at all — either the asset or " +
+                "`FieldDto.format` changed shape, and everything below would pass vacuously",
+            declared.isNotEmpty()
+        )
+        declared.forEach { key ->
+            assertTrue("$key declares format PINCODE and must open the number pad — numeric is $numeric", key in numeric)
         }
-        // Not an equality assertion, for the reason the bulleted test gives: a field NAMED `pincode`
-        // that appears later is a PIN code, and the predicate answering "numeric" for it is correct
-        // rather than a regression. What must not happen is a box of some other shape being swept in,
-        // which is what the named refusals below and the key set's own exactness cover.
+        // The over-match direction, and it asks the one question the predicate cannot answer for
+        // itself: whether the REGISTRY has put the PINCODE format on a box that is not one. A name or
+        // a place behind a number pad is a box a designer cannot answer.
         numeric.forEach { name ->
             assertTrue(
                 "$name is not a pincode-shaped key and must not be forced onto the number pad",
@@ -278,9 +293,11 @@ class DwBulletListFieldTest {
     /**
      * The neighbours on the very same address block keep the ordinary keyboard.
      *
-     * Named individually rather than left to the count above, because these are the fields a
-     * key-pattern would have swept up if it had been written as a pattern — and a state or a
-     * district behind a number pad is unanswerable, not merely inconvenient.
+     * Named individually rather than left to the sweep above, because these are the fields a
+     * key-pattern would have swept up had the predicate ever been written as one — and a state or a
+     * district behind a number pad is unanswerable, not merely inconvenient. Now that
+     * [dwNumericTextField] reads the declaration, this pins the other half of that promise: that the
+     * registry has not put `text_format = PINCODE` on an address line which takes words.
      */
     @Test
     fun `the address boxes beside a pincode are not numeric`() {
@@ -292,19 +309,31 @@ class DwBulletListFieldTest {
     }
 
     /**
-     * A non-TEXT field never qualifies, whatever it is called.
+     * A non-TEXT field never qualifies, and neither does a pincode-shaped KEY on its own.
      *
      * The type test is first in the predicate for a reason: a DECIMAL already gets the decimal pad
      * from its own arm of the renderer, and answering "numeric" for it here would mean two different
      * arms both claiming to choose the keyboard.
+     *
+     * THE KEY IS NOT READ AT ALL ANY MORE, and the last three assertions are what say so. A box named
+     * `pincode` that declares no format keeps the ordinary keyboard, which is the correct answer and
+     * not a loss: the registry is the authority on what a box holds, and a client guessing from names
+     * is how this surface came to disagree with the registry about `workshopPlan.designerPincode`. The
+     * cost of the same rule is stated where the predicate lives — an asset old enough to predate
+     * `text_format` gets no number pad rather than a wrong one.
+     *
+     * AND ONLY `PINCODE`: another `text_format` is not a licence to take the letters off the keyboard.
      */
     @Test
-    fun `the type test comes before the key test`() {
-        assertFalse(dwNumericTextField(FieldDto(key = "pincode", type = "DECIMAL")))
-        assertFalse(dwNumericTextField(FieldDto(key = "pincode", type = "LONG_TEXT")))
-        assertTrue(dwNumericTextField(FieldDto(key = "pincode", type = "TEXT")))
-        // Case-folded, because the registry writes `recordPincode` and a future one might not.
-        assertTrue(dwNumericTextField(FieldDto(key = "RecordPincode", type = "TEXT")))
-        assertFalse(dwNumericTextField(FieldDto(key = "pincodeNotes", type = "TEXT")))
+    fun `the type test comes before the format test and the key is never consulted`() {
+        assertFalse(dwNumericTextField(FieldDto(key = "pincode", type = "DECIMAL", format = "PINCODE")))
+        assertFalse(dwNumericTextField(FieldDto(key = "pincode", type = "LONG_TEXT", format = "PINCODE")))
+        assertTrue(dwNumericTextField(FieldDto(key = "pincode", type = "TEXT", format = "PINCODE")))
+        // The declaration decides, so the key may be anything at all — including nothing that looks
+        // like a PIN code, which is a case a key set could not have covered however carefully written.
+        assertTrue(dwNumericTextField(FieldDto(key = "f12", type = "TEXT", format = "PINCODE")))
+        assertFalse(dwNumericTextField(FieldDto(key = "pincode", type = "TEXT")))
+        assertFalse(dwNumericTextField(FieldDto(key = "recordPincode", type = "TEXT", format = "")))
+        assertFalse(dwNumericTextField(FieldDto(key = "email", type = "TEXT", format = "EMAIL")))
     }
 }

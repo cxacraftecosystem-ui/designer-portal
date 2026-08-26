@@ -7,6 +7,7 @@ import {
   Brush,
   ChevronDown,
   ClipboardList,
+  FileOutput,
   GitBranch,
   Images,
   Languages,
@@ -22,12 +23,16 @@ import {
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { useAuth } from "@/components/AuthProvider";
 import AccessLadder, { TIER_COUNT_WORD } from "@/components/hero/AccessLadder";
+import DesignerWorkbench from "@/components/hero/DesignerWorkbench";
+import DesignWorkshopSection from "@/components/hero/DesignWorkshopSection";
 import HeroFAQ from "@/components/hero/HeroFAQ";
 import HowItWorks from "@/components/hero/HowItWorks";
 import type { CorpusCensus } from "@/components/hero/corpusCensus";
 import PrintingBed from "@/components/hero/PrintingBed";
+import ReportEngine from "@/components/hero/ReportEngine";
 import TeamSection from "@/components/hero/TeamSection";
 import WalkthroughCallout from "@/components/hero/WalkthroughCallout";
+import { STAGE_COUNT_WORD_LOWER } from "@/components/hero/workshopArc";
 import { butiTileUrl } from "@/components/hero/buti";
 import { heroEntrance, useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 
@@ -57,7 +62,13 @@ const TRUST_ITEMS = [
   // other in front of the visitor.
   { icon: ShieldCheck, label: `${TIER_COUNT_WORD}-tier access control` },
   { icon: Wifi, label: "Works offline in the field" },
-  { icon: Languages, label: "Transcribed & translated to English" }
+  { icon: Languages, label: "Transcribed & translated to English" },
+  // The fourth badge is the one thing on this list no comparable tool does, and the page said
+  // nothing about it: `android/…/report/ReportExport.kt` is "the public entry point for exporting a
+  // [ReportDocument] from the device, entirely offline". Deliberately "on the device" and not
+  // "offline" — badge two already owns that word, and repeating it would spend a line saying
+  // nothing.
+  { icon: FileOutput, label: "Reports written on the device" }
 ];
 
 /**
@@ -214,14 +225,32 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
                   </span>
                 ))}
               </h1>
+              {/*
+                THE HEADLINE ABOVE HAS ALWAYS BEEN ABOUT THE WORKSHOP — "The workshop ends. The
+                report is already written." — and this paragraph used to describe only the
+                repository half, so the page wrote a cheque here and spent every section below it
+                cashing a different one. A designer whose actual job is running a workshop in a
+                cluster could read the whole thing and not learn the product was for them.
+
+                WHAT WAS TRADED AWAY TO KEEP THE LENGTH. The review ladder and the dataset export
+                were dropped from this sentence, not from the page: the ladder is the whole of the
+                `#access` section and export is step 4 of `#how-it-works`. "and workshops" left the
+                record list for the same reason — the `#records` section names all eight. A hero
+                paragraph that lists everything is one nobody finishes.
+
+                The stage count is interpolated from `workshopArc.ts` rather than typed, because it
+                is now said in three places on this page and two hand-written counts on one page do
+                not rot together (see `AccessLadder`, which learned this about the tier count).
+              */}
               <motion.p
                 {...heroEntrance(reduce, 0.55, 0.6, { y: 20 })}
                 className="mt-6 max-w-xl text-lg leading-relaxed text-white/75"
               >
-                A field documentation repository for artisan crafts. Record artisans, products,
-                processes, tools and workshops, run structured interviews that transcribe themselves,
-                send the work up a review ladder, and export a research-ready dataset — captured
-                offline, in the field, where the craft actually happens.
+                A field documentation repository for artisan crafts, and the design &amp; prototype
+                workshop that runs on top of it. Record artisans, products, processes and tools, run
+                structured interviews that transcribe themselves — then take a designer through{" "}
+                {STAGE_COUNT_WORD_LOWER} stages in a cluster and hand over the report at the end of
+                it. Captured offline, in the field, where the craft actually happens.
               </motion.p>
 
               <div className="mt-9 flex flex-wrap items-center gap-4">
@@ -388,6 +417,31 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
       {/* ── How it works ─────────────────────────────────────────────────── */}
       <HowItWorks />
 
+      {/*
+        ── The designer half ─────────────────────────────────────────────────
+
+        THREE SECTIONS, IN THIS ORDER, AND THE ORDER IS THE ARGUMENT. The two sections above are the
+        repository: what it holds, and how a recording becomes a dataset. These three are the other
+        half of the product, which this page did not mention at all — the workshop that is RUN rather
+        than filed, the person who runs it, and the document that falls out of the end.
+
+        THEY SIT HERE RATHER THAN HIGHER UP because "eight linked record types" is what the workshop
+        stages point AT: stage 11 records sketches, stage 13 prototypes, and the reference pickers
+        inside the stages choose the artisans, products and tools the sections above describe. Read
+        the other way round, the stages arrive before the things they refer to.
+
+        THEY SIT BEFORE THE WALKTHROUGH CALLOUT because that callout is the page's "and here is
+        somebody to show you" — and its chapter list now names the workshop chapters `/guide`
+        actually has, which only reads as a promise if the workshop has already been introduced.
+
+        `DesignerWorkbench` is the tinted one. Three token-white sections in a row is a wall, and the
+        band in the middle is also the page's own way of saying "this middle one is about a person
+        rather than a mechanism".
+      */}
+      <DesignWorkshopSection />
+      <DesignerWorkbench />
+      <ReportEngine />
+
       {/* ── Walkthrough ──────────────────────────────────────────────────── */}
       <WalkthroughCallout />
 
@@ -465,6 +519,15 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
             </a>
             <a href="#how-it-works" className="text-ink-700 transition hover:text-purple-700">
               How it works
+            </a>
+            {/* Two anchors for three sections: `#designer` sits between these and is reached by
+                scrolling from either, and a footer that lists every heading on the page stops being
+                a way of getting anywhere. */}
+            <a href="#workshop" className="text-ink-700 transition hover:text-purple-700">
+              The workshop
+            </a>
+            <a href="#report" className="text-ink-700 transition hover:text-purple-700">
+              The report
             </a>
             <a href="#access" className="text-ink-700 transition hover:text-purple-700">
               Access ladder

@@ -21,13 +21,36 @@ name: Android build
 # a PR, so there is nothing to order against, and a contributor should get the compile
 # result on the PR itself rather than after their merge lands on main.
 #
-# THE `paths:` FILTER ON THAT PR TRIGGER IS NARROW ON PURPOSE — a backend-only change cannot
-# break a Kotlin compile — but for a long time it was also the reason a PR touching only
-# `backend/` and `frontend/` ran NOTHING: this was the only workflow with a `pull_request`
-# trigger at all, and it declined. That hole is now covered by `checks.yml`, which runs the
-# backend suite and the web checks on every pull request with no path filter. Keep it that way:
-# if you ever find yourself widening the filter below to get some non-Android guard to run, the
+# THE `paths:` FILTER ON THAT PR TRIGGER IS NARROW ON PURPOSE, and for a long time it was also
+# the reason a PR touching only `backend/` and `frontend/` ran NOTHING: this was the only workflow
+# with a `pull_request` trigger at all, and it declined. That hole is covered by `checks.yml`, which
+# runs the backend suite and the web checks on every pull request with no path filter. Keep it that
+# way: if you ever find yourself widening the filter below to get some non-Android guard to run, the
 # guard belongs in checks.yml, not in a job that installs an Android SDK to reach it.
+#
+# ─── THE ONE EXCEPTION, AND IT IS NOT A HYPOTHETICAL ──────────────────────────────────
+#
+# This note used to justify the filter with "a backend-only change cannot break a Kotlin compile".
+# THAT SENTENCE IS FALSE, and it has already cost this repository a day.
+#
+# `backend/app/services/stage_definitions.py` is the source of the 160 KB
+# `android/app/src/main/assets/design-workshop-schema.json` that is COMPILED INTO THE APK, and at
+# least six Kotlin tests read that asset off disk and assert against it — `DwWorkshopSearchRegistryTest`,
+# `DwParentGroupTest`, `DwReferenceCarryParityTest`, `DwConditionalRequirementTest`,
+# `DwAnalysisParityTest` and `DocxContentTest`. Two of them assert COUNTS ("N of the M entities take
+# the untouched path"), so adding one field to the registry can turn them red without a line of
+# Kotlin changing.
+#
+# On 2026-08-24 exactly that happened: a registry wave shipped with every backend and web gate green
+# and broke five of these tests. The registry wave's gate never ran the Android suite; the Android
+# wave's gate was forbidden from touching registry files. Each stayed correctly in its lane and the
+# failure sat in the gap between them — which is precisely what a path filter is.
+#
+# So the registry's own inputs and its dumped output are in the filter now. This is NOT the widening
+# the paragraph above forbids: it is not reaching for a non-Android guard, it is naming the two
+# non-Android files that this Android job's own assertions are computed from. The test to apply to a
+# future addition here is that one — does a change to this path alter what a Kotlin test asserts? —
+# and for everything else in `backend/` the answer is still no, and it still belongs in checks.yml.
 #
 # No repository secrets are required by this workflow.
 
@@ -40,6 +63,14 @@ on:
     paths:
       - "android/**"
       - ".github/workflows/android-build.yml"
+      # The registry: its source, and the two modules that source imports. A change to any of them
+      # can move `registry_version()` or the dumped asset, and six Kotlin tests assert against that
+      # asset — see the note above for the day this cost. `android/**` already covers the dumped
+      # asset itself, so what these three add is the case where the PYTHON moved and somebody has
+      # not yet re-dumped: the Android suite then fails on the mismatch, which is the whole point.
+      - "backend/app/services/stage_definitions.py"
+      - "backend/app/services/stage_schema.py"
+      - "backend/app/services/design_workshops.py"
   workflow_dispatch:
 
 permissions:

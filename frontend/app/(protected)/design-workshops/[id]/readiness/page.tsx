@@ -21,10 +21,12 @@
  * refreshes the draft; nothing on this page waits for it.
  *
  * THE RANKING IS THE FEATURE. Unfilled Basic fields come first because they are the only things that
- * 422 a submit. The report's own checks come second because they change the delivered file without
- * refusing it. Standard and Advanced gaps come last, as counts, behind a disclosure, and are never
- * drawn in the same list — a screen that mixes two hundred suggestions into four obstacles teaches a
- * designer to skim the whole thing.
+ * 422 anything at all — a STAGE CHECK, defined once below and printed in those words on both screens
+ * that quote this count. They do NOT refuse the workshop's status, and this screen asserted that they
+ * did until the contradiction with the Submission card was found. The report's own checks come second
+ * because they change the delivered file without refusing it. Standard and Advanced gaps come last,
+ * as counts, behind a disclosure, and are never drawn in the same list — a screen that mixes two
+ * hundred suggestions into four obstacles teaches a designer to skim the whole thing.
  */
 
 import { use, useEffect, useMemo, useState } from "react";
@@ -51,6 +53,88 @@ import {
   type ReadinessItem,
   type WorkshopReadiness
 } from "@/lib/submissionReadiness";
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The two acts, named once — and this is the only definition of either
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * TWO DIFFERENT ACTS WERE BOTH CALLED "SUBMIT", ON TWO SCREENS, ABOUT ONE NUMBER.
+ *
+ * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────────────
+ *
+ * This screen printed "{n} required fields outstanding / A submit is refused while any of these is
+ * empty". The workshop's own Submission card printed THE SAME COUNT under "Submitting is not blocked
+ * by this". Both sentences were true, of different mechanisms, and neither named which — so a
+ * designer who read both in the same minute was told one number both blocks and does not block them,
+ * with nothing on either screen to reconcile it. That is worse than either sentence alone: a count
+ * that contradicts itself across two screens teaches a designer that the count means nothing, and
+ * this count is the only thing standing between a part-filled workshop and a ministry.
+ *
+ * ── THE TWO MECHANISMS, READ OUT OF THE CODE RATHER THAN ASSUMED ────────────────────────────────
+ *
+ * * `PUT /design-workshops/{id}/stages/{key}` with `submit: true` — `save_stage_data`
+ *   (`backend/app/api/routes/design_workshops.py:1565`), whose gate is `if result["errors"] and
+ *   payload.submit` at `:1590`, over `validate_entry(..., enforce_required=payload.submit)`
+ *   (`services/design_workshops.py:3712`). It 422s ONE STAGE while any Basic field of that stage is
+ *   empty. The refusal is raised AFTER the transaction has committed, so the stage is written and
+ *   then refused — which is why this act's name has to be about the CHECK and not about saving.
+ * * `PATCH /design-workshops/{id}` with `status` consults no scorer at all, gates COMPLETE and
+ *   SUBMITTED identically, is fully reversible, and nothing anywhere reads the tokens it writes.
+ *
+ * ── IT IS REACHABLE, WHICH IS THE OPPOSITE OF WHAT THIS REPAIR WAS BRIEFED ON ───────────────────
+ *
+ * The brief recorded the strict per-stage save as UNREACHABLE from any client, on the evidence that
+ * `lib/designWorkshops.ts:1152` and `lib/designWorkshopStore.ts:4888` both write `submit: false`.
+ * Checked independently before a word of this copy was written, and it is not so:
+ *
+ * * `lib/designWorkshops.ts:1152` is `JSON.stringify({ replaceCollections: false, submit: false,
+ *   ...body })`. `...body` spreads AFTER, so that is an overridable DEFAULT — and `submit?: boolean`
+ *   is a declared member of `DwSaveBody` precisely so a caller can override it.
+ * * The stage form does override it. `stages/[stageKey]/page.tsx:2037` is a button labelled
+ *   "Save and check required fields" whose handler is `save(true)`, and `save`'s single call to
+ *   `saveDesignWorkshopStage` (`:1322`) passes that boolean straight through as `submit`. Its own
+ *   success sentence, at `:1422`, is "Stage saved and every required field is filled in."
+ * * It is exercised end to end today: `e2e/inline-create-hydration.spec.ts:269` clicks that button
+ *   by name and asserts the strict save is ACCEPTED — "this is the 422 the blank required boxes used
+ *   to cause". A spec cannot assert the absence of a 422 from an act no client can perform.
+ * * `lib/designWorkshopStore.ts:4888` really is a hard `submit: false`, and correctly so: that is
+ *   the offline outbox drain, and a background pass must never enforce required fields on a
+ *   designer's behalf — a courtyard sync is not a submission.
+ *
+ * So the refusal this screen has always described is real, and the honest repair is NOT to withdraw
+ * it. What this screen never said is that it refuses ONE STAGE, at a button that has to be pressed on
+ * that stage, and that it has no bearing whatever on the act on the Submission card. Both facts are
+ * now printed, in these exact words, on both screens.
+ *
+ * ── WHY THE VOCABULARY LIVES IN A PAGE MODULE, WHICH IS NOT WHERE IT BELONGS ────────────────────
+ *
+ * `lib/` is the right home and this lane was permitted to write exactly two files. It is defined HERE
+ * rather than on the Submission card's own page because the import must run in the cheaper direction:
+ * this module's imports are a subset of that page's, so the workshop index pays almost nothing to
+ * read these two strings, whereas this screen importing from the index would drag
+ * `lib/workshopSearch` (1,048 lines), `WorkshopSearchPanel` and `DictationConsentCard` into a route
+ * that renders none of them. Moving both constants to a `lib/` module is strictly better and nothing
+ * here resists it — but they must stay in ONE place, because two copies of this vocabulary is the
+ * defect at the top of this comment with extra steps.
+ */
+export const STAGE_CHECK_IS =
+  "A stage check — “Save and check required fields”, the second button at the foot of any stage — is the only " +
+  "act in this app that an empty required field refuses. It saves the stage either way, then refuses THAT ONE " +
+  "STAGE while any of its Basic-tier fields is empty, and names the ones it is waiting for.";
+
+/**
+ * The other half of the same vocabulary, printed beside {@link STAGE_CHECK_IS} on both screens.
+ *
+ * The two are deliberately separate constants rather than one paragraph: the Submission card leads
+ * with this one, because a designer standing at those buttons is asking "does this stop me?", and
+ * this screen leads with the stage check, because a designer reading a list of empty boxes is asking
+ * "what are these for?". Same words, same order inside each sentence, opposite order on the page.
+ */
+export const WORKSHOP_STATUS_IS =
+  "The workshop’s status — “Mark complete” and “Submit”, on the Submission card of the workshop itself — " +
+  "records where the whole workshop stands and is never refused for an empty field: requirement 12 is explicit " +
+  "that a workshop may be submitted part-filled.";
 
 /** The outstanding fields of one stage, under one heading a designer can recognise. */
 function StageGroup({ stageNumber, stageTitle, items }: { stageNumber: number; stageTitle: string; items: ReadinessItem[] }) {
@@ -316,8 +400,8 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
         */
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
           This browser could not read the questions this workshop adds of its own, so anything they ask is NOT counted
-          below. A required question among them would refuse a submit without ever appearing on this page. Open this
-          workshop again with a connection to read them.
+          below. A required question among them would refuse its own stage&apos;s check without ever appearing on this
+          page. Open this workshop again with a connection to read them.
         </div>
       ) : null}
 
@@ -347,8 +431,8 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
               </div>
             </div>
             <p className="text-xs leading-5 text-ink-500">
-              Only Basic-tier fields are counted here, because those are the ones a submit refuses without. A stage
-              that asks for no required fields reads as complete rather than as 0%.
+              Only Basic-tier fields are counted here, because those are the ones a stage check refuses without. A
+              stage that asks for no required fields reads as complete rather than as 0%.
             </p>
           </section>
 
@@ -374,12 +458,12 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                 {uncountedQuestions ? (
                   <>
                     All {readiness.requiredTotal} of them. This workshop&apos;s own questions could not be read here, so
-                    whether a submit would be refused for one of those is not something this page can answer
+                    whether a stage check would be refused for one of those is not something this page can answer
                     {readiness.checks.length ? "; the report also has something to say below." : "."}
                   </>
                 ) : (
                   <>
-                    All {readiness.requiredTotal} of them. Nothing on this workshop will be refused for a missing Basic
+                    All {readiness.requiredTotal} of them. No stage would be refused a stage check for a missing Basic
                     field{readiness.checks.length ? ", though the report has something to say below." : "."}
                   </>
                 )}
@@ -391,9 +475,16 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                 <h2 className="text-sm font-semibold text-ink-900">
                   {readiness.blocking.length} required field{readiness.blocking.length === 1 ? "" : "s"} outstanding
                 </h2>
+                {/* THE SENTENCE THAT USED TO READ "A submit is refused while any of these is empty", over a count
+                    the Submission card printed under "Submitting is not blocked by this". Both were true, of
+                    different acts, and neither named its own — see {@link STAGE_CHECK_IS} for the whole defect and
+                    for the evidence that this refusal is REACHABLE and so must not be withdrawn. It keeps its
+                    refusal and gains its scope (one stage, at that stage's own button); its counterpart is named
+                    beside it, in the words the card uses for the same act. */}
                 <p className="mt-0.5 text-xs leading-5 text-ink-500">
-                  A submit is refused while any of these is empty. Each one opens the stage with the box highlighted.
+                  {STAGE_CHECK_IS} Each row below opens the stage with the box highlighted.
                 </p>
+                <p className="mt-1 text-xs leading-5 text-ink-500">{WORKSHOP_STATUS_IS}</p>
               </div>
               <ul>
                 {groups.map((group) => (
@@ -415,8 +506,12 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                   <FileWarning className="h-4 w-4 text-amber-800" aria-hidden />
                   What the report would warn about
                 </h2>
+                {/* "These do not refuse a submit" named no act either, and this section is the one place on
+                    the screen where the distinction does no work: these refuse NEITHER act. Said that way, with
+                    both names, so the sentence cannot be read as ranking them below only one of the two. */}
                 <p className="mt-0.5 text-xs leading-5 text-ink-500">
-                  These do not refuse a submit. They change the file that gets delivered.
+                  These refuse neither a stage check nor the workshop&apos;s status. They change the file that gets
+                  delivered.
                 </p>
               </div>
               <ul>

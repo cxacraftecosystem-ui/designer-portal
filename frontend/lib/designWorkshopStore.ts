@@ -209,6 +209,12 @@ export function isLocalMediaRef(value: string): boolean {
  * The second is DENORMALISED by `promoted_values()` from stage 1 and is display-only: it is copied
  * down from the server so the list can draw a row offline, and it is never sent back — writing a
  * promoted column by hand is how the JSON and the column come to disagree about the same fact.
+ *
+ * THERE IS NOW A THIRD BLOCK OF EXACTLY ONE KEY, and it belongs to neither of the other two.
+ * `designerUserId` is a CREATE-ONLY INPUT: it is carried here so a workshop started with no signal
+ * still remembers who it was opened for, and it is sent by the create arm of the sync and by
+ * nothing else. It is not editable through PATCH (`DwUpdateBody` omits it by name and says why),
+ * and it is not promoted from anything — it is what DRIVES the promotion, one step earlier.
  */
 export type DwDraftHeader = {
   title: string;
@@ -222,6 +228,17 @@ export type DwDraftHeader = {
   endDate: string | null;
   workshopId: string | null;
   notes: string | null;
+  /**
+   * Create-only — the designer this workshop was opened FOR, chosen before it existed.
+   *
+   * Sent by the create arm and by nothing else. Null is the ordinary state and means "nobody was
+   * named", which the server reads as "leave the seed exactly as it behaved before this field
+   * existed" (the creator's profile is copied). It is deliberately NOT the same fact as
+   * `designerName` below: this is an account id an admin picked, that is a display string the
+   * SERVER promoted out of stage 1 after the seed ran, and a picker that wrote both would be one
+   * fact with two writers — the exact shape the promoted block exists to forbid.
+   */
+  designerUserId: string | null;
   /** Display only — promoted from stage 1 by the server. */
   workshopCode: string | null;
   venue: string | null;
@@ -1155,6 +1172,9 @@ function emptyHeader(title: string, templateId: string): DwDraftHeader {
     title,
     templateId,
     status: "DRAFT",
+    // Null, and the create form overwrites it through `definedOnly` above when an admin named
+    // somebody. A blank header has nobody named, which is a legal and common state.
+    designerUserId: null,
     craftName: null,
     clusterName: null,
     state: null,
@@ -3133,6 +3153,16 @@ function withClientKeys(collections: Record<string, DwRow[]>): Record<string, Dw
 
 function headerOf(summary: DwSummary): DwDraftHeader {
   return {
+    /*
+      NULL, ALWAYS — and this is not a field the summary forgot to carry.
+
+      `designerUserId` is an INPUT to the create and the server does not serialise it back on any
+      read: what survives the seed is `designerName`, promoted out of stage 1, which this header
+      carries below. A workshop adopted from the server has already been created, so there is no
+      create left for the key to feed, and inventing one from `summary.designerName` would be a
+      display string masquerading as an account id. Its only honest value here is "nothing to send".
+    */
+    designerUserId: null,
     title: summary.title,
     templateId: summary.templateId,
     status: String(summary.status),
@@ -4415,6 +4445,24 @@ async function runSync(): Promise<DwSyncResult> {
             (await createDesignWorkshop({
               title: draft.header.title || "Untitled design workshop",
               templateId: draft.header.templateId,
+              // The ONE key of the header's third block, and the create is the only request that
+              // may carry it. A workshop started in a room with no signal keeps the designer the
+              // admin picked before the connection went, and names them the moment it lands — so
+              // the seed copies the right profile rather than the creator's. If their empanelment
+              // lapsed in between, the server refuses the whole create with a 422 naming the
+              // account, which `saveOrQueue` surfaces rather than retrying for ever.
+              //
+              // `?? undefined` AND NOT THE BARE HEADER VALUE, because `emptyHeader` seeds this key
+              // to `null` and `createDesignWorkshop` is a bare `JSON.stringify` that prunes nothing.
+              // A workshop with nobody named would otherwise POST a literal `"designerUserId": null`
+              // — the one arm of either client that puts the key on the wire uninvited. The create
+              // form omits it (`designerUserId || undefined`) and Android omits it (`explicitNulls =
+              // false`), and an API that predates the field is `extra="forbid"`: it answers 422
+              // `extra_forbidden` to a body that merely CARRIES the key. This repository ships the
+              // browser bundle and the API separately, so that skew is a live state rather than a
+              // hypothetical — and here it would strand a whole offline workshop, its 22 stages and
+              // its photographs behind a refusal the sync reads as permanent.
+              designerUserId: draft.header.designerUserId ?? undefined,
               craftName: draft.header.craftName,
               clusterName: draft.header.clusterName,
               state: draft.header.state,

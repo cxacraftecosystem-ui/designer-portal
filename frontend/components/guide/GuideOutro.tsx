@@ -19,14 +19,22 @@ import { GUIDE_STEPS } from "@/components/guide/steps";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 
 /** The last-thing-before-you-pack-up checklist. Each item is a decision that is expensive to
- *  reverse once you are back from the field. */
+ *  reverse once you are back from the field.
+ *
+ *  THE LAST TWO ARE THE WORKSHOP'S, and they are here rather than in a second list because the test
+ *  for this list is not which arc an item belongs to — it is whether the item can still be fixed
+ *  from a desk. A tag cannot be tied to an object you have left in a courtyard, and a sketch that
+ *  was set aside and never written down is gone with the paper it was on. Both fail that test the
+ *  same way the six above do. */
 const CHECKLIST = [
   "Every artisan you spoke to has a record, with Do's and Don'ts filled in.",
   "Every product you photographed has its dimensions, cost of making and selling price.",
   "Every process has its steps in order, and the steps have video.",
   "Every tool has a material, a maker and a replacement cost.",
   "The questionnaire's completion matrix has no unexplained gaps.",
-  "Anything you shot that has no home is uploaded to Miscellaneous Media."
+  "Anything you shot that has no home is uploaded to Miscellaneous Media.",
+  "Every prototype has its tag tied to it, so stages 14, 15 and 16 attach to the right one.",
+  "The sketches nobody prototyped are recorded too — set-aside designs only survive if stage 11 has them."
 ];
 
 const NEXT: Array<{ label: string; href: string; icon: LucideIcon; note: string }> = [

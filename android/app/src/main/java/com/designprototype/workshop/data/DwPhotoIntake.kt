@@ -540,13 +540,25 @@ object DwPhotoIntake {
      * "Opening photographs" and "Event photographs", and which of the two a given photograph belongs
      * in is not knowable from a timestamp. The surface offers the entity's own list and defaults to
      * its first, which is the BASIC-tier one by declaration order.
+     *
+     * THE FIELD'S DECLARED CEILING IS CARRIED THROUGH, not just its cardinality, because a confirmed
+     * intake WRITES and a write has to stop at the ceiling — see [appendMediaRef]. A destination that
+     * knew only `multiple` could append a two-hundred-photograph camera dump into the motif galleries'
+     * declared twenty and lose the whole field's write at sync.
      */
     fun photoTargets(schema: SchemaResponse, stageKey: String, entityKey: String): List<DwPhotoTarget> {
         val stage = schema.stages.firstOrNull { it.key == stageKey }
         val entity = stage?.entities?.firstOrNull { it.key == entityKey }
         return entity?.fields.orEmpty()
             .filter { it.type == "IMAGE" || it.type == "IMAGE_LIST" }
-            .map { DwPhotoTarget(fieldKey = it.key, fieldLabel = it.label, multiple = it.type == "IMAGE_LIST") }
+            .map {
+                DwPhotoTarget(
+                    fieldKey = it.key,
+                    fieldLabel = it.label,
+                    multiple = it.type == "IMAGE_LIST",
+                    maxItems = it.maxItems,
+                )
+            }
     }
 
     // ── Ranking ──────────────────────────────────────────────────────────────────────────────────
@@ -767,7 +779,7 @@ object DwPhotoIntake {
     }
 
     /**
-     * Add one media reference to whatever a field already holds.
+     * Add one media reference to whatever a field already holds, up to the field's ceiling.
      *
      * MORE CONSERVATIVE THAN `appendMediaRef` IN `lib/photoIntake.ts`, in one case, on purpose. The
      * web reads the existing list only when the stored value is an ARRAY and starts from empty
@@ -776,12 +788,72 @@ object DwPhotoIntake {
      * it, which is also what [MediaField] already shows on the capture card for the same value, so
      * this client is at least self-consistent. Silently dropping a reference to a photograph is not a
      * parity worth having.
+     *
+     * ── THE CEILING, WHICH THIS PATH IGNORED ALTOGETHER UNTIL 2026-08-26 ──────────────────────────
+     *
+     * This is ONE OF FOUR write paths that could put an over-cap array into a draft — the capture
+     * card, the browser and [DwValues.coerceHydrated] being the others — and it was the second of
+     * them closed (2026-08-26; `coerceHydrated` was the last, see StageSchema.kt's note there). It
+     * had no cap of any kind, so a confirmed intake of two hundred photographs could append them
+     * into a gallery whose registry entry says twenty. That is
+     * not a cosmetic overrun: `coerce_value` REFUSES an over-long array rather than trimming it
+     * (backend/app/services/stage_schema.py:1822) and `save_stage` restores the rejected key from
+     * `previous`, so the sync that followed lost the whole field's write while the bytes sat in the
+     * workshop's media directory. [maxItems] of 0 is "the registry declared none", which means the
+     * server's [DW_DEFAULT_MAX_ITEMS] and never "unbounded" — see [dwEffectiveMaxItems] and
+     * docs/DESIGN_WORKSHOP.md:229-232.
+     *
+     * A REF THE FIELD ALREADY HOLDS IS NOT GROWTH, so the ceiling is tested after the identity check
+     * above it: re-confirming the same photograph into a full gallery must be the no-op it always was
+     * rather than a refusal.
+     *
+     * ── AND WHAT THIS FUNCTION CANNOT DO, WHICH ITS CALLER MUST ──────────────────────────────────
+     *
+     * A REFUSAL IS NOT REPORTED FROM HERE. This returns a value, not a receipt, so a caller that
+     * counts what it wrote has to ask [mediaRefFits] FIRST and route the file into its own "not
+     * placed" sentence — the duty `PhotoIntakeScreen`'s confirm walk already discharges for a row that
+     * was deleted under it, and `DwMediaCaptureCard` for a gallery import it had to trim.
+     *
+     * BOTH INTAKE CALL SITES NOW DO THAT, as of 2026-08-26: `dwConfirmIntake` carries
+     * [DwPhotoTarget.maxItems] down through `DwIntakeDestination.maxItems`, asks [mediaRefFits] before
+     * each of its two writes — the singleton one and the collection-row one — and sends what does not
+     * fit to `dwIntakeFullNotice`, which is joined into the receipt's `problem` beside the rows that
+     * went missing. So the file this function declines is no longer counted in the "N attached" total
+     * and its id no longer reaches `StageDraft.mediaIds`. Anything that adds a THIRD write through
+     * here owes the designer the same sentence; the signature is shaped to make that a two-line
+     * addition rather than a redesign.
      */
-    fun appendMediaRef(value: JsonElement?, ref: String, multiple: Boolean): JsonElement {
+    fun appendMediaRef(
+        value: JsonElement?,
+        ref: String,
+        multiple: Boolean,
+        maxItems: Int = 0,
+    ): JsonElement {
         if (!multiple) return JsonPrimitive(ref)
         val existing = DwValues.list(value)
         if (ref in existing) return JsonArray(existing.map { JsonPrimitive(it) })
+        if (existing.size >= dwEffectiveMaxItems(maxItems)) {
+            return JsonArray(existing.map { JsonPrimitive(it) })
+        }
         return JsonArray((existing + ref).map { JsonPrimitive(it) })
+    }
+
+    /**
+     * Whether [appendMediaRef] would actually take this reference — asked BEFORE it is called, by any
+     * caller that then tells the designer what landed.
+     *
+     * SPLIT OUT RATHER THAN RETURNED, because a nullable return from [appendMediaRef] would let a
+     * caller write `?: previousValue` and be back where it started, whereas a question that has to be
+     * asked in a separate statement is a question that appears in the diff. It answers TRUE for a
+     * single-valued field (which replaces rather than appends) and TRUE for a reference the field
+     * already holds (which is a no-op, not a refusal), so the only false it ever gives is the one a
+     * receipt has to account for.
+     */
+    fun mediaRefFits(value: JsonElement?, ref: String, multiple: Boolean, maxItems: Int = 0): Boolean {
+        if (!multiple) return true
+        val existing = DwValues.list(value)
+        if (ref in existing) return true
+        return existing.size < dwEffectiveMaxItems(maxItems)
     }
 }
 
@@ -904,6 +976,16 @@ data class DwPhotoTarget(
     val fieldLabel: String,
     /** True for IMAGE_LIST, which holds many; false for IMAGE, which holds exactly one. */
     val multiple: Boolean,
+    /**
+     * [FieldDto.maxItems] verbatim — the DECLARED ceiling, or 0 where the registry declares none.
+     *
+     * 0 IS NOT "no ceiling". It is carried raw rather than resolved so the only place the fallback is
+     * spelled out stays [dwEffectiveMaxItems], and defaulted so a destination built by an older caller
+     * still enforces the server's default instead of nothing at all. It exists because
+     * [DwPhotoIntake.appendMediaRef] needs it: `multiple` alone told the write that a gallery holds
+     * many, not how many.
+     */
+    val maxItems: Int = 0,
 )
 
 data class DwIntakeSummary(val total: Int, val proposed: Int, val manual: Int)

@@ -376,18 +376,34 @@ test("the card prints the designers' placement, not the same number twice", () =
 
 test("the drag commits against the list it was measured on, or not at all", () => {
   /*
-    `endDrag` committed `moveTo(order, current.from, current.to)` — two indices computed from a
-    snapshot taken at pointerdown, applied to whatever `order` had become by the release. If the
-    parent re-derived the list mid-gesture (a Refresh, a colleague's row arriving on a sync) those
-    indices addressed different cards, so the wrong piece moved, the announcement named the piece
-    that had been dragged rather than the one that moved, and the result was stamped `rankFixedBy` as
-    somebody's deliberate arrangement. Every other path here resolves by id first.
+    The release committed two indices computed from a snapshot taken at pointerdown, applied to
+    whatever `order` had become by then. If the parent re-derived the list mid-gesture (a Refresh, a
+    colleague's row arriving on a sync) those indices addressed different cards, so the wrong piece
+    moved, the announcement named the piece that had been dragged rather than the one that moved, and
+    the result was stamped `rankFixedBy` as somebody's deliberate arrangement. Every other path
+    resolves by id first.
+
+    READ FROM `useDragReorder.ts` SINCE 2026-08-25, when the mechanics moved out of `RankableList`
+    so the custom-sections editor could reuse them. The rule is unchanged and so is this test's
+    subject; only the file that owns it moved.
+
+    AND IT PINS THE BEHAVIOUR RATHER THAN THE CALL. The old form required the literal
+    `if (!sameOrder(current.snapshot, order))`, which is a `reviewRanking` helper the generic hook
+    correctly does NOT import — so the string test would have failed a refactor that kept every bit
+    of the guarantee. What matters is that the arrangement is snapshotted, that the release compares
+    it, and that nothing is committed when the comparison fails; that is what is asserted.
   */
-  const list = readFileSync(join(__dirname, "..", "components", "sketches", "RankableList.tsx"), "utf8");
-  expect(list, "the arrangement has to be snapshotted with the rectangles").toContain("snapshot: [...order]");
-  expect(list, "and compared at release before anything is committed").toContain(
-    "if (!sameOrder(current.snapshot, order))"
-  );
+  const drag = readFileSync(join(__dirname, "..", "components", "hooks", "useDragReorder.ts"), "utf8");
+  expect(drag, "the arrangement has to be snapshotted with the rectangles").toContain("snapshot: [...order]");
+
+  const release = drag.slice(drag.indexOf("onPointerUp("), drag.indexOf("onPointerCancel("));
+  expect(release, "the release has to compare the snapshot it measured against").toContain("current.snapshot");
+  expect(
+    release.indexOf("current.snapshot"),
+    "and it has to compare BEFORE it reorders, or the guard is decoration"
+  ).toBeLessThan(release.indexOf("onReorder("));
+  expect(release, "a gesture whose ground moved is abandoned, not guessed at").toContain("return;");
+
   // The unguarded rectangle read threw inside a state updater on a list that shortened mid-gesture.
-  expect(list, "the snapshot can outlive the list it was taken of").toContain("if (!box) return current;");
+  expect(drag, "the snapshot can outlive the list it was taken of").toContain("if (!box) return current;");
 });

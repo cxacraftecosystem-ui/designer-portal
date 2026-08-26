@@ -35,18 +35,38 @@ import type { MediaType } from "@/lib/types";
  * — which reads to a designer as the app losing their file rather than refusing it.
  *
  * WHICH BUCKETS ARE ACTUALLY NARROWED IS THE PART THAT MAKES THE RULE USABLE. `pickAccept` narrows
- * only when a caller passes `allowedTypes`, and today three callers do: `["IMAGE"]`, `["AUDIO"]`,
- * `["VIDEO"]` (see `ALLOWED_TYPES` in `components/designworkshop/FieldInput.tsx`, the questionnaire's
- * audio field, and `DesignerProfileForm`). So the three wildcard-led lists are the ones the rule
- * bites on, and there `inferMediaType` and the bucket must agree exactly.
+ * only when a caller passes `allowedTypes`, and FOUR call sites do: the stage form's media field
+ * through its own `ALLOWED_TYPES` map (`components/designworkshop/FieldInput.tsx`, the
+ * `ALLOWED_TYPES` constant — named rather than cited by line, because the line this said moved
+ * inside the very pass that wrote it — `["IMAGE"]`
+ * for IMAGE and IMAGE_LIST, `["AUDIO"]`, `["VIDEO"]`, and deliberately nothing at all for FILE); the
+ * questionnaire's audio field (`app/(protected)/questionnaire/page.tsx:999`, `["AUDIO"]`); the
+ * designer profile's photograph and signature slots
+ * (`components/designers/DesignerProfileForm.tsx`, the photo and signature cards, `["IMAGE"]`); and
+ * that same form's `cvMediaId` card, which passes `["PDF", "DOCUMENT", "IMAGE"]` plus an explicit
+ * narrow `accept`. For the three wildcard-led lists the rule above
+ * is the whole story — `inferMediaType` and the bucket must agree exactly. The CV slot is the shape
+ * this paragraph did not anticipate, and the third one below is about that.
  *
  * `documentAccept` IS THE `FILE` FIELD'S ATTACHMENT LIST AND NOT A `DOCUMENT` CLASSIFIER. A FILE
  * field passes no `allowedTypes` at all, so its chooser is these four joined AND `addFiles` filters
  * nothing — every token in this list is admitted whatever `inferMediaType` says about it. That is
  * why `.pdf` belongs here even though `inferMediaType` answers `"PDF"` for `application/pdf`: this
- * is the list a FILE field reaches, `ACCEPT_BY_TYPE.PDF` is a separate narrow slot with no caller,
- * and deleting `.pdf` from here in the name of the rule would silently stop every FILE field
- * offering the scanned consent form `ALLOWED_TYPES`' own comment says must stay pickable.
+ * is the list a FILE field reaches, `ACCEPT_BY_TYPE.PDF` is the separate narrow slot for a card that
+ * takes PDFs and nothing else, and deleting `.pdf` from here in the name of the rule would silently
+ * stop every FILE field offering the scanned consent form `ALLOWED_TYPES`' own comment says must stay
+ * pickable.
+ *
+ * SO `ACCEPT_BY_TYPE.DOCUMENT` WAS REACHED FROM A NARROWED CARD, WHICH IS THE ONE CASE THESE
+ * BUCKETS WERE NEVER DESIGNED FOR. The CV slot has to name `DOCUMENT` to be allowed a `.docx` at
+ * all, because that is what `inferMediaType` answers for one — and naming it HANDED that card the
+ * FILE field's ENTIRE attachment list, spreadsheets, `.json` and the two 3D formats included, which
+ * `addFiles` then ADMITS rather than drops, since those infer as DOCUMENT too. So the failure is the
+ * mirror image of the one the rule above is about: nothing is lost silently, the wrong thing is
+ * uploaded and kept in a column called CV. The bucket cannot be trimmed to fix it (previous
+ * paragraph), so a card in that position states its own chooser through the `accept` prop and leaves
+ * the buckets alone. The CV slot is the caller that needs it; `accept`'s own note carries the whole
+ * argument.
  *
  * `.webm` IS GENUINELY AMBIGUOUS BY EXTENSION and sits in both `audioAccept` and `videoAccept`,
  * which is the one place the strict form of the rule cannot hold: the container carries either, the
@@ -119,7 +139,28 @@ const videoAccept = "video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.3gp";
   match-anything wildcard for every field that is not IMAGE/VIDEO/AUDIO, so Android could always
   attach both. This list was the divergent half.
 */
-const documentAccept = ".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.json,.glb,.gltf";
+/*
+  `.odt` ADDED 2026-08-25, one token, for the reason the paragraph above gives for the 3D pair: a box
+  was declared and drawn that could not be answered through the chooser.
+
+  Two uploads asked for on that date name a word-processor document as a first-class answer — the
+  designer's CV on the profile page, and `surveySummary.surveyDocument` ("the written-up survey")
+  — and both help sentences say "PDF, .docx or .odt". OpenDocument text is the direct sibling of the
+  `.doc`/`.docx` pair already here, it is what LibreOffice writes by default, and LibreOffice is what
+  a great deal of this fieldwork's paperwork is written in. Without the token a designer holding
+  `survey.odt` could see the box, read that their format was accepted, open the chooser and find the
+  file greyed out.
+
+  NOTHING ELSE IS NEEDED FOR IT. There is no server-side extension or mime allow-list — `media.py`
+  stores what the browser reported — `inferMediaType` calls it a DOCUMENT (no `image/`, `video/`,
+  `audio/` or `application/pdf` arm matches), `_KIND_WORD` already names DOCUMENT "Document", and the
+  handset's `galleryMimeFor` answers the match-anything wildcard for every non-AV field, so Android
+  could always attach one. This list was the divergent half, exactly as it was for `.glb`/`.gltf`.
+
+  `.ods`/`.odp` are deliberately NOT here, on the same principle as the wider 3D formats: neither has
+  been asked for, and a spreadsheet or a slide deck is not what either of these two boxes is for.
+*/
+const documentAccept = ".pdf,.txt,.csv,.doc,.docx,.odt,.xls,.xlsx,.json,.glb,.gltf";
 
 const ACCEPT_BY_TYPE: Record<MediaType, string> = {
   IMAGE: imageAccept,
@@ -129,6 +170,28 @@ const ACCEPT_BY_TYPE: Record<MediaType, string> = {
   DOCUMENT: documentAccept,
   OTHER: ""
 };
+
+/**
+ * What a narrowed card takes, in the words a designer would use, for the refusal sentence.
+ *
+ * The plural noun rather than the enum: "this card takes images only" is a sentence, "allowedTypes:
+ * IMAGE" is a log line. Keyed on the whole of `MediaType` so a new member cannot be added to the wire
+ * type and leave this map answering `undefined` inside a sentence somebody reads.
+ */
+const KIND_WORD: Record<MediaType, string> = {
+  IMAGE: "images",
+  VIDEO: "video",
+  AUDIO: "audio",
+  PDF: "PDF files",
+  DOCUMENT: "documents",
+  OTHER: "other files"
+};
+
+/** "a", "a and b", "a, b and c" — an Oxford-comma-free list, as the rest of this app's copy writes one. */
+function listWords(words: string[]): string {
+  if (words.length <= 1) return words[0] ?? "";
+  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
 
 function mergeFiles(existing: File[], incoming: File[]) {
   const merged = [...existing];
@@ -177,6 +240,7 @@ export function MediaCaptureField({
   description = "Photos, video, audio and files link to this record automatically. Audio is queued for transcription after upload.",
   allowDocuments = true,
   allowedTypes,
+  accept,
   attachedImages,
   stagingOwnerId,
   "aria-describedby": ariaDescribedBy
@@ -187,6 +251,40 @@ export function MediaCaptureField({
   description?: string;
   allowDocuments?: boolean;
   allowedTypes?: MediaType[];
+  /**
+   * THE CHOOSER'S LIST, STATED BY THE CALLER, FOR A CARD THE BUCKETS ABOVE ARE WIDER THAN.
+   *
+   * It REPLACES the joined `ACCEPT_BY_TYPE` list rather than adding to it. A card whose narrowing
+   * the four buckets already describe correctly should omit it, and then nothing about the chooser
+   * changes.
+   *
+   * ── THE DEFECT IT EXISTS FOR ────────────────────────────────────────────────────────────────
+   * `allowedTypes` does two jobs at once — it narrows the chooser AND it is the list `addFiles`
+   * admits against — and on a card that takes "a PDF, a word-processor document, or a photograph of
+   * a printed one" the two pull apart. `inferMediaType` answers `"DOCUMENT"` for a `.docx`, so such
+   * a card MUST name `DOCUMENT` to be allowed one at all; naming it hands the chooser
+   * `documentAccept`, which is every FILE field's whole attachment list — `.txt`, `.csv`, `.xls`,
+   * `.xlsx`, `.json`, `.glb`, `.gltf` — and `addFiles` admits every one of those too, because they
+   * infer as DOCUMENT as well. The designer profile's CV slot
+   * (`components/designers/DesignerProfileForm.tsx`, the `cvMediaId` capture card — named by its
+   * slot and not by a line, because the reference here read `:824` when it was written and the call
+   * site had already moved before the end of the same session) is exactly that card, and what it bought
+   * was a spreadsheet or a 3D model kept in a column called CV: a format neither help sentence names
+   * (`components/designers/profileCopy.ts`, `backend/app/services/stage_definitions.py`) and the
+   * handset's own picker cannot even select (`DesignerProfileScreen.kt`'s mime array).
+   *
+   * ── WHY AN OVERRIDE HERE AND NOT A NARROWER BUCKET ──────────────────────────────────────────
+   * Because `documentAccept` is the FILE field's chooser and not a DOCUMENT classifier — the rule at
+   * the top of this file. Trimming it there would take those formats away from every FILE field in
+   * the registry to fix one card, the 3D model slot they were added for included.
+   *
+   * ── WHAT IT DOES NOT DO ─────────────────────────────────────────────────────────────────────
+   * It does not filter anything. `accept` is a hint the file dialog honours and a DROP ignores
+   * completely, so `allowedTypes` remains the only gate: a caller that narrows here still admits
+   * whatever its `allowedTypes` admit, and `addFiles` still names what it turned away. Narrowing
+   * this without narrowing that buys a better dialog, not a stricter card.
+   */
+  accept?: string;
   /**
    * A stable name for the SURFACE these files belong to, when that surface outlives this card.
    *
@@ -253,6 +351,16 @@ export function MediaCaptureField({
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [dragging, setDragging] = useState(false);
+  /**
+   * Files a pick or a drop handed over that this card did NOT attach, and why — see `addFiles`.
+   *
+   * Two reasons, kept apart because they need different things from the reader: a file this field
+   * cannot store at all, and a file that is already in the strip. One list rather than two states so
+   * the de-duplication and the pruning are each written once. `key` is `fileKey`'s
+   * `name:size:lastModified` — the same identity `mergeFiles` refuses a second copy on, which is what
+   * lets an entry be matched against a file attached later.
+   */
+  const [unattached, setUnattached] = useState<Array<{ key: string; name: string; reason: "type" | "duplicate" }>>([]);
   const [previewItems, setPreviewItems] = useState<PreviewMedia[]>([]);
   const [activePreview, setActivePreview] = useState<PreviewMedia | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -358,23 +466,96 @@ export function MediaCaptureField({
     [findings, dismissed]
   );
 
+  /**
+   * The two refusal sentences, derived from the list so a later pick cannot silently rewrite them.
+   *
+   * The wrong-type one names the kinds this card DOES take, because "not attached" on its own invites
+   * the reading that the app is broken; naming the narrowing makes it a refusal a person can act on.
+   * `allowedTypes` is what does the filtering, so a card with no narrowing can never reach this
+   * sentence — the conditional is for the type checker, and the wording degrades to the plain fact
+   * rather than inventing a list it did not read.
+   */
+  const wrongTypeNames = unattached.filter((entry) => entry.reason === "type").map((entry) => entry.name);
+  const duplicateNames = unattached.filter((entry) => entry.reason === "duplicate").map((entry) => entry.name);
+  const acceptedKinds = allowedTypes?.length ? listWords(allowedTypes.map((type) => KIND_WORD[type])) : null;
+  const wrongTypeNotice = wrongTypeNames.length
+    ? `${wrongTypeNames.length} file${wrongTypeNames.length === 1 ? " was" : "s were"} not attached` +
+      `${acceptedKinds ? `, because this card takes ${acceptedKinds} only` : ""}: ${wrongTypeNames.join(", ")}.`
+    : null;
+  const duplicateNotice = duplicateNames.length
+    ? `${duplicateNames.length} file${duplicateNames.length === 1 ? " was" : "s were"} already attached, so ` +
+      `${duplicateNames.length === 1 ? "it was" : "they were"} not added twice: ${duplicateNames.join(", ")}.`
+    : null;
+
   const imageAllowed = !allowedTypes || allowedTypes.includes("IMAGE");
   const videoAllowed = !allowedTypes || allowedTypes.includes("VIDEO");
   const audioAllowed = !allowedTypes || allowedTypes.includes("AUDIO");
 
   // "Pick files" accepts everything the field allows; addFiles still filters against allowedTypes.
-  const pickAccept = (
-    allowedTypes
-      ? allowedTypes.map((type) => ACCEPT_BY_TYPE[type])
-      : [imageAccept, videoAccept, audioAccept, allowDocuments ? documentAccept : null]
-  )
-    .filter(Boolean)
-    .join(",");
+  // A caller-supplied `accept` REPLACES the join rather than widening it — see the prop's own note
+  // for the card that needs it, and for why the buckets themselves cannot be narrowed instead.
+  const pickAccept =
+    accept ??
+    (
+      allowedTypes
+        ? allowedTypes.map((type) => ACCEPT_BY_TYPE[type])
+        : [imageAccept, videoAccept, audioAccept, allowDocuments ? documentAccept : null]
+    )
+      .filter(Boolean)
+      .join(",");
 
   function addFiles(fileList: FileList | null) {
     if (!fileList) return;
+    const picked = Array.from(fileList);
     // Only the NEW files are filtered against allowedTypes — files already added stay untouched.
-    const incoming = Array.from(fileList).filter((file) => !allowedTypes || allowedTypes.includes(inferMediaType(file)));
+    const incoming = picked.filter((file) => !allowedTypes || allowedTypes.includes(inferMediaType(file)));
+    /*
+      WHAT THIS CARD JUST THREW AWAY, NAMED — rule 10, and the one gap this file's own header
+      admitted to and left open ("the residual cost … a `video/webm` picked into an AUDIO-only field
+      is still dropped silently").
+
+      THE CHOOSER IS NOT THE ONLY DOOR, which is what makes the residual cost bigger than it looks.
+      `accept` narrows the file dialog on the platforms that honour it and narrows nothing at all on
+      a DROP: drag a folder of a shoot onto an IMAGE-only field and the two clips in it were picked
+      up, filtered out here, and never mentioned — which reads as the app losing files rather than
+      refusing them, the exact failure the placement rule above exists to prevent. The refusal is
+      unavoidable (a field that admits IMAGE cannot store a video), so what was missing was the
+      sentence, not the acceptance.
+
+      AND THE ALREADY-ATTACHED ONES TOO. `mergeFiles` de-duplicates on `name:size:lastModified`, so
+      re-picking a file that is already in the strip is correctly a no-op — but a designer who picks
+      four files and watches one tile appear has no way to tell that from three files having failed.
+
+      IT ACCUMULATES, AND ONE THING ONLY TAKES AN ENTRY OFF IT: the same file being attached for
+      real. A later pick landing cleanly does not make the earlier loss untrue, and the sentence
+      going away on the next successful act is precisely how the defects this session fixed all
+      worked. So the pruning is exact — discard a tile, pick that file again, and the "already
+      attached" line about it goes, because it is now false. A wrong-type entry can never be pruned
+      this way and should not be: this card will refuse that file for as long as it is narrowed.
+      De-duplicated per reason and per file, so picking one rejected folder twice is one fact.
+    */
+    const wrongType = picked.filter((file) => !incoming.includes(file));
+    const alreadyHere = incoming.filter((file) => files.some((held) => fileKey(held) === fileKey(file)));
+    const attaching = incoming.filter((file) => !alreadyHere.includes(file));
+    if (wrongType.length || alreadyHere.length || attaching.length) {
+      setUnattached((current) => {
+        const attached = new Set(attaching.map(fileKey));
+        const next = current.filter((entry) => !attached.has(entry.key));
+        const known = new Set(next.map((entry) => `${entry.reason}:${entry.key}`));
+        for (const [reason, list] of [
+          ["type", wrongType],
+          ["duplicate", alreadyHere]
+        ] as const) {
+          for (const file of list) {
+            const key = fileKey(file);
+            if (known.has(`${reason}:${key}`)) continue;
+            known.add(`${reason}:${key}`);
+            next.push({ key, name: file.name, reason });
+          }
+        }
+        return next;
+      });
+    }
     if (!incoming.length) return;
     onFilesChange(mergeFiles(files, incoming));
   }
@@ -525,6 +706,44 @@ export function MediaCaptureField({
           then only links it — and captured files go up unchanged so embedded EXIF metadata is retained.
         </p>
       </div>
+      {/*
+        WHAT WAS PICKED AND NOT ATTACHED, DIRECTLY UNDER THE DOOR IT CAME IN BY. A refusal rendered
+        somewhere else on a long form is a refusal the reader is not looking at.
+
+        BOTH REGIONS ARE MOUNTED FROM FIRST PAINT: assistive technology announces mutations only
+        inside a region that already existed when the page settled, so a `role` put on a paragraph
+        that appears with its own first sentence is heard by nobody. `alert` for the files this card
+        cannot store (they are lost unless the designer does something with them) and `status` for the
+        duplicates (nothing is lost and nothing is needed).
+
+        `sr-only` AND NOT `hidden`, AS A CLASS SWAP ON ONE ELEMENT — the idiom `SubmissionCard` and
+        `CustomSectionsEditor` use, and its header spells out the trap: `display: none` takes the
+        region out of the accessibility tree, so `empty:hidden` or a conditional mount would undo the
+        whole point of mounting early. Empty, each element is absolutely positioned and 1×1, so it
+        costs this `grid gap-3` card no row of dead space.
+
+        The triangle is decoration and the sentence carries the whole message, so the refusal survives
+        greyscale, colour-blindness and forced colours — amber-100 over amber-800 because those are
+        the two rungs of this palette's amber that pair. It stays in the tree while the region is
+        silent, which costs nothing: it is `aria-hidden` and 1×1-clipped with everything else.
+      */}
+      <div
+        role="alert"
+        aria-live="assertive"
+        className={
+          wrongTypeNotice ? "flex items-start gap-2 rounded-md bg-amber-100 p-3 text-amber-800" : "sr-only"
+        }
+      >
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <p className="min-w-0 flex-1 text-xs leading-5">{wrongTypeNotice}</p>
+      </div>
+      <p
+        role="status"
+        aria-live="polite"
+        className={duplicateNotice ? "text-xs leading-5 text-ink-500" : "sr-only"}
+      >
+        {duplicateNotice}
+      </p>
       {previewItems.length ? (
         <div className="grid gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">

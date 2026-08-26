@@ -37,6 +37,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -49,6 +52,10 @@ import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.customFieldToFieldDto
 import com.designprototype.workshop.data.dwCustomFieldDrawable
 import com.designprototype.workshop.data.dwCustomUnsupportedNote
+// The one place the fallback for an absent `maxItems` is spelled out. TAGS and MULTI_ENUM are
+// multi-valued fields and the server holds them to the same ceiling it holds a gallery to, so this
+// file reads it for the same reason the capture card does — see [dwListCeilingClause].
+import com.designprototype.workshop.data.dwEffectiveMaxItems
 import com.designprototype.workshop.data.DwTextFormats
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.FieldDto
@@ -80,7 +87,7 @@ import java.time.LocalDate
 /**
  * ONE composable that can draw any of the registry's fields, by dispatching on [FieldDto.type].
  *
- * NO FIELD COUNT IS WRITTEN IN THIS FILE, ON PURPOSE — AND THE HISTORY IS THE ARGUMENT. This comment
+ * NO TOTAL FIELD COUNT IS WRITTEN IN THIS FILE, ON PURPOSE — AND THE HISTORY IS THE ARGUMENT. This comment
  * has said 496 and then 570, each measured honestly from
  * `android/app/src/main/assets/design-workshop-schema.json` at the time; both were wrong within days,
  * because the registry owner regenerates that asset whenever a field lands, and it moved TWICE during
@@ -90,9 +97,15 @@ import java.time.LocalDate
  * belongs in a test that reads the asset, which is what `DwBulletListFieldTest` and
  * `DwPhotoMeasureFieldTest` do.
  *
+ * THE TWO FIGURES BELOW ARE NOT AN EXCEPTION TO THAT. `dwBulletListRole`'s arm and
+ * [dwNumericTextField] each name the fields declaring ONE attribute, dated and marked as a fact
+ * about the asset rather than a rule the code reads; neither enumerates anything at runtime, and
+ * the property that has to stay true is swept over the whole registry by `DwBulletListFieldTest`.
+ * A TOTAL is the figure that has no such test behind it, and it is the one this file refuses.
+ *
  * THIS IS THE WHOLE POINT OF THE FEATURE. There is no per-stage form code anywhere in this app and
- * there must never be: the 22 stages carry hundreds of typed fields across 43 entities, that count
- * moves with every registry edit, the tiers within them
+ * there must never be: the 22 stages carry hundreds of typed fields across dozens of entities, both
+ * counts moving with every registry edit, the tiers within them
  * move between studies, and hand-writing the forms would make every registry edit an app release
  * while guaranteeing that the phone, the web form, the validator and the report writer each end up
  * with their own opinion of what stage 14 contains. They would drift, and the first anyone would
@@ -492,35 +505,90 @@ fun FieldRenderer(
             // not serve: the stored value is a JSON array of tokens either way, so the server
             // validates, stores and prints it unchanged, and the only difference is where the
             // labels come from.
-            DwFieldType.MULTI_ENUM -> if (field.refModel.isNotBlank()) {
-                DwReferenceMultiSelectField(
-                    field = field,
-                    value = value,
-                    parentField = parentField,
-                    parentValue = parentValue,
-                    bridge = services?.references,
-                    enabled = enabled,
-                    error = error,
-                    label = fieldLabel(field),
-                    onChange = onChange,
-                )
-            } else {
-                FieldCaption(field)
-                SearchableMultiSelectField(
-                    label = fieldLabel(field),
-                    options = remember(field.options) {
-                        field.options.map { SelectOption(it.value, it.label) }
-                    },
-                    selected = remember(value) { DwValues.list(value).toSet() },
-                    enabled = enabled,
-                    onSelectedChange = { chosen ->
-                        // Re-ordered to the REGISTRY's order rather than the tick order, so two
-                        // designers who selected the same three materials produce the same stored
-                        // array and the report's list does not change shape between workshops.
-                        onChange(DwValues.ofList(field.options.map { it.value }.filter { it in chosen }))
+            DwFieldType.MULTI_ENUM -> {
+                /*
+                 * A MULTI_ENUM IS A CAPPED FIELD, on both of the branches below, and it read no
+                 * ceiling at all until 2026-08-26 — see [dwListCeilingClause] for the whole argument
+                 * and for why the enforced ceiling and the printed one are two different values.
+                 *
+                 * THE SHEET APPLIES A WHOLE SELECTION AT ONCE, which is why this is not the capture
+                 * card's `take(room)`. [SearchableMultiSelectField] hands back everything ticked when
+                 * the designer presses Apply, so the growth can be several at a time, and a change
+                 * that does not grow the list at all — unticking one of five held under a ceiling of
+                 * three — has to pass through untouched or the designer is trapped. That whole rule
+                 * is [dwCapListGrowth], which is where it can be tested.
+                 */
+                val declaredCap = field.maxItems.takeIf { it > 0 }
+                val ceiling = dwEffectiveMaxItems(field.maxItems)
+                val held = remember(value) { DwValues.list(value) }
+                // Keyed on `resetKey` as well, exactly as [ScalarInput]'s buffer is: the notice
+                // belongs to a ROW, so a composable reused for the next row must not carry it over.
+                var capNotice by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
+
+                /**
+                 * What may be committed of [next], with the refusal recorded as a sentence.
+                 *
+                 * Returns rather than commits, so each branch below writes through its own `onChange`
+                 * in its own shape — the reference branch passes the element it was handed straight
+                 * on where nothing was dropped, which is what keeps a cleared field arriving as null
+                 * rather than as an empty array it would have to be re-derived into.
+                 */
+                fun keepWhatFits(next: List<String>): List<String> {
+                    val kept = dwCapListGrowth(held, next, ceiling)
+                    val dropped = next.size - kept.size
+                    capNotice = if (dropped == 0) {
+                        null
+                    } else {
+                        "${dwListCeilingClause(fieldLabel(field), declaredCap)}. $dropped of the " +
+                            "${next.size} you chose ${if (dropped == 1) "was" else "were"} not kept — " +
+                            "untick something first if you need ${if (dropped == 1) "it" else "them"} instead."
                     }
-                )
-                InlineError(error)
+                    return kept
+                }
+
+                if (field.refModel.isNotBlank()) {
+                    DwReferenceMultiSelectField(
+                        field = field,
+                        value = value,
+                        parentField = parentField,
+                        parentValue = parentValue,
+                        bridge = services?.references,
+                        enabled = enabled,
+                        error = error,
+                        label = fieldLabel(field),
+                        // Wrapped rather than passed through: the roster picker writes an array of
+                        // record ids and is as capable of overrunning the ceiling as the enum list
+                        // is. Where nothing is dropped the ORIGINAL element goes on untouched, so
+                        // this wrapper cannot change what "cleared" means on a field it did not cap.
+                        onChange = { next ->
+                            val chosen = DwValues.list(next)
+                            val kept = keepWhatFits(chosen)
+                            if (kept.size == chosen.size) onChange(next) else onChange(DwValues.ofList(kept))
+                        },
+                    )
+                } else {
+                    FieldCaption(field)
+                    SearchableMultiSelectField(
+                        label = fieldLabel(field),
+                        options = remember(field.options) {
+                            field.options.map { SelectOption(it.value, it.label) }
+                        },
+                        selected = remember(value) { DwValues.list(value).toSet() },
+                        enabled = enabled,
+                        onSelectedChange = { chosen ->
+                            // Re-ordered to the REGISTRY's order rather than the tick order, so two
+                            // designers who selected the same three materials produce the same stored
+                            // array and the report's list does not change shape between workshops.
+                            // The ceiling is applied to THAT order, so what a full field keeps is the
+                            // same on two handsets rather than depending on tick order.
+                            val ordered = field.options.map { it.value }.filter { it in chosen }
+                            onChange(DwValues.ofList(keepWhatFits(ordered)))
+                        }
+                    )
+                    InlineError(error)
+                }
+                DwListCapHint(declaredCap, held.size)
+                DwListCapNotice(capNotice)
             }
 
             DwFieldType.TAGS -> TagsField(field, value, onChange, enabled, error, resetKey)
@@ -805,18 +873,26 @@ private fun InlineError(error: String?) {
 /**
  * The TEXT fields whose content is digits, so their box opens the number pad and offers no microphone.
  *
- * ── WHY THERE IS A KEY LIST HERE AT ALL, AND WHY IT IS THE SECOND-BEST ANSWER ─────────────────────
+ * ── IT READS A DECLARATION NOW, AND THE KEY LIST IT REPLACES IS THE ARGUMENT ──────────────────────
  *
  * Every other predicate on this surface reads a DECLARATION: [dwMeasurableLengthFields] asks the
- * registry's `unit`, [dwOffersPhotoMeasure] asks the types. There is no declaration for "this box
- * holds digits" — the honest fix is a `FieldSpec` attribute (`input_mode`, or a narrow `pattern`)
- * that the server emits and both clients read, and it is handed off as such. Until then the handset
- * opens the ALPHABETIC keyboard on a PIN code, in a courtyard, on the surface the designer is
- * actually holding — while the app's own record form gives the same fact
- * `KeyboardOptions(keyboardType = KeyboardType.Number)` two taps away, which is the requirement this
- * predicate is standing in for.
+ * registry's `unit`, [dwOffersPhotoMeasure] asks the types. This one used to be the exception — an
+ * exact set of two key names, `pincode` and `recordPincode`, written because there seemed to be no
+ * declared attribute to ask. There is one, and it was already on the wire: `FieldSpec.text_format`,
+ * emitted as [FieldDto.format] and validated against by [DwTextFormats.error], where `PINCODE` means
+ * precisely "this box holds an Indian PIN code". So the predicate asks that instead.
  *
- * ── WHY IT IS SAFE TO GUESS *THIS*, WHEN THE OTHER GUESSES WERE REFUSED ───────────────────────────
+ * THE KEY LIST DID NOT SURVIVE THE FIRST PIN CODE ADDED AFTER IT. The registry declared a fourth,
+ * `workshopPlan.designerPincode`; nothing widened the set, and that box opened the ALPHABETIC
+ * keyboard and kept the dictation microphone — in a courtyard, on the surface the designer is
+ * actually holding, while the app's own record form gives the same fact
+ * `KeyboardOptions(keyboardType = KeyboardType.Number)` two taps away. Nothing failed, because a
+ * predicate that stops matching does not raise: the ordinary control is drawn and the loss is
+ * invisible to everyone but the designer. Reading the declaration is what makes the FIFTH PIN-code
+ * field arrive correct with no edit to this file, which is the property the whole of this renderer
+ * is built on — see this file's header.
+ *
+ * ── WHY IT IS SAFE TO ACT ON THIS DECLARATION ─────────────────────────────────────────────────────
  *
  * It is bounded on both sides. A keyboard hint WRITES NOTHING and REFUSES NOTHING — Android's number
  * pad is a soft-keyboard preference, not a filter, so a pasted or hardware-typed value still lands —
@@ -825,25 +901,36 @@ private fun InlineError(error: String?) {
  * microphone's removal is the same shape: it subtracts a control whose best possible answer on this
  * field is wrong.
  *
- * AN EXACT KEY SET RATHER THAN A PATTERN, so it cannot over-match. Measured against the bundled
- * `design-workshop-schema.json` rather than assumed: exactly three fields in it have a pincode-shaped
- * key — `participant.pincode`, `tool.recordPincode` and `existingProduct.recordPincode` — and all
- * three are TEXT. (The registry's total is deliberately not quoted here; see this file's header.) A
- * future PIN-code field under a fourth name gets the alphabetic keyboard until somebody adds it here,
- * which is the failure mode of a stopgap and the reason the declared attribute is the answer rather
- * than this.
+ * `PINCODE` ALONE, NOT EVERY `text_format`. EMAIL and the two identity formats are answered on a
+ * keyboard that has letters on it, and PHONE_IN is drawn by [ArtisanPhoneField] with its own ISD
+ * column; PINCODE is the one format whose content is digits and nothing else.
  *
- * NOT the place to fix `maxLength`. All three declare 10 where an Indian PIN code is 6, so the box
- * accepts and the report prints a ten-character value the record page could not have produced. That
- * is a registry declaration, it moves `registry_version()`, and a client that quietly enforced 6
- * against a server that allows 10 would be the two-surfaces-disagree defect wearing a helpful hat.
+ * WHAT AN ASSET WITHOUT THE DECLARATION COSTS, said plainly rather than left for someone to find: a
+ * cached registry old enough to carry these boxes with no `text_format` gets the ordinary keyboard
+ * and keeps the microphone, exactly as the whole app did before this predicate existed. That is the
+ * forgiving direction — a control not subtracted, never a control wrongly imposed — and it is the
+ * same choice [DwTextFormats.error] makes for a format token it has never heard of, for the same
+ * reason: on a handset with no signal the server is still the authority, and a client that invents
+ * the declaration is how the two surfaces come to disagree.
+ *
+ * FOUR FIELDS DECLARE IT in the bundled `design-workshop-schema.json`, measured when this was
+ * written: `workshopPlan.designerPincode`, `participant.pincode`, `tool.recordPincode` and
+ * `existingProduct.recordPincode`, all four TEXT. That is recorded as a fact about the asset and NOT
+ * as a rule this code depends on — nothing below enumerates anything, so the figure going stale
+ * costs a reader a small surprise and costs a designer nothing. The paragraph that stood here before
+ * said "exactly three fields have a pincode-shaped key" and WAS load-bearing, and it went false in
+ * the same tree that added the fourth; the count that has to stay true lives in
+ * `DwBulletListFieldTest`, which sweeps EVERY PINCODE-declaring field in the asset through this
+ * predicate rather than naming any of them.
+ *
+ * NOT the place to fix `maxLength`. Three of the four declare 10 and `designerPincode` declares 12,
+ * where an Indian PIN code is 6, so the box accepts and the report prints a longer value than the
+ * record page could have produced. That is a registry declaration, it moves `registry_version()`,
+ * and a client that quietly enforced 6 against a server that allows 10 would be the
+ * two-surfaces-disagree defect wearing a helpful hat.
  */
-internal fun dwNumericTextField(field: FieldDto): Boolean {
-    if (DwFieldType.of(field.type) != DwFieldType.TEXT) return false
-    return field.key.lowercase(java.util.Locale.ROOT) in DW_PINCODE_KEYS
-}
-
-private val DW_PINCODE_KEYS = setOf("pincode", "recordpincode")
+internal fun dwNumericTextField(field: FieldDto): Boolean =
+    DwFieldType.of(field.type) == DwFieldType.TEXT && field.format == "PINCODE"
 
 /**
  * Every text-shaped type, with a local buffer so typing is not fought by the store.
@@ -1304,6 +1391,123 @@ private fun BoolField(
     InlineError(error)
 }
 
+// --------------------------------------------------------------------------------------
+// The ceiling the two LIST controls are held to
+// --------------------------------------------------------------------------------------
+
+/**
+ * THE CEILING CLAUSE FOR A LIST FIELD — the number stated only where the registry declared one.
+ *
+ * ── WHY TAGS AND MULTI_ENUM NEED THIS AT ALL ─────────────────────────────────────────────────────
+ *
+ * `maxItems` is not a media key. docs/DESIGN_WORKSHOP.md names the three types it governs in one
+ * breath — "IMAGE_LIST, TAGS, MULTI_ENUM" — and `coerce_value` applies `spec.max_items or
+ * DEFAULT_MAX_ITEMS` to whichever of them a stage carries, under a comment headed "A REFUSAL, NOT A
+ * TRUNCATION" (backend/app/services/stage_schema.py:1822). `save_stage` then restores the rejected
+ * key from `previous`. So a control that lets a list grow past the ceiling does not cost the designer
+ * the surplus entries — it costs them that field's whole write at the next sync, silently, with the
+ * stage screen still showing what they typed. These two controls read no ceiling at all until
+ * 2026-08-26, which is the third and last of the write paths audit finding 12 named on this client.
+ * The browser's half of the same finding landed in `FieldInput.tsx` in the same pass, and its TAGS
+ * and MULTI_ENUM controls now hold the identical `declaredCap`/`cap` split — so the two clients
+ * refuse the same list at the same number, which is the only thing that makes this ceiling a
+ * contract rather than a handset behaviour.
+ *
+ * ── AND WHY THE NUMBER IS SEPARATE FROM THE CEILING ──────────────────────────────────────────────
+ *
+ * docs/DESIGN_WORKSHOP.md:229-232 forbids both halves at once: a client "must neither read the
+ * absence as no limit nor print a number it did not read". [declaredCap] is what the registry said
+ * and null where it said nothing; the ceiling ENFORCED in that second case is the server's
+ * [com.designprototype.workshop.data.DW_DEFAULT_MAX_ITEMS], which this client never read off the wire
+ * and which the server may change without a `registry_version()` bump — so it is enforced and never
+ * printed, and the sentence says the field is FULL and stops. That is the same split
+ * [dwCapNotice] makes for a gallery, worded for a list of words rather than a list of files.
+ *
+ * NO FIELD COUNT IS WRITTEN HERE, deliberately, and the reason is this file's own header: two
+ * measured counts in these comments were stale within days. What matters is not how many TAGS or
+ * MULTI_ENUM fields declare a cap today but that the ones that do not are still held to something —
+ * `DwListCapCeilingTest` asserts that property against the bundled registry, where a count belongs.
+ */
+internal fun dwListCeilingClause(label: String, declaredCap: Int?): String =
+    if (declaredCap == null) {
+        "$label is full"
+    } else {
+        "$label holds at most $declaredCap entr${if (declaredCap == 1) "y" else "ies"}"
+    }
+
+/**
+ * The selection a list control may actually commit: everything already held, plus as much of what was
+ * newly chosen as fits under [ceiling].
+ *
+ * IT CAPS GROWTH AND NEVER SHORTENS WHAT IS ALREADY STORED, and the second half is as deliberate as
+ * the first. A cap is not part of `registry_version()`, so a field may perfectly well be holding five
+ * entries on the day its declared ceiling becomes three — the values were valid when they were
+ * written. Trimming them here would be this client deleting a designer's fieldwork to satisfy a rule
+ * that arrived afterwards, without being asked and without anything to point at. What it does instead
+ * is refuse to make it worse: any change that does not grow the list is passed through untouched, so
+ * unticking one of the five still works, and the designer can bring it under the ceiling themselves.
+ * (Until they do, the server refuses that one field at save exactly as it did before this function
+ * existed — the overflow is not created here and cannot be repaired here.)
+ *
+ * The result keeps [next]'s order, which both callers have already put in REGISTRY order, so two
+ * designers who tick the same three options store the same array.
+ */
+internal fun dwCapListGrowth(held: List<String>, next: List<String>, ceiling: Int): List<String> {
+    if (next.size <= ceiling || next.size <= held.size) return next
+    val keep = LinkedHashSet(next.filter { it in held })
+    for (candidate in next) {
+        if (keep.size >= ceiling) break
+        keep.add(candidate)
+    }
+    return next.filter { it in keep }
+}
+
+/**
+ * The refusal, spoken where a designer who just tapped is looking.
+ *
+ * A [Box] with an ASSERTIVE live region and not a bare [Text], mirroring the capture card's notice:
+ * the sentence appears in response to a tap and TalkBack announces nothing for text that merely
+ * arrives, so on a handset held by someone who cannot see it the refusal would otherwise be the
+ * silence the whole ceiling repair exists to prevent. The Box stays in the layout when the notice is
+ * null so the region has a stable node to announce into.
+ */
+@Composable
+private fun DwListCapNotice(notice: String?) {
+    Box(
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            liveRegion = LiveRegionMode.Assertive
+        },
+    ) {
+        notice?.let { sentence ->
+            Text(sentence, color = MaterialTheme.colorScheme.error, fontSize = 11.sp, lineHeight = 16.sp)
+        }
+    }
+}
+
+/**
+ * The always-visible "up to N" line, drawn ONLY where the registry declared the N.
+ *
+ * The other half of docs/DESIGN_WORKSHOP.md:229-232 and the reason [dwListCeilingClause] takes a
+ * nullable: on a field the registry said nothing about, the enforced ceiling is the server's default
+ * and drawing "up to 200" would be this client inventing a number the server owns. Nothing is drawn
+ * there instead, which costs the designer nothing they can act on — the only moment that ceiling can
+ * bite is an entry two hundred deep, and [DwListCapNotice] speaks then.
+ */
+@Composable
+private fun DwListCapHint(declaredCap: Int?, held: Int) {
+    if (declaredCap == null) return
+    val room = (declaredCap - held).coerceAtLeast(0)
+    Text(
+        if (room == 0) {
+            "Full at $declaredCap. Remove one to add another."
+        } else {
+            "Up to $declaredCap — $room more can be added."
+        },
+        color = MaterialTheme.field.muted,
+        fontSize = 11.sp,
+    )
+}
+
 /**
  * A free-form list with no canonical vocabulary behind it.
  *
@@ -1311,6 +1515,10 @@ private fun BoolField(
  * a designer typing "Bagru, Sanganer" got the tag "Bagru" plus a half-typed "Sanganer" the moment
  * they paused — and tags are the one field type whose values are never validated against anything, so
  * a malformed one is never caught downstream.
+ *
+ * IT STOPS AT THE FIELD'S CEILING, declared or defaulted, for the reason [dwListCeilingClause] gives:
+ * `coerce_value` refuses an over-long array rather than trimming it, so a list allowed to grow past
+ * the cap loses the field's whole write at sync rather than its tail.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1324,11 +1532,39 @@ private fun TagsField(
 ) {
     val tags = remember(value) { DwValues.list(value) }
     var pending by remember(field.key, resetKey) { mutableStateOf("") }
+    /** What the registry declared, or null where it declared nothing — the only value that may be
+     * PRINTED. [ceiling] is what is ENFORCED, and for a list field that is never nothing. */
+    val declaredCap = field.maxItems.takeIf { it > 0 }
+    val ceiling = dwEffectiveMaxItems(field.maxItems)
+    /**
+     * Why the last Add did not take. Cleared by the next one that does, and by a removal.
+     *
+     * Keyed on [resetKey] as well as the field key, for the reason [ScalarInput]'s buffer is: this
+     * belongs to a ROW and not merely to a field. A composable reused for the next row of a
+     * collection would otherwise carry "…is full" over onto a row that is empty — a sentence about a
+     * state that stopped being true when the row changed underneath it.
+     */
+    var capNotice by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
 
     fun commit() {
         val cleaned = pending.trim()
+        /*
+         * THE CEILING IS TESTED BEFORE THE BOX IS CLEARED, which is why this sits above the line that
+         * clears it rather than beside the duplicate check below. A refusal that also swallowed the
+         * word just typed would make the designer retype it after removing a tag, on a phone, in a
+         * courtyard — so `pending` is left alone and the sentence quotes the word it refused.
+         *
+         * A DUPLICATE IS NOT GROWTH and falls through to the ordinary no-op below: refusing it as
+         * "full" would report a tag as dropped that is already sitting in the list.
+         */
+        if (cleaned.isNotEmpty() && tags.none { it.equals(cleaned, ignoreCase = true) } && tags.size >= ceiling) {
+            capNotice = "${dwListCeilingClause(fieldLabel(field), declaredCap)}. “$cleaned” was not " +
+                "added — remove one first if you need it instead."
+            return
+        }
         pending = ""
         if (cleaned.isEmpty() || tags.any { it.equals(cleaned, ignoreCase = true) }) return
+        capNotice = null
         onChange(DwValues.ofList(tags + cleaned))
     }
 
@@ -1349,6 +1585,12 @@ private fun TagsField(
             Text("Add")
         }
     }
+    // The hint reads the DECLARED cap and the notice fires on the ENFORCED one, which is the split
+    // docs/DESIGN_WORKSHOP.md:229-232 requires — see [dwListCeilingClause]. The Add button is left
+    // enabled at the ceiling on purpose: a button that goes dead with no sentence beside it is the
+    // silent refusal this pair exists to replace.
+    DwListCapHint(declaredCap, tags.size)
+    DwListCapNotice(capNotice)
     if (tags.isNotEmpty()) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1364,7 +1606,13 @@ private fun TagsField(
                 ) {
                     Text(tag, color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 12.sp)
                     IconButton(
-                        onClick = { onChange(DwValues.ofList(tags.filterNot { it == tag })) },
+                        // The notice goes with the removal that answers it: leaving "…is full" on
+                        // screen beside a list that now has room asserts a state that has just
+                        // stopped being true.
+                        onClick = {
+                            capNotice = null
+                            onChange(DwValues.ofList(tags.filterNot { it == tag }))
+                        },
                         enabled = enabled,
                         modifier = Modifier.size(28.dp)
                     ) {
@@ -1593,9 +1841,12 @@ private fun MediaField(
      * feature was written for — and stage 16's `finalProduct.lineDrawing`, which is often a CAD
      * export this panel has nothing to do with and just as often a technical drawing made on paper
      * and photographed. [dwOffersSketchRectify] argues that second one, and DwSketchRectifyFieldTest
-     * names both and refuses the registry's other six FILE fields by name. This comment said
-     * "`sketch.lineArtFile` and nothing else", which was already untrue of the code beneath it and is
-     * the sentence a reader would trust instead of running the test.
+     * names both. NO COUNT OF THE REFUSALS IS WRITTEN HERE, and none is written there either: the
+     * test sweeps EVERY field of EVERY entity in the bundled asset and asserts the offered set is
+     * exactly those two, which refuses every other FILE field in the registry however many the
+     * registry grows to. This sentence has been wrong twice already — once as "`sketch.lineArtFile`
+     * and nothing else", untrue of the code beneath it, and once as "the registry's other six FILE
+     * fields", untrue of the asset in the very session that declared two more of them.
      *
      * THE SOURCE PHOTOGRAPHS COME FROM THE ENTITY'S OTHER FIELDS, not from this one: a FILE field
      * holds the destination, and what is being read is whatever was attached to `image`. That is also

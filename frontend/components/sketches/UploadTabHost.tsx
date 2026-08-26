@@ -72,7 +72,7 @@ import { ArrowRight, CloudOff } from "lucide-react";
 
 import { Dropdown } from "@/components/ui/Dropdown";
 import { isUnreachable } from "@/lib/failureTriage";
-import { appendMediaRef } from "@/lib/photoIntake";
+import { appendMediaRef, mediaRefRoom } from "@/lib/photoIntake";
 import {
   loadDraft,
   putDraftStage,
@@ -114,7 +114,42 @@ type Target = {
   rowKey: string;
   /** True for IMAGE_LIST, where a file is appended rather than replacing what is there. */
   multiple: boolean;
+  /**
+   * The ceiling the registry DECLARED for the field, or undefined where it declared none.
+   *
+   * Undefined is not "no ceiling": `appendMediaRef` reads it as the server's own default, because
+   * `coerce_value` REFUSES an over-long array rather than trimming it and `save_stage` restores the
+   * refused key from the previous entry — so a turn of two hundred turntable frames appended past the
+   * ceiling would not lose the tail, it would lose the whole field on the next sync with every byte
+   * already staged. Carried verbatim rather than resolved here so the refusal sentence cannot print a
+   * figure this client did not read (docs/DESIGN_WORKSHOP.md:229-232).
+   */
+  maxItems?: number;
 };
+
+/**
+ * "These did not fit", in words, for a destination that is already at its ceiling.
+ *
+ * IT NAMES THE FILES AND NOT THE CEILING, which is both halves of docs/DESIGN_WORKSHOP.md:229-232 in
+ * one sentence. "Only twenty are allowed" tells a designer holding a turn of twelve nothing about
+ * which ones to re-pick, and the number itself may not be printed here at all: `turntablePhotos`
+ * declares no `maxItems`, so what is enforced against it is the server's own default — a figure this
+ * client read from nowhere and may not state as though the registry had said it. "That field is
+ * already full" is true of a declared ceiling and an undeclared one alike, and the named files are
+ * the part a designer can act on.
+ *
+ * THE PHRASE FOR THE FILES COMES FROM THE CALLER'S OWN `what`, so the refusal and the receipt beside
+ * it are worded by the same hand and count in the same units — "3 frames of “Turntable photographs”
+ * were not attached", under "9 frames of “Turntable photographs” attached to …".
+ */
+function fullNotice(said: string, names: string[]): string {
+  const one = names.length === 1;
+  return (
+    `${said} ${one ? "was" : "were"} not attached because that field is already full: ${names.join(", ")}. ` +
+    "Remove something it already holds — the stage form is where an attachment can be taken off — then " +
+    `attach ${one ? "it" : "them"} again.`
+  );
+}
 
 export function UploadTabHost({ workshopId, registry }: { workshopId: string; registry: DwRegistry | null }) {
   const [sketches, setSketches] = useState<StageRows | null>(null);
@@ -166,14 +201,34 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
    * replaces the stage's entities wholesale, so a loop that wrote per file would be reading the
    * collection it had just written back through React state — and any row the designer changed in
    * another tab between two of those writes would be resurrected from the copy this loop is holding.
+   *
+   * ── `what` IS A SENTENCE-MAKER RATHER THAN A SENTENCE, AND THAT IS THE POINT ────────────────────
+   *
+   * It used to be a fixed string, built by the caller from `files.length` before anything had been
+   * written — "12 frames of “Turntable photographs”". The moment this function gained a ceiling to
+   * enforce (see `Target.maxItems`) that string became a receipt for work that may not have happened:
+   * ten land, two are turned away, and the green line still says twelve. A receipt that overstates is
+   * worse than the refusal it papers over, because the designer stops counting. So the caller hands
+   * over a phrase-maker and THIS function, which is the only place that knows how many files the
+   * field actually took, decides the number that goes into it.
    */
   const attach = useCallback(
-    async (target: Target, files: File[], what: string): Promise<boolean> => {
+    async (target: Target, files: File[], what: (landedCount: number) => string): Promise<boolean> => {
       if (files.length === 0) return false;
       setBusy(true);
       setProblem(null);
       setNotice(null);
       let landed: string | null = null;
+      /** How many of `files` the field actually took — the only number any sentence below may use. */
+      let took = 0;
+      /**
+       * The files the field had no room for. Named on screen, never merely dropped.
+       *
+       * DECLARED OUT HERE, ABOVE THE TRY, because it is read twice after the write: once for the red
+       * sentence and once by the value this function hands back to the panel (see the note on the
+       * return, and `upload/UploadTabPanel.AttachAnswer`).
+       */
+      const turnedAway: string[] = [];
       try {
         const draft = await loadDraft(workshopId);
         const stage = draft?.stages[target.stageKey];
@@ -194,14 +249,43 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           return false;
         }
         const row = { ...rows[index] };
+        /*
+          ROOM IS ASKED FOR BEFORE THE BYTES ARE STAGED, not after: `stageLocalMedia` writes the blob
+          into IndexedDB and the sync pass uploads every staged row it finds, so a frame the field then
+          refused would go to the repository referenced by nothing and sit on this laptop for the rest
+          of the fortnight. `MediaField` in FieldInput.tsx trims on the same principle and in the same
+          words — "before a byte is uploaded".
+
+          ASKED PER FILE INSIDE THE LOOP rather than once for the batch, because `row[fieldKey]` is
+          what the previous iteration just grew: a turn of twelve handed to a gallery already holding
+          eighteen of twenty must take two and turn away ten, and one check up front could only take
+          all twelve or none.
+        */
         for (const file of files) {
+          if (!mediaRefRoom(row[target.fieldKey], target.multiple, target.maxItems)) {
+            turnedAway.push(file.name);
+            continue;
+          }
           const { ref } = await stageLocalMedia(workshopId, file, {
             stageKey: target.stageKey,
             entityKey: target.entityKey,
             fieldKey: target.fieldKey,
             clientKey: target.rowKey
           });
-          row[target.fieldKey] = appendMediaRef(row[target.fieldKey], ref, target.multiple);
+          row[target.fieldKey] = appendMediaRef(row[target.fieldKey], ref, target.multiple, target.maxItems);
+          took += 1;
+        }
+        /**
+         * Nothing fitted, so nothing is written and the answer to the panel is a plain no.
+         *
+         * Returning true here would put a green tick over a red sentence — the exact pairing the
+         * return value of this function exists to prevent (see its note below) — and writing the stage
+         * back unchanged would re-put a copy this tab read seconds ago over whatever another tab has
+         * done to the row since.
+         */
+        if (took === 0) {
+          setProblem(fullNotice(what(turnedAway.length), turnedAway));
+          return false;
         }
         rows[index] = row;
         await putDraftStage(workshopId, target.stageKey, {
@@ -211,7 +295,10 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
         });
         landed = rowLabel(row, index);
         await reload();
-        setNotice(`${what} attached to “${landed}” on this device. Sending it to the repository…`);
+        setNotice(`${what(took)} attached to “${landed}” on this device. Sending it to the repository…`);
+        // Both sentences stand together on a partial turn: the green one counts what landed, the red
+        // one names what did not. Either alone would be a lie by omission about the other half.
+        if (turnedAway.length) setProblem(fullNotice(what(turnedAway.length), turnedAway));
       } catch {
         setProblem(
           "Nothing could be written to this device's storage. If the browser is in private mode or its storage is full, the file cannot be kept here — free some space and try again."
@@ -237,7 +324,10 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
         const result = await syncDesignWorkshopDrafts();
         await reload();
         setNotice(
-          `${what} attached to “${landed}”. ${syncPassNote(result, files.length === 1 ? "this file is" : "these files are")}` +
+          // `took`, not `files.length`, in the phrase AND in the singular/plural of the sync note: a
+          // turn of twelve that the gallery took two of is two files going up, and "these files are"
+          // over one file is the same overstatement one clause later.
+          `${what(took)} attached to “${landed}”. ${syncPassNote(result, took === 1 ? "this file is" : "these files are")}` +
             // The bytes are the half a designer cannot re-make: a traced plate can be traced again,
             // a courtyard photograph cannot be re-taken. So on every outcome except a confirmed
             // landing, say that the copy here is kept — that is what makes the wait safe rather than
@@ -249,8 +339,8 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
         // is, so only the sending is what this sentence is about.
         setNotice(
           isUnreachable(error)
-            ? `${what} is saved on this device. There is no connection, so it uploads itself when one returns, and the copy here is kept until the repository confirms it.`
-            : `${what} is saved on this device, but sending it did not complete. It goes up with the next sync — the banner above the page follows it — and the copy here is kept until the repository confirms it.`
+            ? `${what(took)} is saved on this device. There is no connection, so it uploads itself when one returns, and the copy here is kept until the repository confirms it.`
+            : `${what(took)} is saved on this device, but sending it did not complete. It goes up with the next sync — the banner above the page follows it — and the copy here is kept until the repository confirms it.`
         );
       }
       /*
@@ -262,8 +352,25 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
         to …" unconditionally, the moment it handed the files over — so a synchronous `refuse()` or a
         failed IndexedDB write rendered its red sentence and the green tick side by side, one of them
         a lie. A void callback gave the panel no way to know; this is that way.
+
+        ── AND A PARTIAL TURN ANSWERS `false`, WHICH IS NOT THE OBVIOUS READING ─────────────────────
+
+        Some frames landed, so "is it on this device" is arguably yes. But the ONLY thing the answer
+        is used for is whether the panel may print its claim, and that claim counts the files it handed
+        over: `PrototypeModelField` says "12 photographs were added" off `frames.length`, which is
+        exactly the receipt-that-overstates this ceiling work exists to stop. `AttachAnswer`
+        defines `false` as "I have told them; do not claim this worked" — and by then this host has
+        told them twice, in the counted notice above and in the named refusal beside it. So a partial
+        is a `false` under that contract rather than in spite of it.
+
+        WHAT IT COSTS, stated because the next reader will hit it: the panel leaves the designer's
+        whole selection in the picker on a `false`, so a second press after making room re-stages the
+        frames that already landed as fresh references — `appendMediaRef` de-duplicates by reference
+        and these are new ones. The alternative is a green line claiming twelve over ten, which is the
+        worse of the two and the one this repository has already paid for. The real fix is a richer
+        answer than a boolean, in `UploadTabPanel` and its panels, which is not this change.
       */
-      return true;
+      return turnedAway.length === 0;
     },
     [reload, workshopId]
   );
@@ -411,9 +518,12 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           disabled={busy || !anythingReady}
           /*
             THE HANDLERS ANSWER THE PANEL, and the answer is what stops a green tick appearing over a
-            red refusal. `attach` resolves true once the file is on this device (phase two owns its
-            own sentence); a synchronous `refuse` resolves false, because `refuse` has already said
-            why in words the panel could not improve on. See `upload/UploadTabPanel.AttachAnswer`.
+            red refusal. `attach` resolves true once EVERY file it was handed is on this device (phase
+            two owns its own sentence); a synchronous `refuse` resolves false, because `refuse` has
+            already said why in words the panel could not improve on. A turn the field only had room
+            for part of also resolves false — the panel's claim counts what it handed over, so the
+            only honest answers are "all of it" and "read what the host just told you". See
+            `upload/UploadTabPanel.AttachAnswer` and the note on `attach`'s return.
           */
           onAttachSketch={async (file) => {
             if (!sketches?.stageKey || !sketchReady) {
@@ -426,10 +536,11 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
                 entityKey: "sketch",
                 fieldKey: SKETCH_LINE_ART,
                 rowKey: sketchRow,
-                multiple: false
+                multiple: false,
+                maxItems: lineArt.maxItems
               },
               [file],
-              lineArt.label
+              () => lineArt.label
             );
           }}
           onAttachSketchSource={async (file) => {
@@ -443,10 +554,11 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
                 entityKey: "sketch",
                 fieldKey: SKETCH_IMAGE,
                 rowKey: sketchRow,
-                multiple: sketchImage.type === "IMAGE_LIST"
+                multiple: sketchImage.type === "IMAGE_LIST",
+                maxItems: sketchImage.maxItems
               },
               [file],
-              sketchImage.label
+              () => sketchImage.label
             );
           }}
           onAttachModel={async (file) => {
@@ -460,10 +572,11 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
                 entityKey: "prototype",
                 fieldKey: PROTOTYPE_MODEL,
                 rowKey: prototypeRow,
-                multiple: false
+                multiple: false,
+                maxItems: model.maxItems
               },
               [file],
-              model.label
+              () => model.label
             );
           }}
           /*
@@ -481,6 +594,13 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
             image's is. If this field is ever narrowed to a single IMAGE, `appendMediaRef` must
             REPLACE rather than append, or every frame after the first would be dropped by
             `coerce_value` and the designer told nothing.
+
+            `maxItems` TRAVELS WITH IT for the other half of the same argument, and this is the one
+            handler on the panel that can hand over more than one file at a time — a turntable is shot
+            as a turn of twelve to thirty-six frames. Undeclared here today, so what is enforced is the
+            server's default; the phrase-maker below counts in FRAMES and `attach` fills in how many of
+            them the field actually took, which is why it is a function and not the sentence it used to
+            be.
           */
           onAttachTurntable={async (files) => {
             if (!prototypes?.stageKey || !prototypeReady) {
@@ -493,10 +613,11 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
                 entityKey: "prototype",
                 fieldKey: PROTOTYPE_TURNTABLE,
                 rowKey: prototypeRow,
-                multiple: turntable.type === "IMAGE_LIST"
+                multiple: turntable.type === "IMAGE_LIST",
+                maxItems: turntable.maxItems
               },
               files,
-              files.length === 1 ? `1 frame of “${turntable.label}”` : `${files.length} frames of “${turntable.label}”`
+              (count) => (count === 1 ? `1 frame of “${turntable.label}”` : `${count} frames of “${turntable.label}”`)
             );
           }}
         />

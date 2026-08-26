@@ -232,7 +232,17 @@ test("no panel claims a file was added when the host has just said it was not", 
   );
   // The host answers: `attach` resolves true once the file is on this device (phase two owns its own
   // sentence), and every synchronous refusal resolves false.
-  expect(HOST_SOURCE).toContain("files: File[], what: string): Promise<boolean>");
+  //
+  // `what` TAKES THE LANDED COUNT RATHER THAN BEING A FIXED STRING, since 2026-08-26. The field's
+  // `maxItems` ceiling is enforced on this path now (`mediaRefRoom` before `appendMediaRef`), so a
+  // turn of turntable frames can partly fit — and a sentence built before the write would say
+  // "12 frames added" over the nine that landed. That is the same claim-without-checking defect this
+  // very test exists to stop, one layer down, which is why the parameter had to grow a shape rather
+  // than the caller a second sentence. What is pinned here is unchanged: the ANSWER is still
+  // `Promise<boolean>`, and it is the answer the panels read.
+  expect(HOST_SOURCE).toContain(
+    "files: File[], what: (landedCount: number) => string): Promise<boolean>"
+  );
   const refusals = HOST_SOURCE.match(/refuse\("(?:sketch|prototype)"\);\s+return false;/g);
   expect(refusals, "all four handlers answer, not just the two that were reported").toHaveLength(4);
   // And the panels ask before they claim. `!== false` and not truthiness: a host with nothing to

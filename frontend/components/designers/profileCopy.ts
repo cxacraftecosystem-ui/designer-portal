@@ -2,21 +2,28 @@
  * The words the designer profile is asked and read back in — declared ONCE for the editor and the
  * read-only view alike.
  *
- * The two screens render the same twenty columns in the same eight groups, and they must call them
- * the same thing: an admin reading a colleague's profile and that colleague editing it are looking
+ * The two screens render the same twenty-one columns in the same eight groups, and they must call
+ * them the same thing: an admin reading a colleague's profile and that colleague editing it are looking
  * at one record, and a label that drifted between the two would make a filled field look like a
  * different, empty one. `lib/designers.DESIGNER_PROFILE_FIELDS` owns the field list; this file owns
  * what each of them is called on screen.
  *
- * FOUR LABELS ARE NOT FREE CHOICES. `displayName`, `institution`, `biography` and `experienceYears`
- * are COPIED into a workshop's stage entries when the workshop is created
- * (`prefill_from_profile`), so they end up printed under the registry's own labels — "Designer",
- * "Designer’s institution", "Designer’s profile" and "Designer’s experience", curly apostrophes and
- * all, exactly as `stage_definitions.py` declares them. Two of those read naturally as the label of
- * a box on this page and are used verbatim; the other two would be odd here ("Designer" as the
- * label of a name box on the designer's own profile), so those two are named plainly and their
- * HELP text names the registry field the value lands in. Either way a designer can trace the value
- * on their report back to the box it came from, which is the whole requirement.
+ * NO LABEL HERE IS A FREE CHOICE ANY MORE, AND THAT CHANGED ON 2026-08-25. It used to be four:
+ * `displayName`, `institution`, `biography` and `experienceYears` were the only columns
+ * `prefill_from_profile` copied into a workshop's stage entries, so they were the only four printed
+ * under the registry's own labels. The owner's instruction — everything typed on this page is master
+ * data and is pre-filled into EVERY report — widened `PREFILL_MAP` to all twenty-one columns, so
+ * every box on this screen now has a registry field it lands in and a report label it prints under.
+ *
+ * The rule that follows is unchanged in kind and wider in scope: where the registry's label reads
+ * naturally as the label of a box on the designer's own profile it is used VERBATIM, curly
+ * apostrophes and all, exactly as `stage_definitions.py` declares it. Where it would be odd here
+ * ("Designer" as the label of a name box on your own profile; "Designer’s phone" on a page that is
+ * entirely about you) the box is named plainly and the HELP text names the registry field the value
+ * lands in. Either way a designer can trace a value on their report back to the box it came from,
+ * which is the whole requirement — and a mismatch is caught rather than trusted: the backend's
+ * `test_every_prefilled_profile_column_has_a_receiving_field` proves every target exists, and
+ * `test_every_writable_profile_column_is_either_prefilled_or_named_here` proves none was forgotten.
  *
  * THE COPY IS A COPY, AND THE HELP SAYS SO. A workshop reads the profile once, at creation, and
  * never again — a report is a historical document, and a designer who moves from NIFT to NID in
@@ -48,6 +55,7 @@ export const DESIGNER_PROFILE_LABELS: Record<DesignerProfileField, string> = {
   pincode: "Pincode",
   photoMediaId: "Photograph",
   signatureMediaId: "Signature",
+  cvMediaId: "CV",
   empanelmentNo: "Empanelment number",
   empanelmentDate: "Empanelment date"
 };
@@ -62,7 +70,30 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   biography: "The paragraph that appears as “Designer’s profile” in stage 3 of every report.",
   pincode: "Six digits. Optional, and never guessed for you.",
   photoMediaId: "One photograph. Attaching another replaces it.",
-  signatureMediaId: "One image of your signature, for the report’s signature block. Attaching another replaces it.",
+  // ⚠ "for the report's signature block" WAS FALSE, and it is the second false promise this one
+  // sentence pair carried. `report_model.SignatureBlock` holds `signatories: tuple[tuple[str, str]]`
+  // — a name and a role, two strings — and both .docx writers and both .pdf writers draw those names
+  // over ruled lines. There is no image slot in it on either side of the wire, and
+  // `designerSignature` is declared `report_role=GALLERY`, so the picture prints with the report's
+  // photographs under its own heading. The registry's own help says exactly that; this now agrees
+  // with it instead of promising a block the model cannot express.
+  signatureMediaId:
+    "One image of your signature. It prints with the report’s photographs, under its own heading. Attaching another replaces it.",
+  cvMediaId:
+  // ⚠ THIS SENTENCE ENDED "It reaches your reports as an annexure." AND THAT WAS FALSE.
+  //
+  // No branch of this codebase puts a FILE in a report annexure: `report_annexures` is transcripts
+  // only (an AUDIO field resolved to `MediaFile.transcriptText`), and `_render_media_annexure`
+  // gathers through the image path, which admits IMAGE and IMAGE_LIST alone — `report_templates`
+  // records that refusal as a DELIBERATE decision with its reasons written out. What a report
+  // actually does is NAME the attachment — `format_value`'s media branch prints "1 document
+  // attached" under the field's own label — and then `build_report` warns, beside the download, that
+  // the bytes are not inside the file.
+  //
+  // Three surfaces carried this same promise: here, the registry's `designerCv` help, and the
+  // Android profile screen. All three now say the true thing, which is also the more useful thing:
+  // it tells the designer to send the file alongside the report.
+  "One document — PDF, .docx or .odt. A PDF is shown on this page as soon as it uploads; other formats are stored and downloadable. Your reports NAME it rather than carrying it, so send the file alongside the report.",
   empanelmentDate: "The date on the empanelment order, if the order carries one."
 };
 
@@ -99,7 +130,7 @@ export type DesignerProfileGroup = {
  * The eight groups, in the order both screens draw them — roughly the order these values appear in
  * a finished report: who you are, where you work, what you are qualified in, the paragraph about
  * you, how to reach you, where you are, the empanelment identifiers a government report carries,
- * and finally the two images.
+ * and finally the files you attach — photograph, signature and CV.
  */
 export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
   { key: "identity", title: "Name and standing", fields: ["displayName", "localName", "designation"] },
@@ -119,7 +150,17 @@ export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
     blurb: "The identifiers a government report is expected to carry. Not the same thing as the roster row that lets you sign in.",
     fields: ["empanelmentNo", "empanelmentDate"]
   },
-  { key: "images", title: "Photograph and signature", fields: ["photoMediaId", "signatureMediaId"] }
+  // THE CV JOINS THE IMAGES GROUP RATHER THAN GETTING ONE OF ITS OWN, and the group is retitled to
+  // say so. `DesignerProfileGroupKey` is a literal union the editor types its control map against,
+  // so a ninth group would be a compile error until controls were written for it — which is the
+  // guard working as intended, but the real argument is the reader's: these three are "the files you
+  // attach", they are drawn one under another by the same code path, and a section holding a single
+  // upload slot below a section holding two would read as an afterthought rather than a category.
+  {
+    key: "images",
+    title: "Photograph, signature and CV",
+    fields: ["photoMediaId", "signatureMediaId", "cvMediaId"]
+  }
 ];
 
 /**

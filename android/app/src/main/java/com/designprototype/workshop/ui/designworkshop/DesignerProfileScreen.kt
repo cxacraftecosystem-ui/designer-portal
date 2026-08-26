@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -73,6 +74,7 @@ import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.formatFieldDate
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -163,6 +165,8 @@ internal data class ProfileForm(
     val pincode: String = "",
     val photoMediaId: String = "",
     val signatureMediaId: String = "",
+    /** The designer's CV. A media id like the two above; usually a PDF, sometimes a scanned sheet. */
+    val cvMediaId: String = "",
     val empanelmentNo: String = "",
     val empanelmentDate: LocalDate? = null,
 )
@@ -186,6 +190,7 @@ internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
     pincode = pincode.orEmpty(),
     photoMediaId = photoMediaId.orEmpty(),
     signatureMediaId = signatureMediaId.orEmpty(),
+    cvMediaId = cvMediaId.orEmpty(),
     empanelmentNo = empanelmentNo.orEmpty(),
     // A stored value this build cannot parse degrades to "no date" instead of throwing during
     // composition, which would take the whole screen down over one malformed string in one column.
@@ -235,12 +240,21 @@ private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpd
     pincode = pincode,
     photoMediaId = photoMediaId,
     signatureMediaId = signatureMediaId,
+    cvMediaId = cvMediaId,
     empanelmentNo = empanelmentNo,
     empanelmentDate = empanelmentDate?.toString(),
 )
 
-/** What the two capture controls are currently doing, so one upload cannot be started twice. */
-private enum class ProfileMediaSlot { PHOTOGRAPH, SIGNATURE }
+/**
+ * What the three capture controls are currently doing, so one upload cannot be started twice.
+ *
+ * CV joined the two images on 2026-08-25. It shares every part of their path — the durable copy under
+ * `filesDir`, the unlinked upload, the "save the profile to keep it" contract — and differs only in
+ * what it is PICKED with (a document picker, not the gallery) and what it is DRAWN as (a rendered
+ * first page, not an `Image`). Making it a third member of this enum rather than a parallel mechanism
+ * is what keeps the `uploading`, `localPreview` and `remotePreview` maps a single source of truth.
+ */
+private enum class ProfileMediaSlot { PHOTOGRAPH, SIGNATURE, CV }
 
 @Composable
 fun DesignerProfileScreen(
@@ -290,6 +304,15 @@ fun DesignerProfileScreen(
     var localPreview by remember(targetUserId) { mutableStateOf<Map<ProfileMediaSlot, File>>(emptyMap()) }
     /** The stored file's fetchable URL, when the server is willing to serve one back. */
     var remotePreview by remember(targetUserId) { mutableStateOf<Map<ProfileMediaSlot, String>>(emptyMap()) }
+    /**
+     * The CV's filename and mime type, as the server reports them.
+     *
+     * NEEDED ONLY BY THE CV, WHICH IS WHY IT IS NOT A THIRD MAP OVER ALL THREE SLOTS. The two images
+     * are drawn by an `AsyncImage` that neither needs nor consults a mime type; the CV has to decide
+     * between rendering a PDF page, drawing a scanned sheet as a picture, and saying that a .docx
+     * cannot be shown inline — a decision `DwDocumentPreview` makes from exactly these two strings.
+     */
+    var cvDescriptor by remember(targetUserId) { mutableStateOf<Pair<String?, String?>>(null to null) }
 
     // ── Load ─────────────────────────────────────────────────────────────────────────────────────
     LaunchedEffect(targetUserId) {
@@ -331,14 +354,35 @@ fun DesignerProfileScreen(
     // Resolve whatever the stored media ids point at, so a profile filled in on the web shows its
     // photograph here. A null URL is not an error and must not be reported as one: the server
     // withholds it whenever this account may not download that uploader's files.
-    LaunchedEffect(form.photoMediaId, form.signatureMediaId) {
+    LaunchedEffect(form.photoMediaId, form.signatureMediaId, form.cvMediaId) {
         val wanted = listOfNotNull(
             form.photoMediaId.takeIf { it.isNotBlank() }?.let { ProfileMediaSlot.PHOTOGRAPH to it },
             form.signatureMediaId.takeIf { it.isNotBlank() }?.let { ProfileMediaSlot.SIGNATURE to it },
+            form.cvMediaId.takeIf { it.isNotBlank() }?.let { ProfileMediaSlot.CV to it },
         )
         var resolved = remotePreview
         wanted.forEach { (slot, id) ->
-            val url = runCatching { repository.mediaItem(id) }.getOrNull()?.url ?: return@forEach
+            /*
+              A CANCELLATION IS RETHROWN AND NOT READ AS "no url", because this effect's keys change
+              IN PLACE: every successful upload assigns a new media id, which re-keys this block while
+              the previous resolve is still in flight.
+
+              Swallowed, the cancelled run does not stop — `getOrNull()` hands it null, `return@forEach`
+              skips to the next id, each of those throws too, and the run reaches `remotePreview =
+              resolved` at the bottom carrying the map it captured BEFORE the upload. That write can
+              land after the replacement run's, putting the URL of the file that was just REPLACED
+              back on screen; and `cvDescriptor` is written from inside the same loop, so the filename
+              row can end up naming the old document over the new one's page. That is the same defect
+              `DwDocumentPreview`'s cache key was just fixed for, arriving by a second route.
+            */
+            val item = runCatching { repository.mediaItem(id) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull() ?: return@forEach
+            // The CV's name and type are kept even when the URL is withheld: "cv.pdf is stored, but
+            // this account may not open the file itself" is a far better sentence than a blank frame,
+            // and it needs the filename the entitlement answer still carries.
+            if (slot == ProfileMediaSlot.CV) cvDescriptor = item.originalFilename to item.mimeType
+            val url = item.url ?: return@forEach
             resolved = resolved + (slot to url)
         }
         remotePreview = resolved
@@ -441,6 +485,7 @@ fun DesignerProfileScreen(
                 form = when (slot) {
                     ProfileMediaSlot.PHOTOGRAPH -> form.copy(photoMediaId = uploaded.id)
                     ProfileMediaSlot.SIGNATURE -> form.copy(signatureMediaId = uploaded.id)
+                    ProfileMediaSlot.CV -> form.copy(cvMediaId = uploaded.id)
                 }
                 onMessage("${slot.caption()} uploaded. Save the profile to keep it.")
             }.onFailure { error ->
@@ -461,9 +506,51 @@ fun DesignerProfileScreen(
         scope.launch {
             runCatching { copyIntoProfileMedia(appContext, uri) }
                 .onSuccess { durable -> uploadInto(slot, durable) }
-                .onFailure { onError("That file could not be read. Try picking it again.") }
+                /*
+                  THE CANCELLATION GUARD BELONGS ON BOTH PICKERS — this one and the document picker
+                  under it. `onError` is the HOST's snackbar and not this screen's state, so a
+                  designer who picks a file and immediately goes back cancels this copy and is then
+                  told "That file could not be read" on the screen they landed on, about a file
+                  nothing was wrong with. A large scanned sheet takes long enough for that to be an
+                  ordinary sequence rather than a race.
+                */
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    onError("That file could not be read. Try picking it again.")
+                }
         }
     }
+    /**
+     * The CV picker.
+     *
+     * `OpenDocument` AND NOT `GetContent`, which is what the two image slots use, and the difference
+     * is not stylistic: `GetContent` takes ONE mime string, and this box legitimately accepts a PDF, a
+     * Word document, an OpenDocument text file and a photograph of a printed sheet. `OpenDocument`
+     * takes an array, and it also returns a Uri backed by a persistable grant rather than a one-shot
+     * one — which matters less here than it looks, because the bytes are copied into `filesDir`
+     * immediately either way (see `copyIntoProfileMedia`), but it is the correct contract for
+     * "choose a document" and it is what the system file browser is wired to.
+     *
+     * THE IMAGE WILDCARD IS IN THE LIST DELIBERATELY. A designer whose CV exists only as a scanned or
+     * photographed sheet — common in this fieldwork — would otherwise be told their own CV is the
+     * wrong kind of file with no way to attach it. The web's slot makes the same allowance for the
+     * same reason.
+     */
+    val pickDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        pendingSlot = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching { copyIntoProfileMedia(appContext, uri) }
+                .onSuccess { durable -> uploadInto(ProfileMediaSlot.CV, durable) }
+                // Cancellation rethrown for the reason given on the image picker above: a copy
+                // abandoned by leaving the screen must not raise a snackbar on the next one.
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    onError("That document could not be read. Try picking it again.")
+                }
+        }
+    }
+
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         val slot = pendingSlot
         val capture = pendingCapture
@@ -690,12 +777,68 @@ fun DesignerProfileScreen(
                     )
                 }
 
-                ProfileSection("Photograph and signature") {
+                // The section title is the web's, verbatim. Wording and information architecture come
+                // from whichever client the owner last approved, and a researcher moving between the
+                // two apps mid-workshop must find the same heading over the same three controls.
+                ProfileSection("Photograph, signature and CV") {
+                    /*
+                      ══════════════════════════════════════════════════════════════════════════════
+                      THIS SENTENCE PROMISED AN ANNEXURE, AND IT WAS FALSE — MEASURED, NOT SUSPECTED
+                      ══════════════════════════════════════════════════════════════════════════════
+
+                      It read "All three are printed: … and the CV as an annexure." NO BRANCH OF THIS
+                      CODEBASE PUTS A FILE IN AN ANNEXURE. `report_annexures` is transcripts only, and
+                      `_render_media_annexure` gathers through the image path, which admits IMAGE and
+                      IMAGE_LIST and nothing else — and `report_templates` records that refusal as a
+                      DELIBERATE decision with its reasons written out, so this was never a gap
+                      waiting to be filled. It was a sentence contradicting a settled design.
+
+                      WHAT ACTUALLY HAPPENS is that the report NAMES the file: a FILE field declares
+                      no report role, so `format_value` prints the label and a count — "1 document
+                      attached" — and `build_report` now emits a warning beside the generated file
+                      saying the bytes are not inside it and to send them alongside it.
+
+                      SO THE THREE SURFACES NOW SAY ONE THING. The registry's own help text on
+                      `designerCv` was corrected to "The report NAMES it rather than carrying it, so
+                      send the file alongside the report"; the export warning says a report file
+                      cannot carry a document and to send it alongside; and this is the third, which
+                      is the only one the designer reads BEFORE they upload. A designer who submits a
+                      ministry report believing the CV travelled inside it — because this screen told
+                      them so — finds out from the ministry, and it is the photograph and the
+                      signature (which DO travel) that make the claim credible.
+
+                      SPLIT INTO TWO SENTENCES ON PURPOSE. "All three are printed" was doing the
+                      damage by grouping: the two that are printed have to be named as the two, or the
+                      correction reads as a footnote to a promise that still stands.
+                    */
+                    /*
+                      ⚠ AND THE SIGNATURE HALF WAS ITSELF FALSE FOR ONE REVISION, WHICH IS WORTH
+                      LEAVING ON THE RECORD. Correcting the CV claim above, this sentence gained
+                      "the signature in the block an officer counter-signs" — trading one false
+                      promise for another in the same edit.
+
+                      `report_model.SignatureBlock` carries `signatories: tuple[tuple[str, str]]` —
+                      a name and a role, two strings — and all four writers draw those names over
+                      ruled lines. There is no image slot in it on either side of the wire, and
+                      `designerSignature` is declared `report_role=GALLERY`, so the picture prints
+                      with the report's photographs under its own heading. The registry's own
+                      corrected help says exactly that, and this now agrees with it.
+
+                      Whether the signature SHOULD reach the signature block is an open owner
+                      decision about a ministry document — it needs an image on `SignatureBlock`,
+                      which is `report_model.py` plus `ReportModel.kt` plus four writers plus a
+                      re-pin of the bundled asset. Until that decision is taken, the box says what
+                      is true.
+                    */
                     Text(
-                        "Both are printed: the photograph on the designer's profile page, the " +
-                            "signature in the block an officer counter-signs.",
+                        "Two of these are printed in the report: the photograph on the designer's " +
+                            "profile page, and the signature with the report's photographs under " +
+                            "its own heading. The CV is not. The report NAMES it — " +
+                            "\"1 document attached\" — but a report file cannot carry a document, " +
+                            "so send the CV alongside the report.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
                     )
                     ProfileMediaRow(
                         slot = ProfileMediaSlot.PHOTOGRAPH,
@@ -727,6 +870,89 @@ fun DesignerProfileScreen(
                             remotePreview = remotePreview - ProfileMediaSlot.SIGNATURE
                         }
                     )
+
+                    /*
+                     * THE CV. A document row rather than a third image row, for the three reasons the
+                     * web's `DocumentSlot` gives: an `AsyncImage` cannot draw a PDF, a 72dp square is
+                     * not a shape a page of text is readable in, and the picker has to accept
+                     * documents rather than refuse everything that is not an image.
+                     *
+                     * NO CAMERA BUTTON. The two rows above offer one because photographing a signed
+                     * sheet in the room is the ordinary way those two arrive. A CV is a file that
+                     * already exists on a device somewhere; offering a camera would invite a designer
+                     * to photograph a printed CV one page at a time into a single-file column that
+                     * would keep only the last page. A scanned or photographed CV is still perfectly
+                     * attachable — the image wildcard is in the picker's list and the preview draws it — it
+                     * just comes in as a file the designer already has.
+                     */
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("CV", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text(
+                            "One document — PDF, .docx, .odt, or a scan. A PDF is shown here as soon " +
+                                "as it uploads; anything else opens in the app that handles it.",
+                            color = MaterialTheme.field.muted,
+                            fontSize = 11.sp
+                        )
+                        if (uploading == ProfileMediaSlot.CV) {
+                            Text("Uploading…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        }
+                        DwDocumentPreview(
+                            mediaId = form.cvMediaId,
+                            noun = "CV",
+                            localFile = localPreview[ProfileMediaSlot.CV],
+                            remoteUrl = remotePreview[ProfileMediaSlot.CV],
+                            displayName = cvDescriptor.first ?: localPreview[ProfileMediaSlot.CV]?.name,
+                            mimeType = cvDescriptor.second
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    pendingSlot = ProfileMediaSlot.CV
+                                    pickDocument.launch(
+                                        arrayOf(
+                                            "application/pdf",
+                                            "application/msword",
+                                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            "application/vnd.oasis.opendocument.text",
+                                            "image/*"
+                                        )
+                                    )
+                                },
+                                enabled = canEdit && uploading == null,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Filled.AttachFile,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (form.cvMediaId.isBlank()) "Attach CV" else "Replace CV")
+                            }
+                            if (form.cvMediaId.isNotBlank()) {
+                                TextButton(
+                                    onClick = {
+                                        form = form.copy(cvMediaId = "")
+                                        localPreview = localPreview - ProfileMediaSlot.CV
+                                        remotePreview = remotePreview - ProfileMediaSlot.CV
+                                        cvDescriptor = null to null
+                                    },
+                                    enabled = canEdit && uploading == null
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Remove")
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (canEdit) {
@@ -977,11 +1203,13 @@ private fun ProfileMediaRow(
 private fun ProfileMediaSlot.caption(): String = when (this) {
     ProfileMediaSlot.PHOTOGRAPH -> "Photograph"
     ProfileMediaSlot.SIGNATURE -> "Signature"
+    ProfileMediaSlot.CV -> "CV"
 }
 
 private fun ProfileMediaSlot.filePrefix(): String = when (this) {
     ProfileMediaSlot.PHOTOGRAPH -> "designer-photo-"
     ProfileMediaSlot.SIGNATURE -> "designer-signature-"
+    ProfileMediaSlot.CV -> "designer-cv-"
 }
 
 // --------------------------------------------------------------------------------------

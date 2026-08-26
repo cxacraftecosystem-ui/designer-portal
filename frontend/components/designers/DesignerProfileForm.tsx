@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The designer profile editor — all twenty columns, one save, one PUT.
+ * The designer profile editor — all twenty-one columns, one save, one PUT.
  *
  * WHY THIS FORM SENDS EVERY KEY ON EVERY SAVE. `PUT /designers/{…}/profile` applies its body with
  * `exclude_unset`, so an ABSENT key leaves the stored value alone and a key present and NULL clears
@@ -31,7 +31,7 @@
  * success. A FAILURE ALSO LEAVES THE FILE IN THE CAPTURE CARD: the save used to clear both cards
  * unconditionally, in the same statement that wrote "so the one already on file was kept" into the
  * notice, which discarded a photograph that existed nowhere but in this browser. See `uploadOne`,
- * whose `stranded` files are what the two cards are re-seeded with.
+ * whose `stranded` files are what the three cards are re-seeded with.
  *
  * AND THE NOTICE SAYS SO, WHICH IS THE HALF THAT WAS MISSING. Keeping the bytes silently was still
  * wrong: the designer read "Profile saved", got an "Unsaved changes" chip and a leave prompt on it,
@@ -57,6 +57,7 @@ import {
 import { Field, Select, TextArea, TextInput } from "@/components/FormControls";
 import { DateField } from "@/components/forms/DateTimeField";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
+import { DocumentPreview } from "@/components/media/DocumentPreview";
 import { PhoneField } from "@/components/forms/PhoneField";
 import {
   OFFLINE_STATES,
@@ -126,12 +127,17 @@ export function DesignerProfileForm({
   const [pincode, setPincode] = useState((profile.pincode ?? "").replace(/\D/g, "").slice(0, 6));
   const [reference, setReference] = useState<AddressReference | null>(null);
 
-  // The two single-slot media columns. `*Id` is what is stored; `*Files` is what has been attached
-  // in this session and not yet uploaded-and-linked.
+  // The three single-slot media columns. `*Id` is what is stored; `*Files` is what has been attached
+  // in this session and not yet uploaded-and-linked. The CV joined them on 2026-08-25 and takes the
+  // identical shape on purpose — it is a one-file column resolved through `GET /media/{id}` exactly
+  // as the other two are, and the only thing that differs is what it is DRAWN as (a document
+  // preview rather than an `<img>`) and what it will ACCEPT (documents as well as images).
   const [photoId, setPhotoId] = useState(profile.photoMediaId);
   const [signatureId, setSignatureId] = useState(profile.signatureMediaId);
+  const [cvId, setCvId] = useState(profile.cvMediaId);
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [signatureFiles, setSignatureFiles] = useState<File[]>([]);
+  const [cvFiles, setCvFiles] = useState<File[]>([]);
 
   const formRef = useRef<HTMLFormElement | null>(null);
 
@@ -189,12 +195,14 @@ export function DesignerProfileForm({
       // upload is a strictly worse outcome than the upload simply not happening.
       let nextPhotoId = photoId;
       let nextSignatureId = signatureId;
+      let nextCvId = cvId;
 
       // The files that did NOT go up, kept so the save path below can put them back in the capture
       // card instead of clearing it. Empty when there was nothing to upload, which is the ordinary
       // case and is exactly what the old unconditional clear did.
       let strandedPhotos: File[] = [];
       let strandedSignatures: File[] = [];
+      let strandedCvs: File[] = [];
 
       if (photoFiles.length) {
         const attempt = await uploadOne(photoFiles, profile.userId, "Designer photograph", troubles);
@@ -205,6 +213,11 @@ export function DesignerProfileForm({
         const attempt = await uploadOne(signatureFiles, profile.userId, "Designer signature", troubles);
         if (attempt.mediaId) nextSignatureId = attempt.mediaId;
         strandedSignatures = attempt.stranded;
+      }
+      if (cvFiles.length) {
+        const attempt = await uploadOne(cvFiles, profile.userId, "Designer CV", troubles);
+        if (attempt.mediaId) nextCvId = attempt.mediaId;
+        strandedCvs = attempt.stranded;
       }
 
       const body = fullDesignerProfileBody({
@@ -228,6 +241,7 @@ export function DesignerProfileForm({
         pincode,
         photoMediaId: nextPhotoId,
         signatureMediaId: nextSignatureId,
+        cvMediaId: nextCvId,
         empanelmentNo: text(form, "empanelmentNo"),
         empanelmentDate: text(form, "empanelmentDate")
       });
@@ -248,10 +262,11 @@ export function DesignerProfileForm({
        */
       setPhotoId(saved.photoMediaId);
       setSignatureId(saved.signatureMediaId);
+      setCvId(saved.cvMediaId);
       setStateName(saved.state ?? "");
       setPincode((saved.pincode ?? "").replace(/\D/g, "").slice(0, 6));
       /*
-        THE CAPTURE CARDS KEEP WHAT DID NOT GO UP. These two lines were `setPhotoFiles([])` and
+        THE CAPTURE CARDS KEEP WHAT DID NOT GO UP. These lines were `setPhotoFiles([])` and
         `setSignatureFiles([])`, unconditionally, and they ran on the path that had just written
         "the one already on file was kept" into the notice. The sentence was true about the COLUMN
         and false about the screen: the photograph the designer had attached — often taken on the
@@ -259,14 +274,15 @@ export function DesignerProfileForm({
         told them it had not been. Re-seeding with the stranded files means the notice explains a
         card that still holds the bytes it is talking about.
 
-        Both are `[]` when everything landed, which is every ordinary save.
+        All three are `[]` when everything landed, which is every ordinary save.
       */
       setPhotoFiles(strandedPhotos);
       setSignatureFiles(strandedSignatures);
+      setCvFiles(strandedCvs);
       resetDirty();
       /*
         …EXCEPT while a photograph is still sitting in a capture card because its upload failed.
-        `resetDirty` is right about the twenty text boxes — they match what the server now holds — and
+        `resetDirty` is right about the text boxes — they match what the server now holds — and
         wrong about the card: those bytes are unsaved work that exists nowhere else, and the back
         control is one click away. Both the leave guard and the "Unsaved changes" chip read this flag.
 
@@ -274,9 +290,10 @@ export function DesignerProfileForm({
         save that announced itself as successful are unexplained on their own — that was the whole of
         the defect the first version of this left behind. One sentence for both cards rather than one
         per card: `uploadOne` has already named each file and each card, and repeating the retry twice
-        when both a photograph and a signature failed reads like two different retries.
+        when both a photograph and a signature failed reads like two different retries. Three cards
+        now, and the argument only gets stronger with each one.
       */
-      if (strandedPhotos.length || strandedSignatures.length) {
+      if (strandedPhotos.length || strandedSignatures.length || strandedCvs.length) {
         markDirty();
         troubles.push("Press Save again to send just that — this form saves in one PUT, so nothing is duplicated by retrying.");
       }
@@ -341,7 +358,7 @@ export function DesignerProfileForm({
             type="number"
             // Bounded HERE as well as on the server, and that is the whole reason the encoder does
             // not clamp: the column is validated 0–70 by pydantic and a rejection 422s the WHOLE
-            // body, so 400 years typed into this box would lose the nineteen fields the designer got
+            // body, so 400 years typed into this box would lose the twenty fields the designer got
             // right. Native validation refuses the submit instead, on the box that is wrong.
             min={0}
             max={70}
@@ -373,7 +390,7 @@ export function DesignerProfileForm({
         </FieldBlock>
         <Field label={DESIGNER_PROFILE_LABELS.email}>
           {/* type="email" gives the browser its own inline validation, which matters here: the
-              column is an EmailStr and a malformed address 422s the whole twenty-field body. */}
+              column is an EmailStr and a malformed address 422s the whole twenty-one-field body. */}
           <TextInput name="email" type="email" defaultValue={profile.email ?? ""} />
         </Field>
         <Field label={DESIGNER_PROFILE_LABELS.website}>
@@ -509,18 +526,83 @@ export function DesignerProfileForm({
             }}
           />
         </div>
+        {/*
+          THE CV. A DocumentSlot rather than a MediaSlot, and the difference is only what it draws
+          and what it accepts — the state, the trim-to-last rule, the upload and the save path are
+          the same three lines the two slots above use, deliberately, because a second upload path
+          for one column is a second thing to keep working offline.
+
+          FULL WIDTH. A PDF preview at `h-32 w-32` is a thumbnail of a page of text, which answers
+          nothing; the whole point of rendering it is that the designer can read it and see it is
+          the right document and the right version.
+        */}
+        <div className="md:col-span-4">
+          <DocumentSlot
+            label={DESIGNER_PROFILE_LABELS.cvMediaId}
+            help={DESIGNER_PROFILE_HELP.cvMediaId}
+            mediaId={cvId}
+            files={cvFiles}
+            onFilesChange={(files) => {
+              // Trimmed to the LAST file for the reason given at the photograph above: the column
+              // holds one id, and a designer who attached two CVs would otherwise have one of them
+              // uploaded, linked to nothing, and no way to tell which one the report will carry.
+              setCvFiles(files.slice(-1));
+              markDirty();
+            }}
+            onRemove={() => {
+              setCvId(null);
+              setCvFiles([]);
+              markDirty();
+            }}
+          />
+        </div>
       </>
     )
   };
 
   return (
     <>
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
-      {notice ? (
-        <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>
-      ) : null}
+      {/*
+        THE TWO ANSWERS THE SAVE BUTTON CAN GIVE, IN REGIONS THAT ARE MOUNTED BEFORE THEY HAVE
+        ANYTHING TO SAY.
+
+        Both boxes used to be `{error ? <div…> : null}` with no live role at all, so the only reader
+        who learned what "Save your profile" had done was one who could see the box appear. Pressing
+        Save moves nothing, focuses nothing and disables the button for the length of one PUT — so a
+        designer using a screen reader pressed it, heard silence, and could not tell a 422 on their
+        e-mail address from a save that worked. Adding `role` to the box itself does not fix that:
+        assistive technology announces mutations only inside a region that ALREADY EXISTED when the
+        page settled, which is why the region is this wrapper and the box is inserted INTO it. Same
+        rule, same reason, as `CollectionTable`'s always-mounted status region and `Toast`'s
+        permanently-present viewport.
+
+        `alert` for the refusal and `status` for the notice, chosen by what the reader has to do:
+        nothing was saved and something must be retyped, versus the save landed (with, on the
+        partly-failed path, a sentence naming which capture card still holds bytes and that pressing
+        Save again is safe).
+
+        `sr-only` AND NOT `hidden`, AS A CLASS SWAP ON ONE ELEMENT — the idiom `SubmissionCard` uses
+        and the trap its header names: `display: none` takes an element out of the accessibility tree,
+        so a `hidden` or `empty:hidden` region is no better than one that did not exist. Empty, each
+        box is absolutely positioned and 1×1, which is also why `mb-4` can stay on it — a form with
+        nothing to report does not push its first panel down.
+      */}
+      <div
+        role="alert"
+        aria-live="assertive"
+        className={error ? "mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" : "sr-only"}
+      >
+        {error}
+      </div>
+      <div
+        role="status"
+        aria-live="polite"
+        className={
+          notice ? "mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700" : "sr-only"
+        }
+      >
+        {notice}
+      </div>
 
       <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-4 py-3 text-sm leading-6 text-ink-muted">
         {DESIGNER_PROFILE_COPY_NOTICE}
@@ -535,7 +617,7 @@ export function DesignerProfileForm({
             </div>
             <div className="grid gap-3 md:grid-cols-2">{groupBody[group.key]}</div>
             {/* The help lines for this group's fields, printed once beneath it rather than under
-                every box: eight of the twenty have something to say and hanging a sentence under
+                every box: ten of the twenty-one have something to say and hanging a sentence under
                 each one turns a form into a wall of prose. */}
             <HelpLines fields={group.fields} />
           </section>
@@ -653,6 +735,132 @@ function MediaSlot({
   );
 }
 
+/**
+ * The document twin of {@link MediaSlot} — one uploaded file, rendered where the browser can render
+ * it.
+ *
+ * ── WHY IT IS A SEPARATE COMPONENT AND NOT A FLAG ON `MediaSlot` ────────────────────────────────
+ *
+ * Three of `MediaSlot`'s own decisions are wrong for a document and would each need a branch:
+ * `StoredMediaImage` is an `<img>` and a PDF is not one; `frameClassName` is a fixed square because
+ * a portrait and a signature are known shapes, whereas a document wants the full column; and
+ * `allowedTypes={["IMAGE"]}` / `allowDocuments={false}` is precisely what has to invert. Three
+ * branches through one component, all keyed on the same boolean, is two components written badly.
+ *
+ * ── WHAT IT SHARES, WHICH IS EVERYTHING THAT MATTERS ────────────────────────────────────────────
+ *
+ * The same `MediaCaptureField` (eager pre-upload, per-file progress, independent retry, offline
+ * staging), the same "attaching another replaces it" contract, and the same explicit Remove — kept
+ * separate from attaching because "I want no CV" and "I want a different CV" are different
+ * intentions and one control cannot express both.
+ */
+function DocumentSlot({
+  label,
+  help,
+  mediaId,
+  files,
+  onFilesChange,
+  onRemove
+}: {
+  label: string;
+  help?: string;
+  mediaId: string | null;
+  files: File[];
+  onFilesChange: (files: File[]) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="field-label">{label}</span>
+        {mediaId ? (
+          <button type="button" className="field-button-secondary" onClick={onRemove}>
+            <Trash2 className="h-4 w-4" aria-hidden />
+            Remove
+          </button>
+        ) : null}
+      </div>
+      {/*
+        `noun` IS THE LABEL VERBATIM, CASE AND ALL, because `DocumentPreview` interpolates it
+        unchanged and four of its five uses START A SENTENCE with it: "No CV on file.", "Loading the
+        CV…", "This CV is no longer readable from here.". Lower-casing it here printed "No cv on
+        file." on the one screen a designer types on, while `DesignerProfileView` and the handset's
+        `DwDocumentPreview` both pass "CV" for the same column — three surfaces, one field, and the
+        editor the odd one out. The comment that stood here asserted the capitalised outcome the code
+        did not produce, which is worse than no comment: it is what stops the next reader looking.
+
+        It is still deliberately the SAME word the label uses — a page that calls it "CV" above the
+        box and "curriculum vitae" inside it is a page with two names for one thing. The `title`
+        below builds its own phrase from the same label and is composed here rather than interpolated
+        into somebody else's sentence, which is why the two treat the case differently.
+      */}
+      <DocumentPreview mediaId={mediaId} noun={label} className="h-[30rem]" />
+      <MediaCaptureField
+        files={files}
+        onFilesChange={onFilesChange}
+        title={mediaId ? `Replace ${label.toLowerCase()}` : `Attach ${label.toLowerCase()}`}
+        description={
+          help ??
+          "One document. It uploads as soon as it is attached; saving the profile then links it to this column."
+        }
+        /*
+          ALL THREE TOKENS ARE LOAD-BEARING AND `PDF` IS THE ONE THAT BITES.
+
+          `addFiles` FILTERS the selection through `inferMediaType`, which answers `"PDF"` — not
+          `"DOCUMENT"` — for `application/pdf`. So `["DOCUMENT", "IMAGE"]`, which is the obvious list
+          to write here, would have silently dropped every PDF: the format this box is mostly FOR,
+          the one its help text names first, and the only one the page can render inline. The file
+          chooser would have offered `.pdf` (it is in `documentAccept`), accepted the pick, and
+          discarded it with nothing on screen. The token's whole job is `addFiles`' `inferMediaType`
+          filter and NOT the chooser: this card states its own `accept` two props below, which
+          REPLACES the joined `ACCEPT_BY_TYPE` list outright, so `ACCEPT_BY_TYPE.PDF` is still reached
+          by nothing and `.pdf` gets into this dialog from the explicit list instead.
+
+          IMAGE IS OFFERED BESIDE THEM, and that is not sloppiness either. A designer whose CV exists
+          as a photographed or scanned sheet — common in this fieldwork — would otherwise be told
+          their own CV is the wrong kind of file, with no way to attach it at all. A photographed
+          sheet is an IMAGE to `inferMediaType`, so `DocumentPreview` renders it through the same
+          non-PDF path as a .docx: named, sized, and openable.
+
+          AND IT REACHES A REPORT EXACTLY AS A PDF DOES — WHICH IS TO SAY BY NAME AND NOT BY BYTES.
+          This comment used to end "the report carries it as an annexure either way", and that is
+          false for every format including the PDF: `report_builder._image_sources` admits IMAGE and
+          IMAGE_LIST only, `_render_media_annexure` gathers through `_images`, and this column is
+          copied into `designerCv`, which the registry declares as a FILE. So a report NAMES the
+          attachment and `build_report` warns beside the download that the file itself is not inside
+          it. Nothing on this card may promise otherwise; the sentence a designer reads here comes
+          from `DESIGNER_PROFILE_HELP.cvMediaId` in `profileCopy.ts`, which is where that promise has
+          to be corrected rather than contradicted from a second surface.
+        */
+        allowedTypes={["PDF", "DOCUMENT", "IMAGE"]}
+        /*
+          AND THE CHOOSER IS NARROWED SEPARATELY, BECAUSE THE `DOCUMENT` TOKEN ABOVE IS WIDER THAN
+          THIS BOX MEANS.
+
+          The paragraph above explains why `DOCUMENT` has to be named: `inferMediaType` answers
+          `"DOCUMENT"` for a `.docx`, so without the token `addFiles` would drop one. But naming it
+          hands the chooser `documentAccept` — every FILE field's whole attachment list, `.txt`,
+          `.csv`, `.xls`, `.xlsx`, `.json`, `.glb`, `.gltf` included — and `addFiles` admits all of
+          those too, because they infer as DOCUMENT as well. What that bought was a spreadsheet or a
+          3D model stored in a column called CV: a format neither help sentence names, and one the
+          handset's own picker cannot even select.
+
+          THE LIST IS ANDROID'S MIME ARRAY, FORMAT FOR FORMAT (`DesignerProfileScreen.kt`'s
+          `pickDocument.launch`: `application/pdf`, `application/msword`, the `wordprocessingml`
+          and `opendocument.text` pair, `image/*`). The two clients offer one column the same
+          formats or they do not agree about what a CV is, and this is the surface that was wider.
+
+          IT NARROWS THE DIALOG, NOT THE ACCEPTANCE — see the prop's own note. A drop still arrives
+          through `addFiles`, which filters against `allowedTypes`, so this is the polite half and
+          the three tokens above are still the load-bearing one.
+        */
+        accept=".pdf,.doc,.docx,.odt,image/*"
+        allowDocuments
+      />
+    </div>
+  );
+}
+
 /** A FormData value as the trimmed string, or "" — the encoder folds "" to null. */
 function text(form: FormData, key: string): string {
   const value = form.get(key);
@@ -678,7 +886,7 @@ type OneUpload = {
  *
  * `uploadMediaBatch` RESOLVES on a partly-failed batch and throws only when nothing landed at all,
  * so a caller that treats a resolved promise as success loses files without a word. The names of
- * the ones that failed are collected rather than thrown, because the other nineteen fields on this
+ * the ones that failed are collected rather than thrown, because the other twenty fields on this
  * form are still worth saving and a failed photograph must not take them down with it.
  *
  * IT READS `outcomes`, NOT `uploaded`/`failed`, and the difference is the `File`. `failed` carries a

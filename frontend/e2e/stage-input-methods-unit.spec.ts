@@ -64,7 +64,7 @@ function entity(fields: DwField[]): DwEntity {
  * The administrative half of an address
  * ──────────────────────────────────────────────────────────────────────────── */
 
-test("state, district and pincode are recognised under both of the spellings the registry uses", () => {
+test("state, district and pincode are recognised under the plain and `record`-prefixed spellings", () => {
   const roster = entity([
     field("state", "TEXT"),
     field("district", "TEXT"),
@@ -86,6 +86,37 @@ test("state, district and pincode are recognised under both of the spellings the
   expect(addressListRole(productRow, productRow.fields[0])?.role).toBe("state");
   expect(addressListRole(productRow, productRow.fields[1])?.role).toBe("district");
   expect(addressListRole(productRow, productRow.fields[2])?.role).toBe("pincode");
+});
+
+test("the designer's own state and PIN code are recognised under the third spelling, stage 3's", () => {
+  /*
+   * `workshopPlan` is the stage-3 cover block, where a designer types their OWN address, and it was
+   * the prefix the anchored tripwire below could not express. Until 2026-08-26 `designerPincode` fell
+   * through to `FieldInput`'s generic TEXT arm: a dictation button on a six-digit field (which the
+   * comment two lines above it said was refused), no numeric keypad, no `autoComplete="postal-code"`,
+   * no digits-only strip and no postal-zone check.
+   *
+   * THE PAIR IS THE UNIT. `designerState` had to be admitted in the same change, because
+   * `addressSibling` finds the state BY KEY: a PIN code admitted alone would compile, look wired, and
+   * run no zone check at all — a silent regression dressed as a fix.
+   */
+  const plan = entity([
+    field("designerAddress", "TEXT"),
+    field("designerCity", "TEXT"),
+    field("designerState", "TEXT"),
+    field("designerPincode", "TEXT", { format: "PINCODE" })
+  ]);
+  expect(addressListRole(plan, plan.fields[2])?.role).toBe("state");
+  expect(addressListRole(plan, plan.fields[3])?.role).toBe("pincode");
+  // The state the zone check is run against — null here would be the silent-no-op case above.
+  expect(addressListRole(plan, plan.fields[3])?.stateField?.key).toBe("designerState");
+  // Stage 3 declares no designer DISTRICT, so the state box has nothing to clear. `StageAddressField`
+  // draws that arm; a null here is the registry's answer, not a missing lookup.
+  expect(addressListRole(plan, plan.fields[2])?.districtField).toBeNull();
+  // A street address and a town name have no closed list to join, so both stay prose. Recorded as an
+  // assertion rather than a comment: this is the decision, not an oversight waiting to be repaired.
+  expect(addressListRole(plan, plan.fields[0])).toBeNull();
+  expect(addressListRole(plan, plan.fields[1])).toBeNull();
 });
 
 test("the district knows which box scopes it, and the state knows which box it has to clear", () => {
@@ -124,13 +155,31 @@ test("the match is by exact key, so nothing that merely CONTAINS one of the word
   }
 });
 
-test("STANDING TRIPWIRE: the registry names no OTHER field state, district or pincode", () => {
+test("STANDING TRIPWIRE: every field the registry could mean as part of an address, and what it got", () => {
   /*
    * The exact-key list is only safe while it is complete, and completeness is a fact about the
    * registry rather than about this file. Read off the bundled dump — `registry_to_dict()`, no
-   * database needed — so a TWELFTH address field, or a `state` field that means something else
-   * entirely, fails HERE with the key named instead of silently getting a dropdown or silently not
-   * getting one.
+   * database needed — so a NEW address field, or a `state` field that means something else entirely,
+   * fails HERE with the key named instead of silently getting a dropdown or silently not getting one.
+   *
+   * THE SWEEP IS WIDER THAN THE SPELLINGS THAT EXIST, AND THE ANCHORED FORM IT REPLACES IS WHY.
+   * `/^(record)?(state|district|pincode)$/` could not express a THIRD prefix, so when stage 3's
+   * `designerState` and `designerPincode` were declared this test went on passing while the PIN code
+   * box fell through to `FieldInput`'s generic TEXT arm — dictation button, alphabetic keyboard, no
+   * digits-only strip, no zone check — and the eleven-key expectation below reproduced the asset
+   * exactly the whole time. A rule with no prefix in it is the only kind that can fail for a FOURTH
+   * one: the registry's own declared `PINCODE` format, plus the key's last camelCase word.
+   *
+   * SO IT CATCHES NEAR-MISSES ON PURPOSE, and they are listed below with the rest rather than
+   * filtered out here, because "somebody looked at this and it is prose" is the fact worth pinning.
+   * `designerCity` and `surveyPlace.cityDistrict` are both free text: there is no closed list of
+   * Indian towns to offer, and "City / District" is one line a designer writes rather than a district
+   * box. The last WORD and not a suffix test, or `monthlyCapacity` would be dragged in by ending in
+   * "city".
+   *
+   * AND EACH ONE CARRIES WHAT IT WAS DECIDED TO BE, which is the half a set alone cannot hold: the
+   * set fails when the registry grows a candidate, the role fails when one silently loses or gains a
+   * closed list. `designerPincode` was missed by both at once.
    *
    * KEYS AND NOT TYPES, deliberately. `recordState` is a live candidate for being retyped to
    * `ENUM(INDIAN_STATE)` on the server, which would be a BETTER answer than this client-side role
@@ -140,28 +189,37 @@ test("STANDING TRIPWIRE: the registry names no OTHER field state, district or pi
    * must not change quietly is the SET of facts that are an administrative address.
    */
   const dump = JSON.parse(readFileSync(SCHEMA, "utf8")) as {
-    stages: { key: string; entities: { key: string; fields: { key: string; type: string }[] }[] }[];
+    stages: { key: string; entities: DwEntity[] }[];
   };
+  /** The key's last camelCase word: `recordPincode` → "pincode", `monthlyCapacity` → "capacity". */
+  const lastWord = (key: string) => (key.split(/(?=[A-Z])/).pop() ?? "").toLowerCase();
   const found: string[] = [];
   for (const stage of dump.stages) {
     for (const declared of stage.entities) {
       for (const spec of declared.fields) {
-        if (/^(record)?(state|district|pincode)$/i.test(spec.key)) found.push(`${declared.key}.${spec.key}`);
+        const couldBeAnAddress =
+          spec.format === "PINCODE" || ["state", "district", "pincode", "city"].includes(lastWord(spec.key));
+        if (!couldBeAnAddress) continue;
+        found.push(`${declared.key}.${spec.key} → ${addressListRole(declared, spec)?.role ?? "prose"}`);
       }
     }
   }
   expect(found.sort()).toEqual([
-    "existingProduct.recordDistrict",
-    "existingProduct.recordPincode",
-    "existingProduct.recordState",
-    "participant.district",
-    "participant.pincode",
-    "participant.state",
-    "tool.recordDistrict",
-    "tool.recordPincode",
-    "tool.recordState",
-    "workshopSetup.district",
-    "workshopSetup.state"
+    "existingProduct.recordDistrict → district",
+    "existingProduct.recordPincode → pincode",
+    "existingProduct.recordState → state",
+    "participant.district → district",
+    "participant.pincode → pincode",
+    "participant.state → state",
+    "surveyPlace.cityDistrict → prose",
+    "tool.recordDistrict → district",
+    "tool.recordPincode → pincode",
+    "tool.recordState → state",
+    "workshopPlan.designerCity → prose",
+    "workshopPlan.designerPincode → pincode",
+    "workshopPlan.designerState → state",
+    "workshopSetup.district → district",
+    "workshopSetup.state → state"
   ]);
 });
 

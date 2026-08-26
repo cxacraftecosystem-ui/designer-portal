@@ -63,6 +63,7 @@ import {
   EntityForm,
   removalIsADeletion,
   rowsTheServerCouldHold,
+  stageEntryBudget,
   type FieldErrors,
   type ServerHeldRows
 } from "@/components/designworkshop/EntityForm";
@@ -76,6 +77,7 @@ import {
   type StageRecordingPlace
 } from "@/components/designworkshop/StageRecordingPlace";
 import { PageHeader } from "@/components/PageHeader";
+import { StageDocumentPreview } from "@/components/designworkshop/report/StageDocumentPreview";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { UploadTray } from "@/components/media/UploadTray";
 import { UploadsProvider } from "@/lib/uploads";
@@ -129,6 +131,18 @@ import { localWriteDecision, stageRefusalResult, stageRefusalWroteCount } from "
 import { isUnreachable, serverAskedForTime, triageFailure } from "@/lib/offline";
 import { neverReconciled } from "@/lib/workshopOpenability";
 import { readStageFocus } from "@/lib/workshopSearch";
+/*
+  A CROSS-ROUTE RELATIVE IMPORT, ON PURPOSE.
+
+  `reportServerId` is the one place the rule "which id does the REPOSITORY know this workshop by" is
+  written down and exercised (`e2e/report-target-unit.spec.ts`), and the report page and its history
+  view already read it from there. The module lives under the sibling `report/` route, so reaching it
+  from here is `../../report/…` rather than an `@/lib` import — the lesser of the two prices. Lifting
+  it into `lib/` beside `isLocalWorkshopId` would read better and would move a file that two screens
+  and a spec address by path, which is not this change's to do: its subject is the preview panel below
+  having been handed the route param instead of the resolved id.
+*/
+import { reportServerId } from "../../report/reportTarget";
 
 /**
  * How long after the last keystroke the stage is written to IndexedDB.
@@ -202,6 +216,23 @@ function sameStoredValue(a: unknown, b: unknown): boolean {
 function stageNeverRead(draft: DwDraft | null, stageKey: string): boolean {
   if (!draft?.remoteId) return false;
   return (draft.stages[stageKey]?.serverLoadedAt ?? null) === null;
+}
+
+/**
+ * What can be said about the SERVER's id for this workshop before any draft has been read.
+ *
+ * THREE ANSWERS AND NOT TWO. A route param that is not a `dwlocal-…` id IS the server's id — that is
+ * `reportServerId`'s second arm, asked with no draft, and it needs no read at all. The other half of
+ * the rule lives on the draft (`remoteId`, written back by the sync pass once the record has been
+ * created), so for a local route param the honest answer here is `undefined`: NOT KNOWN YET, which is
+ * a different fact from the `null` that means "this workshop is only on this device". Collapsing the
+ * two would have {@link StageDocumentPreview} print "there is nothing to draw until this workshop has
+ * synced" over a workshop nobody has looked up, which is one half of the defect this function exists
+ * to close — the other half is that the panel used to be given the route param and never the draft's
+ * `remoteId` at all.
+ */
+function knownServerId(routeId: string): string | null | undefined {
+  return isLocalWorkshopId(routeId) ? undefined : reportServerId(routeId, null);
 }
 
 function sameSnapshot(a: StageSnapshot, b: StageSnapshot): boolean {
@@ -353,6 +384,38 @@ function DesignWorkshopStagePageBody({
   const [droppedCustom, setDroppedCustom] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * What generation of the saved record the document preview has drawn.
+   *
+   * Bumped by the save path and read by `StageDocumentPreview`, which fetches nothing until it is
+   * opened. See the comment beside the increment for why it is a counter and not a flag.
+   */
+  const [previewToken, setPreviewToken] = useState(0);
+  /**
+   * The id the REPOSITORY knows this workshop by, for the document preview above the form.
+   *
+   * `undefined` until the draft has been read, `null` once it has been read and carries no
+   * `remoteId`, and the server's id otherwise — see {@link knownServerId} for why that is three
+   * answers and not two.
+   *
+   * STATE, WRITTEN BY THE LOAD EFFECT THAT ALREADY HAS THE DRAFT IN HAND. The panel is rendered
+   * before that effect resolves, so it cannot read the draft for itself without racing the effect
+   * that owns it; and `draftIdRef` below deliberately holds the LOCAL id, which is the one every
+   * write on this page addresses and the one the server does not know. The panel used to be handed
+   * the ROUTE param instead, and for a workshop created with no signal and since synced — whose URL
+   * keeps its `dwlocal-…` id — that made its `localOnly` permanently true: it said "there is nothing
+   * to draw until this workshop has synced" about a record the repository was holding, on the same
+   * page whose save path was posting stages into it.
+   *
+   * RESOLVED ONCE, ON OPEN, AND THAT IS A BOUNDARY RATHER THAN AN OVERSIGHT. The sync pass can
+   * create the server record while this stage is open, and nothing re-reads the draft for this
+   * value afterwards, so until the next stage open the panel goes on saying the workshop has not
+   * synced. The save path below re-derives the same id for its own use and deliberately does not
+   * write it here: its draft read is allowed to come back null — a refused flush, a draft belonging
+   * to another session on this laptop — and turning that null into "this workshop is only on this
+   * device" would print the exact claim this state exists to stop.
+   */
+  const [serverId, setServerId] = useState<string | null | undefined>(() => knownServerId(id));
   const [loading, setLoading] = useState(true);
   /**
    * True while the form is being held back for the server's copy of a stage this device has never
@@ -529,6 +592,10 @@ function DesignWorkshopStagePageBody({
     // DIFFERENT stage, and a set of row keys carried over from the stage just left would tell
     // `patchCollection` that rows of this one had been to the server. `seed` refills it below.
     serverHeld.current = {};
+    // Reset with the two above and for the same reason: this effect re-runs when the URL names a
+    // different workshop, and a server id carried over from the one just left would point the preview
+    // panel's build at the wrong record. Back to what the route param alone can answer.
+    setServerId(knownServerId(id));
 
     const seed = (draftStage: DwDraftStage | undefined) => {
       const data = stageDataOf(draftStage);
@@ -588,6 +655,12 @@ function DesignWorkshopStagePageBody({
           return;
         }
         draftIdRef.current = draft.localId;
+        // THE ID THE PREVIEW PANEL ASKS THE SERVER ABOUT — resolved here because this is the one place
+        // holding the draft, through the same `reportServerId` rule the report page and its history
+        // view use. A `null` out of it is an ANSWER ("this workshop has not reached the repository
+        // yet") and not a failure, which is why the panel is given something it can tell apart from
+        // the "not read yet" it starts on.
+        setServerId(reportServerId(id, draft));
 
         /*
           THE DEFINITION IS READ BEFORE THE FORM IS DRAWN, AND ITS FAILURE IS NOT THE STAGE'S FAILURE.
@@ -1415,6 +1488,15 @@ function DesignWorkshopStagePageBody({
           : `Stage saved — ${result.created} added, ${result.updated} updated${result.removed ? `, ${result.removed} removed` : ""}.`) +
           held
       );
+      /*
+        THE DOCUMENT PREVIEW REDRAWS ON THE SAVE, AND ONLY ON THE SAVE.
+        `StageDocumentPreview` is built by the server from the record the server holds, so the save is
+        the exact moment its answer can have changed — bumping this on a keystroke would spend a full
+        document build on text the server has not got. Incremented rather than set to a boolean because
+        the panel has to redraw when the SAME stage is saved twice running, which only a value that
+        changes every time can express. It costs nothing while the panel is closed: it fetches on open.
+      */
+      setPreviewToken((current) => current + 1);
     } catch (err) {
       // A request that never reached a server is NOT a failed save: the stage is already on this
       // device and the sync pass will carry it. Saying "unable to save" here would be a lie that
@@ -1558,6 +1640,45 @@ function DesignWorkshopStagePageBody({
   const stranded = useMemo(
     () => strandedRefusals(errors, stage?.entities ?? [], collections),
     [errors, collections, stage]
+  );
+
+  /**
+   * How many entries one save of this stage would carry — the unit `MAX_STAGE_ROWS` is counted in.
+   *
+   * ── WHY IT IS COMPUTED HERE AND NOT INSIDE EACH TABLE ──────────────────────────────────────────
+   *
+   * `CollectionTable` draws the 500-entry cap sentence, and until now it thresholded on the length of
+   * the one array it had been handed. The cap is not a bound on that array: `StageSaveIn._bound_rows`
+   * refuses on `len(entries)` for the WHOLE stage, so the arrangement in which it bites hardest is the
+   * one in which no single list comes near it — three collections of 200 rows is 600-odd entries, every
+   * save 422s over the entire stage, and no table reached the threshold that would have said so. The
+   * notice was silent on precisely the workshop it existed for.
+   *
+   * THIS PAGE IS THE ONLY THING THAT CAN COUNT IT. It owns `collections` (every list), `singleton` (the
+   * stage's own fields) and `custom` (the designer's own questions), which are the three things
+   * `buildStageEntries` builds its three arms from. So the arithmetic is done once, here, and the one
+   * answer is handed to every table — see {@link stageEntryBudget} for what each arm contributes and
+   * for the two entries it declines to be certain about.
+   *
+   * `splitSingletons` AND NOT THE FLAT `singleton` MAP, because the singleton arm is per ENTITY: it asks
+   * "is anything in THIS entity answered", and the flat map is every singleton entity's keys merged
+   * together. It is the same call `flushLocal` banks with (see the payload it builds), so the count
+   * describes the same per-entity shape the draft holds and the save reads back out of it.
+   *
+   * MEMOISED ON THE THREE FORM VALUES, because the result is a prop on every `CollectionTable` and a
+   * new object identity per render would defeat nothing today but would be a new reason for the flagship
+   * workshop's 244 rows to re-render on a keystroke in an unrelated box the day any of these tables is
+   * memoised.
+   */
+  const stageEntries = useMemo(
+    () =>
+      stageEntryBudget(
+        stage?.entities ?? [],
+        collections,
+        stage ? splitSingletons(stage, singleton) : {},
+        custom
+      ),
+    [stage, collections, singleton, custom]
   );
 
   /**
@@ -1707,12 +1828,61 @@ function DesignWorkshopStagePageBody({
           on close.
         </div>
       ) : null}
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
-      {notice ? (
-        <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>
-      ) : null}
+      {/*
+        THE OUTCOME OF A SAVE, IN TWO REGIONS THAT ARE MOUNTED FROM FIRST PAINT.
+
+        These two sentences are the whole account of the most consequential act on this screen. `error`
+        is every way a save can be refused — a 422 naming fields, a 5xx from a server that answered, a
+        stage that could not be read at all — and `notice` is every way one can succeed or be banked
+        ("Stage saved — 3 added, 1 updated", "Saved on this device", a deletion this save was not
+        entitled to send). Neither had a live role, and there is no toast on this page and no other
+        announcement anywhere in this file, so a designer who pressed Save with a keyboard or a screen
+        reader was told NOTHING AT ALL: not that the stage landed, not that it was refused, not which
+        boxes to go and fix. The refusal is the one that made it expensive — a red banner drawn above a
+        form the page does not scroll to reads exactly like a button that did nothing, and the reflex is
+        to press it again.
+
+        THE TWO TREATMENTS ARE CHOSEN BY MEANING (§12.11), NOT BY SYMMETRY. `error` is a failure the
+        designer has to act on and it is worth interrupting a reader for, so `role="alert"`, assertive.
+        `notice` is a report that something they asked for happened — a receipt — so `role="status"`,
+        polite, and it must never cut across whatever they are reading. This is the same pair, in the
+        same words, that `design-workshops/[id]/page.tsx` uses for its submit `problem`/`outcome`.
+
+        MOUNTED BEFORE THEY HAVE ANYTHING TO SAY, WHICH IS THE HALF THAT ACTUALLY DELIVERS THE FIX.
+        Assistive technology only announces mutations inside a region that ALREADY EXISTED; a region
+        created together with its first message is silently dropped by most screen readers, so
+        `{error ? <div role="alert">…</div> : null}` would have looked like a fix and said nothing. They
+        are therefore ONE element each, always rendered, with the CLASS swapped: `sr-only` when empty,
+        which is absolutely positioned and 1×1, so it stays in the accessibility tree and contributes no
+        box and no `mb-4` to this page's flow. Swapping in `hidden` (`display: none`) or remounting the
+        node would take the region out of the tree and put the defect straight back. `Toast`'s
+        always-present viewport is the precedent; `SubmissionCard` and `EntityForm` are this session's.
+
+        TWO REGIONS AND NOT ONE, because `save()` clears both and then sets exactly one: folding them
+        together would mean a refusal and a receipt share a region, and the polite half would be read in
+        the assertive half's voice — or, worse, one would replace the other mid-sentence.
+
+        THE REST OF THE BANNERS BELOW ARE DELIBERATELY NOT LIVE REGIONS. They describe standing state
+        this page draws on arrival — a stale registry, a stage never downloaded, a failure the sync pass
+        recorded — not the outcome of an act just performed, and eight assertive regions on one page is a
+        screen reader that cannot be listened to.
+      */}
+      <p
+        role="alert"
+        aria-live="assertive"
+        className={error ? "mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" : "sr-only"}
+      >
+        {error}
+      </p>
+      <p
+        role="status"
+        aria-live="polite"
+        className={
+          notice ? "mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700" : "sr-only"
+        }
+      >
+        {notice}
+      </p>
       {registryNotice ? (
         /*
           Which field list a designer is looking at is not a detail. A registry that predates a
@@ -1824,6 +1994,46 @@ function DesignWorkshopStagePageBody({
         </p>
       ) : null}
 
+      {/*
+        THE DOCUMENT, BESIDE THE FORM THAT FEEDS IT.
+
+        Placed ABOVE the form rather than below it, which is a deliberate reading of what a designer
+        does with it: they open it, see how the stage prints, close it, and then type. Below a form
+        that runs to forty boxes it would be a panel nobody scrolls to — the same argument
+        `ReviewEditPanel` makes for putting its error banner immediately above the buttons rather
+        than at the top of a twelve-box panel.
+
+        AFTER EVERY BANNER, AND THAT ORDERING IS NOT COSMETIC EITHER: everything above this line either
+        says something about whether the designer's work is safe — refused answers, a deletion that was
+        not sent, a stage this device has never read, a browser that would not write to its own disk — or
+        says what this stage asks for and whether it is optional. None of it may be pushed below a
+        collapsed disclosure about how the stage will look in print.
+
+        IT USED TO SIT ABOVE `error`, `notice` AND `registryNotice`, DOING THE OPPOSITE OF THE PARAGRAPH
+        ABOVE. The disclosure holds its own open state, so a designer who had opened it once was then
+        refused a save — a 422 from "Save and check required fields" — and the red banner rendered
+        BELOW a panel whose own header warns that it loads every stage and rasterises the figures, i.e.
+        one screen tall or more. The page does not scroll to the banner. The save refusal looked like
+        nothing had happened. The two regions above are now announced as well, but the ordering is the
+        half that serves a sighted designer and it has to be right on its own.
+
+        THE ID IT IS GIVEN IS THE ONE THE SERVER KNOWS, NOT THE ONE IN THE URL. This passed
+        `workshopId={id}` and `localOnly={isLocalWorkshopId(id)}`, both read straight off the route, so
+        a workshop created with no signal and since synced was told for ever that there was "nothing to
+        draw until this workshop has synced": the browser is still on the `dwlocal-…` address the
+        workshop was created under, and nothing lifted the draft's `remoteId` out of the load effect.
+        `undefined` — the draft not read yet — is passed on as the panel's `null`, which is its "do not
+        claim either way": neither of its two sentences is true of a workshop nobody has looked up. The
+        `?? id` fallback is never fetched against, because it is reached only where `localOnly` is not
+        false.
+      */}
+      <StageDocumentPreview
+        workshopId={serverId ?? id}
+        stageTitle={stage?.title ?? ""}
+        refreshToken={previewToken}
+        localOnly={serverId === undefined ? null : serverId === null}
+      />
+
       {loading ? (
         <div className="panel p-4 text-sm text-ink-700">
           {awaitingServer
@@ -1927,6 +2137,14 @@ function DesignWorkshopStagePageBody({
                   capture={capture}
                   focus={focus}
                   provenance={provenance?.collections?.[entity.key]}
+                  /*
+                    THE SAME BUDGET OBJECT TO EVERY TABLE, which is the whole point of computing it here:
+                    the 500 is one allowance shared by every list on this stage, so two tables reading two
+                    different totals would be two tables telling the designer two different things about
+                    the same save. It is a required prop for the same reason — a table cannot see past its
+                    own array, and a table left to guess is the silence this replaced.
+                  */
+                  stageEntries={stageEntries}
                 />
               )}
               {/*

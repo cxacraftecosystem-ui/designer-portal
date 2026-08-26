@@ -17,11 +17,14 @@ The same guide is available inside the app at **`/guide`** ("Walkthrough"), wher
 straight to the screen it describes. This document is the version you can print, email, or read on
 the bus on the way to the village.
 
-> **The in-app `/guide` still carries only the ten record steps.** `frontend/components/guide/steps.ts`
-> declares exactly the ids `workshop`, `craft`, `artisan`, `product`, `process`, `tool`,
-> `questionnaire`, `media`, `review`, `view-data`. The two renderings are therefore **out of step as
-> of 2026-08-19**, which the maintenance rule at the foot of this file forbids; the workshop arc
-> belongs in `steps.ts` in the next change that touches it, and this note comes out then.
+> **The two renderings are back in step as of 2026-08-26.** `frontend/components/guide/steps.ts`
+> declares nineteen steps: the ten record ids (`workshop`, `craft`, `artisan`, `product`, `process`,
+> `tool`, `questionnaire`, `media`, `review`, `view-data`) and then `designer-profile`,
+> `design-workshop`, `design-workshop-codes`, `design-workshop-stages`, `design-workshop-sketches`,
+> `design-review`, `design-workshop-readiness`, `design-workshop-report`,
+> `design-workshop-history`. Each of the nine has a section below under the same name. The note that
+> stood here from 2026-08-19 recorded the divergence as a debt; it is paid, and the maintenance rule
+> at the foot of this file is the thing that keeps it paid.
 
 The screens carry the **same names on the web and in the Android app**. Wherever this document
 names a screen — *Artisan*, *Product*, *Process*, *Tool*, *Questionnaire*, *Miscellaneous Media*,
@@ -34,7 +37,12 @@ names a screen — *Artisan*, *Product*, *Process*, *Tool*, *Questionnaire*, *Mi
 **Workshop → Craft → Artisan → Product → Process → Tool → Questionnaire → Miscellaneous Media →
 Review → View Data**
 
-Learn that order and you can work without the guide.
+Then, for the fortnight that those records feed:
+
+**My designer profile → Design workshops → Cards & tags → Stages → Sketches & prototypes →
+Design review → Readiness → Report → Report history**
+
+Learn those two orders and you can work without the guide.
 
 ---
 
@@ -361,7 +369,7 @@ over — and, the other way round, a correction you make on the Artisan form aft
 does **not** reach a stage you already filled. Re-pick the record if you need the new values, or type
 them.
 
-Two rules worth knowing before you open stage 1:
+Four rules worth knowing before you open stage 1:
 
 - **You cannot make the form shorter by leaving things out.** Only **Basic** fields are scored and
   only Basic fields can be required; **Standard** and **Advanced** are shown but never block a
@@ -369,15 +377,82 @@ Two rules worth knowing before you open stage 1:
   report — that is what the tiers are for. Advanced fields sit behind a *More detail* disclosure.
 - **Everything on these screens works with no signal.** The stage form, the readiness list and the
   code sheets are all built from the local draft on the device; the server read that follows only
-  refreshes it.
+  refreshes it. Every stage also **saves on its own as you go**, into that local draft, so you
+  resume exactly where you left off and a fortnight of fieldwork survives with no connection.
+- **A workshop may be submitted part-filled, and this is the rule to trust.** *Mark complete* and
+  *Submit*, on the workshop's own Submission card, record where the whole workshop stands and are
+  **never refused for an empty field**. Exactly one act in the app is: *Save and check required
+  fields*, the second button at the foot of any stage, which saves the stage either way and then
+  refuses **that one stage** while any of its Basic fields is empty, naming the ones it is waiting
+  for. Those two facts are printed in these words on both screens that quote them.
+- **This whole section is for designers, admins and the master admin.** `/designers/profile`,
+  `/design-workshops`, `/design-review` and `/sketches-and-prototypes` each carry a route guard on
+  `can_run_design_workshops`. The Walkthrough itself is deliberately ungated — it teaches the
+  process to people who have not been granted anything yet — so a researcher can read every step
+  below and open none of them. Ask an admin to empanel you as a designer.
 
-### Step A — Open the workshop
+### Step A — Fill in your designer profile
+
+**Screen: My designer profile** (`/designers/profile`) · Android: *My designer profile*
+
+Your own standing details, kept in one place rather than typed into a stage form: **Name**, **Name in
+the local script**, **Designation**, **Institution**, **Department**, **Qualification**,
+**Specialisation**, **Designer's experience**, **Designer's profile** (the paragraph), **Phone**,
+**Email**, **Website**, **Address**, **City or town**, **State**, **Pincode**, **Empanelment
+number**, **Empanelment date**, **Photograph**, **Signature** and **CV** — twenty-one in eight
+groups.
+
+These are the values a new design workshop's **stage 1** and **stage 3** start pre-filled with, and
+they stay editable inside the workshop. A designer signing in for the first time is brought here
+automatically, once, with an explanation of why.
+
+- **Nothing here is required and nothing is guessed for you.** Left blank, the report cover falls
+  back to the name on your account.
+- **A PDF CV is rendered on the page** as soon as it uploads; a .docx or .odt is stored and
+  downloadable instead. **Your reports name it rather than carrying it**, so send the file alongside
+  the report.
+- **They are copies, and they must stay copies.** A report records who ran a workshop *at the time*,
+  and it is printed from the stages rather than from this page. Moving institution next year must not
+  rewrite last year's report, so each workshop keeps its own copy — editable on its stage 1 and stage
+  3 — and correcting something here never reaches back into a workshop already under way.
+
+### Step B — Open the workshop
 
 **Screen: Design workshops** (`/design-workshops`) · Android: *Design workshops*
 
-Create the workshop, or open the one you are working on. Everything below hangs off it.
+Open the workshop you have been added to. Everything below hangs off it.
 
-### Step B — Fill the stages
+**A designer does not start one.** An admin creates the workshop and adds you to it; everything
+**inside** it is then yours. So this list is empty until that happens, and for a newly empanelled
+designer that is the ordinary state rather than a fault — the screen says who to ask.
+
+Link it to a **Workshop record** early. The reference pickers inside the stages are narrowed to that
+workshop's artisans, products and tools; an unlinked workshop offers the whole repository instead, and
+the screen says which you are looking at.
+
+### Step C — Print the code cards, and get the team onto one workshop
+
+**Screen: Cards & tags** (`/design-workshops/[id]/codes`) · Android: *Cards & tags*, from the stage index
+
+Prints a code for every artisan on the roster and every prototype in the workshop, to tie to the
+object. Stages 14, 15 and 16 each begin by choosing a prototype from a list as long as the fortnight
+made it; scanning a tag removes the choosing, and choosing wrong is how two days of measurements end
+up attached to somebody else's work with nothing downstream able to tell. **Print them on the first
+afternoon** —
+a tag tied on at the end of the fortnight is a tag tied on from memory.
+
+Scanning back is offered four ways — the camera, an uploaded picture, a dropped or pasted picture, or
+typed — and the decode happens in the browser, so it works with no signal. The sheet prints from the
+browser off the local draft for the same reason.
+
+**A join card is a different code doing a different job.** One person creates the workshop and the
+others scan a card to join **the same one**, which is what stops a team ending the fortnight with
+four parallel workshops nobody can merge. It is minted and scanned **on the handset** — there is no
+join-card screen on the web — and a card is good for one person unless an admin makes it good for
+more. A late-comer whose card was already spent is not turned away: the ask is filed for an admin to
+decide, so their work is not orphaned while they wait.
+
+### Step D — Fill the stages
 
 **Screen: the workshop** (`/design-workshops/[id]`) → **a stage** (`/design-workshops/[id]/stages/[stageKey]`)
 Android: the stage index, then the stage screen.
@@ -389,43 +464,125 @@ boxes in the same order.
 Some stages compute a finding beside what you typed rather than instead of it: stage 9 holds your
 declared price bands up against the stage-8 survey, and stage 17 checks each cost sheet against its
 own line items. **Nothing there ever overwrites what you wrote** — you were in the room and the
-arithmetic was not. On the handset both appear on the stage form itself; in the browser, only the
-stage-9 market findings do today.
+arithmetic was not. Both appear on the stage form itself, on the handset and in the browser: the
+market panel above stage 9's tables, the cost panel above stage 17's.
 
-### Step C — Print the code cards
+**The document, beside the form.** A panel on the stage screen draws the report's own pages for the
+slice this stage contributes, so you can see how four paragraphs will actually print before you
+leave the screen. It **follows the saves, not the keystrokes** — it is the real document built by the
+server from the same model the .docx and .pdf writers consume, not a browser sketch of one, so it
+cannot show an edit you have not saved yet and it says so on itself.
 
-**Screen: Cards & tags** (`/design-workshops/[id]/codes`) · Android: *Cards & tags*, from the stage index
+**Your own sections and questions.** A workshop can be given sections and questions that no
+deployment added, and they print in its report. They are written on the workshop's own
+*custom sections* screen rather than on a stage, because a definition is replaced as one whole set;
+the editor tells you what an edit will cost a question somebody has already answered **before** you
+press anything. Reorder with the plus button, the up/down arrows, or by dragging.
 
-Prints a code for every artisan on the roster and every prototype in the workshop, to tie to the
-object. Stages 14, 15 and 16 each begin by choosing a prototype from a list of twenty-five; scanning
-a tag removes the choosing, and choosing wrong is how two days of measurements end up attached to
-somebody else's work with nothing downstream able to tell.
+### Step E — Sketches and prototypes
 
-### Step D — Check what still blocks submission
+**Screen: Sketches & prototypes** (`/sketches-and-prototypes`, or the workshop's own tab at
+`/design-workshops/[id]/sketches-and-prototypes`) · Android: *Sketches & prototypes*
+
+The same screen from two ends. The top-level route asks **which workshop** first, which is what you
+actually know when you are standing there with the drawing in your hand; the workshop's own tab is
+for when you walked in through the workshop. One component renders both, so they cannot drift.
+
+Two tabs — **Upload** and **Review** — over two kinds, **Prototypes** and **Sketches** (stages 13 and
+11). The upload half carries the tracing panel: **Photograph to trace**, **Traced result**, **The
+trace against the photograph**, **Attach as**, **Download a copy to this device**, plus **360°
+capture** and **3D model** on a prototype.
+
+- **The tracing is arithmetic on this device.** The crop and the sharpening feed the *trace* and
+  nothing else — they cannot re-encode your photograph, so the original file stays the artifact,
+  EXIF and all.
+- **Straightening a photographed sheet into a plate is a second panel, and it is on the stage 11
+  form rather than here.** Drag the four corners of the sheet on the photograph and a local threshold
+  turns it into black line on white paper. It writes the plate into the same **Line art / vector
+  file** slot this screen fills — a new file, never over your photograph — and every step of it is
+  arithmetic on the device, so it works where the sketch was drawn. `frontend/lib/sketchRectify.ts`
+  is the arithmetic, `components/designworkshop/SketchRectifyField.tsx` the panel, mounted from
+  `FieldInput.tsx` wherever `stageFieldRoles.offersSketchRectify` matches; the handset twin is
+  `ui/designworkshop/DwSketchRectifyField.kt`.
+- **A 3D model file is stored and downloadable, and nothing in either client draws it.** *360°
+  capture* is the view a reviewer actually sees and the one the report prints; a model file prints as
+  the words "1 document attached".
+- **Set-aside sketches count.** Stage 11 exists to record the designs that were never prototyped,
+  and they are rateable in both rounds — a wider pool picking one up is the reason to write them
+  down at all.
+
+### Step F — Design review
+
+**Screen: Design review** (`/design-review`) · Android: *Design review*
+
+Score a colleague's sketches and prototypes out of five, say what you would change, and put them in
+an order: **Your score for this piece** (1 to 5), **What you think of it**, **What you would change**,
+and **Move up / Move down** or drag to reorder.
+
+Two ways in, and they are not two spellings of one control: **A workshop you can open yourself** is a
+dropdown of your own workshops, and **Or any other workshop, from its link or its id** is a box —
+because the pool round is by design about workshops you were never added to. Then **Prototypes** or
+**Sketches**.
+
+**Two rounds, and this screen is the second.** The workshop's own designers rate each other first, on
+the *Review* tab of Step E. Then the wider pool ranks the pieces a workshop has finished — including
+workshops the reviewer was never added to, which is the whole difference between the two levels. A
+pool reviewer sees the rateable rows and their scores and **nothing else about the workshop**: they
+are not a member of it and cannot write to its stages.
+
+- A piece reaches the pool only once its peer round is closed — **Peer review closed on**, on the
+  piece itself. A workshop with nothing open in the kind you chose says so in one sentence rather
+  than showing an empty list.
+- The comment and the suggestion are two boxes on purpose. *What you would change* is the half a
+  maker acts on, and it is unfindable buried inside a paragraph of assessment.
+- The order you place is stored on the row, inside one workshop — which is why the round is asked one
+  workshop at a time and there is no mixed cross-workshop list to rank.
+
+### Step G — See what is still outstanding
 
 **Screen: Readiness** (`/design-workshops/[id]/readiness`) · Android: the same list, on the stage
 index rather than a separate screen.
 
-One screen answering *what still stops this workshop being submitted?* Unfilled Basic fields first,
-because they are the only things that refuse a submit; the report's own checks next, because they
-change the delivered file without refusing it; Standard and Advanced gaps last, as counts behind a
-disclosure. Use it instead of opening 22 stages on the last afternoon.
+One screen answering *what is still outstanding on this workshop?* Unfilled Basic fields first — what
+a **stage check** is waiting for; the report's own checks next, because they change the delivered file
+without refusing it; Standard and Advanced gaps last, as counts behind a disclosure. Every line links
+into the stage that holds it. Use it on the **first** afternoon as well as the last: it is a plan for
+the fortnight, not only a check at the end.
 
-### Step E — Configure and generate the report
+Read it against the third rule at the top of this section. Nothing on this list refuses the
+**workshop's** submission — a workshop may be submitted part-filled. What these fields refuse is
+*Save and check required fields* on the one stage that holds them.
+
+### Step H — Configure and generate the report
 
 **Screen: Report** (`/design-workshops/[id]/report`) · Android: *Report*
 
 Choose the template, set what the document contains, read it back as **pages** — laid out at real A4
-or Letter dimensions, with the breaks the template declares marked — and download the file. The
-preview is drawn from the same document model the .docx and .pdf writers consume, so what you read
-is what is generated.
+or Letter dimensions, with the breaks the template declares marked — and download the file. There are
+**six templates** (*DCH standard workshop report*, *DIC standard workshop report*, *Implementing
+agency format*, *Compact summary*, *Detailed technical report*, *Photo catalogue*), **twelve named
+accent colours and a colour well**, and picking one redraws every page on screen before a single file
+is made. The preview is drawn from the same document model the .docx and .pdf writers consume — and
+the two on-device writers as well — so what you read is what is generated.
 
-A report generated **on the phone** honours the same template and settings. Three annexures it
-cannot draw are named on the file itself when they are missing: recorded transcripts (produced after
-the audio reaches the server), questionnaire answers (drawn on the device only once that handset has
-opened the workshop's questionnaire list at least once with a connection), and machine-assisted text.
+**A warning never stops a file being produced.** A required field nobody filled in, a photograph the
+report could not embed, a gallery over the template's cap, an attached file the report names and does
+not contain — each is reported **beside the download** and the document is generated anyway, because
+the pages that *are* ready are the ones you need. And those warnings **never travel inside the
+document**: an officer opening the .docx next month must not find a note about what was missing on
+the day, which is also why the screen is the only place they can be read at all.
 
-### Step F — Look at what you have already produced
+The accent ladder runs from navy to burnt orange by **lightness**, not by hue, because these get
+printed on monochrome office lasers where hue is discarded — twelve equally dark colours would come
+out of that tray as twelve identical reports.
+
+A report generated **on the phone** honours the same template and settings and needs no connection at
+all. **Two** annexures it cannot draw are named on the file itself: recorded transcripts (produced
+after the audio reaches the server) and machine-assisted text. **Questionnaire answers are drawn on
+the phone too** — but only once that handset has opened the workshop's questionnaire list at least
+once with a connection, and until then the file says so.
+
+### Step I — Look at what you have already produced
 
 **Screen: Report history** (`/design-workshops/[id]/report/history`)
 
@@ -449,6 +606,9 @@ you resubmitted?" needs an answer.
 | **Tasks** (`/tasks`) | What you have been asked to document. |
 | **Map** (`/map`) | The repository plotted geographically. |
 | **Design workshops** (`/design-workshops`) | The 22-stage workshop form and the report that comes out of it — see *[The design & prototype workshop itself](#the-design--prototype-workshop-itself)* above. It was missing from this table until 2026-08-19, which meant every route this guide offered led back to a repository record form. |
+| **My designer profile** (`/designers/profile`) | The twenty-one standing details a new workshop's stage 1 and stage 3 start pre-filled with. Kept in one place. |
+| **Sketches & prototypes** (`/sketches-and-prototypes`) | Stage 11 and stage 13 of any of your workshops, from one screen, with the tracing panel. |
+| **Design review** (`/design-review`) | The pool round: rank a colleague's finished pieces. |
 | **Give app feedback** (`/feedback`) | Tell us what slowed you down. |
 
 For installing the app, getting an account, working offline and getting the data back out, see
@@ -467,8 +627,10 @@ It is maintained by walking it.
 | The field list on each step | The form component: `frontend/components/forms/ArtisanForm.tsx`, `ProductForm.tsx`, `ToolForm.tsx`, `ProcessForm.tsx`, and the questionnaire page. `grep -oP 'label="[^"]+"'` over a form gives its labels in one command; diff that against the step's field list. |
 | Which fields are **required** | The same components' validation, and the Pydantic schemas in `backend/app/schemas/records.py`. A field marked *(required)* here that is optional there is the error to look for — it makes the guide stricter than the product, which reads as a bug to the researcher. |
 | The route in each **Screen:** heading | The `(protected)` route tree. `docs/tools/check-docs.mjs` does not check these (they are app routes, not files), so they are the most likely thing here to be stale after a page moves. |
-| The ten-step order | `frontend/components/guide/steps.ts`, which is what `frontend/app/(protected)/guide/page.tsx` renders — the in-app Walkthrough. **These two must not diverge**, because a researcher may read either. **They DO diverge as of 2026-08-19**: the workshop arc below is here and is not in `steps.ts`. That is a known debt, written down rather than left for a reader to discover, and it closes when the arc is added there. |
+| The nineteen-step order | `frontend/components/guide/steps.ts`, which is what `frontend/app/(protected)/guide/page.tsx` renders — the in-app Walkthrough. **These two must not diverge**, because a researcher may read either. Ten record steps then nine workshop steps, matching Steps A–I below one for one. They diverged from 2026-08-19 to 2026-08-26 and the notes recording that debt have been removed with it; renaming or adding a step is an edit to both files in one commit. |
 | The design & prototype workshop steps | The `(protected)/design-workshops/` route tree for the routes, [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §3 for the tier rule, and each page's own file header for what the screen is for — those headers are unusually full and are the source this section was written from. **The one claim here that is not a screen description is the reference rule** ("choosing a record copies its values; the report prints the copy"); its authority is `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py` and [REPORT-DATA-WIRING.md](REPORT-DATA-WIRING.md). Do not soften it into "the report shows the linked record" — that is the opposite of what the system does, and the difference is a document already handed to an officer changing under him. |
+| Who may open Steps A–I | `ROUTE_GUARDS` in `frontend/lib/permissions.ts` and [PERMISSIONS.md](PERMISSIONS.md) §5. All four designer paths sit on `can_run_design_workshops`, and the Walkthrough itself is deliberately ungated — so this section describes screens most of its readers cannot open. Say so, as the fourth rule at the top of the section does; do not quietly drop the arc, which is the deliverable the fortnight exists for. |
+| **What the app does not do** | One claim was checked and deliberately left out, and it is the one most likely to be "restored" by a reader who remembers a brief rather than the code. **There is no 3D viewer**: `frontend/components/sketches/upload/PrototypeModelField.tsx` states that no dependency in `frontend/package.json` can render a model, that the file is stored and downloadable, and that it prints as "1 document attached". A guide asserting a feature that does not exist is worse than one that omits it. **The converse is worse still, and this row shipped it.** A second entry here asserted there is no plate straightening, on the evidence that `frontend/lib/trace/imageEdit.ts` is a crop and an unsharp mask with no deskew anywhere under `frontend/lib/trace/`. That evidence was accurate and the conclusion was not: `lib/trace/` is the *tracing* panel, and the straightening ships in `frontend/lib/sketchRectify.ts` for a different registry field (see Step E, which now describes it). So: absence proved inside one directory is not absence from the product, and a "does not do" row is the one kind of claim that tells the next reader not to look. Prove a negative over the whole tree or do not write it. |
 | Statuses in step 9 | `RecordStatus` in `backend/prisma/schema.prisma`; the authority on who may set which is [PERMISSIONS.md](PERMISSIONS.md). |
 
 **The real maintenance procedure:** this document and the in-app `/guide` are two renderings of one

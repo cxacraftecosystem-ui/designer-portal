@@ -104,6 +104,7 @@ import {
   type DwDraftHeader
 } from "@/lib/designWorkshopStore";
 import { AdoptLocalDraftDialog } from "@/components/designworkshop/AdoptLocalDraftDialog";
+import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { DesignWorkshopViewersPanel } from "@/components/settings/DesignWorkshopViewersPanel";
 import { isTransient, isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
@@ -226,6 +227,12 @@ function DesignWorkshopsPageBody() {
   const [creating, setCreating] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [templateId, setTemplateId] = useState("DCH_STANDARD");
+  /**
+   * The designer this workshop is being opened FOR — "" until an admin picks one, which is a real
+   * and common answer rather than an unfilled field. See {@link WorkshopDesignerPicker} for why the
+   * choice belongs to the create and not to a later edit.
+   */
+  const [designerUserId, setDesignerUserId] = useState("");
   /*
     The workshops a 22-stage record may be started FROM: only those filed as a Design & Prototype
     Development Workshop. See the picker's own note for why the whole workshop list is the wrong
@@ -455,6 +462,10 @@ function DesignWorkshopsPageBody() {
       const header = {
         title,
         templateId,
+        // "" MEANS "NOBODY NAMED" AND IS SENT AS NOTHING. The server would fold an empty string to
+        // None itself, but a body that carries the key with nothing in it reads on the wire as an
+        // answer given, and the offline draft would then hold "" where null is the honest state.
+        designerUserId: designerUserId || undefined,
         craftName: text("craftName"),
         clusterName: text("clusterName"),
         state: text("state"),
@@ -488,6 +499,11 @@ function DesignWorkshopsPageBody() {
       // a designer starting their second workshop of the week inherits the first one's fortnight.
       setDuration({});
       setSourceWorkshopId("");
+      // Cleared for the same reason as the range above: it lives in React state, so `reset()` does
+      // not reach it, and the next "New design workshop" would otherwise open with the last
+      // workshop's designer already named — the one field here whose stale value silently puts
+      // somebody's profile on a document they had nothing to do with.
+      setDesignerUserId("");
       setFormOpen(false);
       await refreshDrafts();
       // A brand-new workshop is 22 empty stages, so the only useful next step is opening it. Going
@@ -823,6 +839,22 @@ function DesignWorkshopsPageBody() {
               <DateRangePicker from={duration.from} to={duration.to} onChange={setDuration} />
             </div>
           </div>
+          {/*
+            FULL WIDTH AND OUTSIDE THE FOUR-COLUMN GRID, because it is three stacked controls (a
+            server-backed search box, a one-line notice, the picker) and not a box. It sits last
+            among the header questions on purpose: the title is what an admin came here to type, and
+            who the workshop is FOR is the decision they most often have to leave open — the field
+            is optional precisely because a workshop is opened in a room on day one.
+
+            React state rather than a FormData name, like `templateId` above it and for the same
+            reason: a themed dropdown is a `<button>` and submits nothing of its own.
+          */}
+          <WorkshopDesignerPicker
+            value={designerUserId}
+            onChange={setDesignerUserId}
+            disabled={creating}
+            offline={offline}
+          />
           <Field label="Notes">
             <TextArea name="notes" />
           </Field>

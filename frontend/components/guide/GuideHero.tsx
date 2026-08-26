@@ -94,9 +94,10 @@ export function GuideHero({ stepCount, onStart }: { stepCount: number; onStart: 
         Document a craft, end to end.
       </h2>
       <motion.p variants={riseItem(reduce)} className="mt-4 max-w-2xl text-sm leading-relaxed text-purple-100">
-        This is the whole process, in the order you actually perform it: from opening a workshop to
-        exporting the finished dataset. Each step below names the screen it lives on, the fields it
-        asks for, and the mistakes that cost people a second trip to the field.
+        This is the whole process, in the order you actually perform it: the repository records first,
+        then the 22-stage design &amp; prototype workshop they feed and the report that comes out of it.
+        Each step below names the screen it lives on, the fields it asks for, and the mistakes that
+        cost people a second trip to the field.
       </motion.p>
 
       <motion.ul variants={staggerParent(reduce)} className="mt-7 grid gap-2.5 sm:grid-cols-3">

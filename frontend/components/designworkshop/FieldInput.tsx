@@ -100,11 +100,14 @@ import { aadhaarValidationError, isMaskedIdentityNumber } from "@/components/for
 import { DateField, TimeField } from "@/components/forms/DateTimeField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
+import { DocumentPreview } from "@/components/media/DocumentPreview";
+import { MediaCarousel, type CarouselItem } from "@/components/media/MediaCarousel";
 import { NumberedListField } from "@/components/forms/NumberedListInput";
 import { PhoneField } from "@/components/forms/PhoneField";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { apiFetch } from "@/lib/api";
 import {
+  DW_DEFAULT_MAX_ITEMS,
   fieldTypeName,
   inputValue,
   listValue,
@@ -508,6 +511,44 @@ function derivedPlaceholder(field: DwField, value: DwValue | undefined, row: DwE
   const computed = deriveValue(field, row);
   if (computed === null) return undefined;
   return `${computed}${field.unit ? ` ${field.unit}` : ""} (computed)`;
+}
+
+/**
+ * WHAT THE REGISTRY DECLARED AS A MULTI-VALUED FIELD'S CEILING, OR NULL — the number that may be
+ * PRINTED.
+ *
+ * `field_to_dict` emits `maxItems` only for a field that states one, so an absent key is not a number
+ * and must never be drawn as one: "up to 200" under a gallery would be this client naming a figure it
+ * did not read and the server may change, and a stated cap that is not the enforced cap is worse than
+ * no sentence at all (docs/DESIGN_WORKSHOP.md:229-232). Two of the registry's 20 IMAGE_LIST fields
+ * answer this — the motif pair, 20 each — and none of its 12 TAGS or 5 MULTI_ENUM fields do.
+ *
+ * The `> 0` is not defensive padding: Android's `FieldDto.maxItems` defaults to 0 for the same
+ * absence, so a schema that ever reached this client through that shape has to read as "not
+ * declared" here too rather than as a ceiling of zero.
+ */
+function declaredMaxItems(field: DwField): number | null {
+  return typeof field.maxItems === "number" && field.maxItems > 0 ? field.maxItems : null;
+}
+
+/**
+ * WHAT A MULTI-VALUED FIELD IS ACTUALLY ENFORCED AGAINST — declared, or the server's own default.
+ *
+ * The other half of the same paragraph, and the half both clients failed until 2026-08-26: reading an
+ * absent `maxItems` as NO ceiling is exactly what it forbids. `coerce_value` refuses an over-long
+ * array rather than trimming it and `save_stage` restores a refused key from the previous entry, so
+ * the 201st tag or photograph does not cost itself — it costs every entry the field was about to
+ * store, reported as one error against the field with the uploading already done.
+ *
+ * Read by the three controls that can GROW a list — {@link MediaField}, {@link TagsField} and
+ * {@link MultiEnumField} — each of which trims before anything is uploaded or stored and then says
+ * what it turned away, naming the ceiling only where {@link declaredMaxItems} answered. Both halves
+ * together: gating the notice on the declared cap while trimming at this one would turn a loud
+ * refusal into a silent drop, which is the failure the rule is written against.
+ * `DwMediaCapture.kt` does the same on the handset off the same constant.
+ */
+function effectiveMaxItems(field: DwField): number {
+  return declaredMaxItems(field) ?? DW_DEFAULT_MAX_ITEMS;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1393,22 +1434,19 @@ export function FieldInput({
 
     case "MULTI_ENUM":
       return unlabelled(
-        <MultiSelectDropdown
-          values={listValue(value)}
-          onChange={(next) => onChange(next)}
-          options={field.options ?? []}
-          placeholder="Select"
-          emptyLabel="No options in this list"
-          disabled={disabled}
-          ariaLabel={field.label}
-          describedBy={describedBy}
-          confirmLabel="Confirm"
-        />
+        <MultiEnumField field={field} describedBy={describedBy} value={value} onChange={onChange} disabled={disabled} />
       );
 
     case "TAGS":
       return unlabelled(
-        <TagsField labelId={labelId} describedBy={describedBy} value={value} onChange={onChange} disabled={disabled} />
+        <TagsField
+          labelId={labelId}
+          describedBy={describedBy}
+          field={field}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+        />
       );
 
     case "GEO":
@@ -1819,10 +1857,18 @@ function BoolField({
  * Enter AND comma both commit, and the commit also runs on blur. Committing on blur is the part
  * that matters: a designer who types "indigo" and then taps Save has typed a value the form would
  * otherwise throw away, and nothing on screen would say a word about it.
+ *
+ * IT ALSO CARRIES THE ITEM CEILING, because `maxItems` governs TAGS exactly as it governs a gallery
+ * (docs/DESIGN_WORKSHOP.md:223) and this box read it nowhere at all until 2026-08-26. None of the
+ * registry's twelve TAGS fields declares one, so the ceiling in force here is today always
+ * {@link DW_DEFAULT_MAX_ITEMS} — two hundred chips, far past any real answer, and exactly the
+ * absence both clients used to read as "no limit". `coerce_value` refuses the whole field over it, so
+ * a box that let a designer past it would trade a refused chip for a refused list.
  */
 function TagsField({
   labelId,
   describedBy,
+  field,
   value,
   onChange,
   disabled
@@ -1830,12 +1876,28 @@ function TagsField({
   labelId: string;
   /** The field's hint and refusal message — see `FieldHint`. */
   describedBy?: string;
+  /** Read for its label and for its item ceiling — see {@link effectiveMaxItems}. */
+  field: DwField;
   value: DwValue | undefined;
   onChange: (value: DwValue) => void;
   disabled?: boolean;
 }) {
   const tags = listValue(value);
   const [draft, setDraft] = useState("");
+  /**
+   * The values this ceiling turned away, held until they are typed again.
+   *
+   * Same rule as {@link MediaField}'s `refused` and for the same reason: the box is cleared on
+   * commit, so a chip that was silently not added is a word the designer typed and cannot see
+   * anywhere. A removal deliberately does NOT clear this list — it makes room for exactly these
+   * values, which is what the sentence asks for.
+   */
+  const [refused, setRefused] = useState<string[]>([]);
+  /** Printable only where it was declared, enforced either way — see {@link declaredMaxItems}. */
+  const declaredCap = declaredMaxItems(field);
+  const cap = effectiveMaxItems(field);
+  /** `useId` and not a literal: a stage draws one of these per TAGS field — see {@link MediaField}. */
+  const capId = `${useId()}-cap`;
 
   const commit = useCallback(
     (raw: string) => {
@@ -1848,16 +1910,40 @@ function TagsField({
       // answer become two rows in a report table that is meant to summarise.
       const seen = new Set(tags.map((tag) => tag.toLowerCase()));
       const next = [...tags];
+      const turnedAway: string[] = [];
       for (const part of parts) {
         if (seen.has(part.toLowerCase())) continue;
+        // THE CEILING BEFORE THE VALUE IS STORED, not after the save refuses the field. Counted
+        // against `next` rather than `tags` so a single pasted "a, b, c" cannot step over it.
+        if (next.length >= cap) {
+          turnedAway.push(part);
+          continue;
+        }
         seen.add(part.toLowerCase());
         next.push(part);
       }
+      setRefused(turnedAway);
       if (next.length !== tags.length) onChange(next);
       setDraft("");
     },
-    [tags, onChange]
+    [tags, onChange, cap]
   );
+
+  /**
+   * The refusal, in words — and the CEILING is named only where the registry declared it.
+   *
+   * Which is the whole of the contract in one sentence: the number is unprintable where it was not
+   * read (docs/DESIGN_WORKSHOP.md:229-232), and the refusal still has to be loud, because a value
+   * dropped in silence is the failure the rule is written against. So "is full" without a figure,
+   * and the words themselves named either way.
+   */
+  const refusalNotice = !refused.length
+    ? null
+    : `${
+        declaredCap === null
+          ? `${field.label} is full`
+          : `${field.label} holds at most ${declaredCap} ${declaredCap === 1 ? "entry" : "entries"}`
+      }. Not added: ${refused.join(", ")}. Remove one, then type ${refused.length === 1 ? "it" : "them"} again.`;
 
   return (
     <div className="grid gap-2">
@@ -1885,7 +1971,7 @@ function TagsField({
         className="field-input"
         type="text"
         aria-labelledby={labelId}
-        aria-describedby={describedBy}
+        aria-describedby={[describedBy, declaredCap !== null ? capId : null].filter(Boolean).join(" ") || undefined}
         placeholder="Type a value and press Enter"
         value={draft}
         disabled={disabled}
@@ -1900,6 +1986,157 @@ function TagsField({
           commit(draft);
         }}
       />
+      {/* THE DECLARED CEILING, SAID ON SCREEN — the PRINTED half of the `maxItems` contract, which
+          this control had only the enforced half of. Both halves landed on the handset in the same
+          pass that closed the enforcement gap (`FieldRenderer.kt`'s `DwListCapHint`, mounted on the
+          TAGS and MULTI_ENUM controls) and only the enforcement half landed here, so for the length
+          of one change a designer told "up to 20" on the handset was told nothing at all in the
+          browser about the same field. The strings are Android's, verbatim.
+
+          DESCRIBED, NOT ANNOUNCED, and the argument is the one written out at the foot of
+          {@link MediaField}: this is a running total that is on screen from first paint, so a live
+          region would read it out on every entry a reader added. It is named in the control's
+          `aria-describedby` instead, which is where somebody who has added nothing yet meets it.
+          What must interrupt is the refusal below, which names the values turned away.
+
+          AND WHERE IT IS ABSENT THE CEILING IS STILL THERE: an undeclared list is held at
+          {@link DW_DEFAULT_MAX_ITEMS} and says nothing, because that figure is the server's and this
+          client did not read it. Every number here comes from `declaredCap`. */}
+      {declaredCap !== null ? (
+        <p id={capId} className="text-xs leading-5 text-ink-500">
+          {declaredCap - tags.length <= 0
+            ? `Full at ${declaredCap}. Remove one to add another.`
+            : `Up to ${declaredCap} — ${declaredCap - tags.length} more can be added.`}
+        </p>
+      ) : null}
+      {/* MOUNTED FROM FIRST PAINT AND HIDDEN WHEN EMPTY, never conditionally rendered: assistive
+          technology announces mutations only inside a region that already existed when the page
+          settled, so a paragraph that appears in the same breath as its first sentence is a
+          sentence nobody hears. `sr-only` rather than `hidden` for the same reason, and because an
+          absolutely positioned 1×1 paragraph contributes no row to this `grid gap-2`. The long form
+          of this argument is on the three notices at the foot of {@link MediaField}. */}
+      <p role="status" aria-live="polite" className={refusalNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}>
+        {refusalNotice}
+      </p>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * MULTI_ENUM
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A closed multi-select, with the registry's item ceiling applied to what it hands back.
+ *
+ * A WRAPPER RATHER THAN A BARE CALL TO `MultiSelectDropdown`, for one reason: `maxItems` governs
+ * MULTI_ENUM exactly as it governs a gallery (docs/DESIGN_WORKSHOP.md:223) and the dispatch's
+ * `onChange={(next) => onChange(next)}` read it nowhere at all. Trimming inside that handler and
+ * saying nothing would have been worse than not trimming — a tick that silently does not take is a
+ * control lying about its own state — so the trim and the sentence arrived together, which needed
+ * somewhere to put the sentence.
+ *
+ * WHETHER THE CEILING CAN BITE TODAY, said plainly so nobody hunts for it: only where a field
+ * declares one BELOW its own option count. None of the registry's five MULTI_ENUM fields declares
+ * one, and the widest list any of them draws on is 15 entries against a default of 200, so this is a
+ * rule that is read rather than a limit that is felt. That is the point of reading it. The absence is
+ * what both clients used to take for "no ceiling at all", and the day a field declares three, the
+ * trim is here and says so instead of the designer meeting it as a refused save.
+ *
+ * `searchable` IS STILL LEFT ALONE, for the reason given at the dispatch: `field.options` is an
+ * authored vocabulary rather than a list of records, so the option count is the right judge.
+ */
+function MultiEnumField({
+  field,
+  describedBy,
+  value,
+  onChange,
+  disabled
+}: {
+  field: DwField;
+  /** The field's hint and refusal message — see `FieldHint`. */
+  describedBy?: string;
+  value: DwValue | undefined;
+  onChange: (value: DwValue) => void;
+  disabled?: boolean;
+}) {
+  const values = listValue(value);
+  /** The options this ceiling turned away, by the label the designer read — see {@link TagsField}. */
+  const [refused, setRefused] = useState<string[]>([]);
+  /** Printable only where it was declared, enforced either way — see {@link declaredMaxItems}. */
+  const declaredCap = declaredMaxItems(field);
+  const cap = effectiveMaxItems(field);
+  /** `useId` and not a literal — see {@link TagsField}. */
+  const capId = `${useId()}-cap`;
+
+  /** The word on the row, not the stored token: a designer cannot act on "MATERIAL_FAMILY_JUTE". */
+  const optionLabel = (option: string) =>
+    field.options?.find((candidate) => candidate.value === option)?.label ?? option;
+
+  const refusalNotice = !refused.length
+    ? null
+    : `${
+        declaredCap === null
+          ? `${field.label} is full`
+          : `${field.label} holds at most ${declaredCap} ${declaredCap === 1 ? "entry" : "entries"}`
+      }. Not added: ${refused.join(", ")}. Remove one, then pick ${refused.length === 1 ? "it" : "them"} again.`;
+
+  return (
+    <div className="grid gap-2">
+      <MultiSelectDropdown
+        values={values}
+        onChange={(next) => {
+          /*
+            THE CEILING CAPS GROWTH AND NEVER SHORTENS WHAT IS ALREADY STORED, which is the Kotlin
+            twin's rule (`dwCapListGrowth`, `FieldRenderer.kt`) and was NOT this arm's until
+            2026-08-26.
+
+            `next.length <= values.length` is the half that was missing. A cap is not part of
+            `registry_version()`, so a field may perfectly well be holding five entries on the day its
+            declared ceiling becomes three — those values were valid when they were written. Under a
+            bare `next.length > cap` test, a designer merely UNTICKING one of the five handed back
+            four, which is still over, and the slice then deleted a second value they never touched —
+            while the notice below said "Not added" about something that had in fact just been
+            removed. Data loss reported as a refusal.
+
+            So: any change that does not make the list longer passes through untouched (a shrink, or a
+            same-size swap), and only genuine growth is capped.
+          */
+          if (next.length <= cap || next.length <= values.length) {
+            setRefused([]);
+            onChange(next);
+            return;
+          }
+          // What is already held survives first; the ceiling is then filled from `next` in the order
+          // the panel hands it back, so the tick that did not fit is the one refused.
+          const keep = new Set(next.filter((option) => values.includes(option)));
+          for (const option of next) {
+            if (keep.size >= cap) break;
+            keep.add(option);
+          }
+          setRefused(next.filter((option) => !keep.has(option)).map(optionLabel));
+          onChange(next.filter((option) => keep.has(option)));
+        }}
+        options={field.options ?? []}
+        placeholder="Select"
+        emptyLabel="No options in this list"
+        disabled={disabled}
+        ariaLabel={field.label}
+        describedBy={[describedBy, declaredCap !== null ? capId : null].filter(Boolean).join(" ") || undefined}
+        confirmLabel="Confirm"
+      />
+      {/* The declared ceiling, said on screen — see the identical paragraph in TagsField. */}
+      {declaredCap !== null ? (
+        <p id={capId} className="text-xs leading-5 text-ink-500">
+          {declaredCap - values.length <= 0
+            ? `Full at ${declaredCap}. Remove one to add another.`
+            : `Up to ${declaredCap} — ${declaredCap - values.length} more can be added.`}
+        </p>
+      ) : null}
+      {/* Present from first paint, hidden when empty — see the identical paragraph in TagsField. */}
+      <p role="status" aria-live="polite" className={refusalNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}>
+        {refusalNotice}
+      </p>
     </div>
   );
 }
@@ -1920,6 +2157,27 @@ const ALLOWED_TYPES: Partial<Record<DwField["type"], MediaType[]>> = {
   AUDIO: ["AUDIO"],
   VIDEO: ["VIDEO"]
 };
+
+/** One file a media field's declared ceiling turned away — see `refused` in {@link MediaField}. */
+type RefusedFile = { key: string; name: string };
+
+/**
+ * A file's identity for the refused list.
+ *
+ * The same `name:size:lastModified` triple `MediaCaptureField`'s `mergeFiles`/`fileKey` use, and it
+ * has to be that rather than the `File` object: the whole point of the list is to survive until the
+ * designer picks the file AGAIN, and a second pick of the same bytes is a different `File`.
+ */
+function refusedKeyOf(file: File): string {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+/** Drop from a refused list every entry that has now been attached successfully. */
+function forgetRefused(current: RefusedFile[], attached: File[]): RefusedFile[] {
+  if (!current.length || !attached.length) return current;
+  const done = new Set(attached.map(refusedKeyOf));
+  return current.filter((entry) => !done.has(entry.key));
+}
 
 /**
  * A media field: IMAGE / IMAGE_LIST / FILE / AUDIO / VIDEO.
@@ -2016,11 +2274,118 @@ function MediaField({
 }) {
   const multiple = field.type === "IMAGE_LIST";
   const ids = useMemo(() => listValue(value), [value]);
-  const [files, setFiles] = useState<Record<string, MediaFile>>({});
-  /** Staged-on-this-device tiles: what to draw for a `dwlocal:` reference. */
-  const [staged, setStaged] = useState<Record<string, { name: string; url: string | null; sizeBytes: number }>>({});
+  /**
+   * The id of the ceiling sentence, so the group can be DESCRIBED by it.
+   *
+   * `useId` and not a literal: a stage draws one of these per media field, and a collection row draws
+   * one per row per field — a fixed id would name every gallery on the screen at once.
+   */
+  const capId = `${useId()}-cap`;
+  /**
+   * THE DECLARED CEILING, OR NULL WHERE THE REGISTRY DECLARES NONE — the PRINTABLE one.
+   *
+   * Null and not 200, and it stays null so that nothing on screen can name a figure this client did
+   * not read: `maxItems` is omitted from the published registry unless a field states one, so drawing
+   * "up to 200" on every other gallery would be this client inventing a number the server owns and
+   * may change, and a stated cap that is not the enforced cap is worse than no sentence at all
+   * (docs/DESIGN_WORKSHOP.md:229-232). The count of galleries that would be is deliberately not
+   * written here — it was "the other seventeen" while the registry declared eighteen of them, which
+   * is what a figure kept in prose costs the next time a gallery is added.
+   *
+   * Where it IS declared — the two motif galleries, 20 each — the number is printed under the
+   * picker, joined to the group's description, and the browsable carousel is offered. All three read
+   * THIS and not the effective ceiling below, which is what keeps them honest.
+   *
+   * Only meaningful for a multi-valued field. A single IMAGE/FILE already holds one by construction.
+   */
+  const declaredCap = multiple ? declaredMaxItems(field) : null;
+  /**
+   * THE CEILING ACTUALLY ENFORCED HERE — declared, or the server's own default where there is none.
+   *
+   * The other half of the same paragraph, and the half this client failed until 2026-08-26: reading
+   * an absent `maxItems` as NO ceiling is precisely what it forbids. `coerce_value` refuses an
+   * over-long array rather than trimming it and `save_stage` restores the refused key from the
+   * previous entry, so a designer who attaches the 201st photograph does not lose that photograph —
+   * they lose every photograph the gallery was about to store, as one error against the field, with
+   * all of the uploading already done.
+   *
+   * SO THE TRIM RUNS OFF THIS AND THE SENTENCE ABOVE OFF `declaredCap`, and `refusalNotice` below
+   * fires either way. Gating the notice on the declared cap while trimming at 200 would turn a loud
+   * refusal into a silent drop of the 201st file, which is the one thing both the doc and
+   * `acceptFiles` refuse ("the honest act is to take what fits and SAY what did not").
+   *
+   * `null` only for a single-valued field: it has no ceiling to enforce, because the capture card
+   * deliberately keeps the LAST file picked rather than refusing the second.
+   */
+  const cap = multiple ? effectiveMaxItems(field) : null;
+  /**
+   * Every stored id this control has LOOKED UP, and what came back. THREE STATES, NOT TWO.
+   *
+   * `undefined` — not looked up yet, or the request is still in flight.
+   * `null`      — looked up, and the answer was no: deleted under the stage, not entitled, no signal.
+   * a `MediaFile` — the row.
+   *
+   * The null used to be absent and the two states were collapsed, which made every row of a
+   * twenty-photograph gallery print "This file is no longer readable from here" for as long as its
+   * `GET /media/{id}` was in flight — on a village connection, several seconds of a stage saying
+   * that twenty of its photographs are gone when nothing is wrong with any of them. A sentence that
+   * is false while a fetch is running is not a smaller defect than one that is false afterwards; it
+   * is the one a designer sees first. The tile below now draws "Looking this file up…" for the
+   * undefined case and the refusal only for `null`.
+   */
+  const [files, setFiles] = useState<Record<string, MediaFile | null>>({});
+  /**
+   * Staged-on-this-device tiles: what to draw for a `dwlocal:` reference, with the same three states.
+   *
+   * `undefined` is "this reference has not been read out of IndexedDB yet" — which is where a
+   * just-attached photograph sits for a moment, and which the effect below reaches by REPLACING this
+   * map rather than clearing it, so nothing already on screen flickers. `null` is the one failure
+   * the local store is built to make impossible and therefore the one worth a sentence: the blob is
+   * gone.
+   */
+  const [staged, setStaged] = useState<Record<string, { name: string; url: string | null; sizeBytes: number } | null>>(
+    {}
+  );
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * THE FILES THE CEILING TURNED AWAY, HELD IN THEIR OWN STATE AND NOT IN `notice`.
+   *
+   * ── WHAT SHARING `notice` COST ─────────────────────────────────────────────────────────────────
+   *
+   * The cap refusal — the sentence that NAMES the five photographs a 20-file gallery would not take
+   * — used to be written into `notice`, which is also the channel `stageOffline` writes to and which
+   * `settle` clears at the top of every batch. So the sequence was: attach 25 photographs, read
+   * "Not attached: a.jpg, b.jpg, c.jpg, d.jpg, e.jpg", and then watch that sentence disappear a
+   * second or two later — because the 20 that WERE accepted reached `ready`, the drain fired
+   * `settle`, and `settle` begins `setProblem(null); setNotice(null)`. The only record of which five
+   * files to re-pick was erased by the success of the other twenty, before anybody could write them
+   * down. `acceptFiles` erased it a second way, on the next attach that happened to fit.
+   *
+   * ── WHY A LIST AND NOT A SENTENCE ──────────────────────────────────────────────────────────────
+   *
+   * Held as the files themselves, the sentence can be DERIVED at render — so the count of what is
+   * accounted for stays true as files are removed and re-attached, instead of being a snapshot that
+   * goes stale the moment somebody acts on it. And an entry leaves this list for exactly one reason:
+   * the same file is attached successfully later (`forgetRefused`), which is the reader having dealt
+   * with it. Nothing else clears it, because nothing else makes it untrue.
+   *
+   * Remembered by the `name:size:lastModified` triple rather than by `File` identity, which is the
+   * same triple `MediaCaptureField.mergeFiles` de-duplicates on: a file re-picked out of the chooser
+   * is a NEW `File` object for the same bytes, so identity would never match and the entry would
+   * never leave. NOT by name alone, which is the tempting simplification: two shots off one handset
+   * are both `IMG_0001.jpg`, and clearing one of them because the other was attached is the silent
+   * loss this list exists to stop. The residual cost of the triple is a file EDITED between the
+   * refusal and the re-pick, whose name then lingers in the sentence one attach too long — a
+   * sentence that overstays beats one that disappears, and the counts around it stay true either way.
+   *
+   * LOCAL STATE, AND NOT HOISTED INTO `StagePendingMediaProvider` like `pending` is. Collapsing a
+   * collection row therefore forgets the sentence. That is a stated limit rather than an oversight:
+   * `pending` is hoisted because losing it DELETED photographs out of object storage, and this list
+   * is a message about files that were never taken — recoverable by picking them again, which is what
+   * the sentence asks for. Hoisting it would mean a fourth key in that store for a paragraph.
+   */
+  const [refused, setRefused] = useState<RefusedFile[]>([]);
   /**
    * Where this control sits, as the one key both halves of the survival fix are derived from.
    *
@@ -2084,7 +2449,14 @@ function MediaField({
       if (cancelled) return;
       setFiles((current) => {
         const next = { ...current };
-        for (const [id, file] of resolved) if (file) next[id] = file;
+        // THE FAILURES ARE RECORDED AS `null` AND NOT SKIPPED. Skipping them left the id in the
+        // "never looked up" state, which is the state the tile draws its "no longer readable"
+        // sentence for — so the refusal appeared before the request had even been sent. Writing the
+        // answer down is what lets the tile tell "we have not asked yet" from "we asked and it is
+        // gone". A later run may still overwrite a `null` with a row: `unknown` above tests
+        // falsiness, so an id whose read failed is asked again the next time this list changes,
+        // which is the recovery path for the read that failed only because the signal was gone.
+        for (const [id, file] of resolved) next[id] = file;
         return next;
       });
     })();
@@ -2111,7 +2483,7 @@ function MediaField({
       return;
     }
     (async () => {
-      const tiles: Record<string, { name: string; url: string | null; sizeBytes: number }> = {};
+      const tiles: Record<string, { name: string; url: string | null; sizeBytes: number } | null> = {};
       /**
        * References the sync pass has since turned into real media ids.
        *
@@ -2124,7 +2496,15 @@ function MediaField({
       const healed = new Map<string, string>();
       for (const ref of localRefs) {
         const media = await readLocalMedia(ref);
-        if (!media) continue;
+        if (!media) {
+          // WRITTEN DOWN AS `null` RATHER THAN LEFT OUT. Left out, the reference is indistinguishable
+          // from one this effect has not reached yet — and the tile drew "can no longer be found
+          // here" for both, so a photograph attached a second ago was mourned while it was being
+          // read. This is the one state the local store exists to prevent, so it keeps its sentence;
+          // it just no longer borrows it for the ordinary case.
+          tiles[ref] = null;
+          continue;
+        }
         if (media.remoteMediaId) {
           healed.set(ref, media.remoteMediaId);
           continue;
@@ -2174,6 +2554,10 @@ function MediaField({
    */
   const settle = useCallback(
     async (chosen: File[]) => {
+      // Both channels belong to ONE batch's outcome, so a new batch starts with neither. The
+      // ceiling's refusal is deliberately NOT cleared here: it is about files this control never
+      // took, it is `refused`'s to hold, and clearing it from this line is how the list of what to
+      // re-pick used to vanish a second after it appeared. See `refused`.
       setProblem(null);
       setNotice(null);
       try {
@@ -2334,12 +2718,296 @@ function MediaField({
     if (isLocalMediaRef(id)) void removeLocalMedia(id.slice(LOCAL_MEDIA_PREFIX.length));
   }
 
+  /**
+   * How many more files this field can take, counting what is attached AND what is in flight.
+   *
+   * COUNTING `pending` IS THE WHOLE POINT. Every file in the capture card is a file that will become
+   * an id the moment it lands, so a check against `ids` alone would let a designer queue the
+   * twenty-first, twenty-second and twenty-third photographs — each one uploading, none of them
+   * refused until the save. `null` only on a single-valued field, which has no room to count: it
+   * keeps the last file picked rather than refusing the second. It is never null for a gallery now —
+   * an undeclared ceiling is a ceiling of {@link DW_DEFAULT_MAX_ITEMS}, not the absence of one — so
+   * the only thing an undeclared gallery loses is the printed figure, not the count.
+   */
+  const room = cap === null ? null : Math.max(0, cap - ids.length - pending.length);
+
+  /**
+   * The capture card's list, with the declared ceiling applied and anything dropped SAID OUT LOUD.
+   *
+   * ── WHY TRIMMING IS RIGHT HERE AND REFUSING IS RIGHT ON THE SERVER ─────────────────────────────
+   *
+   * `coerce_value` refuses the whole field, and it must: it is the last door, it cannot ask, and
+   * silently keeping 20 of 25 there would mean a stored value that is not what any client sent.
+   * Here there IS somebody to tell, immediately, before a byte is uploaded — so the honest act is to
+   * take what fits, name the exact filenames that did not, and leave the field valid. A refusal at
+   * this door would be a file picker that appears to do nothing.
+   *
+   * ── WHY THE MESSAGE NAMES THE FILES ────────────────────────────────────────────────────────────
+   *
+   * "Only 20 photographs are allowed" tells a designer holding 25 nothing about which 5 to re-pick.
+   * `uploadMediaBatch`'s own contract in this repo is the same rule — every caller must inspect
+   * `failed` and NAME the filenames that did not make it — and this is the same failure one step
+   * earlier.
+   *
+   * A GROWING SELECTION IS NOT ALWAYS AN ADDITION. `MediaCaptureField` also calls this to REMOVE a
+   * file (its per-tile discard) and to retry one, so the guard only bites when the incoming list is
+   * longer than the current one; a shrink or a same-length replacement passes straight through. Left
+   * unguarded, discarding a file while the field was at its ceiling would have re-run the trim
+   * against `room === 0` and thrown away the reader's own removal.
+   *
+   * ── AND THE REFUSED FILENAMES OUTLIVE THIS CALL ────────────────────────────────────────────────
+   *
+   * What is written here is the LIST (see `refused`), never the sentence: the sentence is derived at
+   * render so its "now accounted for" count cannot go stale, and the list is cleared one entry at a
+   * time as those very files are attached. What this function must not do — and used to do twice —
+   * is throw the list away because something ELSE succeeded. A removal makes room for exactly these
+   * files, so it leaves the list alone; an addition that fits forgets only the entries it attached.
+   */
+  function acceptFiles(next: File[]) {
+    if (room === null || next.length <= pending.length) {
+      setPending(next);
+      return;
+    }
+    const added = next.slice(pending.length);
+    if (added.length <= room) {
+      setPending(next);
+      // Only what actually went in. `setNotice(null)` used to stand here, on the reasoning that "a
+      // previous refusal is stale the moment the reader makes room and adds successfully" — which is
+      // true of the file they just re-attached and false of the other four still waiting to be.
+      setRefused((current) => forgetRefused(current, added));
+      return;
+    }
+    const kept = added.slice(0, room);
+    const dropped = added.slice(room);
+    setPending([...next.slice(0, pending.length), ...kept]);
+    setRefused((current) => {
+      // The re-attached ones leave first, so a designer who re-picks five and gets one in sees four
+      // named rather than five; then the newly turned-away ones join, de-duplicated, because picking
+      // the same over-the-ceiling batch twice is one fact and not two.
+      const carried = forgetRefused(current, kept);
+      const known = new Set(carried.map((entry) => entry.key));
+      const grown = [...carried];
+      for (const file of dropped) {
+        const key = refusedKeyOf(file);
+        if (known.has(key)) continue;
+        known.add(key);
+        grown.push({ key, name: file.name });
+      }
+      return grown;
+    });
+  }
+
+  /**
+   * The refusal, in words, derived from the list rather than frozen when it happened.
+   *
+   * Rule 10: a ceiling that quietly keeps the first twenty of twenty-five is the "Stage saved, and
+   * the photographs are gone" failure the server's `coerce_value` refuses outright to avoid. Here
+   * there is somebody to tell, so the names are on screen — "Only 20 photographs are allowed" tells
+   * a designer holding 25 nothing about WHICH five to re-pick, which is the same rule
+   * `uploadMediaBatch`'s callers are under one step later.
+   *
+   * The count is recomputed here, not remembered: remove two attached photographs and the sentence
+   * says so, which is what makes the instruction in it actionable rather than a receipt.
+   *
+   * ── AND IT FIRES FOR AN UNDECLARED CEILING TOO, WITHOUT NAMING IT ──────────────────────────────
+   *
+   * Gated on `refused` alone and no longer on a declared cap, because every gallery has a ceiling
+   * now (see `cap`) and a trim nobody is told about is the silent drop this whole notice exists to
+   * prevent. What changes is the first clause and only the first clause: with a declared cap the
+   * sentence states it and reconciles the total against it, and without one it says the field is
+   * FULL and stops — because the figure is the server's and this client did not read it
+   * (docs/DESIGN_WORKSHOP.md:229-232). The filenames are named either way, which is the part a
+   * designer holding twenty-five photographs can act on.
+   */
+  const refusalNotice = (() => {
+    if (!refused.length) return null;
+    const accounted = ids.length + pending.length;
+    const ceiling =
+      declaredCap === null
+        ? `${field.label} is full`
+        : `${field.label} holds at most ${declaredCap} file${declaredCap === 1 ? "" : "s"}, and ` +
+          `${accounted} ${accounted === 1 ? "is" : "are"} accounted for`;
+    return (
+      `${ceiling}. Not attached: ${refused.map((entry) => entry.name).join(", ")}. ` +
+      `Remove something already attached, then pick ${refused.length === 1 ? "it" : "them"} again — ` +
+      `this list stays until you do.`
+    );
+  })();
+
+  /**
+   * The attached images, as the carousel reads them.
+   *
+   * ── WHY A CAROUSEL IS OFFERED AT ALL, AND ONLY ON A CAPPED GALLERY ─────────────────────────────
+   *
+   * Asked for on 2026-08-25 for the two motif galleries: the references have to be BROWSABLE, not
+   * merely counted, because the question a designer is answering while they look at them ("is this
+   * the motif I am writing about") needs one image big enough to see.
+   *
+   * It is gated on `declaredCap !== null` rather than on the field key, which is the difference
+   * between a feature and a special case: a gallery whose ceiling somebody bothered to declare is a
+   * gallery meant to be LOOKED at, and the two motif galleries are the two that declare one today.
+   * Gating on `motifPhotos`/`contemporaryMotifPhotos` by name would put the app's behaviour in an
+   * `if` instead of in the registry, and the next such gallery would silently not get it.
+   *
+   * THE DECLARED CAP AND NOT `cap`, WHICH IS NOW NEVER NULL FOR A GALLERY. Since the effective
+   * ceiling defaults to {@link DW_DEFAULT_MAX_ITEMS}, reading it here would mount a carousel on all
+   * twenty IMAGE_LIST fields — a behaviour change nobody asked for, arriving as a side effect of a
+   * fix to the trim. "Somebody declared a ceiling" is still the signal; it is just no longer the
+   * same expression as "there is a ceiling".
+   *
+   * LOCAL, NOT-YET-UPLOADED PHOTOGRAPHS ARE INCLUDED, and they have to be: in a courtyard with no
+   * signal, every photograph taken today is a `dwlocal:` reference, and a carousel that showed only
+   * the ones the server has acknowledged would be empty on precisely the afternoon it is wanted.
+   * `staged[...].url` is the object URL this component already made for its own thumbnail, so no
+   * second blob read happens for it.
+   *
+   * ── AND WHAT IT LEAVES OUT IS COUNTED, NOT DROPPED ─────────────────────────────────────────────
+   *
+   * `MediaCarousel` prints "3 of 12" off `items.length`, so every id this memo declines to build an
+   * item for makes that readout SHORT of what the field is holding — twenty attached motifs, three
+   * whose `GET /media/{id}` was refused, and the browsable view says "1 of 17" over a gallery of 20
+   * with nothing anywhere to explain the missing three. That is the readout the carousel's own header
+   * argues is "the state, not the ornament", quietly wrong.
+   *
+   * So the two reasons an id is left out are counted separately and said in words under the strip:
+   * the row could not be read from here at all, and the file is not an image (a FILE field's
+   * attachment, a video). They are separate because they need different things from the reader — one
+   * is a connection or an entitlement, the other is simply not a photograph and never will be.
+   * Counted only once each id has actually been LOOKED UP — and an id still IN FLIGHT is the third
+   * count rather than a third silence. It used to be a bare `continue`, which is what let the
+   * sentence below print figures that do not add up: `files` and `staged` are filled by two
+   * independent effects, so a field holding both uploaded ids and `dwlocal:` references really does
+   * pass through a moment where 17 are shown, 1 is not an image, and the field holds 20. Transient,
+   * self-correcting, and still a sentence that was wrong while somebody was reading it.
+   */
+  const carousel = useMemo(() => {
+    if (declaredCap === null) {
+      return { items: [] as CarouselItem[], unreadable: 0, notImages: 0, pending: 0 };
+    }
+    const items: CarouselItem[] = [];
+    let unreadable = 0;
+    let notImages = 0;
+    let pending = 0;
+    for (const id of ids) {
+      if (isLocalMediaRef(id)) {
+        const local = staged[id];
+        // `undefined` is "not read out of IndexedDB yet": still not an item, but counted now.
+        if (local === undefined) {
+          pending += 1;
+          continue;
+        }
+        if (local === null) {
+          unreadable += 1;
+          continue;
+        }
+        if (!local.url) {
+          // The effect makes an object URL for `image/*` blobs only, so a staged tile without one is
+          // a staged file that is not a photograph.
+          notImages += 1;
+          continue;
+        }
+        items.push({ key: id, id: null, name: local.name, mediaType: "IMAGE", url: local.url });
+        continue;
+      }
+      const file = files[id];
+      // The same third state on the server side: `GET /media/{id}` has not answered yet.
+      if (file === undefined) {
+        pending += 1;
+        continue;
+      }
+      if (file === null) {
+        unreadable += 1;
+        continue;
+      }
+      if (file.mediaType !== "IMAGE") {
+        notImages += 1;
+        continue;
+      }
+      items.push({
+        key: id,
+        id: file.id,
+        name: file.originalFilename,
+        mediaType: file.mediaType,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+        url: file.url,
+        caption: file.caption
+      });
+    }
+    return { items, unreadable, notImages, pending };
+  }, [declaredCap, ids, staged, files]);
+
+  /**
+   * "This carousel is not showing all of them", in words, or null when it is.
+   *
+   * Rule 10, and it is the carousel's COUNT that makes it necessary rather than the missing images
+   * themselves: the file list above already names every one of these rows honestly, one line each.
+   * What nothing said was that the strip's own "3 of 17" had stopped counting the same set as the
+   * field. The sentence names the total the field holds, so the two figures can be reconciled by
+   * reading rather than by counting rows.
+   *
+   * Drawn only where the strip is drawn. With NOTHING readable there is no strip and no count to
+   * correct, and the list above is then the whole truth on its own.
+   *
+   * ── THE DENOMINATOR IS `ids.length` AND HAS TO STAY THAT WAY ───────────────────────────────────
+   *
+   * Making it `items.length + unreadable + notImages` would close the arithmetic by construction and
+   * delete the sentence's reason to exist in the same stroke: what a reader needs reconciled against
+   * a short strip is THE TOTAL THE FIELD HOLDS, and a denominator of only-the-resolved makes the
+   * sentence trivially true. The gap is closed on the NUMERATOR side instead — the memo counts every
+   * id it declines as one of three things, in-flight included — so the clauses add up to the total
+   * while the total still means what it says.
+   */
+  const carouselOmissionNotice = (() => {
+    const missing = carousel.unreadable + carousel.notImages;
+    if (!carousel.items.length || missing === 0) return null;
+    const parts: string[] = [];
+    // "cannot" is the same word either way, so it is written once rather than as a branch whose two
+    // arms are identical — the shape that hides a real missing plural somewhere else in a file.
+    if (carousel.unreadable) parts.push(`${carousel.unreadable} cannot be read from here`);
+    if (carousel.notImages) {
+      parts.push(carousel.notImages === 1 ? "1 is not an image" : `${carousel.notImages} are not images`);
+    }
+    // THE THIRD CLAUSE, WHICH IS WHAT MAKES THE FIGURES CLOSE. Without it the memo's deliberate
+    // skipping of in-flight ids printed "Showing 17 of the 20 … 1 is not an image", where 17 + 1 is
+    // not 20 and nothing on screen accounted for the other two. It is only ever a sentence about a
+    // moment, so it says so in those words rather than reading as a failure.
+    if (carousel.pending) {
+      parts.push(
+        carousel.pending === 1 ? "1 is still being looked up" : `${carousel.pending} are still being looked up`
+      );
+    }
+    const named = missing + carousel.pending;
+    // Three clauses can reach this now, and ", and " between every pair reads as a list of unrelated
+    // facts; the last join is the only one that should carry the "and".
+    const clauses =
+      parts.length > 2 ? `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}` : parts.join(", and ");
+    // "has a line for" and no longer "names": an id whose lookup has not landed has no filename to
+    // print yet, so its row above reads "Looking this file up…" — a line the reader can find rather
+    // than a name. The third clause is what made the old wording an over-claim.
+    return (
+      `Showing ${carousel.items.length} of the ${ids.length} file${ids.length === 1 ? "" : "s"} attached to ` +
+      `${field.label.toLowerCase()}: ${clauses}. The list above has a line for ` +
+      `${named === 1 ? "it" : "each of them"}.`
+    );
+  })();
+
   return (
     <div
       className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3"
       role="group"
       aria-labelledby={labelId}
-      aria-describedby={describedBy}
+      /*
+        THE FIELD'S OWN HINT, THEN ITS CEILING. The ceiling paragraph joins the description rather
+        than announcing itself as a live region (see the paragraph itself for that argument), and it
+        is appended rather than prepended so the reading order matches the screen: the instruction
+        first, the number of files that will fit after it. Only where a cap is DECLARED — the
+        paragraph does not exist otherwise, and a describedby pointing at no element is announced as
+        a blank by some readers, which is worse than the attribute being absent. `declaredCap` and
+        not `cap`: the effective ceiling is never null for a gallery, and pointing at an element that
+        is not drawn is the same defect wearing the new constant.
+      */
+      aria-describedby={[describedBy, declaredCap !== null ? capId : null].filter(Boolean).join(" ") || undefined}
     >
       {ids.length ? (
         <ul className="grid gap-2">
@@ -2369,9 +3037,17 @@ function MediaField({
                       ? file.originalFilename
                       : isLocalMediaRef(id)
                         ? // A local reference whose blob has gone is the one case this store is built
-                          // to make impossible, so it is stated rather than drawn as an empty tile.
-                          "This file was kept on this device and can no longer be found here."
-                        : "This file is no longer readable from here."}
+                          // to make impossible, so it is stated rather than drawn as an empty tile —
+                          // but ONLY once the store has actually answered. `undefined` is "still
+                          // being read", and printing the loss for that state told a designer their
+                          // photograph was gone in the second between attaching it and the read
+                          // returning. Both sentences are the truth about a different moment.
+                          local === null
+                          ? "This file was kept on this device and can no longer be found here."
+                          : "Reading this file off this device…"
+                        : file === null
+                          ? "This file is no longer readable from here."
+                          : "Looking this file up…"}
                 </span>
                 {local ? (
                   // The static, worded counterpart to the banner at the top of the page: colour and
@@ -2395,6 +3071,73 @@ function MediaField({
       ) : (
         <p className="text-sm text-ink-500">Nothing attached yet.</p>
       )}
+
+      {/* The browsable view of a capped gallery — see `carousel` for why it is gated on the declared
+          cap and not on a field key. Drawn UNDER the file list rather than instead of it: the list is
+          where a file is named, checked and removed, and the carousel is where it is looked at.
+          Replacing one with the other would lose the Remove control the list carries.
+
+          THE SENTENCE BELOW IT IS PART OF THE STRIP, not an aside: `MediaCarousel` prints "3 of 12"
+          from the array it was handed, so whenever this memo left something out that readout was
+          short of what the field holds and said nothing about it. It is NOT in a live region — the
+          figure is a level, it moves only because the reader attached or removed something, and
+          `MediaCarousel`'s own header records the decision not to announce its position readout.
+
+          THE WHOLE LABEL GOES INTO `noun`, ON PURPOSE, AND MUST NOT BE TRIMMED HERE. Until
+          2026-08-26 `MediaCarousel` wrote its own picture word after whatever it was handed, while
+          documenting the prop as a bare noun ("traditional motif") that neither this call site nor
+          the handset's ever passed — so the two capped galleries, labelled "Traditional motif
+          photographs" and "Contemporary motif photographs", made a region announced as "traditional
+          motif photographs photographs" and an arrow that said "Previous traditional motif
+          photographs photograph" on every press. The component now derives the singular and the
+          plural itself (`describeSubject`), because it is the only place that knows it needs both,
+          and because a rule kept at the call sites is a rule two clients get to break independently
+          — which is exactly what they did, in the same words.
+          So do NOT "help" it by stripping "photographs" off the label here: that would restore the
+          two-places-to-remember shape, and a bare stem now produces the identical four strings
+          anyway. The lowercasing stays because two of those four are sentences.
+          THE ANDROID TWIN AGREES AS OF 2026-08-26. `DwMediaCapture.kt` still passes
+          `field.label.lowercase()` — unstripped, for the reason above — and `DwMediaCarousel.kt` now
+          derives the singular and plural itself through `dwDescribeSubject`, so it announces
+          "Previous traditional motif photograph" on a one-step control and names the frame with the plural.
+          This note read "THE ANDROID TWIN IS STILL UNPORTED" until that landed. */}
+      {carousel.items.length ? (
+        <>
+          <MediaCarousel items={carousel.items} noun={field.label.toLowerCase()} className="h-64 sm:h-80" />
+          {carouselOmissionNotice ? (
+            <p className="text-xs leading-5 text-ink-500">{carouselOmissionNotice}</p>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* AN ATTACHED DOCUMENT, READ WHERE IT WAS ATTACHED.
+          Asked for on 2026-08-25 for the market survey upload — *"If the uploaded Market Survey is a
+          PDF, it should be rendered/previewable within the application"* — and it serves every FILE
+          field in the registry rather than that one, because "is this the right document" is the same
+          question at the sanction order, the questionnaire, the certificate and the designer's CV.
+          `DocumentPreview` embeds a PDF and draws a named download row for anything else, which is
+          the same split the instruction draws ("rendering is not mandatory for non-PDF formats").
+
+          ONLY FOR A SERVER-ACKNOWLEDGED id. A `dwlocal:` reference is a blob in IndexedDB with no
+          `MediaFile` row to resolve, so `GET /media/{id}` would 404 and the preview would report a
+          readable document as unreadable. The tile above already says "On this device only", which
+          is the honest state until it syncs.
+
+          THIS `noun` DOES NOT STUTTER, and it was checked rather than assumed when the carousel's
+          did (2026-08-26). `DocumentPreview` appends no noun of its own — the label lands whole in
+          "No {noun} on file.", "Loading the {noun}…", "This {noun} is no longer readable from
+          here.", "This browser will not display the {noun} inline." and the embed's `aria-label` —
+          so nothing can be doubled the way `MediaCarousel` doubled "photographs". Read against every
+          FILE label in the registry, the closest thing to a repeat is "Line art / vector file"
+          giving "No line art / vector file on file.", where the second "file" is the idiom and not
+          the noun again; it needs no derivation and must not be sent through one.
+          What `toLowerCase()` DOES cost here is an acronym: "Designer’s CV" is announced as
+          "designer’s cv". Left as it is — the two live sentences need lower case mid-sentence, and
+          per-label casing is a judgement for whoever owns the copy, not something to guess at from a
+          call site. */}
+      {field.type === "FILE" && ids.length === 1 && !isLocalMediaRef(ids[0]) ? (
+        <DocumentPreview mediaId={ids[0]} noun={field.label.toLowerCase()} className="h-[28rem]" />
+      ) : null}
 
       {extra
         ? extra({
@@ -2420,9 +3163,41 @@ function MediaField({
       {/* A single-value field still accepts several at once and keeps the last: refusing the second
           file would mean a designer who picked the wrong photograph has to find a Remove before they
           can pick the right one, on a handset, in a courtyard. */}
+      {/* THE CEILING, IN WORDS, WHEREVER ONE IS DECLARED — rule 10, and the sentence a designer
+          needs BEFORE they photograph twenty-five motifs rather than after. Drawn above the picker
+          so it is read on the way in, and it states what is left rather than only the total: "20
+          photographs" is a rule, "4 more" is an answer.
+
+          IT IS A LEVEL, SO IT IS DESCRIBED AND NOT ANNOUNCED. This carried `role="status"`, which
+          re-read "Up to 20 files — 17 more can be attached" after every single attach and every
+          single remove, from the first photograph to the twentieth. `CollectionTable` admits a live
+          count on three conditions, and this meets only two of them: the number moves because the
+          reader acted, but the sentence is on screen from first paint rather than appearing near the
+          ceiling, so most of what it announces is a running total nobody asked for — the shape §17
+          forbids for a scroll-position readout. Instead the paragraph is named in the group's
+          `aria-describedby`, so the ceiling is read on ENTERING the field, which is where the reader
+          who has not photographed anything yet actually needs it; and the one event that does have
+          to interrupt — files this ceiling turned away — is `refusalNotice` in the live region
+          below, which names them.
+
+          AND WHERE THIS PARAGRAPH IS ABSENT THE CEILING IS STILL THERE. An undeclared gallery is
+          held at {@link DW_DEFAULT_MAX_ITEMS} (see `cap`) and says nothing about it, because the
+          figure is the server's and this client did not read it; what it must never do is go quiet
+          about the FILES that ceiling turns away, which is `refusalNotice`'s job on both branches.
+          Every number in this paragraph therefore comes from `declaredCap`. */}
+      {declaredCap !== null ? (
+        <p id={capId} className="text-xs leading-5 text-ink-500">
+          {room === 0
+            ? `${field.label} is full at ${declaredCap} file${declaredCap === 1 ? "" : "s"}. Remove one to attach another.`
+            : `Up to ${declaredCap} file${declaredCap === 1 ? "" : "s"} — ${room} more can be attached.`}
+        </p>
+      ) : null}
+
       <MediaCaptureField
         files={pending}
-        onFilesChange={setPending}
+        /* Capped and narrated — see `acceptFiles`. `setPending` directly would upload files the
+           server is going to refuse at the save, which is the defect this wave closed. */
+        onFilesChange={acceptFiles}
         /*
           THE OTHER HALF OF THE ROW-COLLAPSE FIX, and it is useless without the hoisted list above.
           The eager-upload store deletes an owner's unclaimed objects two seconds after that owner
@@ -2442,22 +3217,46 @@ function MediaField({
         allowDocuments={field.type === "FILE"}
       />
 
-      {/* Both of these report something that has ALREADY happened to the designer's files — a batch
-          that only partly landed, or bytes kept on this device because the network was gone. Left as
-          plain paragraphs they were coloured text and nothing else, so a designer using a screen
-          reader attached four photographs, heard nothing, and walked away from a workshop believing
-          all four were in the repository. `status` for the notice (nothing is wrong, do not
-          interrupt) and `alert` for the problem (files were lost and must be attached again). */}
-      {notice ? (
-        <p role="status" className="text-xs leading-5 text-amber-800">
-          {notice}
-        </p>
-      ) : null}
-      {problem ? (
-        <p role="alert" className="text-xs font-medium text-error-600">
-          {problem}
-        </p>
-      ) : null}
+      {/* Every one of these reports something that has ALREADY happened to the designer's files — a
+          batch that only partly landed, bytes kept on this device because the network was gone, or
+          files the declared ceiling turned away before a byte was uploaded. Left as plain paragraphs
+          they were coloured text and nothing else, so a designer using a screen reader attached four
+          photographs, heard nothing, and walked away from a workshop believing all four were in the
+          repository. `status` for the two notices (nothing is broken, do not interrupt) and `alert`
+          for the problem (files were lost and must be attached again).
+
+          ALL THREE ARE MOUNTED FROM FIRST PAINT, which is the half that was missing. The roles used
+          to sit on paragraphs that did not exist until they had something to say, so the region came
+          into being in the same breath as its first sentence — and assistive technology announces
+          mutations only inside a region that ALREADY EXISTED when the page settled. Both sentences
+          were therefore visible and unspoken: pick twenty-five motifs and the five filenames that
+          did not attach were on screen for a sighted reader and nowhere at all for a listening one.
+          `SubmissionCard`, `CollectionTable`'s status region and `Toast`'s permanently-present
+          viewport are the same fix for the same reason.
+
+          `sr-only` AND NOT `hidden`, AS A CLASS SWAP ON ONE ELEMENT. Empty, each paragraph is
+          absolutely positioned and 1×1: in the accessibility tree, and contributing no row to this
+          `grid gap-2` box, where three always-visible empty paragraphs would pay three 8px gaps of
+          dead space under every media field in the app. `display: none` — `empty:hidden`, `hidden`,
+          or unmounting the node — would take the region back OUT of the tree and put this exact
+          defect straight back; `SubmissionCard`'s header says so in as many words.
+
+          THREE ELEMENTS AND NOT ONE, because they are three different facts and `role="status"`
+          implies `aria-atomic`: sharing a region would re-read the offline notice every time the
+          refusal changed, and let one interrupt the other mid-sentence. */}
+      <p
+        role="status"
+        aria-live="polite"
+        className={refusalNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}
+      >
+        {refusalNotice}
+      </p>
+      <p role="status" aria-live="polite" className={notice ? "text-xs leading-5 text-amber-800" : "sr-only"}>
+        {notice}
+      </p>
+      <p role="alert" aria-live="assertive" className={problem ? "text-xs font-medium text-error-600" : "sr-only"}>
+        {problem}
+      </p>
     </div>
   );
 }

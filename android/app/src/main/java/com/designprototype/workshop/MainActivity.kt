@@ -236,6 +236,8 @@ import com.designprototype.workshop.ui.designworkshop.DesignerProfileScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen
 import com.designprototype.workshop.ui.designworkshop.PhotoIntakeScreen
 import com.designprototype.workshop.ui.designworkshop.ReportScreen
+import com.designprototype.workshop.ui.designworkshop.DesignReviewScreen
+import com.designprototype.workshop.ui.designworkshop.SketchesAndPrototypesScreen
 import com.designprototype.workshop.ui.designworkshop.StageIndexScreen
 import com.designprototype.workshop.ui.designworkshop.StageScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopCodesScreen
@@ -622,6 +624,33 @@ private sealed interface Screen {
         val focus: DwStageFocus? = null,
     ) : Screen
     data class DesignWorkshopReport(val workshopId: String) : Screen
+
+    /**
+     * The sketch/prototype chooser — the menu's way into work that is filed on stages 11 and 13.
+     *
+     * `object` and not a `data class`: it carries nothing. Every workshop it can open is fetched by
+     * the screen itself, and the arrival has no parameters that belong to it — unlike
+     * [DesignWorkshops.startCreating] or [DesignWorkshopStage.focus], both of which are carried in
+     * the route precisely because they belong to ONE arrival and must not survive a back-and-forward.
+     */
+    data object SketchesAndPrototypes : Screen
+
+    /**
+     * DESIGN REVIEW — rate a colleague's sketches and prototypes, and settle the order they stand in.
+     *
+     * `object` and not a `data class`, for the same reason [SketchesAndPrototypes] is one: it carries
+     * nothing. Which workshop, which of the two rounds and which kind of piece are all asked BY the
+     * screen, and none of them belongs to the arrival — unlike [DesignWorkshops.startCreating] or
+     * [DesignWorkshopStage.focus], which are carried in the route precisely because they belong to
+     * ONE arrival and must not survive a back-and-forward.
+     *
+     * DELIBERATELY NOT A `workshopId` PARAMETER, which is the obvious-looking addition. The pool
+     * round's whole audience is designers who are NOT in the workshop, so the id that opens a round is
+     * usually one somebody sent them rather than one they navigated from — and a route that took an id
+     * would invite a caller to hand it one from a list that, by construction, cannot contain the
+     * workshops this feature exists to reach.
+     */
+    data object DesignReview : Screen
 
     /**
      * The artisan cards and prototype tags for one workshop — the phone's `…/codes` page.
@@ -1670,6 +1699,14 @@ private fun HomeScreen(
             // fortnight's work; a menu entry that silently created one every time it was tapped
             // would leave a trail of empty records nobody can tell apart.
             NavDestination.DESIGN_WORKSHOPS -> screen = Screen.DesignWorkshops()
+            // The CHOOSER, never a stage directly: which workshop the designer means is exactly the
+            // question this destination exists to ask. See [SketchesAndPrototypesScreen].
+            NavDestination.SKETCHES_AND_PROTOTYPES -> screen = Screen.SketchesAndPrototypes
+            // The CHOOSER again, and for the same reason as the row above: which workshop's round
+            // the designer means is the first question the screen asks. There is nothing to
+            // pre-select — the pool round's own audience arrives with an id from a message, not from
+            // a list this account can see.
+            NavDestination.DESIGN_REVIEW -> screen = Screen.DesignReview
             // The LIST, for the same reason as the row above: a menu entry that created a
             // questionnaire every time it was tapped would leave a trail of untitled forms.
             NavDestination.CUSTOM_QUESTIONNAIRES -> screen = Screen.Questionnaires
@@ -1769,6 +1806,14 @@ private fun HomeScreen(
             // a designer looking at their own came from the menu and goes back to the dashboard.
             // Sending both to the dashboard would make an admin re-find the row in a list they may
             // have searched and scrolled to get to.
+            // Reached from the menu, so back is the dashboard — the same rule the designer's own
+            // profile follows two lines down. A stage opened FROM here backs out to that stage's own
+            // index, which is that screen's business and not this one's.
+            is Screen.SketchesAndPrototypes -> Screen.Dashboard
+            // Reached from the menu, so back is the dashboard — the same rule as the row above. A
+            // stage opened FROM here backs out to that stage's own index, which is that screen's
+            // business and not this one's.
+            is Screen.DesignReview -> Screen.Dashboard
             is Screen.DesignerProfile -> if (s.userId != null) Screen.DesignerRoster else Screen.Dashboard
             is Screen.DesignerRoster -> Screen.Dashboard
             is Screen.AccessRoster -> Screen.Dashboard
@@ -1824,6 +1869,10 @@ private fun HomeScreen(
         is Screen.DesignWorkshopProvenance -> null
         // Null on both for the same reason as the four above: each screen draws its own heading,
         // and the profile's additionally says WHOSE profile it is, which a shared header cannot.
+        is Screen.SketchesAndPrototypes -> null
+        // Null for the same reason: the screen draws its own "Design review" heading, which is the
+        // web's `PageHeader title` word for word, over a description the shared header cannot carry.
+        is Screen.DesignReview -> null
         is Screen.DesignerProfile -> null
         is Screen.DesignerRoster -> null
         is Screen.AccessRoster -> null
@@ -1871,6 +1920,18 @@ private fun HomeScreen(
         is Screen.DesignWorkshopReport,
         is Screen.DesignWorkshopCodes,
         is Screen.DesignWorkshopPhotos -> NavDestination.DESIGN_WORKSHOPS
+        // Its OWN destination and not DESIGN_WORKSHOPS: this screen is reached from its own menu row,
+        // and highlighting a different row than the one that was tapped is how a menu comes to
+        // disagree with the screen behind it. It is therefore a SEPARATE arm, and this comment sits
+        // BELOW the comma-list above rather than inside it: a comment does not terminate a `when`
+        // branch, so a line spliced between `is Screen.DesignWorkshopCodes,` and this one would hand
+        // SKETCHES_AND_PROTOTYPES to every design-workshop screen listed above as well — which is
+        // what it did until 2026-08-26, five stage screens lighting a row that does not open them.
+        is Screen.SketchesAndPrototypes -> NavDestination.SKETCHES_AND_PROTOTYPES
+        // Its OWN row and not SKETCHES_AND_PROTOTYPES, even though the two are halves of one feature:
+        // this screen is reached from its own menu row, and lighting a different row than the one that
+        // was tapped is how a menu comes to disagree with the screen behind it.
+        is Screen.DesignReview -> NavDestination.DESIGN_REVIEW
         // Lights the same row as its siblings even though it is admin chrome, because it is still a
         // screen INSIDE one design workshop and the row opens the list the admin is already in.
         // It is not `DESIGNER_ROSTER`: that is the institution's list of who may sign in at all,
@@ -2592,6 +2653,43 @@ private fun HomeScreen(
              * and the one most likely to drift, because it is the one nobody reads when changing the
              * screen.
              */
+            is Screen.SketchesAndPrototypes -> SketchesAndPrototypesScreen(
+                repository = repository,
+                // Straight to the stage that owns the work. `focus = null`: the designer chose a
+                // STAGE and not a box on it, and a focus carried here would scroll them past the
+                // fields they came to read.
+                onOpenStage = { workshopId, stageKey ->
+                    message = null
+                    screen = Screen.DesignWorkshopStage(workshopId = workshopId, stageKey = stageKey)
+                },
+                onError = { showMessage(it) }
+            )
+
+            /*
+             * DESIGN REVIEW. Ungated at this call site, like its siblings above: the tier is
+             * re-derived inside the screen from the CACHED account before it issues a single request,
+             * and it is stated there in the API's own words. A gate here would be a third copy of the
+             * rule and the one nobody reads when changing the screen.
+             *
+             * It takes no `onError`. Every failure this screen can have is rendered IN PLACE, beside
+             * the control that caused it — a list that could not be loaded, a round the repository
+             * refused, an arrangement that could not be written — because each of those has a
+             * different next move and a snackbar that slides away is the wrong home for all of them.
+             * `DwProvenanceScreen` above took an `onError` it never called and its comment records why
+             * that is worse than taking none: a channel that looks live to whoever wires up the next
+             * failure path and goes nowhere.
+             */
+            is Screen.DesignReview -> DesignReviewScreen(
+                repository = repository,
+                // Straight to the stage that owns the piece — the handset's "Open the record".
+                // `focus = null`: the designer chose a PIECE, not a box on its form, and a focus
+                // carried here would scroll them past the row they came to read.
+                onOpenStage = { workshopId, stageKey ->
+                    message = null
+                    screen = Screen.DesignWorkshopStage(workshopId = workshopId, stageKey = stageKey)
+                },
+            )
+
             is Screen.DesignerProfile -> DesignerProfileScreen(
                 repository = repository,
                 targetUserId = s.userId,

@@ -966,6 +966,79 @@ interface WorkshopRepositoryApi {
     @GET("design-workshops/{id}/provenance")
     suspend fun designWorkshopProvenance(@Path("id") id: String): DwProvenanceReportDto
 
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+    // DESIGN REVIEW — the three rating routes.
+    //
+    // THEIR OWN PREFIX, AND NOT NESTED UNDER `design-workshops`, and that is a permission fact
+    // rather than a naming preference. Every route under `design-workshops` goes through
+    // `load_workshop_or_404`, which admits the workshop's creator, an admin and the holder of a
+    // viewer grant — and what it admits is READ PLUS all 22 stage WRITES. The pool round is by
+    // definition the designers that helper turns away, so serving it from that prefix would have
+    // meant teaching the shared loader about POOL and handing every designer in the country write
+    // access to every finished workshop's fieldwork. `/design-ratings` is a separate, narrow door
+    // that leads to the rateable rows and their scores and nothing else about the workshop.
+    //
+    // EVERY REFUSAL ON ALL THREE IS 404 WITH ONE SENTENCE — "Record not found" — whether the record
+    // is missing, soft-deleted, of an entity nobody rates, or simply not this caller's to see. The
+    // data set is keyed by cuid and a 403 would turn any designer login into an enumeration of the
+    // ministry's archive. So NO CALLER HERE MAY BRANCH ON 404 TO SAY "you do not have access":
+    // `lib/workshopCodeLookup.ts` carries the same rule for the scanners.
+    //
+    // A 503 is the one refusal worth telling apart, and the server writes the sentence for it: the
+    // ledger table is not in that deployment's generated client yet, which a restart does not fix
+    // and a migration does. `apiErrorMessage` surfaces it verbatim.
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Submit a rating, or amend the one this caller already left.
+     *
+     * ONE ROUTE FOR BOTH, AND 200 ON THE CREATE PATH TOO. The client cannot know which of create,
+     * amend and replay it is asking for — that is the point of the endpoint — so a status that
+     * varied between them would be a fact about the server's state dressed as a fact about the
+     * request. [DesignRatingSavedDto.replayed] is where the difference is reported, and a replay is
+     * a SUCCESS: the outbox delivered the same capture twice, which is the ordinary behaviour of a
+     * phone with a flaky connection, and no second row can exist.
+     *
+     * A 403 HERE IS NOT LIKE THE 404s. It is the one deliberate exception in this router — a
+     * designer may not rate their own work — and the server says so in a sentence written for the
+     * person holding the phone. It is answered as a 403 rather than a 404 precisely because the
+     * caller demonstrably knows this record exists: it is theirs. Render it as written; see
+     * `DwDesignRatings`' header for why this client cannot pre-empt it.
+     */
+    @POST("design-ratings")
+    suspend fun submitDesignRating(@Body body: DesignRatingBody): DesignRatingSavedDto
+
+    /**
+     * Who rated one sketch or prototype, when, and how — redacted server-side on the way out.
+     *
+     * The `round` is a QUERY parameter and defaults to PEER on the server. It is always sent
+     * explicitly from here: a ledger read for the round the screen is NOT showing would put another
+     * round's rows under this one's heading, and a default that agrees with this screen today is one
+     * somebody can change on the server tomorrow.
+     */
+    @GET("design-ratings/subjects/{subjectId}")
+    suspend fun designRatingLedger(
+        @Path("subjectId") subjectId: String,
+        @Query("round") round: String,
+    ): SubjectLedgerDto
+
+    /**
+     * One round's pieces, each with its score, its DEFAULT position and its PLACED position.
+     *
+     * `workshopId` IS REQUIRED FOR BOTH ROUNDS, POOL INCLUDED — see [RoundRankingDto] for why that
+     * is structural and not an unfinished API.
+     *
+     * `entityKey` defaults to `prototype` on the server and is likewise always sent: this screen
+     * offers both rateable entities, and letting the server pick would make the chips silently
+     * disagree with the list under them the first time that default moved.
+     */
+    @GET("design-ratings/rounds/{round}")
+    suspend fun designRatingRound(
+        @Path("round") round: String,
+        @Query("workshopId") workshopId: String,
+        @Query("entityKey") entityKey: String,
+    ): RoundRankingDto
+
     /**
      * The questions THIS WORKSHOP'S DESIGNER added to it, and the digest of them.
      *

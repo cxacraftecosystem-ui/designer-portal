@@ -199,16 +199,33 @@ function DashboardView() {
    *   4. The relative order of the tiles Android DOES have is not reshuffled. Android builds its
    *      grid as `DesignWorkshopCard`, then `EntryMode.entries` in declaration order, then Settings.
    *
-   * AND FOUR OF THESE TILES ARE WEB-ONLY, which is the part a bare "parity" claim hides and the
-   * reason a future reader must not "restore parity" by deleting one of them. There is no
-   * `EntryMode`, no `NavDestination` and no screen at all on the handset for:
+   * AND FOUR OF THESE TILES HAVE NO ANDROID *CARD*, which is the part a bare "parity" claim hides
+   * and the reason a future reader must not "restore parity" by deleting one of them. What each is
+   * missing is NOT the same thing, and two of the four lines below said the wrong thing until
+   * 2026-08-26 — so read the distinction rather than the count:
    *
    *   • Design workshop — Android draws a bespoke `DesignWorkshopCard`, which is not an `EntryMode`;
    *   • My designer profile — Android has `NavDestination.DESIGNER_PROFILE` and no dashboard card;
-   *   • Sketches & prototypes — the TOP-LEVEL ENTRY POINT is web-only. Read the next paragraph
-   *     before acting on this line: the FEATURE is on the handset;
-   *   • Design review — web-only outright. There is no ratings code anywhere under
-   *     `android/app/src/main` (`design-ratings`, `designRatings`, `ratable` all return nothing).
+   *   • Sketches & prototypes — Android now has BOTH the feature and a top-level entry point
+   *     (`NavDestination.SKETCHES_AND_PROTOTYPES`, `SketchesAndPrototypesScreen.kt`). What it has no
+   *     member for is `EntryMode`, i.e. the dashboard card. Read the next paragraph before acting on
+   *     this line;
+   *   • Design review — SAME SHAPE AS THE LINE ABOVE, and this line used to be the most wrong in the
+   *     file. It said "web-only outright. There is no ratings code anywhere under
+   *     `android/app/src/main`". That was true when it was written and false from the moment the
+   *     handset grew the feature: `NavDestination.DESIGN_REVIEW` + its `NavEntry`
+   *     (`ui/AppNavigation.kt`), `DesignReviewScreen.kt`, `DwRankableList.kt`,
+   *     `data/DwDesignRatings.kt`, all three `/design-ratings` endpoints bound in
+   *     `WorkshopRepositoryApi.kt`, an `OFFLINE_DESIGN_RATING` outbox kind, and seven wiring points
+   *     in `MainActivity.kt`. What is missing is the `EntryMode` — the dashboard card — and nothing
+   *     else.
+   *
+   * ⚠ THE LESSON THIS LINE IS NOW THE EXAMPLE OF: a "does not exist on the other client" claim goes
+   * stale silently and in the WORST direction. Nothing fails, nobody is told, and the next reader
+   * either hunts a gap that has been closed or, far worse, deletes a tile believing the other client
+   * never had it. If you are about to write another such sentence, write the GREP that settles it
+   * beside the claim — the way `e2e/dashboard-tile-parity-unit.spec.ts` does — so a reader can
+   * re-check it in one command instead of trusting prose.
    *
    * The ORDER already diverges too: Android appends its Settings card AFTER Workshop, while Settings
    * sits between Users and Craft here.

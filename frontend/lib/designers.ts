@@ -298,8 +298,8 @@ export function listDesignerDirectory(params: { search?: string | null; includeS
  * and the timestamps — in the order the form and the read-only view both render them.
  *
  * NAMED ONCE, HERE, and consumed by the encoder, the form and the display alike. The backend names
- * the same twenty in `PROFILE_FIELDS` for the same reason and says it plainly: three copies of a
- * twenty-name list is two copies that will disagree, and the way that failure surfaces is a field
+ * the same twenty-one in `PROFILE_FIELDS` for the same reason and says it plainly: three copies of a
+ * twenty-one-name list is two copies that will disagree, and the way that failure surfaces is a field
  * the designer can save and then cannot see.
  */
 export const DESIGNER_PROFILE_FIELDS = [
@@ -321,6 +321,10 @@ export const DESIGNER_PROFILE_FIELDS = [
   "pincode",
   "photoMediaId",
   "signatureMediaId",
+  // The CV, added 2026-08-25. A media id like the two above it and never a URL — rule 4 in this
+  // file's header. It is the one profile column whose file is usually NOT an image, which is why
+  // the form gives it a document slot and `DocumentPreview` rather than `StoredMediaImage`.
+  "cvMediaId",
   "empanelmentNo",
   "empanelmentDate"
 ] as const;
@@ -358,6 +362,8 @@ export type DesignerProfile = {
   /** A media id, resolved through `GET /media/{id}`. Never a URL — see the file header. */
   photoMediaId: string | null;
   signatureMediaId: string | null;
+  /** The designer's CV. A media id; rendered inline where the stored mime type is a PDF. */
+  cvMediaId: string | null;
   empanelmentNo: string | null;
   /** ISO-8601, and a STRING rather than a date, matching every other date this API accepts. */
   empanelmentDate: string | null;
@@ -370,7 +376,7 @@ export type DesignerProfile = {
  * says "clear this column".
  *
  * Every key is REQUIRED in the type rather than optional, deliberately: it is the type system's way
- * of saying that this body is only correct for an editor that renders all twenty fields. A future
+ * of saying that this body is only correct for an editor that renders all twenty-one fields. A future
  * partial editor must declare its own narrower body rather than reach for this one.
  */
 export type DesignerProfileUpdateBody = {
@@ -392,6 +398,7 @@ export type DesignerProfileUpdateBody = {
   pincode: string | null;
   photoMediaId: string | null;
   signatureMediaId: string | null;
+  cvMediaId: string | null;
   empanelmentNo: string | null;
   empanelmentDate: string | null;
 };
@@ -399,7 +406,7 @@ export type DesignerProfileUpdateBody = {
 /**
  * What a form hands the encoder: every value as the string a control produced, or a number, or
  * null. `FormData` yields strings for everything including the year count, so the encoder — not
- * twenty call sites — is where a string becomes the integer the column wants.
+ * every call site — is where a string becomes the integer the column wants.
  */
 export type DesignerProfileDraft = Partial<Record<DesignerProfileField, string | number | null | undefined>>;
 
@@ -419,11 +426,11 @@ function blankToNull(value: string | number | null | undefined): string | null {
 }
 
 /**
- * A draft as the full twenty-key wire body, with cleared fields carrying an explicit null.
+ * A draft as the full twenty-one-key wire body, with cleared fields carrying an explicit null.
  *
  * `experienceYears` is parsed here and NOT clamped here. The column is bounded 0–70 by the server —
  * the same bounds as the registry's `designerExperience` field, which this value is copied into —
- * and a pydantic rejection 422s the WHOLE body, taking the nineteen fields the designer got right
+ * and a pydantic rejection 422s the WHOLE body, taking the twenty fields the designer got right
  * with it. So the form blocks it natively with `min`/`max` on the input and this function only
  * refuses what is not a number at all; silently clamping 400 to 70 would store a number nobody
  * typed and print it on a cover page as a statement about a person.
@@ -450,6 +457,7 @@ export function fullDesignerProfileBody(draft: DesignerProfileDraft): DesignerPr
     pincode: blankToNull(draft.pincode),
     photoMediaId: blankToNull(draft.photoMediaId),
     signatureMediaId: blankToNull(draft.signatureMediaId),
+    cvMediaId: blankToNull(draft.cvMediaId),
     empanelmentNo: blankToNull(draft.empanelmentNo),
     // Sliced to the date part before it is sent. The column is a DateTime and the server parses
     // `str(raw)[:10]`, so a value that arrived as a full ISO timestamp (which is how the GET serves
