@@ -48,7 +48,11 @@ from app.core.deps import is_admin
 from app.services import custom_sections, dictation_consent, entry_provenance, rich_text
 from app.services.address import DISTRICTS_BY_STATE
 from app.services.concurrency import gather_reads
-from app.services.design_workshop_viewers import has_viewer_grant
+from app.services.design_workshop_access import add_one_viewer
+from app.services.design_workshop_viewers import (
+    _assert_every_id_may_be_granted,
+    has_viewer_grant,
+)
 from app.services.designers import prefill_from_profile
 from app.services.report_annexures import annexure_warnings, attach_transcripts
 from app.services.report_builder import ReferencedRecord, WorkshopData, build_report
@@ -3244,16 +3248,174 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
 
 # --------------------------------------------------------------------------------------
 # Prefill: the designer's profile, copied into a brand-new workshop
+#
+# THE ONE FACT THIS SECTION TURNS ON: THE PERSON WHOSE PROFILE IS COPIED AND THE PERSON DOING THE
+# COPYING ARE NOT THE SAME PERSON, AND FOR MONTHS THIS CODE ASSUMED THEY WERE.
+#
+# `assert_can_create_design_workshops` is {ADMIN, MASTER_ADMIN} — a DESIGNER may not open a
+# workshop at all, deliberately, because a workshop is the container a fortnight of records lives
+# in and the unit the ministry funds. The only caller of the seed passes the account that pressed
+# create, so it always passed an ADMIN. Requirement 3 says the Designer Page is master data
+# pre-filled into every report; what actually happened is that the Designer Page's twenty-one
+# columns, its CV upload, its signature capture and the first-login redirect built to drive
+# designers to it fed NOTHING, and every report named the admin who opened the workshop.
+#
+# `DesignWorkshopCreate.designerUserId` closes it by naming the designer at creation, and the three
+# functions below are the halves of that: ASK whether this account may be named, PUT them on the
+# workshop, and COPY THEIR profile rather than the caller's.
 # --------------------------------------------------------------------------------------
 
 
+async def assert_designer_may_be_named(user_id: str) -> None:
+    """Raise the viewers screen's own 422 if this account may not be the workshop's designer.
+
+    **THE RULE IS IMPORTED AND NEVER COPIED**, exactly as ``design_workshop_grants`` and
+    ``design_workshop_access`` import it. ``_assert_every_id_may_be_granted`` reads the DESIGNER
+    empanelment roster AND the platform allow-list, exempts the break-glass master through
+    ``deps.is_break_glass_master`` itself, and answers with a sentence naming the screen that fixes
+    each refusal. A second copy of that here is how somebody comes to be named as a workshop's
+    designer while their next sign-in refuses them — one screen saying they are on the workshop and
+    another saying they cannot get in, with nothing connecting the two.
+
+    IT IS A PRIVATE NAME IN ANOTHER MODULE, which is a coupling taken on deliberately and for the
+    same reason ``design_workshop_grants`` takes it on: this is a two-read security decision with
+    four worded refusals in it, not a pattern a file can restate correctly. If ``design_workshop_
+    viewers`` ever gives it a public name, use that and delete this wrapper.
+
+    **WHY IT IS THE GRANT RULE AND NOT A NARROWER "MUST BE A DESIGNER" TEST.** ADMIN is inside
+    ``DESIGN_WORKSHOP_ROLES`` precisely so that admins can run workshops of their own, so an admin
+    who is the practising designer of a cluster is a legitimate answer here and a role test spelled
+    ``== "DESIGNER"`` would refuse them. More importantly, a second eligibility rule beside the one
+    the viewers screen enforces is a second rule to drift: this call and the grant that follows it
+    must agree, and the only way they cannot disagree is to be the same function.
+
+    CALLED BEFORE THE WORKSHOP ROW IS CREATED. A 422 raised afterwards would leave a committed
+    orphan draft behind on every retry until somebody noticed the list filling up with untitled
+    duplicates — the same failure the seed's blanket ``except`` exists to prevent, arrived at from
+    the other end.
+    """
+    await _assert_every_id_may_be_granted({user_id})
+
+
+async def attach_the_named_designer(
+    workshop_id: str, designer_id: str, *, granted_by_id: str, creator_id: str
+) -> bool:
+    """Put the named designer on the workshop. Answers whether a row was actually written.
+
+    **NAMING A DESIGNER AND GRANTING THEM ACCESS ARE ONE ACT, AND SPLITTING THEM WAS THE COST.**
+    Today an admin creates the workshop and then has to remember to open the viewers panel and tick
+    the designer; forgetting the second step leaves a designer who cannot open the workshop whose
+    stage 1 already carries their name, and the only symptom is a 404 they cannot distinguish from a
+    workshop that does not exist. One call, two steps, no second thing to remember.
+
+    ``add_one_viewer`` AND EMPHATICALLY NOT ``replace_viewers``. The whole-set replace deletes
+    whatever it did not read, so using it to add one person deletes a viewer row a concurrent
+    join-card redemption created and resurrects one an admin has just removed. Both sibling writers
+    of viewer rows — a decided access request and a redeemed join card — already funnel through this
+    one statement for that reason, and a third hand-written insert into the one table that confers
+    access is how the three come to disagree about a column.
+
+    **THE CREATOR IS NOT A VIEWER**, so an admin naming THEMSELVES as the designer writes no row and
+    this answers ``False``. Their access comes from ``createdById``; a viewer row for them would be a
+    second, redundant source of truth for access they already hold, and one they could "remove" from
+    the viewers screen without anything changing. ``_deduplicate`` drops them on the admin PUT path
+    and ``decide`` has the same branch on the request path; this is the third place that rule has to
+    hold, and it holds by the same test rather than by a comment. Note that their PROFILE is still
+    what the seed copies — being the creator does not stop somebody being the designer.
+
+    NOT IN A TRANSACTION WITH THE WORKSHOP CREATE, and the exposure is worth stating rather than
+    hiding: the workshop row is already committed by the time this runs, so a driver-level failure
+    here answers 500 and leaves a workshop the named designer cannot open. That is recoverable from
+    the viewers panel in two clicks and is visible — the admin gets an error, and the panel shows an
+    empty team. The alternative, wrapping the create and the grant together, would have to take the
+    seed in with it (a dozen writes behind a blanket ``except`` that must never fail a create) or
+    leave the ordering harder to read than the failure it prevents.
+    """
+    if designer_id == creator_id:
+        return False
+    await add_one_viewer(
+        db,
+        workshop_id=workshop_id,
+        user_id=designer_id,
+        granted_by_id=granted_by_id,
+        # NO CARD AND NO REQUEST DECIDED THIS. An administrator named them on the create, so
+        # ``tokenId`` stays NULL — that column's schema comment promises it is "NULL for every row
+        # an admin made by hand", and this is such a row.
+    )
+    return True
+
+
 async def seed_designer_prefill(
-    record: Any, user: Any, *, extra: Mapping[str, Any] | None = None
+    record: Any,
+    actor: Any,
+    *,
+    designer_id: str | None = None,
+    extra: Mapping[str, Any] | None = None,
 ) -> Any:
-    """Start a new workshop with the creator's profile already in stage 1 and stage 3.
+    """Start a new workshop with the DESIGNER's profile already in stage 1 and stage 3.
 
     Returns the workshop header, updated if a promoted column was seeded, so the caller can
     serialise it without a second read.
+
+    ══ TWO ACCOUNTS, AND CONFLATING THEM WAS THE DEFECT ═════════════════════════════════════════
+
+    ``designer_id`` NAMES THE ACCOUNT WHOSE PROFILE IS COPIED. ``actor`` IS THE ACCOUNT DOING THE
+    COPYING. This function took ONE account and used it for both, and its only caller passes the
+    account that pressed create — which the route's gate guarantees is an ADMIN, because a DESIGNER
+    may not open a workshop. So requirement 3's "the designer's master profile, pre-filled into
+    every report" pre-filled the ADMIN's details into every report: onto the cover's "Designer" row,
+    into the certification block's signatory line, into the .docx's own ``dc:creator`` and
+    ``cp:lastModifiedBy``, and — through the promoted ``designerName`` column — into the workshop
+    list. **And every automatic check in the product agreed the document was correct**, because
+    ``designerName`` was not MISSING, it was FILLED WITH THE WRONG PERSON: completeness scored 100%,
+    the readiness screen was green, ``build_report`` emitted no warning, and the only detector left
+    anywhere was a human reading a stranger's name in a box labelled "Designer". A designer who
+    never opened stage 3 — where nineteen of the twenty-one fields live — submitted somebody else's
+    biography, phone number, address, empanelment number, photograph and signature without ever
+    seeing the boxes.
+
+    ``designer_id`` IS ``None`` DOWN THREE DIFFERENT ROADS, and then this behaves exactly as it did
+    before — the actor's profile, byte for byte. That is what makes the change additive rather than
+    a flag day. The three roads are worth naming, because they used to be one:
+
+    * The admin ANSWERED "not decided yet". A workshop is opened in a room on day one and who will
+      run it is often not settled; the picker offers that answer rather than forcing a guess.
+    * The create happened OFFLINE, where the eligibility picker cannot be reached at all —
+      eligibility is two roster reads on the server and no useful part of it is answerable on the
+      device.
+    * The client PREDATES the field. Both clients send it as of 2026-08-26 (the web create form and
+      its offline draft store; Android's create body and its sync arm), but an older APK in the
+      field does not, and a handset is updated when its owner next has signal and a reason to.
+
+    Until 2026-08-26 this paragraph also said the gap was "what is NOT fixed yet", because the field
+    was server-only and no client could send it — so the wrong-name defect stood on every real
+    request. It no longer does; what stands is the three cases above, in all of which copying the
+    creator's profile is the intended answer. ``tests/test_designer_roster.py`` pins both halves by
+    name — the named-designer path and the names-nobody path — against a real database.
+
+    **THERE IS NO FALLBACK FROM ``designer_id`` TO ``actor``, AND THE MISSING ``or`` IS THE POINT.**
+    If the named designer has never filled in a profile, the designer block is written EMPTY.
+    ``prefill_from_profile(designer_id or actor.id)`` — one plausible extra word — would restore
+    exactly the defect this parameter removes, in the case where it is hardest to notice: an admin
+    who picked a designer off a list and got their own name back. An empty ``designerName`` is a
+    required Basic-tier stage-1 field, so it is counted by the completeness score and named in
+    ``build_report``'s warnings; the admin's name in that box is counted as complete and warned
+    about by nothing. A blank a machine can see beats a confident wrong name no machine can — which
+    is Rule 10 discharged by machinery that already exists, rather than by a new banner.
+
+    **THE STAMP AND ``createdById`` STAY WITH THE ACTOR, AND THAT IS A DECISION, NOT AN OVERSIGHT.**
+    ``entry_provenance`` has exactly two sources — ``reference`` (a value copied off a record
+    somebody else recorded) and ``designer`` (a person working on this workshop set it) — and the
+    sentence declaring "two" is pinned word for word between ``FieldProvenance.tsx`` and Android's
+    ``DwFieldStampDto``. A value copied out of somebody else's profile at an admin's request is
+    honestly NEITHER, and minting a third source is a two-client change that is the owner's call.
+    Of the two answers available, stamping the ACTOR is the only one that is not a fabrication: the
+    admin caused this write, and the designer has never seen these values. Stamping the DESIGNER
+    would put their name under twenty-one fields they have not read, on a document going to a
+    ministry — the same manufactured audit trail ``merge_entry_provenance`` refuses to create for an
+    unstamped legacy field, arrived at from the other end. The consequence a reader should expect is
+    that the designer opens stage 1 and sees the ADMIN's name and today's date in small grey type
+    under their OWN name. That is true, and it reads as an invitation to check the box.
 
     **WRITTEN AS ORDINARY STAGE ENTRIES, WHICH IS THE WHOLE DESIGN.** The alternative — teaching
     the report builder to fall back to the profile when ``designerName`` is blank — would put a
@@ -3294,12 +3456,19 @@ async def seed_designer_prefill(
     Seeding the ENTRY closes both halves and adds no third writer: the columns now have something
     behind them, stage 1 opens with those boxes already filled in (nothing else fills them — the
     stage form does not read the header), and a later save merges with them rather than
-    contradicting them. ``extra`` wins over a profile value of the same key, because it is what
-    the designer typed thirty seconds ago; the two sets do not overlap today.
+    contradicting them. ``extra`` wins over a profile value of the same key, because it is what the
+    person opening the workshop typed thirty seconds ago — said as "the designer" here until
+    ``designer_id`` made the two different people, and the sentence was then a claim rather than a
+    turn of phrase. The two sets do not overlap today.
     """
     try:
         values: dict[str, Any] = {
-            **(await prefill_from_profile(user.id)), **dict(extra or {})
+            # ``designer_id or actor.id`` PICKS WHOSE PROFILE, AND NOTHING BELOW EVER FALLS BACK.
+            # Read the docstring's "no fallback" paragraph before adding a second ``or`` further
+            # down: a named designer with no profile must leave the designer block EMPTY, because a
+            # blank required field is visible to the completeness score and to the report warnings
+            # while somebody else's name in it is visible to nobody.
+            **(await prefill_from_profile(designer_id or actor.id)), **dict(extra or {})
         }
         if not values:
             return record
@@ -3318,7 +3487,38 @@ async def seed_designer_prefill(
                 subset = {k: v for k, v in values.items() if k in known}
                 if not subset:
                     continue
-                clean, _errors = validate_entry(entity, subset, enforce_required=False)
+                clean, refused = validate_entry(entity, subset, enforce_required=False)
+                if refused:
+                    # THE ERROR MAP IS LOGGED, NOT DISCARDED, BECAUSE THIS IS THE ONE
+                    # `validate_entry` CALLER WITH NOWHERE TO RETURN IT. Everywhere else the map
+                    # becomes the response's `errors` and the person who typed the value is told
+                    # which box was refused; prefill's "sender" is the designer's own profile, saved
+                    # minutes or months ago behind a 200 that has already been answered, so a value
+                    # refused here vanished completely — `clean` simply lacked the key, the entry
+                    # was written without it, and the designer opened a stage whose phone box was
+                    # empty while their Designer Page went on showing them the number.
+                    #
+                    # THE DIVERGENCE THIS CATCHES IS REAL AND IS ALREADY WRITTEN DOWN, and this log
+                    # line is deliberately NOT a fix for it. `DesignerProfileUpdate` is looser than
+                    # three of the stage boxes `PREFILL_MAP` seeds — phone (40 characters and no
+                    # `PHONE_IN`, seeding a box bounded at 20 that declares it), email (no bound at
+                    # all, seeding 180) and pincode (no `PINCODE` check, seeding a box that declares
+                    # one) — recorded with its consequence in `KNOWN_PREFILL_GAPS` in
+                    # tests/test_designer_prefill_contract.py, pinned in BOTH directions so an entry
+                    # cannot outlive its gap. Narrowing those three bodies would 422 the next save
+                    # of every stored row already holding a looser value, which is why that comment
+                    # calls closing the gap an owner call with the existing rows to answer for.
+                    # Making the loss VISIBLE is not an owner call, and until somebody makes the
+                    # other one this is the only trace a dropped prefill value leaves anywhere.
+                    #
+                    # The reasons are safe to log: no `*_error` reachable from `PREFILL_MAP`'s
+                    # targets echoes the value it refused, so this names the box and the rule, never
+                    # the designer's phone number.
+                    logger.warning(
+                        "Designer prefill dropped %d value(s) on %s.%s for workshop %s: %s",
+                        len(refused), spec.key, entity.key, getattr(record, "id", None),
+                        "; ".join(f"{k}: {v}" for k, v in sorted(refused.items())),
+                    )
                 if not clean:
                     continue
                 await db.dwstageentry.create(data={
@@ -3337,19 +3537,23 @@ async def seed_designer_prefill(
                     # states is "one row per (workshop, entity)", and an invariant with one
                     # unkeyed writer is not an invariant.
                     "clientKey": singleton_client_key(spec.key),
-                    # STAMPED TO THE CREATOR AS A DESIGNER VALUE, not as a reference one, and that
-                    # is a real distinction rather than a default. These fields come from the
-                    # designer's OWN `DesignerProfile` and from the create form they just filled
-                    # in — their name, their institution — so the person who set them is the person
-                    # creating the workshop. `source: "reference"` is reserved for a value copied
-                    # off a record somebody ELSE recorded, which is the case where authorship has
-                    # to stay behind. Leaving these unstamped would instead hand them to whichever
-                    # co-designer next saves stage 1 without changing them.
+                    # STAMPED TO THE ACTOR AS A DESIGNER VALUE, not as a reference one, and — since
+                    # `designer_id` arrived — not to the person whose profile it came from either.
+                    # The docstring's provenance paragraph carries the whole argument; the short
+                    # version is that `entry_provenance` declares exactly TWO sources, that sentence
+                    # is pinned word for word against Android, and a value lifted out of somebody
+                    # else's profile at an admin's request is honestly neither of them. Of the two
+                    # answers that exist, the ACTOR is the only one that is not a fabrication: they
+                    # caused this write, and the designer has not seen these values. `source:
+                    # "reference"` is reserved for a value copied off a RECORD somebody else
+                    # recorded, which is a different question about a different table. Leaving these
+                    # unstamped would instead hand them to whichever co-designer next saves stage 1
+                    # without changing them.
                     "fieldProvenance": _json(entry_provenance.merge_entry_provenance(
                         previous={}, previous_data={}, new_data=clean,
-                        hydrated={}, user=user,
+                        hydrated={}, user=actor,
                     )),
-                    "createdById": user.id,
+                    "createdById": actor.id,
                 })
                 # Only columns this subset actually filled, and only the string-valued ones.
                 # `_coerce_promoted` is deliberately NOT reused: it nulls every promoted column of
@@ -3363,8 +3567,24 @@ async def seed_designer_prefill(
                     # were half seeded and whose header was not written at all. `_coerce_promoted`
                     # parses them for the stage-save path; here there is nothing to parse for,
                     # because the create route wrote both columns from the same request through
-                    # `_parse_date` before calling us. Only `extra` can put a date in reach — the
-                    # profile carries none — so this guard arrived with it.
+                    # `_parse_date` before calling us.
+                    #
+                    # THE TWO NAMES ARE STILL THE WHOLE LIST, THOUGH NO LONGER FOR THE REASON THIS
+                    # COMMENT USED TO GIVE. It said "only `extra` can put a date in reach — the
+                    # profile carries none", and the profile now carries one: `PREFILL_MAP` maps
+                    # `empanelmentDate` -> `designerEmpanelmentDate` (services/designers.py:244) and
+                    # `prefill_from_profile` narrows the Postgres DateTime to an ISO date string on
+                    # the way out (designers.py:297, a branch that exists only for it), so a date
+                    # does reach `values` above from the profile. What keeps the list complete is
+                    # the OTHER end: `designerEmpanelmentDate` is not a promoted column at all, and
+                    # all 13 entries of `PROMOTED_COLUMNS` (services/stage_schema.py:841) are keyed
+                    # `workshopSetup.*` — so `promoted_values` can never surface it and no ISO
+                    # string of it can reach a Prisma DateTime column.
+                    #
+                    # SO THE RULE TO APPLY BEFORE PROMOTING ANYTHING NEW, whatever its source: any
+                    # promoted column whose registry field is DATE must be named here. Adding one to
+                    # `PROMOTED_COLUMNS` and not to this tuple is what produces the driver error
+                    # above — swallowed, and read by the designer as an empty stage 1.
                     if column in ("startDate", "endDate"):
                         continue
                     if isinstance(value, str) and value:
@@ -4452,6 +4672,33 @@ def assemble_workshop_data(record: Any, entries: list[Any]) -> WorkshopData:
     singletons: dict[str, dict[str, Any]] = {}
     collections: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
+    # ── SORTED BY `ordinal` ALONE, AND A TIE IS DELIBERATELY LEFT TO THE STABLE SORT ──────────────
+    #
+    # A `(ordinal, createdAt)` tuple was tried here on 2026-08-26 and REVERTED the same day. It was
+    # meant to close a real but narrow gap — `save_stage` writes `ordinal` only for the rows the
+    # payload names, so a row a colleague added on the handset after this browser last read the stage
+    # keeps its old ordinal and can collide with one the designer has just dragged into that place.
+    # Two reasons it made things worse, both found by review rather than by reasoning:
+    #
+    # 1. IT MOVES SINGLETONS, WHERE THE "TIE" IS NOT A RACE BUT THE NORMAL STATE. Every singleton row
+    #    carries `ordinal = 0`, and the fold below is last-wins — so ordering singleton rows by
+    #    `createdAt` deterministically pins THIS reader to the newest duplicate. The other two readers
+    #    of the same rows do not sort at all: `workshop_completeness` iterates `entries` directly, and
+    #    so does `_stages_payload`. `SINGLETON_CLIENT_KEY`'s docstring states the invariant plainly —
+    #    all three take last-write-wins over one arbitrary order, and therefore AGREE on any single
+    #    read. Moving one of the three meant the stage form and the readiness score read one row while
+    #    the .docx submitted to the ministry read the other, permanently, on any workshop carrying a
+    #    pre-2026-08-22 duplicate pair. That is a far worse defect than the one being fixed.
+    #
+    # 2. `entries` IS `list[Any]`, AND THE ATTRIBUTE IS NOT GUARANTEED TO EXIST. Not a nullability
+    #    question — an ABSENT one. `tests/test_report_sketch_prototype_mapping.py` builds its rows as
+    #    `SimpleNamespace` without `createdAt`, so the tuple raised `AttributeError` and took out the
+    #    one test asserting "the designer's arrangement is the order the report prints them in" — the
+    #    single assertion protecting the printed row order of a filed report.
+    #
+    # SO THE COLLECTION-TIE GAP IS STILL OPEN, and it is recorded rather than half-closed. Shutting it
+    # properly means moving all three readers together, in one change, with a tie-break that cannot
+    # reorder singletons — not a tuple in one of them.
     for row in sorted(entries, key=lambda r: r.ordinal):
         data = dict(row.data or {})
         # THE ROW'S OWN ID TRAVELS WITH IT, under the same `_`-prefixed name the stage GET uses.

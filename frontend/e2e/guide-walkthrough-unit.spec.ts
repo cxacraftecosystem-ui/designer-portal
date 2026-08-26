@@ -35,11 +35,26 @@ import { GUIDE_STEPS } from "@/components/guide/steps";
 const ROOT = join(__dirname, "..");
 const PROTECTED = join(ROOT, "app", "(protected)");
 
-/** The six ids of the design & prototype workshop arc, in the order `WALKTHROUGH.md` prints them. */
+/**
+ * The ids of the design & prototype workshop arc, in the order `WALKTHROUGH.md` prints them.
+ *
+ * THIS LIST HELD SIX IDS UNTIL 2026-08-26, AND THE ORDER OF TWO OF THEM WAS WRONG — which is the
+ * failure this spec exists to catch, arriving from the inside. The arc grew three screens
+ * (`designer-profile`, `design-workshop-sketches`, `design-review`) and *Cards & tags* moved AHEAD
+ * of *Stages*, because a code card is what a participant scans to reach a stage form and so has to
+ * exist before the form is worth opening. `components/guide/steps.ts` and `docs/WALKTHROUGH.md` were
+ * both rewritten to that nine-step order and this constant was not, so the spec was asserting a
+ * printed order neither rendering had printed since. The two renderings agreeing is the whole
+ * subject here, and a stale THIRD copy of the order is no better than a divergence between them:
+ * update this list in the same edit as the other two, never afterwards.
+ */
 const WORKSHOP_ARC = [
+  "designer-profile",
   "design-workshop",
-  "design-workshop-stages",
   "design-workshop-codes",
+  "design-workshop-stages",
+  "design-workshop-sketches",
+  "design-review",
   "design-workshop-readiness",
   "design-workshop-report",
   "design-workshop-history"
@@ -47,7 +62,7 @@ const WORKSHOP_ARC = [
 
 test("the guide carries the design & prototype workshop arc, after the record steps", () => {
   const ids = GUIDE_STEPS.map((step) => step.id);
-  expect(ids, "the six screens WALKTHROUGH.md names").toEqual(expect.arrayContaining(WORKSHOP_ARC));
+  expect(ids, "the screens WALKTHROUGH.md names").toEqual(expect.arrayContaining(WORKSHOP_ARC));
   // AFTER, not before. The order is the order the work happens in, and a guide that opened on the
   // 22-stage form would be teaching a designer to point at records that do not exist yet.
   expect(ids.indexOf(WORKSHOP_ARC[0])).toBeGreaterThan(ids.indexOf("view-data"));
@@ -96,18 +111,27 @@ test("the workshop arc says the stage carries a COPY, and never that the report 
   }
 });
 
-test("the printed guide still declares the same six screens", () => {
+test("the printed guide still declares every screen of the arc", () => {
   /*
-    THE OTHER HALF OF THE PAIR, read rather than duplicated. If somebody adds a seventh screen to
+    THE OTHER HALF OF THE PAIR, read rather than duplicated. If somebody adds a screen to
     `WALKTHROUGH.md` and not to `steps.ts` — which is exactly what happened once — this fails and
     names the file to open. It matches on the ROUTES rather than on the headings, because a heading
     is prose somebody will reword and a route is the thing a designer has to be able to reach.
+
+    THE LIST GUARDED SIX ROUTES WHILE THE ARC CARRIED NINE SCREENS, from 2026-08-26 until this line
+    was written. A pair-check that covers two thirds of the pair is worse than none, because it
+    reports green over the gap: the designer profile, the sketches screen and the design review could
+    each have been dropped from the printed guide without a single test going red. The rule is that
+    this list holds one route per id in `WORKSHOP_ARC` — add to both together, or neither.
   */
   const walkthrough = readFileSync(join(ROOT, "..", "docs", "WALKTHROUGH.md"), "utf8");
   for (const route of [
+    "/designers/profile`",
     "/design-workshops`",
-    "/design-workshops/[id]/stages/[stageKey]`",
     "/design-workshops/[id]/codes`",
+    "/design-workshops/[id]/stages/[stageKey]`",
+    "/sketches-and-prototypes`",
+    "/design-review`",
     "/design-workshops/[id]/readiness`",
     "/design-workshops/[id]/report`",
     "/design-workshops/[id]/report/history`"

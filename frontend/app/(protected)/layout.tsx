@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/AppShell";
+import { DesignerProfileOnboarding } from "@/components/designers/DesignerProfileOnboarding";
 import { DesignWorkshopDraftBanner } from "@/components/designworkshop/DraftSyncBanner";
 import { AppUpdateWatcher } from "@/components/dialogs/AppUpdateDialog";
 import { ConfirmProvider } from "@/components/dialogs/ConfirmDialog";
@@ -33,7 +34,15 @@ import { UnsavedChangesProvider } from "@/components/UnsavedChangesGuard";
  *   the workshop has not reached the repository — a warning that only exists on the page you are
  *   already worried about is a warning nobody reads in time.
  *
- * All five live here rather than in the root layout because they are for signed-in work: the login
+ * - `DesignerProfileOnboarding` takes a designer signing in for the first time to their profile
+ *   page, from a landing route only — once per session where `sessionStorage` answers, and once
+ *   per loaded page where the browser refuses it, which is the most that component can promise. It renders nothing and it is here for the
+ *   same reason the four above are: it is a signed-in concern that has to be able to fire whichever
+ *   protected page the session happens to open on. Read its header before touching it — a forced
+ *   navigation is the most intrusive thing this client does to anybody, and the four rules that keep
+ *   it from becoming a trap are all written down there.
+ *
+ * All six live here rather than in the root layout because they are for signed-in work: the login
  * and landing pages have nothing to confirm, nothing to save offline, and no lazy chunks to fail on.
  *
  * `UnsavedChangesProvider` wraps them because it has to sit above BOTH halves of a form page: the
@@ -53,6 +62,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       </UnsavedChangesProvider>
       <AppUpdateWatcher />
       <OfflineWatcher />
+      <DesignerProfileOnboarding />
     </ConfirmProvider>
   );
 }

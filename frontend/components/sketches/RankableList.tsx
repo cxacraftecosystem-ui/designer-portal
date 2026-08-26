@@ -12,44 +12,37 @@
  * are therefore always rendered, always enabled while the list is writable, and are what the
  * keyboard, the assistive layer and the specs drive. The drag handle is an accelerator on top.
  *
- * ── WHY IT IS HAND-ROLLED, WITH POINTER EVENTS AND NO LIBRARY ───────────────────────────────────
+ * ── WHERE THE DRAG ITSELF LIVES ─────────────────────────────────────────────────────────────────
  *
- * There is no drag-and-drop anywhere in this repository today and no dnd dependency in
- * `package.json` — checked, not assumed. This project argues every dependency it takes, and what
- * is needed here is a list of eight cards reordered by one finger: `setPointerCapture`, one
- * rectangle snapshot and `moveTo` cover it in about a hundred lines, where the smallest of the
- * usual libraries is tens of kilobytes on a page that field designers load over a village
- * connection. Pointer events rather than the HTML5 drag API for the same reason the rest of the
- * app avoids it: `dragstart`/`dragover` do not fire for touch at all on Android Chrome, and a
- * gesture that works on a laptop and silently does nothing on the phone the fieldwork is done on
- * is worse than no gesture.
+ * `components/hooks/useDragReorder.ts`, and that file's header carries the whole argument: why
+ * pointer events rather than the HTML5 drag API (`dragstart` does not fire for touch on Android
+ * Chrome at all), why no dnd dependency, and the five things that make the gesture honest — the
+ * rectangle snapshot, the ARRANGEMENT snapshot that abandons a gesture whose ground moved, commit
+ * only on release, the spoken announcement, and the drag dying with the list that owns it.
  *
- * ── THE THREE THINGS THAT MAKE THE DRAG HONEST ──────────────────────────────────────────────────
+ * It used to live inline here, because this was the only reorderable list in the repository. It
+ * moved out on 2026-08-25 when the custom-sections editor needed the same gesture and could not use
+ * this component — that screen draws a whole `panel` per row, whereas this one owns its `<ol>`, its
+ * numbering column and its three buttons. THE MECHANICS MOVED; THE RENDERING STAYED — with ONE
+ * deliberate behaviour change carried in, so do not read this as a pure extraction. The hook now
+ * measures a neighbour's displacement as the distance between ADJACENT ROW TOPS, which means every
+ * neighbour in the `<ol className="grid gap-3">` below travels the dragged row's height PLUS the
+ * 12px gap between rows. The inline version shifted by `getBoundingClientRect().height` alone — the
+ * border box, which excludes the gap above it — and so under-shot by exactly one gap per displaced
+ * card, every drag, since the day this list shipped. It was small enough to read as sloppy rendering
+ * rather than as a wrong target, which is why it lasted; `useDragReorder.ts`'s note on the shift
+ * carries the full argument and the reason the naive fallbacks for the last row are wrong.
  *
- * 1. **The rectangles are snapshotted once, at pointerdown.** The dragged card is translated and
- *    its neighbours are shifted by CSS, so nothing in the layout actually moves while a drag is in
- *    flight. Re-measuring during the gesture would feed the shift back into the measurement and
- *    the target index would oscillate under the finger. THE ARRANGEMENT IS SNAPSHOTTED WITH THEM,
- *    because the measurement is only meaningful against the list it was taken of — see
- *    `DragState.snapshot` and `endDrag`.
- * 2. **Nothing is committed until the pointer is released**, and Escape cancels outright. A
- *    reorder is a write with a person's name on it (see `reviewRanking.arrangeRows`), so a stray
- *    swipe over a card must not be able to stamp an arrangement.
- * 3. **Every move is announced in words** through a polite live region, and the position is also
- *    printed on the card as a number. A rank that exists only as a place in a visual list is a
- *    rank a screen-reader user cannot read back — and colour or position alone never carries
- *    meaning in this app.
- *
- * Motion: the neighbours' shift is a CSS `transition-transform`, which the global reduced-motion
- * rules in `globals.css` zero for both sources (OS preference and the in-app toggle). There is no
- * framer-motion here on purpose — it writes inline styles that CSS cannot reach, and this file
- * would then need its own JS branch for a 120ms slide.
+ * What this file still owns, and what is still the point of it: the position printed on the card as
+ * a NUMBER. A rank that exists only as a place in a visual list is a rank a screen-reader user
+ * cannot read back — and colour or position alone never carries meaning in this app.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback } from "react";
 import { ArrowDown, ArrowUp, GripVertical } from "lucide-react";
 
-import { moveBy, moveTo, sameOrder } from "./reviewRanking";
+import { useDragReorder } from "@/components/hooks/useDragReorder";
+import { moveBy, moveTo } from "./reviewRanking";
 
 /** What one row needs to render itself inside the list. */
 export type RankableRenderArgs = {
@@ -79,59 +72,46 @@ type Props = {
   disabledReason: string | null;
 };
 
-type DragState = {
-  id: string;
-  pointerId: number;
-  from: number;
-  to: number;
-  startY: number;
-  offset: number;
-  /** Snapshot of every row's box at pointerdown; see the header. */
-  boxes: Array<{ top: number; height: number }>;
-  /**
-   * The arrangement as it stood at pointerdown, so the release can tell whether it still holds.
-   *
-   * `from`, `to` and every rectangle in `boxes` are INDICES INTO THIS ARRAY. If the list changes
-   * mid-gesture — a Refresh, a background item change, a colleague's row arriving on a sync — those
-   * indices address different cards than the ones the finger was over, and committing them moves the
-   * wrong piece and then stamps the result with a designer's name as a deliberate arrangement. So the
-   * snapshot is kept and compared, and a gesture whose ground moved is abandoned rather than guessed
-   * at. Every other path here resolves by ID first, which is why only this one needed it.
-   */
-  snapshot: readonly string[];
-};
-
 export function RankableList({ order, labelFor, renderItem, onReorder, disabledReason }: Props) {
-  const rowRefs = useRef(new Map<string, HTMLLIElement>());
-  const [drag, setDrag] = useState<DragState | null>(null);
-  const [announcement, setAnnouncement] = useState("");
   const total = order.length;
   const locked = disabledReason !== null;
 
-  const announce = useCallback(
-    (id: string, index: number) => {
-      setAnnouncement(`${labelFor(id)} moved to position ${index + 1} of ${total}.`);
-    },
-    [labelFor, total]
-  );
+  /**
+   * The drag half, from the shared hook.
+   *
+   * `onReorder` is handed `from`/`to` INDICES by the hook and this component's own prop takes a
+   * whole arrangement, so `moveTo` bridges them — which is right rather than merely convenient: the
+   * hook has no business knowing that this caller's arrangement is a `string[]` it can rebuild,
+   * and `moveTo` is already the pure helper `reviewRanking` exports for exactly this.
+   */
+  const drag = useDragReorder({
+    order,
+    labelFor,
+    locked,
+    onReorder: useCallback(
+      (from: number, to: number) => onReorder(moveTo(order, from, to)),
+      [onReorder, order]
+    )
+  });
 
-  const commit = useCallback(
-    (next: string[], id: string) => {
-      const index = next.indexOf(id);
-      onReorder(next);
-      if (index >= 0) announce(id, index);
-    },
-    [announce, onReorder]
-  );
-
+  /**
+   * One arrow press.
+   *
+   * ANNOUNCED THROUGH THE HOOK'S OWN `announceMove`, so the two paths speak in one voice. They used
+   * to be two `setAnnouncement` calls with the same template written twice, which is the shape that
+   * drifts: a wording fixed on the drag path and missed on the arrow path would leave a
+   * screen-reader user hearing two different sentences for one act.
+   */
   const step = useCallback(
     (id: string, delta: number) => {
       if (locked) return;
       const next = moveBy(order, id, delta);
       if (next.every((value, index) => value === order[index])) return;
-      commit(next, id);
+      onReorder(next);
+      const landed = next.indexOf(id);
+      if (landed >= 0) drag.announceMove(id, landed);
     },
-    [commit, locked, order]
+    [drag, locked, onReorder, order]
   );
 
   const jump = useCallback(
@@ -141,120 +121,12 @@ export function RankableList({ order, labelFor, renderItem, onReorder, disabledR
       if (from < 0) return;
       const next = moveTo(order, from, to);
       if (next.every((value, index) => value === order[index])) return;
-      commit(next, id);
+      onReorder(next);
+      const landed = next.indexOf(id);
+      if (landed >= 0) drag.announceMove(id, landed);
     },
-    [commit, locked, order]
+    [drag, locked, onReorder, order]
   );
-
-  /*
-    THE DRAG IS TORN DOWN ON UNMOUNT AS WELL AS ON RELEASE. A route change mid-gesture would
-    otherwise leave the captured pointer's listeners attached to a node React has removed, and the
-    next pointerup would run a commit against an order that no longer exists on screen.
-  */
-  useEffect(() => {
-    if (!drag) return;
-    function cancelOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setDrag(null);
-    }
-    window.addEventListener("keydown", cancelOnEscape);
-    return () => window.removeEventListener("keydown", cancelOnEscape);
-  }, [drag]);
-
-  function beginDrag(event: React.PointerEvent<HTMLButtonElement>, id: string) {
-    if (locked || event.button !== 0) return;
-    const from = order.indexOf(id);
-    if (from < 0) return;
-    const boxes = order.map((rowId) => {
-      const node = rowRefs.current.get(rowId);
-      const box = node?.getBoundingClientRect();
-      return { top: box?.top ?? 0, height: box?.height ?? 0 };
-    });
-    event.currentTarget.setPointerCapture(event.pointerId);
-    /*
-      THE GESTURE BELONGS TO THIS HANDLE FROM HERE ON. Without `preventDefault` the browser also
-      begins a text selection, which drags a blue smear across every card the pointer crosses and,
-      on touch, turns the reorder into a long-press selection instead.
-
-      AND THE FOCUS IS TAKEN BACK BY HAND, because that same `preventDefault` is what stops the
-      browser focusing the button it was pressed on. Leaving it unfocused would mean a designer who
-      dragged a card once could not then nudge it with the arrow keys — the two paths would stop
-      being interchangeable at exactly the point somebody switched between them.
-    */
-    event.preventDefault();
-    event.currentTarget.focus();
-    setDrag({
-      id,
-      pointerId: event.pointerId,
-      from,
-      to: from,
-      startY: event.clientY,
-      offset: 0,
-      boxes,
-      snapshot: [...order]
-    });
-  }
-
-  function moveDrag(event: React.PointerEvent<HTMLButtonElement>) {
-    setDrag((current) => {
-      if (!current || current.pointerId !== event.pointerId) return current;
-      const offset = event.clientY - current.startY;
-      // GUARDED, BECAUSE THE SNAPSHOT CAN OUTLIVE THE LIST IT WAS TAKEN OF. A list that shortened
-      // mid-gesture leaves `from` past the end of `boxes`, and the unguarded read threw on the next
-      // pointermove — an exception inside a state updater, which takes the whole tab down rather
-      // than losing a drag. The release path checks the same thing properly and cancels.
-      const box = current.boxes[current.from];
-      if (!box) return current;
-      const centre = box.top + box.height / 2 + offset;
-      let to = current.from;
-      current.boxes.forEach((other, index) => {
-        if (index === current.from) return;
-        const otherCentre = other.top + other.height / 2;
-        if (index < current.from && centre < otherCentre) to = Math.min(to, index);
-        if (index > current.from && centre > otherCentre) to = Math.max(to, index);
-      });
-      if (offset === current.offset && to === current.to) return current;
-      return { ...current, offset, to };
-    });
-  }
-
-  function endDrag(event: React.PointerEvent<HTMLButtonElement>) {
-    const current = drag;
-    setDrag(null);
-    if (!current || current.pointerId !== event.pointerId) return;
-    if (current.to === current.from) return;
-    /*
-      THE GESTURE IS ABANDONED IF THE LIST MOVED UNDER IT, and it is said out loud rather than
-      swallowed. `from`, `to` and the rectangles are all indices into the snapshot taken at
-      pointerdown; if the arrangement is no longer that one, they name different cards, and a commit
-      would move a piece nobody dragged and then write `rankFixedBy` over it as a decision. The
-      alternative — re-deriving `from` by id and keeping `to` — silently keeps half a stale
-      measurement, which is the same guess in a smaller coat.
-    */
-    if (!sameOrder(current.snapshot, order)) {
-      setAnnouncement(
-        `${labelFor(current.id)} was not moved: the list changed while it was being dragged. Try again.`
-      );
-      return;
-    }
-    commit(moveTo(order, current.from, current.to), current.id);
-  }
-
-  /** How far each row is pushed while a drag is in flight, in pixels. */
-  const shift = useMemo(() => {
-    const map = new Map<string, number>();
-    if (!drag) return map;
-    const height = drag.boxes[drag.from]?.height ?? 0;
-    order.forEach((id, index) => {
-      if (index === drag.from) {
-        map.set(id, drag.offset);
-        return;
-      }
-      if (index > drag.from && index <= drag.to) map.set(id, -height);
-      else if (index < drag.from && index >= drag.to) map.set(id, height);
-      else map.set(id, 0);
-    });
-    return map;
-  }, [drag, order]);
 
   return (
     <div>
@@ -264,19 +136,16 @@ export function RankableList({ order, labelFor, renderItem, onReorder, disabledR
         same rule `Toast`'s always-present viewport follows.
       */}
       <p aria-live="polite" className="sr-only">
-        {announcement}
+        {drag.announcement}
       </p>
       <ol className="grid gap-3">
         {order.map((id, index) => {
-          const dragging = drag?.id === id;
-          const offset = shift.get(id) ?? 0;
+          const dragging = drag.draggingKey === id;
+          const offset = drag.shiftFor(id);
           return (
             <li
               key={id}
-              ref={(node) => {
-                if (node) rowRefs.current.set(id, node);
-                else rowRefs.current.delete(id);
-              }}
+              ref={drag.registerRow(id)}
               style={offset ? { transform: `translateY(${offset}px)` } : undefined}
               className={
                 dragging
@@ -325,10 +194,7 @@ export function RankableList({ order, labelFor, renderItem, onReorder, disabledR
                     className="grid h-8 w-8 cursor-grab touch-none place-items-center rounded-md border border-line-200 text-ink-500 transition hover:bg-surface-50 active:cursor-grabbing disabled:opacity-40"
                     aria-label={`Reorder ${labelFor(id)} — drag, or use the arrow keys`}
                     disabled={locked}
-                    onPointerDown={(event) => beginDrag(event, id)}
-                    onPointerMove={moveDrag}
-                    onPointerUp={endDrag}
-                    onPointerCancel={() => setDrag(null)}
+                    {...drag.handleProps(id)}
                     onKeyDown={(event) => {
                       if (event.key === "ArrowUp") {
                         event.preventDefault();

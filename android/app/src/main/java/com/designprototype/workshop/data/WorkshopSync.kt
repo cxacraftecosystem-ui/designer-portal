@@ -645,8 +645,16 @@ data class SyncPassResult(
  * payload that will not parse — is deferred to [WorkshopRepository.isTransient] rather than
  * re-decided here, so there is still exactly ONE answer to "is this the network" for the shapes both
  * files see.
+ *
+ * INTERNAL RATHER THAN PRIVATE SINCE 2026-08-26, and the widening is the point rather than a
+ * convenience. The design review screen asks the identical question about the two rating reads — a
+ * round the repository ANSWERED and refused must say what it said, and only a request nobody answered
+ * may be reported as lost signal — and the alternative was a fourth private copy of this test in a
+ * third file. The file `readableError` complains about ("two private re-implementations already exist
+ * and a third must not") is the mild version of that; here the cost of two copies disagreeing is the
+ * defect this KDoc opens by describing. Nothing about the behaviour changed with the keyword.
  */
-private fun WorkshopRepository.isConnectionFailure(error: Throwable): Boolean {
+internal fun WorkshopRepository.isConnectionFailure(error: Throwable): Boolean {
     val http = error as? HttpException ?: return isTransient(error)
     return when (http.code()) {
         401, 408, 429 -> true
@@ -1814,14 +1822,38 @@ object WorkshopSyncEngine {
             }
             val created = if (resumedId != null) null else try {
                 repository.createDesignWorkshop(
-                    // Only the title and the template. Every other column the workshop list shows —
-                    // craft, cluster, state, district, dates — is PROMOTED server-side out of stage
-                    // 1 as that stage saves (`PROMOTED_COLUMNS`, backend/app/services/
-                    // design_workshops.py), so sending a second copy from here would give one fact
-                    // two writers and let them disagree.
+                    // The title, the template, and the one INPUT that has to travel with them. Every
+                    // other column the workshop list shows — craft, cluster, state, district, dates
+                    // — is PROMOTED server-side out of stage 1 as that stage saves
+                    // (`PROMOTED_COLUMNS`, backend/app/services/design_workshops.py), so sending a
+                    // second copy from here would give one fact two writers and let them disagree.
+                    //
+                    // `designerUserId` IS THE OPPOSITE CASE AND THAT IS WHY IT BELONGS HERE. It is
+                    // not a copy of a promoted column; it is what DRIVES the promotion, one step
+                    // earlier — the account whose `DesignerProfile` `seed_designer_prefill` copies
+                    // into stage 1 and stage 3 before either stage exists. Omitted (null), the seed
+                    // copies whoever is signed in, which for an admin who started this workshop on a
+                    // colleague's behalf is the wrong person's name on a ministry document. This is
+                    // the only request on this handset that may carry it: naming the designer is a
+                    // create-time act, and PATCH is closed to the field.
+                    //
+                    // Sent straight off the draft, unfolded, because the dialog already folded it —
+                    // `dwNamedDesignerId` writes null rather than "" for the "Not decided yet" row,
+                    // and the server folds a blank to None regardless
+                    // (`(payload.designerUserId or "").strip() or None`). A null is left off the
+                    // wire entirely by `ApiClient.json`, so a workshop with nobody named posts the
+                    // same bytes it posted before this field existed.
+                    //
+                    // A 422 HERE IS THE EXPECTED, HANDLED CASE, not an edge: naming somebody also
+                    // grants them a viewer row, so an empanelment that lapsed between the pick in
+                    // the courtyard and this pass refuses the WHOLE create. It lands in the
+                    // `refusal(...)` arm below as a permanent failure with the server's own words
+                    // naming the account — not as a schema skew, so no later app run silently
+                    // retries it — and the workshop stays on the phone with everything in it.
                     DesignWorkshopCreateBody(
                         title = draft.title.ifBlank { "Untitled design workshop" },
                         templateId = draft.templateId.ifBlank { "DCH_STANDARD" },
+                        designerUserId = draft.designerUserId,
                     )
                 )
             } catch (e: CancellationException) {

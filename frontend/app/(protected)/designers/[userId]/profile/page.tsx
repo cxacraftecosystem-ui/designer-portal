@@ -71,7 +71,7 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
     setNotFound(false);
     setError(null);
     // Cleared, not left standing, when the id changes. Next reuses this component across a param
-    // change, so without this the previous designer's twenty values sit on screen under the new
+    // change, so without this the previous designer's twenty-one values sit on screen under the new
     // one's heading for the length of the fetch — a profile attributed to the wrong person, which
     // on a screen whose whole subject is "who signs this report" is the worst possible stale read.
     setProfile(null);
@@ -96,8 +96,8 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
   /**
    * The account behind the id, so the page can say whose profile this is.
    *
-   * A separate, best-effort request: the profile payload carries no name (it is twenty columns and
-   * two identifiers), and a page headed "Designer profile" with no name on it leaves an admin
+   * A separate, best-effort request: the profile payload carries no name (it is twenty-one columns,
+   * two identifiers and two timestamps), and a page headed "Designer profile" with no name on it leaves an admin
    * unable to tell whether they opened the right person. `/users/directory` is open to any signed-in
    * account and answers with nothing but id, name, email and role. A failure here is silent — the
    * profile is what the page is for, and losing the heading's subtitle must not lose the page.
@@ -186,8 +186,12 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
           {designerProfileIsEmpty(profile) ? (
             <section className="panel p-4 text-sm leading-6 text-ink-700">
               {/* An empty profile is a real, actionable state — the cover of this designer's next
-                  report will carry a blank "Designer:" line — so it is named rather than drawn as
-                  twenty rows of "Not filled in" that look like a rendering fault. */}
+                  report will carry a blank "Designer:" line — so it is named rather than drawn as a
+                  wall of "Not filled in" rows that look like a rendering fault. NO COUNT: it is not
+                  the profile's twenty-one, because `DesignerProfileView` draws `cvMediaId` through
+                  `DocumentPreview` — which carries its own "No CV on file." — before the blank test
+                  the other twenty fall through. This clause said "twenty-one" for a few minutes on
+                  2026-08-26, renumbered by a sweep that was right about every other sentence. */}
               {displayName} has not filled in a designer profile yet. Until they do, a workshop they start is created with
               nothing but the name on their account.
             </section>

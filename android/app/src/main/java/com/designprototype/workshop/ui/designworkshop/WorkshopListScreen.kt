@@ -13,15 +13,21 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -42,12 +48,16 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.ConnectivityObserver
 import com.designprototype.workshop.data.DW_LOCAL_ID_PREFIX
 import com.designprototype.workshop.data.DW_WORKSHOP_CREATE_REFUSAL
 import com.designprototype.workshop.data.DesignWorkshopCreateBody
+import com.designprototype.workshop.data.DwEligibleViewerDto
+import com.designprototype.workshop.data.DwEligibleViewers
+import com.designprototype.workshop.data.DwPy
 import com.designprototype.workshop.data.mayMintLocalWorkshop
 import com.designprototype.workshop.data.ReportTemplateDto
 import com.designprototype.workshop.data.SchemaResponse
@@ -59,15 +69,22 @@ import com.designprototype.workshop.data.WorkshopSyncStatus
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.DwCustomSectionStore
 import com.designprototype.workshop.data.computeWorkshopCompleteness
+import com.designprototype.workshop.data.dwPersonLabel
+import com.designprototype.workshop.data.dwViewerAdministrationMissing
+import com.designprototype.workshop.data.dwViewerOfferNotice
+import com.designprototype.workshop.data.dwViewerSearchTerm
+import com.designprototype.workshop.data.isConnectionFailure
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.overallPercent
 import com.designprototype.workshop.data.visibleDesignWorkshops
+import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 import java.time.Instant
 import java.util.UUID
 
@@ -87,10 +104,17 @@ import java.util.UUID
  */
 
 /**
- * How long the search box waits before it asks the server.
+ * How long a search box on this screen waits before it asks the server.
  *
- * The local half of the list is filtered in memory and is therefore instant either way; this only
- * paces the network call, so it can be generous enough to cover an ordinary typing speed.
+ * TWO BOXES USE IT NOW, and they are paced together deliberately. The workshop search above the list
+ * is the first: its local half is filtered in memory and is therefore instant either way, so this
+ * only paces the network call and can be generous enough to cover an ordinary typing speed. The
+ * second is the designer picker inside `CreateWorkshopDialog`, whose search is entirely the server's
+ * — `GET /design-workshops/eligible-viewers` — and which therefore needs the pacing more, not less:
+ * that endpoint's `ILIKE '%term%'` over `User` is a scan no index can answer, so every keystroke that
+ * escapes this is a full scan of the largest table in the repository. One number rather than two,
+ * because two boxes on one screen that respond at visibly different speeds read as one of them being
+ * broken. It is the same 350ms `WorkshopViewersScreen` uses for the same endpoint.
  */
 private const val SEARCH_DEBOUNCE_MS = 350L
 
@@ -758,6 +782,13 @@ fun WorkshopListScreen(
     if (showCreate) {
         CreateWorkshopDialog(
             repository = repository,
+            // THE SAME FLAG THE ADOPT DIALOG IS GIVEN, and it stands the designer picker down rather
+            // than styling it. Eligibility is two roster reads on the SERVER — the empanelment roster
+            // and the platform allow-list — and no useful part of that question can be answered from
+            // this device, so with no connection the control has nothing honest to offer. Every other
+            // field on that form works in a courtyard, which is the whole reason the create mints a
+            // local id; this is the one that cannot, and it says so.
+            offline = offline,
             onDismiss = { showCreate = false },
             onCreated = { id, wasLocal ->
                 showCreate = false
@@ -947,10 +978,37 @@ private fun CompletenessRing(percent: Int) {
  * handset had a validated connection at the moment of the POST, so the ordinary offline create —
  * which is the whole point of the paragraph above — carries none and the resolver is never armed for
  * it. The stamp's own comment has the fortnight that costs.
+ *
+ * ── AND IT NAMES WHO THE WORKSHOP IS FOR, WHICH IS THE ONE ANSWER THE REPORT PRINTS ─────────────
+ *
+ * `seed_designer_prefill` copies a `DesignerProfile` into stage 1 and stage 3 the instant the record
+ * exists, and until [DesignWorkshopCreateBody.designerUserId] could be SENT the profile it copied
+ * was always the CREATOR'S. Every account that reaches this dialog is an ADMIN or the master admin
+ * (`DW_WORKSHOP_CREATOR_ROLES`), so "the creator" is very often exactly the wrong person: an admin
+ * opening a workshop for a designer in another cluster put their own name on a ministry document,
+ * and not by mistake — `GET /designers/me/profile` upserts a profile row for any admin who so much
+ * as opens the Designer Profile screen, and `prefill_from_profile`'s tail fallback then writes
+ * `profile.user.name` even from a wholly empty one. The designer picker below is how this handset
+ * answers instead, and `WorkshopDesignerPicker.tsx` is the browser's.
+ *
+ * THE PICKER'S OPTIONS ARE THE SERVER'S AND THE SEARCH IS THE SERVER'S. `GET /design-workshops/
+ * eligible-viewers` is the same endpoint `WorkshopViewersScreen` uses, deliberately: the create
+ * route's `assert_designer_may_be_named` delegates to the same `_assert_every_id_may_be_granted`
+ * that endpoint is built on, so offering somebody here whom the create would refuse is impossible by
+ * construction rather than by agreement. It is capped at 2000 accounts and the cap is REACHED on a
+ * real repository (2543 eligible), so the box below asks the server rather than filtering what
+ * arrived — a local filter would search only the part of the alphabet that fitted and answer "no
+ * such person" about a colleague who is perfectly eligible and merely sorts late.
+ *
+ * NAMING SOMEBODY ALSO PUTS THEM ON THE WORKSHOP: the create route grants their viewer row in the
+ * same call. That replaces two admin steps with one, and forgetting the second is how a designer
+ * ends up locked out of the workshop whose stage 1 already carries their name.
  */
 @Composable
 private fun CreateWorkshopDialog(
     repository: WorkshopRepository,
+    /** No connection — see the call site. The designer picker, and only it, stands down. */
+    offline: Boolean,
     onDismiss: () -> Unit,
     onCreated: (workshopId: String, localOnly: Boolean) -> Unit,
     onError: (String) -> Unit,
@@ -966,15 +1024,148 @@ private fun CreateWorkshopDialog(
     var templates by remember { mutableStateOf<List<ReportTemplateDto>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
 
+    /** The account chosen in the picker, or "" for the "Not decided yet" row. */
+    var designerUserId by remember { mutableStateOf("") }
+    /** What the admin has typed. [dwViewerSearchTerm] turns it into what the server is asked. */
+    var designerQuery by remember { mutableStateOf("") }
+    /**
+     * The eligible set as the server last served it, PAIRED WITH THE TERM IT ANSWERS.
+     *
+     * Null means there is no list at all — not loaded yet, stood down offline, or a read that
+     * failed — and it is deliberately not `DwEligibleViewers()`, which would claim `complete` and let
+     * [dwViewerOfferNotice] fall silent over an empty picker. When it is null [designerStandDown]
+     * carries the sentence saying why.
+     */
+    var designerOffer by remember { mutableStateOf<DwEligibleViewers?>(null) }
+    /**
+     * Every eligible account this dialog has been shown since it opened, first-seen order.
+     *
+     * **THE ANTI-AMNESIA STORE, and it is the same one `WorkshopViewersScreen` keeps for the same
+     * reason.** A search REPLACES [designerOffer], so an admin who found a colleague under one
+     * surname, picked them, then typed a second surname would be left with a picker whose trigger
+     * reads "Not decided yet" while [designerUserId] still holds the first pick — a form that has
+     * quietly stopped agreeing with itself on the one field that decides whose name the report
+     * prints. The pick is put back into the options from here.
+     */
+    var seenDesigners by remember { mutableStateOf<Map<String, DwEligibleViewerDto>>(emptyMap()) }
+    var designerSearching by remember { mutableStateOf(false) }
+    /** Why there is no list to pick from, or null while there is one. See [dwDesignerPickerStandDown]. */
+    var designerStandDown by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(Unit) {
         templates = runCatching { repository.designWorkshopTemplates(appContext) }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Ask the SERVER for the eligible set, once on open and again whenever the typed term changes.
+     *
+     * Keyed on the raw text, so each keystroke cancels the run before it, and debounced for exactly
+     * the reason the workshop search above is: five letters would otherwise be five requests on a
+     * metered field connection, four of them replies nobody will look at. The CLEAR is not debounced
+     * — emptying the box is a deliberate act, not typing, and making an admin wait 350ms to un-narrow
+     * a list they have just cleared reads as a stuck screen. That is the same split the list makes.
+     */
+    LaunchedEffect(offline, designerQuery) {
+        if (offline) {
+            // Nothing is requested at all, and the picker is disabled below. An empty picker with
+            // nothing said is indistinguishable from a repository with no eligible designers, which
+            // is the failure rule 10 of this repo exists to stop.
+            designerOffer = null
+            designerSearching = false
+            designerStandDown = dwDesignerPickerStandDown(
+                offline = true,
+                error = null,
+                // Never consulted on this branch — nothing was attempted, so there is no failure to
+                // classify. Named rather than left to a trailing lambda so that is obvious.
+                isConnectionFailure = { false },
+            )
+            return@LaunchedEffect
+        }
+        val term = dwViewerSearchTerm(designerQuery)
+        val loaded = designerOffer
+        // Already the answer on screen: clearing "abc " back to "abc" is the same question and must
+        // not cost a request.
+        if (loaded != null && term == loaded.search) return@LaunchedEffect
+        if (term != null) delay(SEARCH_DEBOUNCE_MS)
+        designerSearching = true
+        val answered = runCatching { repository.eligibleDesignWorkshopViewers(term) }
+        designerSearching = false
+        answered
+            .onSuccess { served ->
+                designerOffer = served
+                // MERGED, never replaced — see [seenDesigners].
+                seenDesigners = seenDesigners + served.users.associateBy { it.id }
+                designerStandDown = null
+            }
+            .onFailure { error ->
+                // A CANCELLED SEARCH IS NOT A FAILED ONE. This effect is keyed on the box, so every
+                // keystroke cancels the request in flight and `runCatching` catches that like
+                // anything else; reported, it would flash a failure over a connection that is fine,
+                // mid-word. The house pattern is to guard the HANDLING rather than rethrow, and the
+                // run that replaced this one sets both fields a moment later.
+                if (error is CancellationException) return@onFailure
+                // CLEARED, not left standing. The previous term's list sitting under the new term is
+                // a picker answering a question nobody asked, on the field that decides whose name
+                // the report carries; the sentence below says what happened instead.
+                designerOffer = null
+                designerStandDown = dwDesignerPickerStandDown(
+                    offline = false,
+                    error = error,
+                    isConnectionFailure = { repository.isConnectionFailure(it) },
+                )
+            }
+    }
+
+    /**
+     * The picker's rows: the server's answer, then the still-selected account it no longer contains.
+     *
+     * **NEVER RE-SORTED.** The server orders by `name` then `id` — a total order, so which accounts
+     * fell inside the 2000 ceiling is stable between two identical requests — and `sortedBy` on a
+     * Kotlin String orders by UTF-16 code unit, which disagrees with Postgres's collation on exactly
+     * the names this repository is full of. A picker whose order changes between the phone and the
+     * browser is a picker two admins describe differently.
+     *
+     * The retained pick is appended last rather than merged in place, for the same reason
+     * `dwViewerChoices` keeps its groups in order: it is not part of the answer to the term that is
+     * currently typed, and pretending otherwise would move a row the admin is looking at.
+     */
+    val designerOptions = remember(designerOffer, seenDesigners, designerUserId) {
+        val offered = designerOffer?.users.orEmpty()
+        val retained = designerUserId
+            .takeIf { id -> id.isNotBlank() && offered.none { it.id == id } }
+            ?.let { seenDesigners[it] }
+        (offered + listOfNotNull(retained)).map { person ->
+            com.designprototype.workshop.ui.SelectOption(
+                value = person.id,
+                // `dwPersonLabel` and not `name.ifBlank { email }`: a name that is nothing but a
+                // no-break space — what a directory row pasted out of a ministry PDF leaves behind —
+                // is falsy in the browser and survives Kotlin's `isBlank`, so the two clients would
+                // draw the same person differently and this one would offer an invisible label.
+                label = dwPersonLabel(person.name, person.email),
+                // Two colleagues share a display name more often than this repository would like,
+                // and the address is what tells them apart on a screen where picking the wrong row
+                // puts a stranger's name on a ministry document AND grants them the workshop.
+                hint = listOfNotNull(
+                    person.email.takeIf { it.isNotBlank() },
+                    FieldPermissions.label(person.role).takeIf { it.isNotBlank() },
+                ).joinToString(" · ").takeIf { it.isNotBlank() }
+            )
+        }
     }
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("New design workshop") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // SCROLLABLE, and it has to be. Material3's `AlertDialog` gives its text slot a
+            // `weight(1f, fill = false)` box and nothing else: content taller than the dialog is
+            // CLIPPED, not scrolled. Adding the designer picker put three more controls on this form,
+            // and on a small handset with the IME up the "Start" button was still there while the
+            // last field was not — a form that silently loses its bottom is worse than a long one.
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
@@ -1003,6 +1194,111 @@ private fun CreateWorkshopDialog(
                     includeNone = false,
                     onSelect = { picked -> if (picked.isNotBlank()) templateId = picked }
                 )
+
+                // ── Who the workshop is for ──────────────────────────────────────────────────────
+                //
+                // LAST AMONG THE QUESTIONS, deliberately: the title is what an admin opened this
+                // form to type, and who the workshop is FOR is the answer they most often have to
+                // leave open — which is exactly why the field is optional on the server.
+                //
+                // THE BOX BELOW IS THE ONE THAT REACHES EVERYBODY. The picker's own sheet has a
+                // filter of its own and it narrows what came BACK; this decides what comes back, and
+                // on a repository with 2543 eligible accounts under a 2000 ceiling those are not the
+                // same list. Drawn only when there is a list to search — with the control stood down
+                // a search box is a control that cannot do anything.
+                if (designerStandDown == null) {
+                    OutlinedTextField(
+                        value = designerQuery,
+                        onValueChange = { designerQuery = it },
+                        label = { Text("Search designers by name or email") },
+                        singleLine = true,
+                        enabled = !busy,
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.field.muted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            when {
+                                designerSearching -> CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                designerQuery.isNotEmpty() -> IconButton(onClick = { designerQuery = "" }) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Clear search",
+                                        tint = MaterialTheme.field.muted,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                // AT MOST ONE LINE, EVER, and silence is a real answer and the common one: a complete
+                // list has nothing to explain, and a standing note about paging on every visit is the
+                // padding this app has twice been asked not to have. When there IS a list, the four
+                // states are chosen by [dwViewerOfferNotice] — the same four sentences in the same
+                // order as the viewers screen and as the web, because an admin moves between the
+                // three and must not be told three different stories about one cut list.
+                //
+                // THE FIFTH LINE IS THIS SCREEN'S OWN AND IS NOT ADDED TO THAT FUNCTION. A complete,
+                // unsearched, EMPTY eligible set is the one state `dwViewerOfferNotice` deliberately
+                // says nothing about, because the viewers screen answers it in its picker's
+                // `emptyMessage` instead — and `SearchableSelectField` has no such slot, so an empty
+                // picker here would offer "Not decided yet" alone with nothing to say why. That reads
+                // as a broken control rather than as a statement about the empanelment roster, which
+                // is what it is. Kept out of the shared function so the four states that ARE shared
+                // stay byte-for-byte the same on both screens and in the browser.
+                val designerNotice = designerStandDown ?: designerOffer?.let { offer ->
+                    dwViewerOfferNotice(offer)
+                        ?: (
+                            "No account on this repository may be named as this workshop's designer. " +
+                                "An account has to be able to run a design workshop, and be on the " +
+                                "ACTIVE designer roster, before it can be named on one."
+                            ).takeIf { offer.users.isEmpty() && offer.search == null }
+                }
+                designerNotice?.let {
+                    Text(
+                        it,
+                        // The WORD carries it; the colour only separates "somebody is hidden from
+                        // you, or there is nobody to show" from "nothing matched", and neither is an
+                        // error the admin has made.
+                        color = if (designerStandDown != null || designerOffer?.truncated == true) {
+                            MaterialTheme.field.warning
+                        } else {
+                            MaterialTheme.field.muted
+                        },
+                        fontSize = 12.sp
+                    )
+                }
+                SearchableSelectField(
+                    label = "Designer this workshop is for",
+                    options = designerOptions,
+                    selectedValue = designerUserId,
+                    // "NOT DECIDED YET" IS A REAL ANSWER AND IT IS THE DEFAULT ONE, so it is offered
+                    // as a row rather than left to the placeholder: that is what lets an admin UNDO a
+                    // pick without closing the form. The server folds it to "nobody named" and the
+                    // seed then behaves exactly as it did before this field existed.
+                    placeholder = "Not decided yet",
+                    includeNone = true,
+                    enabled = !busy && designerStandDown == null,
+                    onSelect = { picked -> designerUserId = picked }
+                )
+                Text(
+                    "Their designer profile is copied into stage 1 and stage 3, and they are given " +
+                        "access to this workshop in the same step. Leave it as “Not decided yet” if " +
+                        "you do not know — stage 1 then carries whoever creates the workshop, and a " +
+                        "designer can be added later from “Designers on a workshop”.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp
+                )
             }
         },
         confirmButton = {
@@ -1024,6 +1320,13 @@ private fun CreateWorkshopDialog(
                         val body = DesignWorkshopCreateBody(
                             title = title.trim(),
                             templateId = templateId,
+                            // FOLDED TO NULL RATHER THAN SENT AS "", because a body carrying the key
+                            // with nothing in it reads on the wire as an answer given. The server
+                            // would fold it itself — `(payload.designerUserId or "").strip() or
+                            // None` — but the same value is about to be written to the disk, where
+                            // "" and null would be two spellings of one state for every later pass
+                            // to disagree about. See [dwNamedDesignerId].
+                            designerUserId = dwNamedDesignerId(designerUserId),
                             craftName = craft.trim().takeIf { it.isNotEmpty() },
                             clusterName = cluster.trim().takeIf { it.isNotEmpty() },
                         )
@@ -1052,6 +1355,26 @@ private fun CreateWorkshopDialog(
                                 draft.copy(
                                     title = body.title,
                                     templateId = body.templateId,
+                                    // PERSISTED FROM THE BODY, NOT RE-READ FROM THE PICKER, so the
+                                    // draft carries exactly what was sent (or what will be sent) and
+                                    // there is one folded value rather than two.
+                                    //
+                                    // WRITTEN WHETHER OR NOT THE CREATE LANDED, and the two cases
+                                    // are not the same thing. If it landed, the field has already
+                                    // been consumed by `seed_designer_prefill` and this value is
+                                    // inert — `WorkshopSync` reads it only inside its
+                                    // `remoteIdOf(draft) == null` arm, which a draft with a remote id
+                                    // never enters. If it did NOT land, this is the whole point: a
+                                    // workshop started in a courtyard remembers the designer the
+                                    // admin picked before the signal went, and names them on the
+                                    // create the sync pass makes days later.
+                                    //
+                                    // AND IT IS NOT `designerName`. This draft holds no such field
+                                    // and must not grow one here: the display name is DENORMALISED
+                                    // from stage 1 by the server's `promoted_values()` after the seed
+                                    // runs, and a picker that wrote both would give one fact two
+                                    // writers.
+                                    designerUserId = body.designerUserId,
                                     remoteId = remote.getOrNull()?.id,
                                     ownerUserId = repository.cachedUser()?.id,
                                     /*
@@ -1277,6 +1600,78 @@ internal fun classifyCreate(error: Throwable?, isTransient: (Throwable) -> Boole
             error.apiErrorMessage("The server refused to start this workshop.")
         )
     }
+
+/**
+ * WHY THE DESIGNER PICKER HAS NO LIST TO OFFER — or null when it has one and must say nothing.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT A `when` INSIDE THE DIALOG ───────────────────────────────────
+ *
+ * The same argument `dwViewerOfferNotice` makes one layer down, and the same one `classifyCreate`
+ * above makes: these are DECISIONS, not layout, and a `when` inside a composable is only ever
+ * exercised by somebody looking at a phone. The predicate is injected for the second half of that
+ * reason — so the decision can be asserted with no HTTP stack, and so there is no second opinion in
+ * this app about what "offline" means. `classifyCreate` takes `isTransient` for exactly this.
+ *
+ * ── THE FOUR ANSWERS, AND WHY NONE OF THEM IS AN EMPTY PICKER ───────────────────────────────────
+ *
+ * Rule 10 of this repo: a list that quietly stops is indistinguishable from a place with no records.
+ * An empty designer picker with nothing said reads as "this repository has no eligible designers",
+ * which is a statement about the empanelment roster that none of these four failures supports.
+ *
+ *  1. **No connection.** Eligibility is two roster reads on the SERVER — the DESIGNER empanelment
+ *     roster and the platform allow-list — and no useful part of it can be answered from this
+ *     device, so the control stands down. It says the workshop can still be started, because it can:
+ *     that is the whole point of the local id this dialog mints, and an admin who thought otherwise
+ *     would stand in a courtyard waiting for a bar of signal they may not get for two days.
+ *  2. **A 404 from the id-less endpoint** — the only honest probe for "this deployment predates the
+ *     feature", because a 404 with no id in the request cannot mean a missing record. See
+ *     [dwViewerAdministrationMissing], which is where that reasoning lives.
+ *  3. **The connection failed under us**, which reads to the admin as case 1 and is told as case 1.
+ *  4. **Anything else** — a 500, a 401, a body that would not parse. Said plainly rather than dressed
+ *     up as an offline message, which is the split this whole screen already carries for the create
+ *     itself: a refusal is not a disconnection.
+ *
+ * @param error null when nothing was attempted (the offline stand-down), otherwise the failure.
+ */
+internal fun dwDesignerPickerStandDown(
+    offline: Boolean,
+    error: Throwable?,
+    isConnectionFailure: (Throwable) -> Boolean,
+): String? {
+    val cannotReach =
+        "There is no connection, so the list of designers cannot be read. Start the workshop now " +
+            "and name the designer once this phone is back online — nothing is lost by leaving it, " +
+            "and stage 1 carries whoever started it until then."
+    if (offline) return cannotReach
+    if (error == null) return null
+    if (dwViewerAdministrationMissing((error as? HttpException)?.code())) {
+        return "This repository does not offer the designer list yet. The workshop can still be " +
+            "started; stage 1 will carry whoever started it."
+    }
+    if (isConnectionFailure(error)) return cannotReach
+    return "The list of designers could not be read just now. The workshop can still be started; " +
+        "stage 1 will carry whoever started it, and a designer can be added afterwards from " +
+        "“Designers on a workshop”."
+}
+
+/**
+ * What the create carries for a pick: the chosen account id, or null for "nobody named".
+ *
+ * **BLANK IS ABSENT, AND IT IS FOLDED HERE RATHER THAN LEFT TO THE SERVER.** The route does fold it
+ * — `(payload.designerUserId or "").strip() or None` — but the same value is also written to
+ * [com.designprototype.workshop.data.WorkshopDraft.designerUserId] on the disk, where "" and null
+ * would be two spellings of one state for every later sync pass to disagree about. One fold, before
+ * either copy is made.
+ *
+ * **PYTHON'S `strip()`, so the two sides agree on emptiness** — the same choice [dwViewerSearchTerm]
+ * makes and for the same reason: Python calls the no-break space U+00A0 whitespace and
+ * `Char.isWhitespace` does not. An id never comes from a keyboard here (the picker hands back the
+ * server's own `DwEligibleViewerDto.id`, or "" from the "Not decided yet" row), so this is belt and
+ * braces rather than a live defect — but a value that means "nobody" on the server and "somebody" on
+ * the phone is precisely the disagreement this field exists to end, and it costs one call to be sure.
+ */
+internal fun dwNamedDesignerId(picked: String?): String? =
+    DwPy.strip(picked.orEmpty()).takeIf { it.isNotEmpty() }
 
 // --------------------------------------------------------------------------------------
 // Helpers

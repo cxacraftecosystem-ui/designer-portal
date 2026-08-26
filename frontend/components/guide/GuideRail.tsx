@@ -104,7 +104,24 @@ export function GuideRail({
           </div>
 
           <nav className="mt-5 border-t border-line-200 pt-4" aria-label="Walkthrough steps">
-            <ol className="grid gap-0.5">
+            {/*
+              THE LIST SCROLLS INSIDE ITSELF, and it has to now rather than as a precaution.
+
+              The panel is `sticky top-28`, so it never leaves the viewport — which means anything
+              taller than the viewport has no way of being reached AT ALL: scrolling the page moves
+              the steps past it and leaves the rail exactly where it was. At ten steps the panel was
+              about 470px and the question did not arise. At nineteen it is around 770px, which
+              overflows a 1366×768 laptop — the size of machine this web client is actually used on
+              — and silently swallowed the last five entries, the whole designer arc among them.
+
+              `100vh` minus 19rem is the sticky offset (7rem), the panel's padding, the ring row, the
+              nav's own spacing and a little air at the bottom, rounded up rather than derived
+              exactly: being slightly short costs a few pixels of scroll and being slightly long
+              costs the reader the last row, so the error is taken in the safe direction. `min-h`
+              keeps it usable on a very short window, where clipping to almost nothing would be
+              worse than letting the panel run past the fold.
+            */}
+            <ol className="grid max-h-[calc(100vh-19rem)] min-h-[12rem] gap-0.5 overflow-y-auto pr-1">
               {steps.map((step, index) => {
                 const isActive = index === activeIndex;
                 const isPast = index < activeIndex;

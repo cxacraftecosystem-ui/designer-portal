@@ -207,7 +207,11 @@ Android, a validator in `coerce_value` and a renderer in `report_builder`, so a 
 its place four times over. `FieldType` exposes `is_media`, `is_numeric` and `is_multi` so client and
 server code can group them without restating the membership.
 
-Two rendering rules are not expressible as a type and must be honoured by every client:
+Some rules are not expressible as a type and must be honoured by every client. The register is
+`field_to_dict` in `stage_schema.py` — the keys it emits are exactly what crosses the wire — and
+these are the ones that change what a client must DO. **This paragraph said "two rendering rules"
+until 2026-08-26 and named the first two; a count in prose over a register that grows is the failure
+this document's own maintenance table forbids, so it no longer states one.**
 
 - **`captionFor`.** A field with `caption_for` set is the caption *of* that media field. Render it
   directly beneath the field it captions, never as a separate input in the list. `validate_registry`
@@ -216,6 +220,19 @@ Two rendering rules are not expressible as a type and must be honoured by every 
   `TABLE_COLUMN`, `CAPTION`, `GALLERY`, `COVER_FIELD`, `METRIC`, `BULLETS`, `HIDDEN`. A field with
   `HIDDEN` is captured and retained but never printed, which is a legitimate outcome for internal
   bookkeeping and much better than the alternative of printing everything and burying the narrative.
+- **`maxItems`.** How many entries a multi-valued field may hold — `IMAGE_LIST`, `TAGS`,
+  `MULTI_ENUM` — and the one entry on this list a client must act on *before* the designer does
+  anything, because `coerce_value` **refuses** an over-long array rather than trimming it. A cap only
+  the server knows about is a cap a designer meets after attaching the twenty-fifth photograph, with
+  the work already done and nothing saying which five to drop; on a handset it is worse still,
+  because the import has by then copied the bytes into the workshop's media directory. So both
+  clients read the key, stop at it, and say the number on screen. **An ABSENT `maxItems` means the
+  server's `DEFAULT_MAX_ITEMS`, not "unbounded":** `field_to_dict` emits the key only where a field
+  declares a cap, so a client must neither read the absence as no limit nor print a number it did
+  not read — a stated cap that is not the enforced cap is worse than no sentence at all. It is
+  deliberately **not** part of `registry_version()`, since the values already stored are still valid,
+  which means a client that has not refetched is enforcing the previous cap and the server remains
+  the authority either way.
 
 ### Coercion is forgiving; typing is not
 
@@ -789,7 +806,12 @@ the viewer grant landed means the creator, an admin, **or** somebody an admin ha
 saving would mean a partially-applied stage on a dropped connection, which on a two-week document is
 a corruption nobody can see. `submit` is what flips `enforce_required` on. Payload size is bounded
 (`MAX_STAGE_ROWS`, `MAX_FIELD_KEYS` in `backend/app/schemas/design_workshops.py`) so one malformed
-client cannot post an unbounded blob into a JSON column.
+client cannot post an unbounded blob into a JSON column. **Those two bound the CONTAINERS — rows per
+stage and keys per row — and for a long time nothing bounded the CONTENTS**, so a single
+multi-valued field could still carry an arbitrarily long array into the jsonb column and be
+re-serialised in full on every later read of the stage. `DEFAULT_MAX_ITEMS` and
+`DEFAULT_MAX_ITEM_CHARS` in `stage_schema.py` close that half, applied by `coerce_value` on every
+save; a field may narrow the first for itself with `max_items` (see `maxItems` in §4).
 
 Operation counts for the whole API are generated into [REPO_FACTS.md](REPO_FACTS.md).
 

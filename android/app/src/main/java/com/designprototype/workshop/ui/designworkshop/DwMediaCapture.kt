@@ -47,6 +47,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,8 +57,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.designprototype.workshop.data.DW_DEFAULT_MAX_ITEMS
 import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.FieldDto
+import com.designprototype.workshop.data.dwEffectiveMaxItems
 import com.designprototype.workshop.ui.MediaViewerDialog
 import com.designprototype.workshop.ui.RecordingIndicator
 import com.designprototype.workshop.ui.rememberMediaImageLoader
@@ -135,6 +140,43 @@ private fun galleryMimeFor(type: DwFieldType): String = when (type) {
 }
 
 /**
+ * WHAT AN IMPORT DROPPED, IN WORDS — AND THE CEILING ONLY WHERE THE REGISTRY DECLARED IT.
+ *
+ * ONE CLAUSE CHANGES AND ONLY ONE, which is the same split `FieldInput.tsx`'s `refusalNotice` makes
+ * for the same reason. With a DECLARED cap the sentence states the number, because that number came
+ * off the registry and the hint under the capture buttons has been printing it all along. With none,
+ * the ceiling is the server's [DW_DEFAULT_MAX_ITEMS] and the sentence says the field is FULL and
+ * stops: docs/DESIGN_WORKSHOP.md:229-232 forbids a client printing a number it did not read, because
+ * "a stated cap that is not the enforced cap is worse than no sentence at all".
+ *
+ * DROPPING THE SENTENCE ALONG WITH THE NUMBER WAS NOT AVAILABLE INSTEAD, and that trade is the
+ * mistake this function exists to make unrepresentable. What the counted clause carries is the only
+ * record anywhere of a refusal — `adopt` trims before `media.attach` copies a byte, so a photograph
+ * that did not land has no row, no thumbnail, nothing in the draft and nothing on the server — so
+ * saying nothing on an undeclared gallery would turn a loud trim into a silent drop of the
+ * two-hundred-and-first photograph, which is exactly what [DwMediaCaptureCard]'s comment on `adopt`
+ * refuses: *"the honest act is to take what fits and SAY what did not"*.
+ *
+ * IT COUNTS RATHER THAN NAMING FILES, where the web names them. Not a divergence worth closing: this
+ * card is handed content Uris and trims them before anything is imported, so the only handle it has
+ * on a refused photograph is that there was one — and a `content://` path is not a thing to show a
+ * designer. The count is what they can act on.
+ *
+ * `internal` and a pure function of its inputs so [DwMediaCapCeilingTest] can hold it to both rules
+ * on a desktop JVM, where no `@Composable` can be composed.
+ */
+internal fun dwCapNotice(label: String, declaredCap: Int?, dropped: Int, chosen: Int): String {
+    val one = dropped == 1
+    val ceiling = if (declaredCap == null) {
+        "$label is full"
+    } else {
+        "$label holds at most $declaredCap file${if (declaredCap == 1) "" else "s"}"
+    }
+    return "$ceiling. $dropped of the $chosen you chose ${if (one) "was" else "were"} not attached. " +
+        "Remove something first if you need ${if (one) "it" else "them"} instead."
+}
+
+/**
  * The whole card for one media field.
  *
  * [ids] are the media ids already stored in the field's value, in the order they were attached, and
@@ -161,6 +203,39 @@ internal fun DwMediaCaptureCard(
     val routes = remember(type) { routesFor(type) }
 
     /**
+     * THE CEILING THIS FIELD IS HELD TO, AND THE CEILING IT IS ALLOWED TO PRINT — TWO DIFFERENT
+     * NUMBERS, AND CONFLATING THEM IS WHAT docs/DESIGN_WORKSHOP.md:229-232 FORBIDS IN AS MANY WORDS.
+     *
+     * [declaredCap] is what the registry said, or null where it said nothing. [cap] is what is
+     * actually enforced, and for a multi-valued field that is never nothing: an absent `maxItems`
+     * means the server's [DW_DEFAULT_MAX_ITEMS], not "no limit" — see [FieldDto.maxItems].
+     *
+     * READING THE ABSENCE AS NO LIMIT IS HALF OF THE FORBIDDEN PAIR, and it is the half this card did
+     * until 2026-08-26. It did not cost the designer the surplus photographs, which would have been
+     * survivable; it cost the whole stage write. `coerce_value` REFUSES an over-long array rather than
+     * trimming it (stage_schema.py:1822) and `save_stage` restores the rejected key from `previous`,
+     * so a gallery grown past the ceiling syncs as a field that simply did not save — with the bytes
+     * already copied into the workshop's media directory.
+     *
+     * PRINTING A NUMBER THIS CLIENT DID NOT READ IS THE OTHER HALF, which is why [declaredCap]
+     * survives as a value of its own rather than being folded into [cap]. The registry declares a cap
+     * on two of its image lists and nothing on every other gallery, so drawing "up to 200" under the
+     * rest would be this client inventing a number the server owns and may change without a
+     * `registry_version()` bump: a stated cap that is not the enforced cap is worse than no sentence
+     * at all. So the always-visible hint below reads [declaredCap], the trim in [adopt] reads [cap],
+     * and the trim still SAYS what it dropped — naming the ceiling only where [declaredCap] gave it
+     * one — because a silent drop is the one outcome the doc and [adopt]'s own comment both refuse.
+     *
+     * Only meaningful for a multi-valued field: a single IMAGE/FILE/AUDIO/VIDEO holds one by
+     * construction, and [adopt] already replaces rather than appends for those.
+     */
+    val declaredCap = if (multiple) field.maxItems.takeIf { it > 0 } else null
+    val cap = if (multiple) dwEffectiveMaxItems(field.maxItems) else null
+
+    /** Why an import was cut short, when it was. Cleared by the next import that fits. */
+    var capNotice by remember(field.key) { mutableStateOf<String?>(null) }
+
+    /**
      * The capture currently in flight, kept OUTSIDE the launcher callback.
      *
      * `TakePicture` reports only a boolean; the file it wrote is the one we handed it, and if that
@@ -178,7 +253,46 @@ internal fun DwMediaCaptureCard(
     /** Import a finished capture and, only once the bytes are safely copied, drop the staging file. */
     fun adopt(uris: List<Uri>, staging: List<File> = emptyList()) {
         if (uris.isEmpty()) return
-        media.attach(uris, field) { newIds ->
+        /*
+         * THE CAP IS APPLIED BEFORE THE IMPORT, NOT AFTER IT, AND THAT IS THE WHOLE POINT ON A PHONE.
+         *
+         * `media.attach` copies every byte into the workshop's media directory under filesDir before
+         * it hands back an id. Trimming after that call would leave orphaned copies of the
+         * photographs it refused — files the UI has no row for and therefore no way to delete —
+         * filling a field handset that is usually short of space. Trimming the Uri list is free.
+         *
+         * TRIMMED HERE AND REFUSED ON THE SERVER, which is the same split the web makes: there is
+         * somebody to tell, right now, before anything is copied, so the honest act is to take what
+         * fits and SAY what did not. `coerce_value` has nobody to ask and must refuse the whole field.
+         *
+         * THE TRIM READS [cap] AND SO IT FIRES ON EVERY GALLERY, not only the two that declare a
+         * number — an absent `maxItems` is the server's [DW_DEFAULT_MAX_ITEMS] and never "no limit".
+         * THE NOTICE FIRES WITH IT, and it is handed [declaredCap] rather than [cap] so that the one
+         * clause naming a number is dropped where the number is the server's: see [dwCapNotice], which
+         * is the wording that lets both halves of docs/DESIGN_WORKSHOP.md:231-232 hold at once. Gating the
+         * NOTICE ITSELF on a declared cap while trimming at 200 anyway would have been the trade that
+         * paragraph exists to refuse — a silent drop of the two-hundred-and-first photograph.
+         */
+        val trimmed = if (cap == null || !multiple) uris else uris.take((cap - ids.size).coerceAtLeast(0))
+        if (multiple && cap != null && trimmed.size < uris.size) {
+            val dropped = uris.size - trimmed.size
+            capNotice = dwCapNotice(
+                label = field.label,
+                declaredCap = declaredCap,
+                dropped = dropped,
+                chosen = uris.size,
+            )
+            // The staging files for what was refused are deleted here rather than left for a sweep:
+            // nothing downstream will ever reference them, and a camera capture that was cut by the
+            // cap is a file whose only purpose has just ended.
+            if (trimmed.isEmpty()) {
+                staging.forEach { file -> runCatching { file.delete() } }
+                return
+            }
+        } else {
+            capNotice = null
+        }
+        media.attach(trimmed, field) { newIds ->
             if (newIds.isEmpty()) return@attach
             onIdsChange(if (multiple) ids + newIds else listOf(newIds.first()))
             // The import made its own durable copy under media/, so the staging file is now a
@@ -419,12 +533,205 @@ internal fun DwMediaCaptureCard(
             RecordingIndicator(getAmplitude = { runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0) })
         }
 
+        /*
+         * THE CEILING, IN WORDS, WHEREVER ONE IS DECLARED — and it states what is LEFT rather than
+         * only the total. "20 photographs" is a rule; "4 more can be attached" is an answer to the
+         * question a designer standing in front of twenty-five motifs is actually asking. It is drawn
+         * under the capture buttons rather than over them so it sits beside the count it describes.
+         *
+         * The buttons are deliberately NOT disabled at the ceiling. A designer who has filled a
+         * gallery still needs the picker to replace something, and more importantly the same card
+         * carries the retry path for a failed import — disabling it at the cap would strand that.
+         * The trim in `adopt` is what enforces the number; this is what stops anybody meeting it by
+         * surprise.
+         *
+         * IT READS [declaredCap] AND NOT [cap], WHICH IS WHY THE TWO EXIST SEPARATELY. Every gallery
+         * is now trimmed to a ceiling, but only two of them have a ceiling this client is entitled to
+         * PRINT: on the rest it is the server's [DW_DEFAULT_MAX_ITEMS], and "up to 200 files" would be
+         * a number this client did not read, drawn permanently under a picker, which
+         * docs/DESIGN_WORKSHOP.md:231-232 forbids in as many words. The default ceiling is not left silent
+         * either: the only moment it can bite is an import, and [dwCapNotice] is spoken then, naming
+         * the field and what did not land.
+         */
+        if (declaredCap != null) {
+            val room = (declaredCap - ids.size).coerceAtLeast(0)
+            Text(
+                if (room == 0) {
+                    "${field.label} is full at $declaredCap file${if (declaredCap == 1) "" else "s"}. Remove one to attach another."
+                } else {
+                    "Up to $declaredCap file${if (declaredCap == 1) "" else "s"} — $room more can be attached."
+                },
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp
+            )
+        }
+
+        /*
+          WHAT AN IMPORT DROPPED, AND HOW MANY THEY WERE — a COUNT and not a list of names, which is
+          the one way this region differs from the web's twin. See [dwCapNotice] for why: this card
+          trims content Uris before importing them, so at the moment it has something to say the only
+          handle it holds on a refused photograph is that there was one. Nothing is broken and nothing already
+          attached was lost, but the designer has to know that some of what they chose did not land —
+          the "resolved promise read as total success" failure that `uploadMediaBatch`'s contract on
+          the web is written against, arriving here by way of the cap.
+
+          ════════════════════════════════════════════════════════════════════════════════════════════════
+          THE SENTENCE IS SPOKEN, AND THE REGION EXISTS BEFORE THERE IS ANYTHING IN IT
+          ════════════════════════════════════════════════════════════════════════════════════════════════
+
+          This is the ONLY record anywhere of which files were refused. `adopt` trims the Uri list
+          before `media.attach` copies a byte, so there is no row for a refused file, no thumbnail,
+          nothing in the draft and nothing on the server: the sentence IS the receipt. It was a bare
+          `Text`, which means a designer using TalkBack chose nine photographs, had four silently
+          declined, and had no way at all to learn it — the cap notice is invisible to them and the
+          gallery below simply holds five.
+
+          THE REGION IS COMPOSED WHETHER OR NOT THERE IS A SENTENCE IN IT. Assistive technology
+          announces a CHANGE inside a region that already existed, so a region created in the same
+          breath as its first message is a region whose first message is never announced — and the
+          first message is the only one most imports produce. `mergeDescendants` is what makes it
+          work: a live region announces a change to ITS OWN semantics and this node has no text of
+          its own, so merged, the child's sentence IS this node's text and replacing it is the change
+          that gets announced. The same idiom, for the same two reasons, as [DwRankableList]'s move
+          announcer and `DwReviewTextBox`'s dropped-characters notice; do not invent a second one.
+
+          ASSERTIVE AND NOT POLITE, chosen by meaning. Polite waits for a pause, and the pause after
+          a gallery import is a designer walking away believing all nine photographs are attached.
+          This is a refusal with a remedy in it ("Remove something first"), it is about work that has
+          just been discarded, and it has to interrupt. `DwRankableList` announces a reorder POLITELY
+          for the opposite reason: nothing there was lost and the list on screen already says so.
+        */
+        Box(
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                liveRegion = LiveRegionMode.Assertive
+            },
+        ) {
+            capNotice?.let { sentence ->
+                Text(
+                    sentence,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        }
+
         if (ids.isEmpty()) {
             Text(
                 if (multiple) "No photographs yet." else "Nothing attached yet.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
+        }
+
+        /*
+         * THE BROWSABLE VIEW OF A CAPPED GALLERY — the handset's half of the motif carousel.
+         *
+         * GATED ON THE DECLARED CAP, NOT ON A FIELD KEY, which is the same rule the web applies and
+         * the difference between a feature and a special case: a gallery whose ceiling somebody
+         * bothered to declare is a gallery meant to be LOOKED at, and the two motif galleries are the
+         * two that declare one today. Keying it to `motifPhotos`/`contemporaryMotifPhotos` by name
+         * would put the app's behaviour in a `when` instead of in the registry, and the next such
+         * gallery would silently not get it.
+         *
+         * [declaredCap] AND EMPHATICALLY NOT [cap]. Since 2026-08-26 every gallery is trimmed to a
+         * ceiling — an absent `maxItems` means the server's default rather than no limit — so [cap] is
+         * non-null for every other gallery too, and gating on it would put a carousel under every image
+         * list in the registry. What this reads is the DECLARATION, which is the signal.
+         *
+         * DRAWN ABOVE THE ATTACHMENT ROWS, not instead of them. The rows are where a file is named,
+         * has its caption written and is removed; the carousel is where it is judged. Replacing one
+         * with the other would take the Remove control and the AI-verb row with it.
+         *
+         * IMAGES ONLY, and resolvable ones only. `media.resolve` reads the LOCAL descriptor index, so
+         * a photograph attached in the browser answers null here — that is a different thing to draw
+         * and not an error (the same case `RichTextEditor` records), and the attachment row below
+         * already says so for that file. A carousel that drew a "?" tile for it would say it twice.
+         */
+        if (declaredCap != null && multiple) {
+            val gallery = remember(ids, media) {
+                ids.mapNotNull(media.resolve).filter { it.mediaType.equals("IMAGE", ignoreCase = true) }
+            }
+            if (gallery.isNotEmpty()) {
+                DwMediaCarousel(
+                    items = gallery,
+                    noun = field.label.lowercase(),
+                    onOpen = { item -> viewing = item }
+                )
+            }
+        }
+
+        /*
+         * THE FIRST PAGE OF AN ATTACHED DOCUMENT — the other half of the 2026-08-25 instruction
+         * [DwDocumentPreview] is named for, and until 2026-08-26 the half nothing mounted.
+         *
+         * That file's own header states the requirement as TWO documents, "the designer's CV on the
+         * profile screen, and the market survey write-up on stage 8". Only the first had a call site
+         * (DesignerProfileScreen.kt), so stage 8's `surveyDocument` — and every other FILE field in the
+         * registry with it — attached, named and opened a PDF on the handset without ever showing a
+         * page of it.
+         * The web mounts the same component GENERICALLY from its own FILE branch
+         * (FieldInput.tsx:3103), so the two clients disagreed about the very document the instruction
+         * singled out.
+         *
+         * MOUNTED FROM THE REGISTRY, ON THE WEB'S CONDITION, NOT FROM A FIELD KEY. `field.type == FILE`
+         * and exactly one attachment, so the next document field the registry declares gets a preview
+         * with no change here — the same argument the carousel above makes about the declared cap.
+         *
+         * THE WEB'S "not a local ref" TEST INVERTS ON THIS CLIENT, and reading it literally would have
+         * mounted nothing. In the browser a `dwlocal:` reference has no `MediaFile` row, so `GET
+         * /media/{id}` would 404 and a perfectly readable document would be reported as unreadable;
+         * the honest condition there is "the server has acknowledged it". Here the bytes ARE the local
+         * copy — `media.resolve` reads the draft's own descriptor index and hands back a path under
+         * filesDir — and a document attached in the BROWSER is the one that answers null, exactly as
+         * the carousel's note above records. So the condition is "this device can resolve it", which is
+         * the same question asked from the other end: is there a document to draw at all.
+         *
+         * AND "RESOLVE" MEANS THE BYTES, NOT THE ROW — see the note at the mount itself.
+         * `media.resolve` consults the descriptor index and never touches the disk, so on its own it
+         * answers yes for a document this handset has a RECORD of and no copy of. Both halves are
+         * tested, or the honest "is there a document to draw" becomes "is there one named".
+         *
+         * `remoteUrl = null` FOR THE SAME REASON. This surface has no pre-signed link and needs none;
+         * [DwDocumentPreview] prefers a local file over a URL anyway, and its cache is keyed on the id
+         * it is given, so nothing here fetches. NO MIME EITHER: [DwMediaItem.mediaType] is this app's
+         * own category ("IMAGE", "VIDEO", "FILE") and not a MIME type, and handing "FILE" to a
+         * parameter that is tested against `application/pdf` would defeat the filename test that is
+         * the card's actual evidence.
+         *
+         * `noun = field.label.lowercase()`, NOT SENT THROUGH A NOUN-STRIPPER, which the web checked
+         * rather than assumed (FieldInput.tsx:3091-3102) when [DwMediaCarousel]'s noun was found to
+         * stutter: [DwDocumentPreview] appends no noun of its own, so the label lands whole in "No
+         * {noun} on file." and its four sibling sentences and nothing can be doubled. Lower case
+         * because those sentences need it mid-sentence; the cost is an acronym read as "designer's cv",
+         * and per-label casing is a judgement for whoever owns the copy rather than a derivation to
+         * guess at from a call site.
+         */
+        if (type == DwFieldType.FILE && ids.size == 1) {
+            val document = media.resolve(ids.first())
+            /*
+              THE BYTES, NOT MERELY THE DESCRIPTOR. [DwMediaBridge.resolve] looks the id up in the
+              draft's descriptor index and never touches the disk, so it answers non-null for a
+              document this handset has a RECORD of and not a copy of — a workshop pulled down from
+              the server, or one whose media directory a cleanup reclaimed.
+
+              Handed that path unchecked, [DwDocumentPreview] takes its `looksLikePdf` branch with a
+              non-null `localFile`, the render fails inside its own `runCatching`, and the card says
+              "This device could not render the document. Open it to read it." over a file the Open
+              button cannot open either. That is the worst of the three sentences it could say: the
+              component already carries an honest one for a document whose bytes are not here, and
+              `remoteUrl = null` is what reaches it once `localFile` is null.
+            */
+            val onDevice = document?.let { File(it.absolutePath).takeIf(File::exists) }
+            if (document != null && onDevice != null) {
+                DwDocumentPreview(
+                    mediaId = document.id,
+                    noun = field.label.lowercase(),
+                    localFile = onDevice,
+                    remoteUrl = null,
+                    displayName = document.displayName,
+                )
+            }
         }
 
         ids.forEach { id ->

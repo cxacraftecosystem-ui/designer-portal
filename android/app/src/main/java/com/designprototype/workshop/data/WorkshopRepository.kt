@@ -92,6 +92,23 @@ internal const val DESIGN_WORKSHOP_MEDIA_TAG = "designWorkshop"
 internal const val OFFLINE_EXPORT_RECORD = "designWorkshopExport"
 
 /**
+ * [PendingEntry.type] for a DESIGN REVIEW RATING captured with no signal.
+ *
+ * The second entry type in this queue that is not a record — see [OFFLINE_EXPORT_RECORD] above — and
+ * it is here for the reason that one is: the queue's dispatch is a `when` over this string, so the
+ * constant is what stops a typo between the producer ([WorkshopRepository.submitDesignRating]) and
+ * the replay (`createFromEntry`) from parking every queued judgement for ever behind "Unknown
+ * offline entry type", which [WorkshopRepository.isTransient] calls worth retrying.
+ *
+ * THE REPLAY IS SAFE TO REPEAT, which is not true of most entries here and is why this one needs no
+ * `targetId` and no de-duplication key. `POST /design-ratings` is idempotent under replay by
+ * construction: `@@unique([stageEntryId, reviewerId, round])` makes a second row unrepresentable and
+ * a delivery whose device clock is not newer than the stored row's writes nothing and answers with
+ * the row the server already holds.
+ */
+internal const val OFFLINE_DESIGN_RATING = "designRating"
+
+/**
  * [PendingEntry.type] for an entry that CREATES NOTHING and only carries files to a record that is
  * already on the server. [PendingEntry.targetId] holds that record's id and [PendingEntry.label]
  * names it for the tray.
@@ -1521,6 +1538,135 @@ class WorkshopRepository(
      */
     suspend fun designWorkshopProvenance(workshopId: String): DwProvenanceReportDto =
         api.designWorkshopProvenance(workshopId)
+
+    // ── DESIGN REVIEW: the rating ledger ─────────────────────────────────────────────────────────
+    //
+    // THE READS THROW AND ARE NEVER CACHED, which puts them with the three access calls above rather
+    // than with the stage reads. The stage block degrades to the device because a workshop is a DATED
+    // OBSERVATION and yesterday's copy of it is still true; a round's SCORES are the opposite kind of
+    // fact. They are other people's judgements arriving continuously from other devices, so a cached
+    // answer would show a designer a ranking that has since moved — and, worse, would let them fix an
+    // arrangement against averages that are no longer the ones the ranking was computed from. There
+    // is no offline form of "what do my colleagues think", and inventing one would be a screen that
+    // looks live and is not.
+    //
+    // THE WRITE IS THE EXCEPTION AND IS QUEUED, because a judgement is captured in a courtyard. See
+    // [submitDesignRating].
+
+    /**
+     * One review round's pieces, in PLACED order, each carrying both positions and this caller's own
+     * rating.
+     *
+     * [workshopId] IS THE SERVER'S ID AND NOT THE DRAFT STORE'S, the same requirement
+     * [designWorkshopProvenance] carries: a workshop started in a courtyard holds a `local-…` id no
+     * server has ever seen, and this endpoint has nothing to say about a workshop that has never left
+     * the phone. The screen resolves it before asking.
+     *
+     * The round token is passed as a String rather than the enum so that this layer stays the wire
+     * and nothing else; `DwRatingRound.wire` is what the caller hands over.
+     */
+    suspend fun designRatingRound(
+        round: String,
+        workshopId: String,
+        entityKey: String,
+    ): RoundRankingDto = api.designRatingRound(
+        round = round,
+        workshopId = workshopId,
+        entityKey = entityKey,
+    )
+
+    /**
+     * Who rated one piece, when and how — whatever the server is willing to tell THIS account.
+     *
+     * NOTHING IS FILTERED HERE AND NOTHING MAY BE. `rating_payload` omits a `reviewerId` the caller
+     * may not have and `visible_rows` drops rows they may not see, both before the response is built,
+     * so what arrives is already exactly what may be shown. A second opinion in this client would be
+     * a weaker copy of a rule the server enforces — the kind that goes stale the first time the
+     * server's own changes — and hiding a column in a client was never a control in the first place.
+     */
+    suspend fun designRatingLedger(subjectId: String, round: String): SubjectLedgerDto =
+        api.designRatingLedger(subjectId = subjectId, round = round)
+
+    /**
+     * Submit a rating, or keep it on this phone and let the outbox deliver it.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════════
+     * WHY THIS ONE IS QUEUED WHEN THE TWO READS ABOVE ARE NOT
+     * ══════════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * A rating is a judgement made in a courtyard, in front of the piece, by somebody who will not be
+     * standing there again. Refusing it for want of a signal loses a score, an assessment and a
+     * suggested change that nothing else on the device holds — the web's own review card records this
+     * as having been "the ONE value on the whole sketches and prototypes surface with no persistence
+     * path of any kind", and offline is far more nearly the RULE on a handset than it is in a browser.
+     *
+     * Everything the queue needs, the server already had: the route is idempotent under replay, a
+     * second row is unrepresentable (`@@unique([stageEntryId, reviewerId, round])`), and two
+     * deliveries of one capture are ordered by the DEVICE clock rather than by arrival.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════════
+     * `ratedAt` IS STAMPED HERE AND ONLY ON THE QUEUED PATH, WHICH IS THE POINT OF THE FIELD
+     * ══════════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * The direct path omits it deliberately: submitted straight against the server, the row's own
+     * `createdAt` IS the moment the designer moved the control, and stamping the field at send time
+     * would write the sync clock into the one column whose job is to not be the sync clock. A QUEUED
+     * rating is the case the column exists for — made in the courtyard, delivered from the office
+     * three days later — and `rating_plan` orders two deliveries of one capture by it, which is the
+     * whole of what stops a queued original from undoing an amendment after a tunnel.
+     *
+     * So the stamp is taken at the moment of QUEUEING, which is the moment of capture: this function
+     * is called synchronously from the designer pressing the button, and the failing request in front
+     * of it takes seconds rather than days.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════════
+     * ONLY A REQUEST THE SERVER NEVER ANSWERED IS QUEUED
+     * ══════════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * An [HttpException] means the server SAW this rating and said no — a 403 on the designer's own
+     * record, a 422 on a bad round, a 404 on a subject they may not see, a 503 on a deployment whose
+     * migration has not run — and replaying a refusal for ever behind a sentence promising it will
+     * land is worse than the refusal. So the status is re-thrown for the screen to print, and only a
+     * shape that never reached the server is queued. That is a NARROWER test than [isTransient],
+     * which excuses every 5xx because all a record queue has to decide is whether to keep the entry;
+     * here a 5xx is an answer, and the boxes keep the designer's text either way.
+     *
+     * A DOUBLE PRESS WITH NO SIGNAL QUEUES TWICE, AND THAT IS ACCEPTED RATHER THAN UNNOTICED. The
+     * queue holds no de-duplication key, so two entries go up; the second carries the later
+     * `ratedAt`, the route stores whichever is newer and answers `replayed` for the other, and no
+     * second row can exist. Two tray rows for one judgement is the whole cost, and it is paid in
+     * exchange for never having to decide on a device whether two presses were one intention.
+     *
+     * @param label what a designer will recognise this by in the outbox tray a week later. The
+     *   PIECE's own name — an endpoint is not something anybody recognises.
+     */
+    suspend fun submitDesignRating(
+        context: Context,
+        body: DesignRatingBody,
+        label: String,
+    ): DwRatingOutcome {
+        try {
+            return DwRatingOutcome.Sent(api.submitDesignRating(body))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Answered, or permanent: the screen prints what the server said. See the KDoc.
+            if (e is HttpException || !isTransient(e)) throw e
+            OfflineOutbox.enqueue(
+                context,
+                PendingEntry(
+                    id = java.util.UUID.randomUUID().toString(),
+                    type = OFFLINE_DESIGN_RATING,
+                    payloadJson = offlineJson.encodeToString(
+                        body.copy(ratedAt = Instant.now().toString())
+                    ),
+                    label = label,
+                    createdAt = Instant.now().toString(),
+                )
+            )
+            return DwRatingOutcome.Queued
+        }
+    }
 
     // ── The DESIGNER tier ────────────────────────────────────────────────────────────────────────
     //
@@ -5453,6 +5599,26 @@ class WorkshopRepository(
             api.recordDesignWorkshopExport(queuedExport.workshopId, queuedExport.body)
             CreatedRecord(queuedExport.workshopId)
         }
+        // A JUDGEMENT, NOT A RECORD, and it carries no media — so the replay reaches Synced the
+        // moment this returns and the entry leaves the queue.
+        //
+        // THE ID IS THE RATING ROW'S, and unlike the export above there is a real one to report: the
+        // route answers with the stored row whichever of create, amend and replay it resolved to. It
+        // matters only for the same narrow reason `createdId` exists at all — a pass interrupted
+        // after the POST must not send the body again — and here even that is belt and braces,
+        // because the route is idempotent under replay by construction. Nothing downstream reads it:
+        // this entry has no media to attach and no second step.
+        //
+        // THE BODY IS REPLAYED EXACTLY AS IT WAS QUEUED, `ratedAt` INCLUDED. That field is the
+        // courtyard moment and re-stamping it here would be the one mistake this whole mechanism
+        // exists to prevent: it would date every queued judgement to the drive home, and it would
+        // make a stale delivery look newer than the amendment that superseded it — putting back the
+        // tunnel regression `rating_plan` documents at length.
+        OFFLINE_DESIGN_RATING -> CreatedRecord(
+            api.submitDesignRating(
+                offlineJson.decodeFromString<DesignRatingBody>(entry.payloadJson)
+            ).rating.id
+        )
         else -> throw IllegalStateException("Unknown offline entry type: ${entry.type}")
     }
 

@@ -25,9 +25,9 @@ from typing import Any
 from app.core.db import db
 
 # Every column of ``DesignerProfile`` a person may write. Named once, here, and consumed by the
-# serializer, the updater and the schema's field list alike — three copies of a twenty-name list
-# is two copies that will disagree, and the way that failure surfaces is a field the designer can
-# save and then cannot see.
+# serializer, the updater and the schema's field list alike — three copies of a twenty-one-name
+# list is two copies that will disagree, and the way that failure surfaces is a field the designer
+# can save and then cannot see.
 PROFILE_FIELDS: tuple[str, ...] = (
     "displayName",
     "localName",
@@ -47,6 +47,18 @@ PROFILE_FIELDS: tuple[str, ...] = (
     "pincode",
     "photoMediaId",
     "signatureMediaId",
+    # THE CV, ADDED 2026-08-25. A media id like the two above it and never a URL — see
+    # `frontend/lib/designers.ts` rule 4 for why a stored pre-signed link is a report that prints a
+    # broken figure three months later with nothing on the row to say why. The Designer Page renders
+    # it inline where it is a PDF.
+    #
+    # `designerCv` ON STAGE 3 IS THE COPY A REPORT *NAMES*, NOT ONE IT CARRIES, and this line said
+    # "carries" until it was measured. A FILE field reaches the document as its label plus a count —
+    # "1 document attached" — because no annexure in this product admits a FILE, and `build_report`
+    # emits a warning saying the bytes are not inside the file. The distinction matters here of all
+    # places: this is the table that decides what crosses into a workshop, so a reader deciding
+    # whether to add another FILE column needs to know what crossing actually buys.
+    "cvMediaId",
     "empanelmentNo",
     "empanelmentDate",
 )
@@ -186,22 +198,65 @@ def profile_payload(row: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 
 #: Profile column -> registry field key. The report never learns that a profile exists; it reads
-#: ordinary stage data written under these four keys, which is what keeps the designer's details
+#: ordinary stage data written under these keys, which is what keeps the designer's details
 #: editable per workshop like every other captured value.
+#:
+#: ── EVERY WRITABLE COLUMN IS CARRIED, WHICH IS THE OWNER'S INSTRUCTION OF 2026-08-25 ────────────
+#:
+#: It used to be four of the twenty. The instruction is that everything typed on the Designer Page
+#: is master data pre-filled into EVERY report, so the honest shape of this table is "all of them",
+#: and the way that is kept honest is
+#: ``test_every_writable_profile_column_is_either_prefilled_or_named_here``: a column added to
+#: :data:`PROFILE_FIELDS` must either appear below or be listed in that test's explicit exemptions,
+#: so the next column somebody adds cannot silently fail to reach a report. Widening it four at a
+#: time, by hand, with nothing checking, is how it came to be four out of twenty in the first place.
+#:
+#: THE ONE EXEMPTION, AND IT IS NOT AN OVERSIGHT. ``email`` is deliberately absent as a *separate*
+#: consideration only in the sense that it maps like the rest — every column below maps. The
+#: exemption list in that test is currently EMPTY, and a future column that genuinely must not
+#: cross (a private note, an internal flag) belongs there with its reason, never dropped in silence.
+#:
+#: THE TARGETS ARE REAL REGISTRY FIELDS AND ARE CHECKED. ``validate_registry`` cannot see this
+#: table — it is not part of the registry — so
+#: ``test_every_prefilled_profile_column_has_a_receiving_field`` resolves every right-hand key
+#: against ``STAGES`` and fails the build on a typo. Without it a misspelt target is a value written
+#: into a stage blob under a key no form renders and no report prints: saved, and invisible.
 PREFILL_MAP: tuple[tuple[str, str], ...] = (
-    ("displayName", "designerName"),            # stage 1, workshopSetup
-    ("institution", "designerInstitution"),     # stage 1, workshopSetup
-    ("biography", "designerProfile"),           # stage 3, workshopPlan
-    ("experienceYears", "designerExperience"),  # stage 3, workshopPlan
+    ("displayName", "designerName"),                        # stage 1, workshopSetup
+    ("institution", "designerInstitution"),                 # stage 1, workshopSetup
+    ("biography", "designerProfile"),                       # stage 3, workshopPlan
+    ("experienceYears", "designerExperience"),              # stage 3, workshopPlan
+    # The rest of stage 3's `workshopPlan` — see the block comment at those fields for why the
+    # designer's details live on stage 3 rather than on stage 1's cover table.
+    ("localName", "designerLocalName"),
+    ("designation", "designerDesignation"),
+    ("department", "designerDepartment"),
+    ("qualification", "designerQualification"),
+    ("specialisation", "designerSpecialisation"),
+    ("phone", "designerPhone"),
+    ("email", "designerEmail"),
+    ("website", "designerWebsite"),
+    ("addressLine", "designerAddress"),
+    ("city", "designerCity"),
+    ("state", "designerState"),
+    ("pincode", "designerPincode"),
+    ("empanelmentNo", "designerEmpanelmentNo"),
+    ("empanelmentDate", "designerEmpanelmentDate"),
+    ("photoMediaId", "designerPhoto"),
+    ("signatureMediaId", "designerSignature"),
+    ("cvMediaId", "designerCv"),
 )
 
 
 async def prefill_from_profile(user_id: str) -> dict[str, Any]:
     """The stage-1 and stage-3 values a workshop this user creates should START with.
 
-    Returns ``{registry field key: value}`` — ``designerName``, ``designerInstitution``,
-    ``designerProfile``, ``designerExperience`` — for the keys the profile can actually answer,
-    and an empty dict for a designer who has never filled one in.
+    Returns ``{registry field key: value}`` for every pair in :data:`PREFILL_MAP` the profile can
+    actually answer, and an empty dict for a designer who has never filled one in. Which pairs
+    those are is that table's business and is deliberately not restated here — this docstring said
+    "``designerName``, ``designerInstitution``, ``designerProfile``, ``designerExperience``" for as
+    long as those were the only four, and a prose list of a table's contents is a second copy that
+    goes stale the first time the table grows. It grew on 2026-08-25.
 
     **THESE ARE COPIES, AND THEY MUST STAY COPIES.** A report is a HISTORICAL DOCUMENT. It records
     a workshop that was run, on given dates, by a named person working out of a named institution
@@ -230,6 +285,17 @@ async def prefill_from_profile(user_id: str) -> dict[str, Any]:
         value = getattr(profile, column, None)
         if isinstance(value, str):
             value = value.strip()
+        # A DateTime COLUMN LANDING IN A `DATE` FIELD MUST BE NARROWED HERE, NOT BY `str()` LUCK.
+        #
+        # `empanelmentDate` is the one date in this table, it is a Postgres DateTime, and its target
+        # `designerEmpanelmentDate` is a registry DATE — which `coerce_value` reads as
+        # `str(raw).strip()[:10]`. That happens to work on both `str(datetime)` ("2026-08-25 00:00…")
+        # and `datetime.isoformat()` ("2026-08-25T00:00…"), and relying on it would be relying on the
+        # first ten characters of a repr. Narrowed explicitly so the stored value is a date string
+        # exactly as every client sends one, and so a second date column added to this table later
+        # is carried by this branch rather than by the same coincidence.
+        if isinstance(value, datetime):
+            value = value.date().isoformat()
         if value in (None, ""):
             continue
         values[field_key] = value
@@ -254,9 +320,9 @@ def _parse_date(raw: Any) -> datetime | None:
     """An ISO date string as a UTC datetime, or None for anything unreadable.
 
     Unreadable input becomes NULL rather than a 422 for the same reason ``_parse_date`` in the
-    design-workshop routes does: this is one optional identifier on a twenty-field profile, and
-    refusing the whole save because the empanelment date was typed ``12/03/2026`` would lose the
-    nineteen fields the designer got right.
+    design-workshop routes does: this is one optional identifier on a twenty-one-field profile,
+    and refusing the whole save because the empanelment date was typed ``12/03/2026`` would lose
+    the twenty fields the designer got right.
     """
     if raw in (None, ""):
         return None

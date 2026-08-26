@@ -16,6 +16,15 @@
  * is a browser concern and lives in `lib/media.ts` (`readCaptureStamp`); everything below takes the
  * string that reader produced.
  *
+ * ONE VALUE crosses that line, and it is deliberate: {@link DW_DEFAULT_MAX_ITEMS}, the ceiling the
+ * server enforces on a multi-valued field that declares none. Everything else this file imports from
+ * `lib/designWorkshops` is a type and vanishes at build. That constant is imported rather than
+ * re-typed as `200` here because a second copy of the number is a second thing to forget when the
+ * server changes it — see {@link effectiveMaxItems}, and the same rule stated at
+ * docs/DESIGN_WORKSHOP.md:229-232. The cost is that this module's import graph now reaches
+ * `lib/api` transitively; nothing in it is CALLED, no request is made at import, and the Kotlin port
+ * reads the same figure off `DW_DEFAULT_MAX_ITEMS` in `StageSchema.kt`.
+ *
  * IT PROPOSES. IT NEVER COMMITS. Nothing here attaches a photograph to anything. It returns a
  * ranking and the sentence that justifies it, and a human presses the button — the same rule, for
  * the same reason, as the identity-card OCR endpoint (`scan_identity_card` in
@@ -57,7 +66,15 @@
  * answer; it is not attempted here rather than attempted badly.
  */
 
-import type { DwEntryData, DwRegistry, DwRow, DwStageData, DwValue } from "@/lib/designWorkshops";
+import {
+  DW_DEFAULT_MAX_ITEMS,
+  type DwEntryData,
+  type DwField,
+  type DwRegistry,
+  type DwRow,
+  type DwStageData,
+  type DwValue
+} from "@/lib/designWorkshops";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Thresholds
@@ -530,17 +547,38 @@ export function buildAnchors(registry: DwRegistry, stages: Record<string, DwStag
  * photographs" and "Event photographs", and which of the two a given photograph belongs in is not
  * knowable from a timestamp. The surface offers the entity's own list and defaults to its first,
  * which is the BASIC-tier one by declaration order.
+ *
+ * ── AND IT CARRIES THE FIELD'S CEILING, WHICH IS WHY `maxItems` IS ON EVERY TARGET ─────────────
+ *
+ * A destination is not just a place, it is a place with room in it or without. {@link
+ * appendMediaRef} is the only door a confirmed intake writes through and it cannot look a field up,
+ * so the ceiling has to travel WITH the target or the whole intake path runs uncapped — which is
+ * exactly what it did until 2026-08-26, straight past the two motif galleries' declared 20 and past
+ * the server's own default of 200. Android carries the same figure the same way,
+ * `DwPhotoIntake.DwPhotoTarget.maxItems` into `DwIntakeDestination.maxItems`.
+ *
+ * VERBATIM FROM THE REGISTRY, undefined and all: `field_to_dict` emits `maxItems` only for a field
+ * that declares one, and that absence has to survive the trip because it decides two different
+ * things — {@link effectiveMaxItems} turns it into the number ENFORCED (200), while a caller writing
+ * a sentence may only PRINT the number when it is present (docs/DESIGN_WORKSHOP.md:229-232).
+ * Resolving it here would collapse those two into one and hand every caller a 200 it is not allowed
+ * to say out loud.
  */
 export function photoTargets(
   registry: DwRegistry,
   stageKey: string,
   entityKey: string
-): Array<{ fieldKey: string; fieldLabel: string; multiple: boolean }> {
+): Array<{ fieldKey: string; fieldLabel: string; multiple: boolean; maxItems?: number }> {
   const stage = registry.stages.find((candidate) => candidate.key === stageKey);
   const entity = stage?.entities.find((candidate) => candidate.key === entityKey);
   return (entity?.fields ?? [])
     .filter((field) => field.type === "IMAGE" || field.type === "IMAGE_LIST")
-    .map((field) => ({ fieldKey: field.key, fieldLabel: field.label, multiple: field.type === "IMAGE_LIST" }));
+    .map((field) => ({
+      fieldKey: field.key,
+      fieldLabel: field.label,
+      multiple: field.type === "IMAGE_LIST",
+      maxItems: field.maxItems
+    }));
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -732,9 +770,116 @@ export function intakeSummary(rows: PhotoIntakeRow[]): { total: number; proposed
   return { total: rows.length, proposed, manual: rows.length - proposed };
 }
 
-/** Convenience for a value that may be a stored IMAGE_LIST. Kept here so the surface stays thin. */
-export function appendMediaRef(value: DwValue | undefined, ref: string, multiple: boolean): DwValue {
+/* ────────────────────────────────────────────────────────────────────────────
+ * Writing a photograph into a field
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * THE CEILING A MULTI-VALUED FIELD IS ACTUALLY ENFORCED AGAINST — what it declared, or the server's
+ * own default.
+ *
+ * The twin of `effectiveMaxItems` in `components/designworkshop/FieldInput.tsx` and of
+ * `dwEffectiveMaxItems` in `StageSchema.kt`, and the three of them read the SAME 200 —
+ * {@link DW_DEFAULT_MAX_ITEMS}, exported from `lib/designWorkshops.ts` — because the number being in
+ * one place is the only thing that stops the day the server changes it from being discovered as a
+ * refused save. FieldInput's copy is private to a `"use client"` module and cannot be imported into a
+ * module this pure, which is why there are two of these three lines on this client rather than one.
+ *
+ * `> 0` IS NOT DEFENSIVE PADDING. Undefined is how the web registry says "not declared" and 0 is how
+ * Android's `FieldDto.maxItems` says it, so both have to read as the default here rather than as a
+ * ceiling of zero — a gallery that refused its FIRST photograph would be the same silent loss in the
+ * opposite direction.
+ *
+ * ABSENT MEANS 200, NEVER "UNBOUNDED", and that is the half of docs/DESIGN_WORKSHOP.md:229-232 this
+ * whole file failed until 2026-08-26. `coerce_value` (backend/app/services/stage_schema.py:1822)
+ * REFUSES an over-long array rather than trimming it, and `save_stage` then restores the refused key
+ * from the previous entry — so the two-hundred-and-first photograph does not cost itself, it costs
+ * every photograph the field was about to store, reported as one error with the uploading done.
+ */
+export function effectiveMaxItems(declared: DwField["maxItems"]): number {
+  return typeof declared === "number" && declared > 0 ? declared : DW_DEFAULT_MAX_ITEMS;
+}
+
+/** The strings a stored IMAGE_LIST is holding. Shared by the two functions below so they cannot disagree. */
+function heldRefs(value: DwValue | undefined): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/**
+ * Add one media reference to whatever a field already holds, up to that field's ceiling.
+ *
+ * ── THE CEILING, WHICH THIS PATH IGNORED ALTOGETHER UNTIL 2026-08-26 ──────────────────────────────
+ *
+ * This is the door for TWO of the browser's three write paths into a media field — the bulk photo
+ * import and the UPLOAD tab; `MediaField` in FieldInput.tsx is the third and has had a ceiling since
+ * it was written. This one had no cap of any kind, so a confirmed import of two hundred photographs
+ * appended every one of them into a gallery whose registry entry says twenty. Not a cosmetic
+ * overrun: the server REFUSES the whole field rather than truncating it (see
+ * {@link effectiveMaxItems}), so the stage save that followed lost the field's entire write while
+ * the bytes sat in this browser's IndexedDB. An undefined `maxItems` is "the registry declared none",
+ * which means {@link DW_DEFAULT_MAX_ITEMS} and never "no limit".
+ *
+ * A REF THE FIELD ALREADY HOLDS IS NOT GROWTH, so the ceiling is tested after the identity check
+ * above it: confirming the same photograph into a full gallery twice must stay the no-op it always
+ * was rather than become a refusal a designer is then told about.
+ *
+ * ── AND WHAT THIS FUNCTION CANNOT DO, WHICH ITS CALLERS MUST ──────────────────────────────────────
+ *
+ * A REFUSAL IS NOT REPORTED FROM HERE. It returns a value, not a receipt, so a caller that counts
+ * what it wrote has to ask {@link mediaRefRoom} FIRST and route what does not fit into its own "not
+ * attached" sentence — rule 10 of the frontend contract, and the same duty the confirm walk already
+ * discharges for a row that was deleted under it. Both callers now do:
+ * `app/(protected)/design-workshops/[id]/photos/page.tsx` asks before it stages a single byte and
+ * names the files it turned away beside the rows that went missing, and
+ * `components/sketches/UploadTabHost.tsx` does the same for a turn of turntable frames and counts
+ * only what landed in the sentence it prints. Anything that adds a FOURTH write through here owes
+ * the designer the same sentence.
+ *
+ * The Kotlin twin is `DwPhotoIntake.appendMediaRef`, which differs in exactly one deliberate way:
+ * it keeps a bare string a list field somehow holds, where this reads only an ARRAY. Its KDoc argues
+ * that case; the two are otherwise the same function, ceiling included.
+ */
+export function appendMediaRef(
+  value: DwValue | undefined,
+  ref: string,
+  multiple: boolean,
+  maxItems?: number
+): DwValue {
   if (!multiple) return ref;
-  const existing = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-  return existing.includes(ref) ? existing : [...existing, ref];
+  const existing = heldRefs(value);
+  if (existing.includes(ref)) return existing;
+  if (existing.length >= effectiveMaxItems(maxItems)) return existing;
+  return [...existing, ref];
+}
+
+/**
+ * How many more references this field can take — asked BEFORE {@link appendMediaRef} is called, by
+ * any caller that then has to tell the designer what landed.
+ *
+ * SPLIT OUT RATHER THAN RETURNED, because a nullable return from {@link appendMediaRef} would let a
+ * caller write `?? previous` and be exactly where it started, whereas a question that has to be asked
+ * in its own statement is a question that appears in the diff. Kotlin's `DwPhotoIntake.mediaRefFits`
+ * is the same guard for the same reason, and the capture card's `room` in FieldInput.tsx is the same
+ * arithmetic — this is deliberately that same word, so a reader who knows one knows this.
+ *
+ * A COUNT AND NOT A YES/NO, AND NOT A REFERENCE TO ASK ABOUT, because of WHEN the browser has to ask.
+ * On the handset the file is already copied and has an id by the time the confirm walk runs, so
+ * Kotlin can ask about a specific reference; here the reference does not exist until
+ * `stageLocalMedia` mints it, so the only answerable question before the write is "is there room".
+ * A count is also the shape a caller trimming a whole turn in one go would need; the two callers here
+ * ask per file inside their own loops instead, because the file before it is what filled the field.
+ *
+ * ASKING FIRST IS WHAT KEEPS THE BYTES OUT OF STORAGE. `stageLocalMedia` writes the blob into
+ * IndexedDB and the sync pass uploads every staged row it finds, so staging a photograph the field
+ * then refuses would put a file nothing references on the wire and leave a copy in browser storage
+ * for the rest of the fortnight. FieldInput's `acceptFiles` makes the same choice in the same words:
+ * trim "before a byte is uploaded".
+ *
+ * ONE for a single-valued field, which REPLACES rather than appends and therefore always has room for
+ * the next file — the field the designer overwrites is a different complaint (`UploadTabHost` states
+ * it beside the picker) and not a refusal to report here.
+ */
+export function mediaRefRoom(value: DwValue | undefined, multiple: boolean, maxItems?: number): number {
+  if (!multiple) return 1;
+  return Math.max(0, effectiveMaxItems(maxItems) - heldRefs(value).length);
 }

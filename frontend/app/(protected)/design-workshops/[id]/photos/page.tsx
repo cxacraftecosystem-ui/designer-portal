@@ -53,6 +53,7 @@ import {
   formatStamp,
   intakePhotos,
   intakeSummary,
+  mediaRefRoom,
   photoTargets,
   type PhotoIntakeRow,
   type WorkshopAnchor
@@ -89,6 +90,16 @@ type Destination = {
   fieldKey: string;
   label: string;
   multiple: boolean;
+  /**
+   * The ceiling the registry DECLARED for this field, or undefined where it declared none.
+   *
+   * Carried verbatim, undefined and all, because the absence is not the same as the number: what is
+   * ENFORCED on an undeclared field is the server's own default (`mediaRefRoom` and `appendMediaRef`
+   * resolve it), and what may be PRINTED is only a figure the registry actually stated
+   * (docs/DESIGN_WORKSHOP.md:229-232). Resolving it here would hand the refusal sentence a 200 it is
+   * not allowed to say. Two of the twenty IMAGE_LIST fields — the motif pair, 20 each — answer this.
+   */
+  maxItems?: number;
 };
 
 /** The two group headings, named once so the picker and this file's prose cannot drift apart. */
@@ -226,6 +237,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
               rowKey: null,
               fieldKey: target.fieldKey,
               multiple: target.multiple,
+              maxItems: target.maxItems,
               label: `${stage.number}. ${stage.title} — ${target.fieldLabel}`
             });
           }
@@ -247,6 +259,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
               rowKey,
               fieldKey: target.fieldKey,
               multiple: target.multiple,
+              maxItems: target.maxItems,
               label: `${stage.number}. ${stage.title} — ${entity.title} “${rowName}” — ${target.fieldLabel}`
             });
           }
@@ -380,23 +393,86 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
 
       let attached = 0;
       const missed: string[] = [];
+      /**
+       * The photographs a destination had no room for, each with the destination that turned it away.
+       *
+       * THE FIELD'S CEILING IS ENFORCED HERE OR IT IS NOT ENFORCED AT ALL on this path. `coerce_value`
+       * REFUSES an over-long array rather than trimming it and `save_stage` then restores the refused
+       * key from the previous entry, so a confirm that appended two hundred photographs into a gallery
+       * declaring twenty would not lose the last hundred and eighty — it would lose the field's whole
+       * write on the next sync, with every byte already copied. See `appendMediaRef` in
+       * `lib/photoIntake.ts`, and docs/DESIGN_WORKSHOP.md:229-232 for why an absent `maxItems` is the
+       * server's default of two hundred rather than no ceiling.
+       *
+       * THE DESTINATION IS CARRIED, NOT JUST THE FILENAME, because "it did not fit" is unactionable
+       * without knowing where it did not fit: a designer confirming a camera dump across nine stages
+       * needs to be told WHICH gallery is full to know what to remove or where else to send it.
+       */
+      const full: Array<{ file: string; label: string; declaredCap?: number }> = [];
+      /**
+       * The stages that actually received a photograph, which is not the same set as `pending`.
+       *
+       * `stageOf` puts a stage in `pending` the moment one is CONSIDERED — before the row lookup and
+       * before the room check — so a stage every photograph was refused from is in that map holding a
+       * copy identical to what is on disk. Counting it would print "across 4 stages" over three that
+       * changed, and writing it back would re-put an unchanged stage over whatever another tab has
+       * done to it in the meantime. Both are answered by only ever counting and writing what landed.
+       */
+      const touched = new Set<string>();
+      /**
+       * The photographs whose chosen destination is not in the registry-built list any more.
+       *
+       * `destinations` is rebuilt whenever the draft changes, so a row deleted in another tab between
+       * the choosing and the pressing takes its destination key with it. This was a bare `continue`:
+       * the file was not attached, not counted, and dropped out of the table on the next render with
+       * nothing anywhere saying it had gone. That silence used to hide behind a receipt that at least
+       * printed "0 photographs attached"; withholding that sentence when nothing lands (below) would
+       * have made it total. Android's confirm walk names the same case `unplaceable`.
+       */
+      const unplaceable: string[] = [];
 
       for (const line of chosen) {
         const destination = destinationsByKey.get(line.choice);
-        if (!destination) continue;
-        const { ref } = await stageLocalMedia(id, line.file, {
-          stageKey: destination.stageKey,
-          entityKey: destination.entityKey,
-          fieldKey: destination.fieldKey,
-          clientKey: destination.rowKey,
-          caption: null
-        });
+        if (!destination) {
+          unplaceable.push(line.file.name);
+          continue;
+        }
+        /*
+          THE BYTES ARE COPIED ONLY ONCE THE FIELD HAS AGREED TO TAKE THEM, which is why this is a
+          closure called from inside the two branches rather than a statement above them.
+
+          `stageLocalMedia` writes the blob into IndexedDB and the sync pass uploads every staged row
+          it finds, so copying first and asking afterwards would leave a photograph nothing references
+          on this laptop for the fortnight and push it to the repository on the next connection. The
+          capture card makes the same choice in the same words one layer up — FieldInput's
+          `acceptFiles` trims "before a byte is uploaded".
+        */
+        const copyToDevice = () =>
+          stageLocalMedia(id, line.file, {
+            stageKey: destination.stageKey,
+            entityKey: destination.entityKey,
+            fieldKey: destination.fieldKey,
+            clientKey: destination.rowKey,
+            caption: null
+          });
 
         const target = stageOf(destination.stageKey);
         if (destination.rowKey === null) {
           const entity = { ...(target.singletons[destination.entityKey] ?? {}) };
-          entity[destination.fieldKey] = appendMediaRef(entity[destination.fieldKey], ref, destination.multiple);
+          const heldOnEntity = entity[destination.fieldKey];
+          if (!mediaRefRoom(heldOnEntity, destination.multiple, destination.maxItems)) {
+            full.push({ file: line.file.name, label: destination.label, declaredCap: destination.maxItems });
+            continue;
+          }
+          const { ref } = await copyToDevice();
+          entity[destination.fieldKey] = appendMediaRef(
+            heldOnEntity,
+            ref,
+            destination.multiple,
+            destination.maxItems
+          );
           target.singletons[destination.entityKey] = entity;
+          touched.add(destination.stageKey);
           attached += 1;
           continue;
         }
@@ -404,33 +480,103 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
         const index = rows.findIndex((row) => (row._clientKey ?? row._entryId) === destination.rowKey);
         if (index < 0) {
           // The row was deleted in another tab between this page reading the draft and Confirm being
-          // pressed. Naming the file is the only acceptable outcome — the bytes are already in the
-          // draft store, so nothing is lost, but the designer has to be told it did not land.
+          // pressed. Naming the file is the only acceptable outcome, and nothing is lost: the file
+          // itself is still the one the designer picked, sitting in the table below for them to send
+          // somewhere else. Nothing has been copied for it either — which is the point of asking
+          // before staging, since the retry would otherwise leave the first copy orphaned in storage.
           missed.push(line.file.name);
           continue;
         }
         const row = { ...rows[index] };
-        row[destination.fieldKey] = appendMediaRef(row[destination.fieldKey], ref, destination.multiple);
+        const heldOnRow = row[destination.fieldKey];
+        if (!mediaRefRoom(heldOnRow, destination.multiple, destination.maxItems)) {
+          full.push({ file: line.file.name, label: destination.label, declaredCap: destination.maxItems });
+          continue;
+        }
+        const { ref } = await copyToDevice();
+        row[destination.fieldKey] = appendMediaRef(heldOnRow, ref, destination.multiple, destination.maxItems);
         rows[index] = row;
         target.collections[destination.entityKey] = rows;
+        touched.add(destination.stageKey);
         attached += 1;
       }
 
       for (const [stageKey, data] of pending) {
+        if (!touched.has(stageKey)) continue;
         await putDraftStage(id, stageKey, { singletons: data.singletons, collections: data.collections });
       }
 
       setDraft(await loadDraft(id));
-      setLines((current) => current.filter((line) => !line.choice || missed.includes(line.file.name)));
-      setNotice(
-        `${attached} photograph${attached === 1 ? "" : "s"} attached on this device across ${pending.size} stage${pending.size === 1 ? "" : "s"}. ` +
-          "They upload themselves when this laptop next has a connection, and the copy here is kept until the repository confirms each one."
-      );
+      /*
+        EVERY LINE THAT DID NOT LAND STAYS IN THE TABLE, with its file and its chosen destination, so
+        the designer can send it somewhere else without picking the folder again. A refused line whose
+        row has come back, or whose gallery has had something removed from it, confirms on the second
+        press with no further ceremony.
+      */
+      const refusedNames = new Set([...missed, ...full.map((entry) => entry.file)]);
+      setLines((current) => current.filter((line) => !line.choice || refusedNames.has(line.file.name)));
+      /*
+        THE RECEIPT COUNTS WHAT LANDED AND NOTHING ELSE — `attached`, incremented only after a write
+        actually went into the stage in memory, and `touched`, which holds only stages one of those
+        writes reached. Printing `chosen.length` or `pending.size` here would be the same defect this
+        whole change is about wearing a different hat: a green "12 attached" over ten photographs is
+        worse than the refusal it hides, because the designer stops looking.
+
+        Withheld entirely when nothing landed rather than printed as "0 photographs attached": the
+        sentence goes on to promise an upload, and there is nothing to upload. The refusals below then
+        carry the whole story, which is the accurate one.
+      */
+      if (attached) {
+        setNotice(
+          `${attached} photograph${attached === 1 ? "" : "s"} attached on this device across ${touched.size} stage${touched.size === 1 ? "" : "s"}. ` +
+            "They upload themselves when this laptop next has a connection, and the copy here is kept until the repository confirms each one."
+        );
+      }
+      /*
+        THE TWO REFUSALS ARE WORDED APART AND JOINED, never folded into one count, because they need
+        different things from the reader: a vanished row wants a different destination, a full gallery
+        wants something removed from the one they chose. A single "N were not attached" would leave
+        both looking like the other.
+
+        THE FULL-GALLERY SENTENCE NAMES THE CEILING WHERE THE REGISTRY DECLARED ONE, AND NEVER
+        OTHERWISE. Two of the twenty IMAGE_LIST fields declare a cap; for the rest the number enforced
+        is the server's own default, and printing a figure this client read from nowhere is the half
+        of docs/DESIGN_WORKSHOP.md:229-232 that is forbidden — "a client must neither read the absence
+        as no limit nor print a number it did not read". Both halves, and neither traded for the
+        other: the declared number is read, so it may be printed; 200 is not, so it may not.
+
+        THIS PARAGRAPH USED TO SAY THE CEILING WAS NEVER NAMED HERE, and stated it as the shared rule.
+        It was not: Android's `dwIntakeFullNotice` prints "already holds the 20 photographs it may"
+        for a declared cap, and this browser's OWN capture card prints "holds at most 20 files". So a
+        designer importing on the handset was told 20 and the same designer importing here was told
+        nothing, and the two surfaces of this client disagreed with each other about one field.
+      */
+      const complaints: string[] = [];
       if (missed.length) {
-        setProblem(
+        complaints.push(
           `${missed.length} could not be placed because the row they were headed for is no longer in this workshop: ${missed.join(", ")}. Pick them again and choose another destination.`
         );
       }
+      if (full.length) {
+        const one = full.length === 1;
+        // The number only where the registry gave one, and only when the refused files AGREE about it:
+        // the set is keyed on the declared ceiling rather than on the field, so two galleries that both
+        // declare 20 still name 20 (true of each), while one declared beside one undeclared gives a set
+        // of two and falls back to naming no number — a single sentence can never name a ceiling that
+        // is not every listed file's own.
+        const caps = new Set(full.map((entry) => entry.declaredCap));
+        const declared = caps.size === 1 ? [...caps][0] : undefined;
+        const because =
+          declared && declared > 0
+            ? `holds at most ${declared} ${declared === 1 ? "entry" : "entries"} and is full`
+            : "is full";
+        complaints.push(
+          `${full.length} ${one ? "was" : "were"} not attached because the field ${one ? "it was" : "they were"} headed for ${because}: ` +
+            `${full.map((entry) => `${entry.file} (${entry.label})`).join(", ")}. ` +
+            `Remove something already attached there, or choose another destination, then confirm ${one ? "it" : "them"} again — ${one ? "it is" : "they are"} still in the list below.`
+        );
+      }
+      if (complaints.length) setProblem(complaints.join(" "));
     } catch {
       setProblem(
         "Nothing could be written to this device's storage. If the browser is in private mode or its storage is full, the photographs cannot be kept here — free some space and try again."

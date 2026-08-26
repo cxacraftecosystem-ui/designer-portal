@@ -63,9 +63,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowDown, ArrowUp, Lock, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, GripVertical, Lock, Plus, Trash2 } from "lucide-react";
 
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { useDragReorder, moveIndex } from "@/components/hooks/useDragReorder";
 import { rowAction } from "@/components/RowActions";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
@@ -168,6 +169,15 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
    */
   const [refusals, setRefusals] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * Why a drag did nothing, when it did nothing on purpose.
+   *
+   * A gesture that is silently ignored is indistinguishable from a gesture that is broken, and this
+   * one is ignored for a real reason (see the drag block below). Kept apart from `notice`, which
+   * reports what a SAVE did: mixing "the server accepted your definition" and "that drag was not
+   * allowed" into one line would make each of them read as the other's aftermath.
+   */
+  const [crossSectionRefusal, setCrossSectionRefusal] = useState<string | null>(null);
   /**
    * The id the SERVER knows this workshop by, which is not always the one in the URL.
    *
@@ -429,26 +439,210 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
     );
   }
 
+  /* ══════════════════════════════════════════════════════════════════════════════════════════════
+     DRAG AND DROP, ON TOP OF THE ARROWS — NOT INSTEAD OF THEM
+     ══════════════════════════════════════════════════════════════════════════════════════════════
+
+     The owner asked on 2026-08-25 for reordering to be served by "a plus button, up down arrows and
+     drag and drop as well". The plus buttons and the arrows were already here; this is the third.
+
+     THE ARROWS REMAIN THE PRIMARY PATH and are never hidden or disabled in favour of the grip. A
+     drag is a pointer gesture: it is unreachable from a keyboard, from a switch device and from a
+     screen reader, so drag ALONE would put the arrangement of a ministry report's sections behind a
+     mouse. `RankableList` made the same call for the same reason and the wording there is the same.
+
+     ── WHY ONE HOOK PER LEVEL, WITH COMPOSITE IDS, AND NOT ONE PER SECTION ─────────────────────────
+
+     The Rules of Hooks. The question rows are rendered inside `sections.map(...)`, so a
+     `useDragReorder` per section would be a hook called in a loop whose count changes when a section
+     is added — which React refuses, correctly. So there are exactly two hooks: one over the
+     sections, and ONE over every question in the workshop, whose ids encode the section they belong
+     to (`sectionIndex:fieldIndex`).
+
+     That choice has a consequence the reader has to be told about, because it bit once: the question
+     hook's `order` is NOT the list on screen, so its default announcement would quote a position
+     against the workshop's whole question count. `describeMove` below is what fixes that.
+
+     ── AND WHY A CROSS-SECTION DROP IS REFUSED RATHER THAN PERFORMED ───────────────────────────────
+
+     A single question list spanning every section means the geometry can perfectly well name a
+     target row in a DIFFERENT section, and it would be easy to let that move the question across.
+     It is refused, out loud, because moving a question between sections is not a reorder at all: a
+     custom answer is stored in a per-(workshop, stage) container keyed by the field key, and the
+     section decides both the stage it is asked at and the key namespace it is unique in. Dragging
+     "How many looms?" from a stage-5 section into a stage-17 one would silently re-file every answer
+     already recorded under it — the class of thing `custom_sections.py`'s supersede/retire rules
+     exist to make impossible. If it is ever wanted it needs the server's consent, not a gesture.
+  */
+
+  /**
+   * The sections' drag ids.
+   *
+   * `key` IS EMPTY ON A SECTION NOBODY HAS SAVED YET — the server mints it — so the index is part of
+   * the identity rather than decoration. That is safe here in a way it would not be in `RankableList`:
+   * `sections` is a local editing buffer, nothing outside this component mutates it, and the id only
+   * has to be stable for the length of one gesture. The hook's snapshot guard still bites on the case
+   * that matters (a row added or removed mid-gesture changes this array).
+   */
+  const sectionDragIds = useMemo(
+    () => sections.map((section, index) => `${section.key || "new"}:${index}`),
+    [sections]
+  );
+
+  const sectionDrag = useDragReorder({
+    order: sectionDragIds,
+    locked: busy,
+    labelFor: useCallback(
+      (id: string) => {
+        const index = Number(id.split(":").pop());
+        return sections[index]?.title?.trim() || "Untitled section";
+      },
+      [sections]
+    ),
+    onReorder: useCallback((from: number, to: number) => {
+      setSections((current) => moveIndex(current, from, to));
+    }, [])
+  });
+
+  /** Every question in the workshop, in render order, tagged with the section it belongs to. */
+  const questionDragIds = useMemo(
+    () =>
+      sections.flatMap((section, sectionIndex) =>
+        section.fields.map((_, fieldIndex) => `${sectionIndex}:${fieldIndex}`)
+      ),
+    [sections]
+  );
+
+  const questionDrag = useDragReorder({
+    order: questionDragIds,
+    locked: busy,
+    labelFor: useCallback(
+      (id: string) => {
+        const [sectionIndex, fieldIndex] = id.split(":").map(Number);
+        return sections[sectionIndex]?.fields[fieldIndex]?.label?.trim() || "Untitled question";
+      },
+      [sections]
+    ),
+    /**
+     * "How many looms? moved to position 3 of 5 in Loom shed." — the position the READER can see.
+     *
+     * The hook's default sentence would say "position 3 of 37", because `order` here is every
+     * question in the WORKSHOP: one hook drives them all, since the Rules of Hooks forbid one per
+     * section. A position quoted against a total nobody can see describes nothing, so this composes
+     * the section-scoped one. The drag path had that defect from the day it shipped, and the arrows —
+     * being silent until today — did not have it at all.
+     *
+     * IT ALSO NAMES THE SECTION, which the section-level announcement has no need to. A question is
+     * identified by its wording AND where it sits, and "moved to position 3 of 5" is ambiguous on a
+     * screen holding five sections that each have a third question.
+     *
+     * BOTH ARGUMENTS ARE PRE-MOVE, and that is what makes it correct. `key` is the id of the question
+     * being moved and resolves against the arrangement as it stands; `index` is a position in that
+     * same arrangement, and the id currently sitting there carries the within-section slot the
+     * question is about to take. Cross-section drops are refused below, so that id is always in the
+     * same section as `key`.
+     */
+    describeMove: useCallback(
+      (key: string, index: number) => {
+        const [sectionIndex, fieldIndex] = key.split(":").map(Number);
+        const section = sections[sectionIndex];
+        const question = section?.fields[fieldIndex]?.label?.trim() || "Untitled question";
+        const heading = section?.title?.trim() || "Untitled section";
+        const landing = Number(questionDragIds[index]?.split(":")[1] ?? index);
+        const total = section?.fields.length ?? 0;
+        return `${question} moved to position ${landing + 1} of ${total} in ${heading}.`;
+      },
+      [questionDragIds, sections]
+    ),
+    onReorder: useCallback(
+      (from: number, to: number) => {
+        // CLEARED WHERE THE GESTURE STARTS, NOT ONLY WHERE ONE SUCCEEDS. The amber banner further
+        // down explains why the LAST drop did nothing, and it used to be cleared only on the accepted
+        // same-section path at the foot of this callback. So a refusal outlived the gesture it
+        // describes: it sat above the first section through renames, new questions, retirements and
+        // whole other drags, still claiming to account for what the designer had just done. Clearing
+        // on ENTRY covers every outcome in one line — the refusal below re-sets it in the same batch,
+        // and the accepted path needs no clear of its own because it has already fallen through this
+        // one.
+        setCrossSectionRefusal(null);
+        const fromId = questionDragIds[from];
+        const toId = questionDragIds[to];
+        // `false` REFUSES, so the hook stays silent and does not announce a move that did not happen.
+        // An unresolvable id is a refusal too: nothing moved, so nothing may be announced.
+        if (!fromId || !toId) return false;
+        const [fromSection, fromField] = fromId.split(":").map(Number);
+        const [toSection, toField] = toId.split(":").map(Number);
+        // See the block comment above: a question does not move between sections by gesture.
+        if (fromSection !== toSection) {
+          setCrossSectionRefusal(
+            "A question can only be reordered inside its own section. Moving one to another section " +
+              "would change the stage it is asked at and re-file the answers already recorded under " +
+              "it, so it is not something a drag can do."
+          );
+          // REFUSED, AND THE HOOK IS TOLD SO. Without this the polite live region announced the move
+          // as done — with a position from the target section and a total from the source one, so
+          // "position 4 of 2" — while the amber banner beside it said it had been refused. The
+          // accessible channel was the one that lied.
+          return false;
+        }
+        setSections((current) =>
+          current.map((section, at) =>
+            at === fromSection ? { ...section, fields: moveIndex(section.fields, fromField, toField) } : section
+          )
+        );
+      },
+      [questionDragIds]
+    )
+  });
+
+  /* ── THE ARROWS SPEAK, AND THEY SPEAK THROUGH THE SAME CHANNEL THE DRAG DOES ───────────────────────
+
+     Both of these used to decide their bounds INSIDE the `setSections` updater and announce nothing,
+     which left this screen with the worst possible split: the POINTER gesture spoke and the KEYBOARD
+     path — the only one a switch device or a screen reader has — was silent. The arrows are the
+     PRIMARY path here, so the silent one was the one that mattered most.
+
+     The bounds check is therefore lifted OUT of the updater, because a sentence cannot be composed
+     from inside one. That is safe rather than merely convenient: these are click handlers on buttons
+     that are `disabled` at both ends of their list, so the `sections` read here is the committed state
+     the button was rendered from and there is no concurrent writer to race.
+
+     DECLARED BELOW BOTH HOOKS, and that is not cosmetic. They read `sectionDragIds` and
+     `questionDragIds`, and while a hoisted function declaration would run fine at click time, reading
+     a `useMemo` result above its own declaration is a pattern the React Compiler cannot follow — it
+     reported "could not preserve existing memoization" against `sectionDragIds` and stopped optimising
+     the component. Data flow down the file, controls after the state they read.
+
+     `moveIndex` rather than the element swap they used to do. For a one-step arrow the two are
+     identical, so this changes no behaviour — it is here so the arrows and the drag go through ONE
+     primitive. The same swap-versus-move divergence was a real cross-client bug in `EntityForm`'s
+     rows, where the web swapped and the handset moved: identical for one step, different the moment a
+     gesture spans five. */
   function moveSection(index: number, by: -1 | 1) {
-    setSections((current) => {
-      const next = [...current];
-      const target = index + by;
-      if (target < 0 || target >= next.length) return current;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
+    const target = index + by;
+    if (target < 0 || target >= sections.length) return;
+    // The PRE-move id, which is what makes the label right: `labelFor` resolves the id's index
+    // against the `sections` this render closed over, i.e. the arrangement before the move. Section
+    // ids are one-per-visible-list, so the hook's own "position N of TOTAL" wording is correct here
+    // and is used unchanged.
+    sectionDrag.announceMove(sectionDragIds[index], target);
+    setSections((current) => moveIndex(current, index, target));
   }
 
   function moveField(sectionIndex: number, fieldIndex: number, by: -1 | 1) {
+    const section = sections[sectionIndex];
+    if (!section) return;
+    const target = fieldIndex + by;
+    if (target < 0 || target >= section.fields.length) return;
+    // `announceMove` takes an index into `order`, which for questions is the FLATTENED list across
+    // every section — so the within-section target is resolved back to its flat position rather than
+    // passed straight through. Getting this wrong would announce a question from another section.
+    const flatTarget = questionDragIds.indexOf(`${sectionIndex}:${target}`);
+    if (flatTarget >= 0) questionDrag.announceMove(`${sectionIndex}:${fieldIndex}`, flatTarget);
     setSections((current) =>
-      current.map((section, at) => {
-        if (at !== sectionIndex) return section;
-        const fields = [...section.fields];
-        const target = fieldIndex + by;
-        if (target < 0 || target >= fields.length) return section;
-        [fields[fieldIndex], fields[target]] = [fields[target], fields[fieldIndex]];
-        return { ...section, fields };
-      })
+      current.map((entry, at) =>
+        at === sectionIndex ? { ...entry, fields: moveIndex(entry.fields, fieldIndex, target) } : entry
+      )
     );
   }
 
@@ -608,6 +802,79 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
         <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>
       ) : null}
 
+      {/*
+        THE TWO LIVE REGIONS ARE RENDERED WHETHER OR NOT THEY HOLD ANYTHING. Assistive technology only
+        announces mutations inside a region that already existed when the page settled — the same rule
+        `Toast`'s always-mounted viewport follows, and the reason a region created at the moment of the
+        announcement says nothing at all.
+
+        TWO AND NOT ONE, because they are two lists. A designer who has just moved a question wants to
+        hear about the question; folding both into one region means the second announcement replaces
+        the first mid-sentence when a drag on one level follows a drag on the other.
+      */}
+      <p aria-live="polite" className="sr-only">
+        {sectionDrag.announcement}
+      </p>
+      <p aria-live="polite" className="sr-only">
+        {questionDrag.announcement}
+      </p>
+
+      {/*
+        WHY A DRAG DID NOTHING, WHEN IT DID NOTHING DELIBERATELY — AND THE REGION THAT SAYS SO IS
+        MOUNTED BEFORE IT HAS ANYTHING TO SAY.
+
+        THE `role="status"` USED TO BE ON THE AMBER BOX ITSELF, so the region came into existence in the
+        same commit as its first sentence — which is the exact defect the two `sr-only` regions eight
+        lines above are always-mounted to avoid, and whose comment states the rule in as many words:
+        assistive technology only announces mutations inside a region that ALREADY EXISTED. One file
+        disagreeing with itself, and the disagreement cost the whole message: a designer using a screen
+        reader dragged a question into another section, the drop was declined, nothing on screen moved,
+        and nothing was said. This sentence is the ONLY account of why the gesture had no effect —
+        without it a deliberate refusal is indistinguishable from a drag that missed — so silence here
+        is not a missing nicety, it is the message going unsaid.
+
+        So the region is this element, which never unmounts, and what changes is the CLASS and not the
+        node: `sr-only` while there is nothing to say. That keeps it in the accessibility tree, and
+        because `sr-only` is absolutely positioned it is out of flow and adds no row to this
+        `grid gap-5` — an always-visible empty box would open a 1.25rem hole above the first section.
+        Swapping in `hidden` (`display: none`) or remounting the node would take the region back out of
+        the tree and put the defect straight back. `EntityForm`'s cap notice and the workshop page's
+        submit outcome are the same fix from the same session; a fourth spelling of it is not wanted.
+
+        ITS CHILDREN ARE STILL CONDITIONAL, AND THAT IS NOT A HALF-MEASURE. Dismiss is a real focusable
+        control: left mounted inside the empty region it would be an invisible tab stop, on the keyboard
+        route between the editor's own toolbar and the first section, offering to dismiss nothing. What
+        has to survive is the region's IDENTITY, never its contents.
+
+        `role="status"` AND NOT `alert`, AMBER AND NOT RED: nothing is broken and nothing was lost — the
+        question is exactly where it was — so this must not interrupt, and drawing it in the error colour
+        would file a refusal under "something went wrong". Dismissable because it is about a gesture that
+        is over; unlike the save notice, it has no lasting state to describe.
+      */}
+      <div
+        role="status"
+        aria-live="polite"
+        className={
+          crossSectionRefusal
+            ? "flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800"
+            : "sr-only"
+        }
+      >
+        {crossSectionRefusal ? (
+          <>
+            <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
+            <p className="min-w-0 flex-1">{crossSectionRefusal}</p>
+            <button
+              type="button"
+              className="shrink-0 text-xs font-medium underline"
+              onClick={() => setCrossSectionRefusal(null)}
+            >
+              Dismiss
+            </button>
+          </>
+        ) : null}
+      </div>
+
       {sections.map((section, sectionIndex) => {
         const fields = section.fields;
         // The questions of this section that are no longer asked. Resolved once: it is read five times
@@ -623,8 +890,27 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
         // deleted, and still cannot be moved.
         const answeredHere = liveFields(section).filter((field) => isAnswered(section, field.key)).length;
         const sectionHolds = sectionIsAnswered(section);
+        const sectionDragId = sectionDragIds[sectionIndex];
+        const sectionShift = sectionDrag.shiftFor(sectionDragId);
+        const sectionDragging = sectionDrag.draggingKey === sectionDragId;
         return (
-          <section key={`${section.key}-${sectionIndex}`} className="panel grid gap-4 p-4">
+          <section
+            key={`${section.key}-${sectionIndex}`}
+            ref={sectionDrag.registerRow(sectionDragId)}
+            /*
+              The transform is inline because it is a live pixel offset, and `transition-transform` is
+              a class because the global reduced-motion rules in `globals.css` can reach a CSS
+              transition and cannot reach an inline framer style. The dragged panel is lifted with a
+              ring rather than an opacity change: a translucent panel over another panel is unreadable,
+              and the ring is also the half a reduced-motion reader still gets.
+            */
+            style={sectionShift ? { transform: `translateY(${sectionShift}px)` } : undefined}
+            className={
+              sectionDragging
+                ? "panel relative z-10 grid gap-4 p-4 shadow-panel ring-2 ring-purple-600/40 transition-transform"
+                : "panel relative grid gap-4 p-4 transition-transform"
+            }
+          >
             <header className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
                 <h2 className="font-display text-lg font-bold text-ink-900">
@@ -649,6 +935,31 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                 </p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
+                {/*
+                  THE GRIP ANSWERS THE KEYBOARD TOO, even though the two arrows beside it already do.
+                  It is the affordance that LOOKS like reordering, so a reader who finds it must not
+                  have to go and find two other buttons — and a handle that swallowed the arrow keys
+                  while doing nothing would read as broken. `touch-none` is what stops the browser
+                  claiming the gesture as a scroll before the first pointermove arrives.
+                */}
+                <button
+                  type="button"
+                  className="grid h-8 w-8 cursor-grab touch-none place-items-center rounded-md border border-line-200 text-ink-500 transition hover:bg-surface-50 active:cursor-grabbing disabled:opacity-40"
+                  aria-label={`Reorder ${section.title?.trim() || "this section"} — drag, or use the arrow keys`}
+                  disabled={busy || sections.length < 2}
+                  {...sectionDrag.handleProps(sectionDragId)}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveSection(sectionIndex, -1);
+                    } else if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      moveSection(sectionIndex, 1);
+                    }
+                  }}
+                >
+                  <GripVertical className="h-4 w-4" aria-hidden />
+                </button>
                 <button
                   type="button"
                   className={rowAction("neutral")}
@@ -751,8 +1062,20 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                 const answeredField = isAnswered(section, field.key);
                 const cost = fieldEditCost(before, { label: field.label }, answeredField);
                 const locked = Boolean(before);
+                const questionDragId = `${sectionIndex}:${fieldIndex}`;
+                const questionShift = questionDrag.shiftFor(questionDragId);
+                const questionDragging = questionDrag.draggingKey === questionDragId;
                 return (
-                  <li key={`${field.key}-${fieldIndex}`} className="rounded-md border border-line-200 p-3">
+                  <li
+                    key={`${field.key}-${fieldIndex}`}
+                    ref={questionDrag.registerRow(questionDragId)}
+                    style={questionShift ? { transform: `translateY(${questionShift}px)` } : undefined}
+                    className={
+                      questionDragging
+                        ? "relative z-10 rounded-md border border-purple-600 bg-card p-3 shadow-panel ring-2 ring-purple-600/40 transition-transform"
+                        : "relative rounded-md border border-line-200 p-3 transition-transform"
+                    }
+                  >
                     {cost.kind === "SUPERSEDE" ? (
                       // SHOWN WHILE THE BOX STILL HOLDS THE NEW WORDING AND BEFORE SAVE, not afterwards.
                       // amber-100 / amber-800 are the palette's tinted-card pair; amber-50 and amber-200
@@ -996,6 +1319,26 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                         </span>
                       </div>
                       <div className="flex flex-wrap justify-end gap-2">
+                        {/* Same contract as the section grip above: an accelerator over the arrows,
+                            never a replacement for them, and it answers the arrow keys itself. */}
+                        <button
+                          type="button"
+                          className="grid h-8 w-8 cursor-grab touch-none place-items-center rounded-md border border-line-200 text-ink-500 transition hover:bg-surface-50 active:cursor-grabbing disabled:opacity-40"
+                          aria-label={`Reorder ${field.label?.trim() || "this question"} — drag, or use the arrow keys`}
+                          disabled={busy || fields.length < 2}
+                          {...questionDrag.handleProps(questionDragId)}
+                          onKeyDown={(event) => {
+                            if (event.key === "ArrowUp") {
+                              event.preventDefault();
+                              moveField(sectionIndex, fieldIndex, -1);
+                            } else if (event.key === "ArrowDown") {
+                              event.preventDefault();
+                              moveField(sectionIndex, fieldIndex, 1);
+                            }
+                          }}
+                        >
+                          <GripVertical className="h-4 w-4" aria-hidden />
+                        </button>
                         <button
                           type="button"
                           className={rowAction("neutral")}

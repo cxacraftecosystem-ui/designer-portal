@@ -6,12 +6,32 @@ import { ArrowRight, Compass } from "lucide-react";
 
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 
-/** The chapters the in-app walkthrough covers, so the link promises something specific. */
+/**
+ * The chapters the in-app walkthrough covers, so the link promises something specific.
+ *
+ * ⚠ IT PROMISED FOUR, ALL OF THEM ABOUT ARTISAN RECORDS, while `components/guide/steps.ts` carries
+ * a whole run of chapters about the design & prototype workshop — every step whose `id` begins
+ * `design` (the designer's profile, the workshop itself, its stages, the code cards, sketches and
+ * prototypes, design review, readiness, the report and the report history). This list is a promise
+ * about a destination, and a promise that omits the half of the destination a designer came for
+ * sends them away from the one tour that covers it.
+ *
+ * NO COUNT IS STATED HERE, DELIBERATELY. That file is under active edit and gained three steps
+ * between two reads of it while this component was being written; a number in this comment would
+ * have been wrong before the change was finished, and a number on the page beside a list of six
+ * lines would be worse. The two lines added below are compressions of that run, in its own order,
+ * and each names something the guide really shows.
+ *
+ * SIX LINES IS WHERE THIS STOPS. One line per chapter would be a table of contents, and a table of
+ * contents is the thing this section is trying to get somebody to open rather than to read here.
+ */
 const CHAPTERS = [
   "Recording an artisan and carrying them into a product",
   "Running an interview and reading the transcript back",
   "Sending work up the review ladder",
-  "Sharing data with another researcher"
+  "Sharing data with another researcher",
+  "Your designer profile, and working a workshop through its stages",
+  "Sketches, peer review, readiness, and generating the report"
 ];
 
 /**
@@ -46,7 +66,8 @@ export default function WalkthroughCallout() {
           <p className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
             Every account gets the same guided tour of the documentation process — what each record
             type is for, what makes a good interview, and how work travels from the field to an
-            approved, exportable dataset.
+            approved, exportable dataset. For a designer it keeps going: how a design &amp; prototype
+            workshop runs from its first stage to a submitted report.
           </p>
           <ul className="mt-6 grid gap-2 sm:grid-cols-2">
             {CHAPTERS.map((chapter) => (

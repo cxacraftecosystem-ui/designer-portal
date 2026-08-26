@@ -2855,14 +2855,16 @@ object AccessStatus {
  * The signed-in designer's own profile, as `GET /designers/me/profile` serves it — every column of
  * `DesignerProfile` plus the identifiers the client may not write.
  *
- * These twenty values are typed once and copied into every report the designer generates, which is
- * the reason the screen that edits them is worth building at all: a cover page that says "Designer:"
- * and nothing after it is a document that cannot be submitted.
+ * These twenty-one values are typed once and copied into every report the designer generates, which
+ * is the reason the screen that edits them is worth building at all: a cover page that says
+ * "Designer:" and nothing after it is a document that cannot be submitted. It was twenty and four of
+ * them until 2026-08-25, when the owner's instruction widened `PREFILL_MAP` to carry every writable
+ * column into stage 1 and stage 3 rather than only the name, institution, biography and years.
  *
- * [photoMediaId] and [signatureMediaId] are MEDIA IDS, resolved through `GET /media/{id}` exactly as
- * a stage field's photograph is — never URLs. A URL stored in a profile column would be a pre-signed
- * link that expires, so a report generated three months later would print a broken image and nothing
- * in the stored row would say why.
+ * [photoMediaId], [signatureMediaId] and [cvMediaId] are MEDIA IDS, resolved through
+ * `GET /media/{id}` exactly as a stage field's photograph is — never URLs. A URL stored in a profile
+ * column would be a pre-signed link that expires, so a report generated three months later would
+ * print a broken image and nothing in the stored row would say why.
  */
 @Serializable
 data class DesignerProfileDto(
@@ -2888,6 +2890,18 @@ data class DesignerProfileDto(
     val pincode: String? = null,
     val photoMediaId: String? = null,
     val signatureMediaId: String? = null,
+    /**
+     * The designer's CV. Usually a PDF, sometimes a .docx or .odt, and sometimes a photograph of a
+     * printed sheet — which is why the screen renders it through a document card rather than an
+     * `Image`, and why nothing here constrains the format: what the file IS belongs to the
+     * `MediaFile` row this id points at.
+     *
+     * NULLABLE WITH A DEFAULT, which is what makes this addition safe in BOTH directions across the
+     * fleet: a handset one release behind that has never heard of the key drops it, and this handset
+     * reading a server that does not yet send it defaults it. No coordination is needed for the
+     * column — unlike the registry change shipping beside it, which moves `registry_version()`.
+     */
+    val cvMediaId: String? = null,
     val empanelmentNo: String? = null,
     /** ISO-8601, and a STRING rather than a date — see [DesignerProfileUpdateBody.empanelmentDate]. */
     val empanelmentDate: String? = null,
@@ -2930,6 +2944,7 @@ data class DesignerProfileUpdateBody(
     val pincode: String? = null,
     val photoMediaId: String? = null,
     val signatureMediaId: String? = null,
+    val cvMediaId: String? = null,
     val empanelmentNo: String? = null,
     /**
      * An ISO-8601 date STRING, matching every other date this API accepts (see
@@ -2981,26 +2996,11 @@ fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = bui
     put("pincode", textOrNull(body.pincode))
     put("photoMediaId", textOrNull(body.photoMediaId))
     put("signatureMediaId", textOrNull(body.signatureMediaId))
+    put("cvMediaId", textOrNull(body.cvMediaId))
     put("empanelmentNo", textOrNull(body.empanelmentNo))
     put("empanelmentDate", textOrNull(body.empanelmentDate))
 }
 
-/**
- * The body of `PATCH /designers/roster/{id}` — a correction, or a restore.
- *
- * BUILT KEY BY KEY RATHER THAN FROM A DATA CLASS, and the asymmetry with the profile encoder above is
- * deliberate rather than an oversight. [email] is the row's unique join key to `User.email`, and the
- * server applies this body with `exclude_unset`, so a present-and-null `email` would be read as
- * "clear the address" — which on the one column that decides whether a person can sign in is not a
- * risk worth carrying for the convenience of one uniform encoder. It is therefore sent only when the
- * admin actually changed it to something non-blank. The three descriptive columns DO accept an
- * explicit null, because emptying the "Notes" box has to be able to mean emptying the notes.
- *
- * [isActive] is sent only when [suspendOrRestore] is non-null. Suspension is expressed through this
- * key as well as through `DELETE /designers/roster/{id}` because restoring somebody is not an act a
- * DELETE can express, and a screen that could suspend but not restore would push admins toward
- * deleting the row — destroying the record that the person was ever recognised.
- */
 /**
  * The body of `PATCH /access/roster/{id}` — correcting the admin-typed columns of an allow-list row.
  *
@@ -3032,6 +3032,22 @@ fun accessRosterUpdateJson(
     put("notes", textOrNull(notes))
 }
 
+/**
+ * The body of `PATCH /designers/roster/{id}` — a correction, or a restore.
+ *
+ * BUILT KEY BY KEY RATHER THAN FROM A DATA CLASS, and the asymmetry with the profile encoder above is
+ * deliberate rather than an oversight. [email] is the row's unique join key to `User.email`, and the
+ * server applies this body with `exclude_unset`, so a present-and-null `email` would be read as
+ * "clear the address" — which on the one column that decides whether a person can sign in is not a
+ * risk worth carrying for the convenience of one uniform encoder. It is therefore sent only when the
+ * admin actually changed it to something non-blank. The three descriptive columns DO accept an
+ * explicit null, because emptying the "Notes" box has to be able to mean emptying the notes.
+ *
+ * [isActive] is sent only when [suspendOrRestore] is non-null. Suspension is expressed through this
+ * key as well as through `DELETE /designers/roster/{id}` because restoring somebody is not an act a
+ * DELETE can express, and a screen that could suspend but not restore would push admins toward
+ * deleting the row — destroying the record that the person was ever recognised.
+ */
 fun designerRosterUpdateJson(
     email: String? = null,
     fullName: String? = null,
@@ -3440,4 +3456,242 @@ data class UserAiKeyDto(
 data class UserAiKeySetBody(
     val key: String? = null,
     val model: String? = null
+)
+
+// ---------------------------------------------------------------------------------------------
+// DESIGN REVIEW — the rating ledger: `POST /design-ratings`,
+// `GET /design-ratings/subjects/{subjectId}`, `GET /design-ratings/rounds/{round}`
+//
+// Appended rather than filed beside the other design-workshop DTOs above, deliberately: this file
+// was being edited by two other lanes on the day these landed, and a reorganisation of a
+// 3,400-line shared file is the change most likely to lose somebody else's uncommitted work.
+//
+// ── WHAT THIS WIRE IS, AND THE TWO THINGS IT IS NOT ──────────────────────────────────────────
+//
+// It is a ledger of judgements POINTING AT stage rows. `backend/app/services/design_ratings.py`
+// states both refusals at length and they are worth carrying here, because both are the shortcut a
+// reader of this block will reach for:
+//
+//   * IT IS NOT A SECOND WAY TO ADD A PROTOTYPE. A rating carries no design content. A sketch is a
+//     `sketch` row of stage 11 and a prototype a `prototype` row of stage 13, and that is where
+//     their fields, their plates and their report figures stay.
+//   * IT IS NOT A NEW RANKING MECHANISM. The placed order IS `DwStageEntry.ordinal` — the number
+//     this handset already writes from the row order of [StageDraft.rows] (see `buildStageBody`,
+//     `ordinal = index`). Nothing here writes an ordinal; [RankedSubjectDto.placedPosition] reads
+//     one.
+//
+// ── EVERY RESPONSE FIELD IS NULLABLE-WITH-DEFAULT, AND THAT IS NOT TIDINESS ──────────────────
+//
+// This app ships separately from the API, in both directions: a handset a release BEHIND meets keys
+// it has never heard of (handled by `ignoreUnknownKeys` in data/ApiClient.kt), and a handset a
+// release AHEAD meets a server that does not send a key yet. The second is what defaults are for. A
+// required field here would turn one missing key into a `SerializationException` that takes the
+// whole screen down, on a feature whose entire audience is designers standing in a courtyard.
+//
+// The REQUEST body [DesignRatingBody] is the deliberate exception: its three required fields are
+// values this client always has, and defaulting them would let a future caller post a rating with no
+// subject and no score and be answered with a 422 naming a field the designer never saw.
+//
+// ── AND THE ONE ABSENT KEY THAT IS THE WHOLE PERMISSION RULE ─────────────────────────────────
+//
+// `reviewerId` is OMITTED by the server for a caller who may not have it — see `rating_payload`,
+// which redacts on the way out rather than letting a route trim afterwards, so that no client can
+// render a name that was never sent. It is therefore `String?` here and must stay so: the nullable
+// type is the only thing that stops a later card printing an identity unconditionally.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One row of the ledger, as `design_ratings.rating_payload` writes it.
+ *
+ * BOTH CLOCKS TRAVEL, ALWAYS, and a screen that prints one has to say which. [ratedAt] is when the
+ * designer judged the piece as their own device recorded it; [createdAt] is when this server first
+ * heard about it. On this fleet the two are routinely a fortnight apart — a rating captured in a
+ * courtyard reaches the server whenever the phone next finds signal — so collapsing them into "when"
+ * credits the sync with the judgement.
+ *
+ * [mine] is the server's own answer to "did this caller write this row", not something a client
+ * derives by comparing ids: the reviewer always sees their own row in full, which is the clause that
+ * makes the amend flow work for somebody who may not read the rest of the ledger.
+ */
+@Serializable
+data class DesignRatingDto(
+    val id: String = "",
+    val subjectId: String? = null,
+    /** PEER or POOL. A String and not an enum — see `DwRatingRound.of` for why. */
+    val round: String = "",
+    val score: Int? = null,
+    val comment: String? = null,
+    val suggestion: String? = null,
+    /** The courtyard moment, as the rating device recorded it. */
+    val ratedAt: String? = null,
+    /** When this server first heard of it. */
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val mine: Boolean = false,
+    /** ABSENT, never blank, when this caller may not know who rated. See the block comment above. */
+    val reviewerId: String? = null,
+)
+
+/**
+ * One judgement on its way up — the body of `POST /design-ratings`.
+ *
+ * ONE ROUTE FOR CREATE AND AMEND, because the client cannot know which it is asking for. A phone
+ * that captured a rating in a courtyard has no idea whether the server already holds one from the
+ * tablet the same designer used yesterday, and asking first would put a round trip in front of every
+ * offline capture. The server resolves it to a create, an amendment or a no-op and says which
+ * through [DesignRatingSavedDto.replayed].
+ *
+ * ── [ratedAt] IS THE ONE FIELD A CLIENT CAN GET DANGEROUSLY WRONG ────────────────────────────
+ *
+ * It is what orders two deliveries of the SAME capture: `rating_plan` refuses a delivery whose
+ * `ratedAt` is not newer than the stored row's, and that is the whole of what stops a queued
+ * original from undoing an amendment after a tunnel. So it must be the moment the PERSON moved the
+ * control, never the moment the request went out. Stamping it at send time defeats the field
+ * exactly, and the schema says so in as many words: "Omit it when the rating is typed straight
+ * against the server."
+ *
+ * This handset therefore sends it ONLY from the offline queue path, stamped at the moment of
+ * capture; a rating typed with a connection omits it and lets the row's own `createdAt` be the
+ * moment. See `WorkshopRepository.submitDesignRating`.
+ */
+@Serializable
+data class DesignRatingBody(
+    val subjectId: String,
+    val round: String,
+    val score: Int,
+    val comment: String? = null,
+    val suggestion: String? = null,
+    val ratedAt: String? = null,
+)
+
+/**
+ * What `POST /design-ratings` answers with: the stored row, and whether this was a replay.
+ *
+ * [replayed] TRUE IS A SUCCESS AND MUST NOT BE DRAWN AS A FAILURE. It means the server already held
+ * this exact capture — the outbox delivered it twice, which is the ordinary behaviour of a phone
+ * with a flaky connection — and the stored row is the answer. A red line here would tell a designer
+ * their judgement was lost when it is safely recorded.
+ */
+@Serializable
+data class DesignRatingSavedDto(
+    val rating: DesignRatingDto = DesignRatingDto(),
+    val replayed: Boolean = false,
+)
+
+/**
+ * The piece a ledger read was about, as `subject_ledger` names it.
+ *
+ * [ordinal] is a DISCLOSURE and not a display field: the server sends the raw `DwStageEntry.ordinal`
+ * only to the workshop's own party and to admins, because a pool reader shown one opened prototype
+ * sitting at ordinal 7 has learned the workshop holds at least eight pieces they may not open. Its
+ * PRESENCE is what this client reads it for — see `dwMayArrange`.
+ */
+@Serializable
+data class RatingSubjectDto(
+    val id: String = "",
+    val entityKey: String = "",
+    val label: String = "",
+    val workshopId: String = "",
+    val ordinal: Int? = null,
+)
+
+/**
+ * The aggregate: the mean of the scores on the rows, and how many there were.
+ *
+ * [score] is null for a piece nobody has rated. NULL IS NOT ZERO — a sketch nobody has got to has
+ * not been judged badly, it has not been judged — and every screen over this has to keep the two
+ * apart. It arrives rounded to three decimals rather than one, deliberately, so that two pieces on
+ * 4.24 and 4.16 do not look tied on a list whose whole job is to order them.
+ */
+@Serializable
+data class RatingSummaryDto(
+    val score: Double? = null,
+    val ratingCount: Int = 0,
+)
+
+/**
+ * `GET /design-ratings/subjects/{subjectId}` — who rated this piece, when, and how.
+ *
+ * ── THE TWO BOOLEANS ARE THE POINT OF THIS RESPONSE ──────────────────────────────────────────
+ *
+ * [canReadLedger] false with a populated [summary] IS NOT A REFUSAL and must never be rendered as
+ * one. It is "you can see the score, not the scorers" — the ordinary state of a peer in a round —
+ * and the server sends the flag precisely so a client does not have to guess whether an empty
+ * [ratings] list means "nobody rated" or "not yours to see". Guessing is how a designer comes to
+ * believe their prototype went unreviewed.
+ *
+ * [namesShown] says whether the rows that DID arrive carry a reviewer. It is the server's decision
+ * for this round — see `POOL_RATINGS_NAME_THEIR_RATER`, an owner call — so the sentence on screen
+ * attributes it to the server rather than implying this app withheld something.
+ *
+ * BOTH DEFAULT TO FALSE, which is the conservative direction for a handset talking to a server that
+ * does not send them yet: the screen says less than it might, rather than claiming an entitlement
+ * nobody granted. Per-row identity is still read off [DesignRatingDto.reviewerId], which is the fact
+ * rather than the flag.
+ */
+@Serializable
+data class SubjectLedgerDto(
+    val subject: RatingSubjectDto = RatingSubjectDto(),
+    val round: String = "",
+    val summary: RatingSummaryDto = RatingSummaryDto(),
+    val ratings: List<DesignRatingDto> = emptyList(),
+    val canReadLedger: Boolean = false,
+    val namesShown: Boolean = false,
+)
+
+/**
+ * One row of `GET /design-ratings/rounds/{round}` — a piece, its score, and BOTH of its positions.
+ *
+ * ── TWO POSITIONS, AND THE WHOLE FEATURE IS THE GAP BETWEEN THEM ─────────────────────────────
+ *
+ * The owner asked for "sorted by score by default, with the designer having the final say", which is
+ * two orders that have to be visible at once:
+ *
+ *   * [defaultPosition] is what the ratings say. Derived from the average, then the sample size,
+ *     then the placed order, then the id — and unrated pieces sort LAST, because nobody having got
+ *     to a sketch is not the same as it scoring nothing.
+ *   * [placedPosition] is what the designers say: `DwStageEntry.ordinal`, the number the row arrows
+ *     on the stage screen already write.
+ *
+ * A client that only ever showed the sorted order could not show a designer that they had overruled
+ * the scores, which is precisely the judgement being recorded.
+ *
+ * [myRating] is this caller's own row, sent with the listing so the rating control renders already
+ * filled in without a request per piece. It carries no identity decision — it is the caller's own
+ * row, which they may always see in full.
+ *
+ * [ordinal] carries the same disclosure rule as [RatingSubjectDto.ordinal] and this client reads its
+ * PRESENCE as one thing only: whether this caller is the workshop's own party or an admin, which is
+ * the same set the stage save admits. See `dwMayArrange`.
+ */
+@Serializable
+data class RankedSubjectDto(
+    val subjectId: String = "",
+    val entityKey: String = "",
+    val label: String = "",
+    val workshopId: String = "",
+    val score: Double? = null,
+    val ratingCount: Int = 0,
+    val defaultPosition: Int = 0,
+    val placedPosition: Int = 0,
+    val myRating: DesignRatingDto? = null,
+    val ordinal: Int? = null,
+)
+
+/**
+ * `GET /design-ratings/rounds/{round}` — one round's pieces, in PLACED order.
+ *
+ * `workshopId` IS REQUIRED FOR BOTH ROUNDS, POOL INCLUDED, and that is structural rather than an
+ * unfinished API. The placed order is `DwStageEntry.ordinal`, which orders the rows of ONE
+ * collection inside ONE workshop: two prototypes in two workshops can both be ordinal 0, so an
+ * arrangement made across a mixed list would have nowhere to be stored. The pool round is the same
+ * list read by a WIDER AUDIENCE, not a wider list, and a cross-workshop browse is a different
+ * feature with a different answer. Neither client has one.
+ */
+@Serializable
+data class RoundRankingDto(
+    val workshopId: String = "",
+    val entityKey: String = "",
+    val round: String = "",
+    val items: List<RankedSubjectDto> = emptyList(),
 )

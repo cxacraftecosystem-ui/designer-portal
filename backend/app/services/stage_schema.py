@@ -361,10 +361,13 @@ class FieldSpec:
     ref_scope: str = ""
     max_length: int = 0
     #: For a multi-valued type (IMAGE_LIST, TAGS, MULTI_ENUM): how many entries it may hold.
-    #: 0 means ``DEFAULT_MAX_ITEMS``, which is what every field in the registry uses today —
-    #: see that constant for why an unbounded array is a permanent write amplified on every
-    #: later read of the stage. On a scalar field it is inert; ``max_length`` is that field's
-    #: bound. On a multi field ``max_length`` bounds ONE ENTRY, not the joined string.
+    #: 0 means ``DEFAULT_MAX_ITEMS``, which is what 35 of the registry's 37 multi-valued fields
+    #: still use; the two exceptions are stage 4's motif galleries, which declare 20. (This line
+    #: read "which is what every field in the registry uses today" until those two arrived — the
+    #: count is stated so the next reader can re-measure it instead of trusting it.) See that
+    #: constant for why an unbounded array is a permanent write amplified on every later read of
+    #: the stage. On a scalar field it is inert; ``max_length`` is that field's bound. On a multi
+    #: field ``max_length`` bounds ONE ENTRY, not the joined string.
     max_items: int = 0
     min_value: float | None = None
     max_value: float | None = None
@@ -1742,11 +1745,22 @@ _MAX_ACCURACY_M = 20_037_508.0
 #: workshop — serialises IN FULL, for ever, with no path that trims it and no error recording it.
 #:
 #: MEASURED RATHER THAN GUESSED, so the cap cannot refuse an honest answer: the registry declares
-#: 35 multi-valued fields (18 IMAGE_LIST, 12 TAGS, 5 MULTI_ENUM); the largest option list any
+#: 37 multi-valued fields (20 IMAGE_LIST, 12 TAGS, 5 MULTI_ENUM); the largest option list any
 #: MULTI_ENUM draws on is PRODUCT_CATEGORY at 15 entries, and the largest list in ``ENUMS`` at all
 #: is MATERIAL_FAMILY at 17. 200 is more than ten times the widest legitimate "select them all",
 #: and far past any gallery a designer photographs onto ONE row of a stage that already admits 500
-#: rows. A field that genuinely needs more says so with ``max_items`` on its own ``FieldSpec``.
+#: rows.
+#:
+#: RE-MEASURED, AND THE COUNT IS THE ONLY PART THAT MOVED: this read "35 multi-valued fields (18
+#: IMAGE_LIST …)" when it was first taken, and two more IMAGE_LIST fields have been declared since.
+#: The conclusion does not depend on that number — 200 is judged against the widest OPTION LIST,
+#: not against how many fields there are — so the count is restated rather than dropped, for the
+#: next reader who needs to know whether it is a live measurement or an old one.
+#:
+#: A field that needs a DIFFERENT ceiling, in either direction, says so with ``max_items`` on its
+#: own ``FieldSpec``. Two do, and both go DOWN rather than up: stage 4's motif galleries cap at 20
+#: because the owner asked for 20, which is the case this constant is a fallback for and not an
+#: override of.
 DEFAULT_MAX_ITEMS = 200
 
 #: How long ONE entry of a multi-valued field may be when the field declares no ``max_length``.
@@ -2376,11 +2390,35 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
     # in their own field types, and the key is what crosses the wire.
     if f.text_format is not TextFormat.NONE:
         out["format"] = f.text_format.value
-    # Emitted on the same "only non-default keys" rule as everything around it, so no field in
-    # today's registry emits it and neither the bundled Android asset nor `registry_version()`
-    # moves for adding the line. It starts crossing the wire the day a field declares a bound,
-    # which is the day a client needs it to stop a designer filling a picker the server will
-    # then refuse. Both clients ignore keys they do not know.
+    # THE ASSET MOVES FOR THIS KEY AND THE VERSION DOES NOT, AND THAT ASYMMETRY IS THE WHOLE NOTE.
+    #
+    # This is the line somebody reads before deciding whether a changed cap owes a re-dump of
+    # `android/app/src/main/assets/design-workshop-schema.json` and a re-cut APK, so it has to be
+    # right about both halves. It used to say that no field in today's registry emitted the key, so
+    # neither the bundled asset nor `registry_version()` moved for it. That was true when written
+    # and is now false in its first two clauses: stage 4's two motif galleries declare
+    # `max_items=20` (`stage_definitions.py`, `motifPhotos` and `contemporaryMotifPhotos`), so
+    # `maxItems` crosses the wire twice and appears twice in the bundled asset. The third clause is
+    # the load-bearing one and is still true.
+    #
+    #   * THE ASSET MOVES. It is a by-value dump of `registry_to_dict()`, which serialises this
+    #     function's output verbatim, so a cap added, changed or removed here leaves the shipped
+    #     copy disagreeing with the server until somebody re-dumps it.
+    #   * THE VERSION DOES NOT. `registry_version()` below digests key, type, tier, required, enum,
+    #     deprecated, derivation, hydration, `store_masked` and `text_format` — and NOT
+    #     `max_items`. A cap change leaves that digest character for character identical.
+    #
+    # Which is why `tests/test_controlled_vocabularies.py` carries TWO asset tests and not one: on
+    # a cap change the version test (`..._matches_the_registry_it_was_dumped_from`) reports
+    # agreement and only the content test (`..._is_the_registry_it_claims_to_be`) fails. Reading
+    # the green version test as "the asset is fresh" is the defect this note exists to prevent, and
+    # what it costs is specific rather than cosmetic: `DwMediaCapture.kt` computes its cap as
+    # `if (multiple && field.maxItems > 0) field.maxItems else null`, so a handset rendering off a
+    # stale asset gets `null` — an UNCAPPED picker — while `coerce_value` above REFUSES the
+    # twenty-first entry rather than trimming it. The designer learns the number by losing a save.
+    #
+    # Both clients ignore keys they do not know, so a new bound is safe for an OLD build that never
+    # fetched it; it is the BUNDLED copy of the build being cut that has to be re-dumped.
     if f.max_items:
         out["maxItems"] = f.max_items
     if f.min_value is not None:

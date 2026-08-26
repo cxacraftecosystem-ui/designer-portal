@@ -821,10 +821,16 @@ def test_a_declared_bound_on_a_multi_field_is_no_longer_a_silent_no_op():
     """``max_length`` and ``max_items`` are both consulted for a multi field.
 
     ``max_length`` was unreachable for these types — the branch returned first — so a field that
-    declared one was declaring nothing. No registry field declares either today (measured: 35
-    multi-valued fields, none with ``max_length``), which is exactly why the defaults above are
-    what actually bound the fleet; these two assertions keep the declared path honest for the
-    first field that needs it.
+    declared one was declaring nothing.
+
+    NO MULTI-VALUED FIELD DECLARES A ``max_length`` TODAY, which is why ``DEFAULT_MAX_ITEM_CHARS``
+    is what actually bounds every TAGS box in the fleet, and this assertion keeps the declared path
+    honest for the first field that needs one. ``max_items`` is no longer in that position: the two
+    motif galleries declared 20 on 2026-08-25, and the live-registry half of that is pinned by
+    ``test_the_capped_motif_galleries_refuse_the_twenty_first_photograph`` and
+    ``test_exactly_two_fields_in_the_whole_registry_declare_a_cap`` further down. This test stays a
+    statement about the MECHANISM on a synthesised spec, which is the right division: those two
+    would still pass if ``coerce_value`` honoured a cap by truncating.
     """
     capped = _f(type=FieldType.TAGS, label="Tags", max_items=2, max_length=4)
     assert coerce_value(capped, ["ikat", "silk"]) == (["ikat", "silk"], None)
@@ -847,6 +853,218 @@ def test_max_items_crosses_the_wire_only_once_a_field_declares_one():
 
     assert "maxItems" not in field_to_dict(_f(type=FieldType.TAGS))
     assert field_to_dict(_f(type=FieldType.TAGS, max_items=12))["maxItems"] == 12
+
+
+# --------------------------------------------------------------------------------------
+# The two capped galleries — max_items ON A LIVE REGISTRY FIELD
+#
+# WHAT THE THREE TESTS ABOVE CANNOT SEE, and why these exist beside them rather than instead of
+# them. Those pin the ARITHMETIC of the bound, on synthesised `_f(...)` specs, which is the right
+# place for it: the cap is a property of `coerce_value`, not of any one field. What none of them
+# asks is whether any field in the registry actually declares one — a `max_items` that no
+# `FieldSpec` sets is a feature with a green test suite and no effect — or, the other direction,
+# whether the `photos()` helper handed the same number to the seventeen galleries nobody asked
+# about. `photos()` is the single most repeated shape in the registry (fifteen call sites), so an
+# optional keyword added to it has a blast radius of fifteen stages, and a widened or narrowed
+# ceiling is invisible until a designer meets a refusal they were never shown.
+# --------------------------------------------------------------------------------------
+
+#: The owner's stated ceiling of 2026-08-25, and the ONLY two fields it was stated for.
+#:
+#: Written as a literal rather than derived from the registry for the same reason
+#: `test_the_designer_boxes_stage_3_gained_are_all_there` names its boxes by hand: a test that
+#: computed its expectation from the thing under test would pass for any registry at all, which is
+#: precisely the failure mode here — the whole risk is that the number reached fields nobody chose.
+CAPPED_GALLERIES: dict[str, int] = {
+    "motifPhotos": 20,              # relabelled to "Traditional motif photographs", key KEPT
+    "contemporaryMotifPhotos": 20,  # the new half of the traditional/contemporary pair
+}
+
+
+def test_the_capped_motif_galleries_refuse_the_twenty_first_photograph():
+    """The owner's ceiling is enforced by the SERVER, on the real field, and refuses rather than trims.
+
+    THE DEFECT THIS PREVENTS IS NOT AN OVERSIZED ARRAY — `DEFAULT_MAX_ITEMS` already stopped that
+    at 200. It is a cap that exists in a picker and nowhere else. Both clients now read `maxItems`
+    off the published registry and stop the picker at twenty, and a designer who believes that IS
+    the rule will hit the server through every other door: an Android draft syncing a gallery
+    assembled by an older build, a bulk import, a direct API call (`validate_entry`'s docstring is
+    explicit that a phone one release ahead is a supported caller), or the same handset after a
+    retry loop appends rather than replaces. If the declaration were client-side advice, all four
+    would store twenty-five photographs into a report whose figure list promises twenty.
+
+    A REFUSAL, NOT A TRUNCATION, AND THE SECOND HALF IS THE ASSERTION A REFACTOR WOULD LOSE.
+    Silently keeping the first twenty of a twenty-one-photograph array is this repository's most
+    repeated bug class — the designer is told "Stage saved" and one photograph is gone with nothing
+    on screen. So `stored is None` is asserted as well as the message: `save_stage` restores a
+    refused key from `previous`, so nothing is lost either, and the message names the box.
+
+    AGAINST THE LIVE FIELD AND NOT A SYNTHESISED ONE, which is the entire point of this test
+    existing next to `test_a_declared_bound_on_a_multi_field_is_no_longer_a_silent_no_op`. That one
+    proves `coerce_value` honours a declared cap; this one proves these two galleries declare it.
+    """
+    background = _entity("clusterBackground")
+    for key, cap in CAPPED_GALLERIES.items():
+        gallery = background.field(key)
+        assert gallery is not None, f"clusterBackground has no {key!r} field"
+        assert gallery.type is FieldType.IMAGE_LIST, (
+            f"{key} is {gallery.type.value}; max_items is inert on anything but a multi field, so "
+            "the declaration would be published and enforce nothing"
+        )
+        assert gallery.max_items == cap, (
+            f"{key} declares max_items={gallery.max_items}, not the owner's {cap}"
+        )
+
+        # Media ids, because that is what an IMAGE_LIST holds: a cuid is 25 characters, comfortably
+        # inside DEFAULT_MAX_ITEM_CHARS, so the per-ITEM bound cannot be what refuses these and the
+        # test cannot pass for the wrong reason.
+        ids = [f"cm{n:023d}" for n in range(cap + 1)]
+
+        stored, error = coerce_value(gallery, ids[:cap])
+        assert error is None, f"the {cap}th photograph was refused: {error}"
+        assert stored == ids[:cap], (
+            "the ceiling is inclusive — a cap of 20 that refuses the twentieth is an off-by-one "
+            "the designer meets as a lost photograph"
+        )
+
+        stored, error = coerce_value(gallery, ids)
+        assert error == f"{gallery.label} may hold at most {cap} entries", error
+        assert stored is None, (
+            f"{key} stored {len(stored or [])} of {len(ids)} entries: a silent truncation, which "
+            "is the failure this cap must not become"
+        )
+
+    # AND THE CAP CROSSES THE WIRE, because a ceiling only the server knows about is a ceiling the
+    # designer discovers after attaching the twenty-first photograph — see `photos()`' docstring.
+    for key, cap in CAPPED_GALLERIES.items():
+        published = field_to_dict(background.field(key), "clusterBackground")
+        assert published["maxItems"] == cap, published
+
+
+def test_exactly_two_fields_in_the_whole_registry_declare_a_cap():
+    """The blast radius of one optional keyword on a helper fifteen galleries share.
+
+    `photos()` gained `max_items` and `help` on 2026-08-25. It is called fifteen times across
+    fifteen stages, and its own docstring states why the parameter defaults to 0: "widening or
+    narrowing every one of the eighteen galleries in this registry from one keyword here would be a
+    silent change to seventeen stages nobody asked about." This is the test that makes that
+    sentence true rather than intended.
+
+    BOTH DIRECTIONS OF WRONG ARE SILENT, which is why the assertion is set EQUALITY and not a
+    superset:
+
+    * A CAP THAT LEAKED. A default of, say, 20 on the helper would silently narrow `stepPhotos`,
+      `finalPhotos` and twelve others. Nothing fails. The symptom arrives weeks later as a designer
+      in a cluster being refused their twenty-first process photograph on a stage that has always
+      taken as many as they could shoot, and `validate_registry` has nothing to say about it
+      because a cap is a legal declaration.
+    * A CAP THAT VANISHED. Deleting `max_items=20` from one motif gallery restores the unstated 200
+      and both clients stop showing the ceiling. Also nothing fails.
+
+    THE ENTIRE REGISTRY IS SWEPT, not only the IMAGE_LISTs, because `max_items` is legal on every
+    multi-valued type — a TAGS or MULTI_ENUM box that quietly gained one would refuse a designer's
+    selections with no owner decision behind the number.
+    """
+    declared = {
+        f"{entity.key}.{field.key}": field.max_items
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.max_items
+    }
+    assert declared == {
+        f"clusterBackground.{key}": cap for key, cap in CAPPED_GALLERIES.items()
+    }, (
+        f"the set of fields declaring a cap is {declared}, not the two motif galleries the owner "
+        "stated a ceiling for. A cap that leaked from photos() refuses photographs on a stage "
+        "nobody asked about; a cap that vanished silently restores DEFAULT_MAX_ITEMS and both "
+        "clients stop showing the ceiling."
+    )
+
+
+def test_the_photos_helper_puts_its_help_on_the_gallery_and_never_on_the_caption():
+    """The other half of the same keyword, and the half with no error path at all.
+
+    `help` reached `photos()` in the same edit as `max_items`, and it is the more dangerous of the
+    two because a wrong cap eventually refuses something whereas wrong help text just sits on a
+    form telling a designer the wrong thing for ever. `photos()` states where it lands — "``help``
+    lands on the gallery and not on the caption. The caption's own guidance is its label" — and a
+    help string that leaked onto fifteen caption boxes would put "Up to 20 photographs…" under a
+    one-line text input, which is advice about a different field.
+
+    THE ENTRIES THAT ARE NOT LEAKS ARE NAMED SO NOBODY DELETES THEM, and there are five of them
+    across the two sets below: `existingProduct.productPhotos` and four caption boxes. None came
+    from `photos()`. Every one is a `fromref` box carrying the reference-carry sentence every
+    hydrated field in this registry carries ("Filled in from the linked record when one is
+    chosen…"), and every one predates this wave. They are listed by hand because an assertion that
+    quietly allowed "any field with help" would allow exactly the leak this test exists for.
+    """
+    galleries_with_help = {
+        f"{entity.key}.{field.key}"
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.type is FieldType.IMAGE_LIST and field.help
+    }
+    assert galleries_with_help == {
+        "clusterBackground.motifPhotos",
+        "clusterBackground.contemporaryMotifPhotos",
+        "existingProduct.productPhotos",   # the hydration sentence, not photos() — see docstring
+    }, (
+        f"{galleries_with_help} carry gallery help. A string that leaked out of photos() tells "
+        "fifteen stages' designers about a ceiling that is not theirs."
+    )
+
+    # THE CAPTIONS, AND WHY THIS HALF IS A PINNED SET RATHER THAN A SWEEP FOR EMPTINESS.
+    #
+    # The first draft of this test asserted that NO caption in the registry carries help, on the
+    # reasoning that `photos()` never puts one there. Four do, and the way they were found is worth
+    # keeping: `photos()`-produced pairs are structurally INDISTINGUISHABLE from hand-declared ones.
+    # Both are a field keyed `<gallery>Caption` with `caption_for` naming the gallery — the helper
+    # follows the registry's convention rather than marking its output — so there is no predicate
+    # that means "came from photos()". Every one of the four belongs to a `fromref` box and carries
+    # the shared reference-carry sentence, which is a fact about hydration and not about a ceiling.
+    #
+    # So the set is pinned by hand with its reason, exactly as the gallery set above is. That is the
+    # stronger check in any case: `photos()` passing its `help` to the caption as well as the
+    # gallery would add thirteen entries here and fail loudly, whereas an "is it empty" sweep could
+    # only ever have been deleted.
+    hydration_captions = {
+        "workshopSetup.craftPhotoCaption",
+        "participant.photoCaption",
+        "tool.photoCaption",
+        "existingProduct.productPhotosCaption",
+    }
+    captions = [
+        (f"{entity.key}.{field.key}", field.help)
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.caption_for and field.key == f"{field.caption_for}Caption"
+    ]
+    # A FLOOR AND NOT AN EXACT COUNT. Twenty-six pairs today (fifteen from `photos()`, eleven
+    # declared directly); a floor of twenty leaves room for a retirement or two while still refusing
+    # the one way this can lie — a matcher somebody broke, which would make both assertions below
+    # pass over an empty list. The same reasoning, and the same shape, as the `len(vectors) > 30`
+    # floor in the vector-table test at the end of this file.
+    assert len(captions) >= 20, (
+        f"only {len(captions)} caption pairs found; the assertions below are measuring nothing"
+    )
+    helped = {path for path, help_text in captions if help_text}
+    assert helped == hydration_captions, (
+        f"{sorted(helped)} are caption boxes carrying help, not the four hydrated ones. photos() "
+        "puts help on the gallery; a string that landed on a caption is guidance about a different "
+        "field, printed under a one-line text input."
+    )
+    # AND WHAT THEY SAY IS THE HYDRATION SENTENCE, not a ceiling. This is the assertion that would
+    # actually catch a leak: if `photos()` started passing `help` through to the caption, these four
+    # would still be the only captions with help on the day a capped gallery's caption inherited
+    # "Up to 20 photographs…" — because `motifPhotosCaption` would then join the set above AND its
+    # text would be about a photograph count.
+    for path, help_text in captions:
+        if not help_text:
+            continue
+        assert help_text.startswith("Filled in from the linked record"), (
+            f"{path} carries help that is not the reference-carry sentence: {help_text!r}. A "
+            "caption's own guidance is its label; anything else here is advice about the gallery."
+        )
 
 
 def test_date_requires_iso_8601():
@@ -1436,3 +1654,199 @@ def test_the_three_implementations_agree_on_the_shared_vector_table():
         assert error == row["error"], (
             f"{row['format']} {row['value']!r}: expected {row['error']!r}, got {error!r}"
         )
+
+
+# --------------------------------------------------------------------------------------
+# The stage-3 designer boxes — the SAME feature, one entity over
+#
+# Stage 3's `workshopPlan` gained nineteen boxes on 2026-08-25 so that everything a designer types
+# on the Designer Page reaches every report. Three of them are shaped values, and they arrived with
+# exactly the exposure `TextFormat`'s docstring describes: the Designer Page validates its own
+# `phone`, `email` and `pincode` columns, and the box the REPORT prints is the stage copy. A stage
+# copy that checked only a length would put a nine-digit phone number and an address with no `@`
+# into a document submitted to a ministry, with the validated originals sitting two inches away on
+# a page nobody prints from.
+#
+# The tests below are deliberately NOT a fourth statement of the three rules. `phone_error`,
+# `email_error` and `pincode_error` are the record path's own functions, the shared vector table
+# pins their sentences in three languages, and restating a sentence here would make a fourth copy
+# to keep in step. What is asserted instead is the JOIN: that the stage box answers exactly what
+# the record page answers, on the live FieldSpec, through `coerce_value`.
+# --------------------------------------------------------------------------------------
+
+#: The three shaped boxes stage 3 gained, and the type each one is declared on.
+#:
+#: Named by hand rather than read off the registry, and the reason is not style: the risk being
+#: guarded is a box that declares NO format, and a table derived from `text_format` cannot see one
+#: of those. Same argument as `test_the_designer_boxes_stage_3_gained_are_all_there`.
+DESIGNER_SHAPED_BOXES: tuple[tuple[str, TextFormat, FieldType], ...] = (
+    ("designerPhone", TextFormat.PHONE_IN, FieldType.PHONE),
+    ("designerEmail", TextFormat.EMAIL, FieldType.EMAIL),
+    # TEXT AND NOT A TYPE OF ITS OWN, which is why this one is the easiest of the three to forget:
+    # there is no `FieldType.PINCODE`, so the sweep that catches a formatless EMAIL/PHONE field
+    # (`test_every_email_and_phone_field_in_the_registry_declares_a_format`) cannot see a PIN code
+    # box at all. `test_a_pin_code_box_anywhere_in_the_registry_declares_the_pincode_format` below
+    # is the sweep that can.
+    ("designerPincode", TextFormat.PINCODE, FieldType.TEXT),
+)
+
+
+def test_the_stage_three_designer_boxes_declare_the_shapes_they_were_given():
+    """The declarations themselves, and that `validate_registry` is content with all three.
+
+    THE RULE BEING CHECKED IS THE ONE THAT REFUSES THE OTHER TYPES. `validate_registry` permits a
+    format only on TEXT, LONG_TEXT, URL, PHONE and EMAIL — the five that reach `coerce_value`'s
+    scalar-text arm — and refuses every other type on the ground that the declaration would
+    serialise to both clients, be published in the digest, appear in the bundled Android asset, and
+    refuse nothing on the way in. All three of these boxes sit inside that permitted set, and this
+    test says so PER BOX rather than leaning on `test_registry_is_sound`'s single aggregate: a
+    registry-wide `problems == []` tells you something is fine, and after nineteen new fields in one
+    edit that is not the same as knowing these three are. PHONE and EMAIL are also the two types
+    whose whole contribution before this feature was a keyboard on the handset — declaring the type
+    bought the designer nothing the server enforced — so "the type is allowed to carry a format" is
+    the specific thing worth pinning here.
+
+    THE `max_length` BESIDE EACH FORMAT IS ASSERTED TOO, because a format is a SHAPE and not a
+    bound — the lesson of `participant.email`, which declared EMAIL and no length at all and was
+    therefore unbounded into the .docx, the .xlsx and every export. A stage-3 box with a format and
+    no bound would be that same field under a different key.
+    """
+    plan = _entity("workshopPlan")
+    for key, expected_format, expected_type in DESIGNER_SHAPED_BOXES:
+        field = plan.field(key)
+        assert field is not None, f"workshopPlan has no {key!r} field"
+        assert field.type is expected_type, f"{key} is {field.type.value}"
+        assert field.text_format is expected_format, (
+            f"{key} declares text_format {field.text_format.value or 'NONE'}, so the server checks "
+            "nothing but its length — and the value the report prints is this copy, not the "
+            "Designer Page's validated column"
+        )
+        assert field.max_length, (
+            f"{key} declares a format and no max_length. A format is a shape, not a bound; see "
+            "test_participant_email_is_bounded for the field that was learned on."
+        )
+        # NOT masked, and asserted rather than assumed. `validate_registry` refuses `store_masked`
+        # without `AADHAAR`, so a mask here would fail the build — but the reason it must not be
+        # masked is worth stating, because a phone number and an email address are printed IN FULL
+        # in the report's designer block: a masked one would be a broken contact detail rather than
+        # a protected identifier, and `mask_aadhaar` keeps the last four characters of anything.
+        assert field.store_masked is False, f"{key} would print as a mask in the designer block"
+
+    problems = validate_registry()
+    assert problems == [], "\n".join(problems)
+
+
+def test_the_stage_three_designer_boxes_refuse_what_the_designer_page_refuses():
+    """The join: the stage copy answers exactly what the record path's own validator answers.
+
+    THE DEFECT THIS ENDS, stated for these three boxes specifically. `prefill_from_profile` copies
+    `phone`, `email` and `pincode` off `DesignerProfile` into these boxes at create time, and the
+    designer may then edit them per report — which is the whole point of them being copies. So there
+    are two ways a malformed value gets in: typed here, or carried from a profile column written
+    before its own validator existed. `validate_entry` re-coerces EVERY field on EVERY save, so
+    declaring the format is what re-refuses the second kind as well as the first.
+
+    ASSERTED AGAINST THE VALIDATOR AND NOT AGAINST A RESTATED SENTENCE, deliberately. The exact
+    strings are already pinned by the shared vector table in three languages
+    (`test_the_three_implementations_agree_on_the_shared_vector_table`), and a fourth copy here
+    would be a fourth thing to keep in step — the precise mistake that table exists to end. What
+    this asserts is stronger and is asserted nowhere else: that the stage box's answer IS the record
+    page's answer, character for character, for the same input. A `coerce_value` that stopped
+    applying formats would answer `None` here and fail every row.
+
+    AND NOTHING IS STORED ON A REFUSAL. `save_stage` restores a refused key from `previous`, so the
+    designer keeps the other eighteen answers of the entry and the box keeps whatever it held. A
+    version that stored the malformed value alongside the error would be the silent half of this
+    defect surviving the fix.
+    """
+    from app.services.address import normalize_pincode, pincode_error
+    from app.services.contact_formats import email_error, normalize_email, phone_error
+
+    plan = _entity("workshopPlan")
+
+    # (field key, the validator applied exactly the way `_FORMATS` applies it, values to try)
+    #
+    # THE NORMALISATION IS PART OF THE CONTRACT AND NOT COSMETIC. `_pincode_format_error` checks the
+    # NORMALISED value so that a box already holding "768 029" — typed that way by somebody reading
+    # an address aloud, and named in `participant.pincode`'s own comment as the value a tighter rule
+    # would start refusing on a stage a designer is trying to submit — is accepted, while the STORED
+    # string is left as typed. Mirroring that here is what makes the comparison honest rather than
+    # merely green.
+    checks = (
+        ("designerPhone", phone_error,
+         ("+91 9876500001", "9876500001", "+91 987650000", "+44 20 7946 0958",
+          "abc9876500001def", "not a number")),
+        ("designerEmail", lambda v: email_error(normalize_email(v)),
+         ("latha.nayak@nift.ac.in", "latha", "latha@example", "@example.org",
+          "latha@example.org, ammaji@example.org")),
+        ("designerPincode", lambda v: pincode_error(normalize_pincode(v) or v),
+         ("768029", "768 029", "76802", "068029", "7680A9", "---")),
+    )
+
+    for key, validator, values in checks:
+        field = plan.field(key)
+        # A CASE TABLE THAT ACCEPTED EVERYTHING WOULD PASS THIS TEST WITHOUT MEASURING THE REFUSAL,
+        # so each box must contribute at least one accepted and one refused value.
+        verdicts = {validator(value) is None for value in values}
+        assert verdicts == {True, False}, (
+            f"{key}'s cases are all-accept or all-refuse, so half of this test is vacuous"
+        )
+        for value in values:
+            stored, error = coerce_value(field, value)
+            expected = validator(value)
+            assert error == expected, (
+                f"{key} {value!r}: the stage box answers {error!r} and the Designer Page's own "
+                f"validator answers {expected!r}. Two answers for one rule is the state this "
+                "feature was written to end."
+            )
+            if expected is None:
+                assert stored == value, (
+                    f"{key} {value!r} was accepted and stored as {stored!r}; an accepted value must "
+                    "be kept as typed, not reformatted under the designer"
+                )
+            else:
+                assert stored is None, (
+                    f"{key} {value!r} was refused with {error!r} and still stored {stored!r} — a "
+                    "malformed value in a ministry document behind an error nobody blocked on"
+                )
+
+
+def test_a_pin_code_box_anywhere_in_the_registry_declares_the_pincode_format():
+    """The sweep the EMAIL/PHONE sweep structurally cannot do, and the reason it is needed.
+
+    `test_every_email_and_phone_field_in_the_registry_declares_a_format` works because EMAIL and
+    PHONE are FIELD TYPES: a new contact box declares one and the sweep sees it. There is no
+    `FieldType.PINCODE`. Every PIN code in this registry is a `FieldType.TEXT` box indistinguishable
+    from a city name, so the only thing separating it from four hundred other TEXT fields is what
+    its label says — and a PIN code box added without `text_format=PINCODE` would look completely
+    reasonable in review, which is exactly how `designerPincode` could have arrived without one.
+
+    MATCHED ON THE LABEL, which is the weak part of this and is stated rather than hidden. A box
+    labelled "Postal code" or "ZIP" would slip through. The label is nonetheless the strongest
+    signal available — the key names are not consistent enough to match on (`pincode`,
+    `recordPincode`, `designerPincode`) — and a sweep that catches the spellings actually in use is
+    worth more than no sweep at all. Widen the pattern when a fifth spelling appears.
+    """
+    pattern = re.compile(r"pin\s*code", re.IGNORECASE)
+    matched = [
+        (f"{entity.key}.{field.key}", field)
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if pattern.search(f"{field.key} {field.label}")
+    ]
+
+    # THE SWEEP IS NOT VACUOUS. Four boxes match today — `participant.pincode`,
+    # `tool.recordPincode`, `existingProduct.recordPincode` and `workshopPlan.designerPincode`. A
+    # floor rather than the exact count, for the reason written at the caption sweep further up: a
+    # fifth PIN code box is an ordinary addition, whereas a pattern somebody broke while editing
+    # would make the assertion below pass while measuring nothing.
+    assert len(matched) >= 4, f"the PIN code pattern matches only {matched}; it has stopped working"
+
+    unchecked = sorted(
+        path for path, field in matched
+        if not field.deprecated and field.text_format is not TextFormat.PINCODE
+    )
+    assert unchecked == [], (
+        f"{unchecked} look like PIN code boxes and declare no PINCODE format, so the server checks "
+        "nothing but their length — and a five-digit PIN code then prints as an address in a report"
+    )

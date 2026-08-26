@@ -171,6 +171,34 @@ export type DwCardinality = "SINGLETON" | "COLLECTION";
 export type DwEnumOption = { value: string; label: string };
 
 /**
+ * THE CEILING A MULTI-VALUED FIELD IS ENFORCED AGAINST WHERE THE REGISTRY DECLARES NONE — 200.
+ *
+ * The server's own `DEFAULT_MAX_ITEMS` (`services/stage_schema.py`), copied here and into Android's
+ * `DW_DEFAULT_MAX_ITEMS` because `field_to_dict` emits `maxItems` ONLY for a field that states one:
+ * a client that reads the absence as no ceiling at all is doing the exact thing
+ * docs/DESIGN_WORKSHOP.md:229-232 forbids in those words, and until 2026-08-26 both clients did it.
+ *
+ * WHAT THAT COSTS IS NOT ONE PHOTOGRAPH. `coerce_value` REFUSES an over-long array rather than
+ * trimming it, and `save_stage` restores a refused key from the previous entry — so the designer who
+ * attaches the 201st file does not lose the 201st file, they lose every file that gallery was about
+ * to store, reported as one error against the field with all the uploading already done.
+ *
+ * IT IS ENFORCED AND NEVER PRINTED, and that split is the whole of the rule. The same paragraph
+ * forbids printing a number the client did not read, because this figure is the server's to change
+ * and a stated cap that is not the enforced cap is worse than no sentence at all. So the "up to N"
+ * line under a gallery is drawn from {@link DwField.maxItems} alone, while the trim — and the
+ * sentence naming the files it turned away, which still has to fire — run off this. A notice gated
+ * on the declared cap while the trim ran off this one would turn a loud refusal into a silent drop,
+ * which is the half of the rule that costs the designer.
+ *
+ * A COPY OF A NUMBER WITH NOTHING ASSERTING THE TWO AGREE, and that is survivable in exactly one
+ * direction: `maxItems` is deliberately not part of `registry_version()`, so a client may be
+ * enforcing a stale ceiling, and the server refuses what it will not hold either way. This only
+ * stops a designer walking into that refusal.
+ */
+export const DW_DEFAULT_MAX_ITEMS = 200;
+
+/**
  * One field descriptor.
  *
  * Everything after `required` is optional because `field_to_dict` emits only non-default keys — the
@@ -213,6 +241,37 @@ export type DwField = {
    */
   refFilterBy?: string;
   maxLength?: number;
+  /**
+   * HOW MANY ENTRIES A MULTI-VALUED FIELD MAY HOLD — IMAGE_LIST, TAGS, MULTI_ENUM.
+   *
+   * Emitted by `field_to_dict` only when the registry declares one, so ABSENT MEANS "the server's
+   * own default" ({@link DW_DEFAULT_MAX_ITEMS}, 200) and NOT "unbounded". That distinction cuts the
+   * two ways a client can get this wrong, and it must obey both halves: the absence is ENFORCED as
+   * 200, because reading it as no ceiling at all is what walks a designer into a refusal; and the
+   * number is never PRINTED where it was not declared, because a cap drawn on screen has to be the
+   * cap that will be enforced and 200 is the server's business to change. Only two of the registry's
+   * 20 IMAGE_LIST fields declare one (the motif pair, 20 each) and no TAGS or MULTI_ENUM field
+   * does, so for almost every multi-valued box on screen the ceiling is felt and not stated.
+   *
+   * ── WHY IT HAS TO BE READ HERE AT ALL, WHICH IT WAS NOT UNTIL 2026-08-25 ──────────────────────
+   *
+   * `coerce_value` REFUSES an over-long array rather than trimming it — deliberately, because
+   * silently keeping the first N of a list the client believes it stored is the shape of failure
+   * that module refuses everywhere ("the designer is told 'Stage saved' and the photographs are
+   * gone"). But neither client read this key, so the refusal was the ONLY thing enforcing it: a
+   * designer could attach twenty-five photographs to a twenty-photograph gallery, watch every one
+   * of them upload, press Save, and be told the field was rejected — with the work already done and
+   * no way to know which five to drop except by counting.
+   *
+   * So the cap is now enforced BEFORE the picker — the declared one where a field states it, the
+   * server's default where it does not — and whatever the ceiling turned away is NAMED either way,
+   * which is rule 10 of the frontend contract (every cap, truncation or skipped row must say so on
+   * screen). Only the CEILING ITSELF is printed conditionally, for the reason above. Reading the key
+   * and stating nothing was the 2026-08-25 half of this; enforcing its absence was the 2026-08-26
+   * half. The server's refusal stays exactly as it was and is still the authority; this only stops a
+   * designer walking into it.
+   */
+  maxItems?: number;
   /**
    * THE SERVER WILL KEEP ONLY THE MASK OF AN IDENTITY NUMBER HERE, WHATEVER THIS FORM POSTS.
    *
@@ -580,6 +639,25 @@ export type DwTemplate = { id: string; name: string; description: string };
 export type DwCreateBody = {
   title: string;
   templateId?: string;
+  /**
+   * THE DESIGNER THIS WORKSHOP IS FOR — the one field here that changes what the finished report
+   * SAYS rather than what it is filed under.
+   *
+   * Their `DesignerProfile` is what `seed_designer_prefill` copies into stage 1 and stage 3, and the
+   * create route grants them a viewer row in the same call under the same eligibility rule the
+   * viewers screen applies. Omitting it is legal and leaves the pre-field behaviour exactly as it
+   * was — the CREATOR's profile is copied — which for an admin opening a workshop on somebody
+   * else's behalf is the wrong person's name on a ministry document. There is deliberately no
+   * fallback between the two; see `seed_designer_prefill` for the whole argument.
+   *
+   * **BLANK IS ABSENT, and the server says so explicitly**: the route reads
+   * `(payload.designerUserId or "").strip() or None`, so an empty picker means "nobody named" and
+   * not an account whose id is the empty string. Send `undefined` or omit it; either is fine.
+   *
+   * Optional on the wire, so a client that has not adopted it is not broken and an older server
+   * that has never heard of it is not either.
+   */
+  designerUserId?: string | null;
   craftName?: string | null;
   clusterName?: string | null;
   state?: string | null;
@@ -590,7 +668,28 @@ export type DwCreateBody = {
   notes?: string | null;
 };
 
-export type DwUpdateBody = Partial<DwCreateBody> & { status?: string };
+/**
+ * `Omit<…, "designerUserId">` AND NOT A BARE `Partial<DwCreateBody>` — read this before "simplifying"
+ * it back.
+ *
+ * PATCH is CLOSED to this field: `DesignWorkshopUpdate` has no such member and `APIModel` is
+ * `extra="forbid"`, so a PATCH carrying `designerUserId` is refused whole with `extra_forbidden`.
+ * The `Omit` is what makes that closure VISIBLE in the type, so the key cannot be added to the
+ * header-edit body at `designWorkshopStore.ts`'s `whole` without the mismatch being obvious.
+ *
+ * IT IS DOCUMENTATION RATHER THAN ENFORCEMENT ON THE ONE CALL THAT MATTERS, and saying otherwise
+ * would be worse than saying nothing. The sync's header arm hands `patchDesignWorkshop` an
+ * `Object.fromEntries(...)`, whose type is an index signature — so the compiler would accept the key
+ * on that path whether or not this `Omit` were here. What actually keeps it out is that `whole`
+ * enumerates its ten keys by hand and `designerUserId` is deliberately not among them. (This
+ * paragraph claimed the body was built by SPREADING a draft header, and that the compiler therefore
+ * caught the mistake. Neither was true: nothing spreads a header into an update body.)
+ *
+ * Naming the designer is a CREATE-time act by construction: it decides whose profile gets copied
+ * into stage 1 before stage 1 exists, and once the workshop is open the same outcome is reached by
+ * editing stage 1 and by the viewers panel. So there is nothing for a PATCH to carry.
+ */
+export type DwUpdateBody = Omit<Partial<DwCreateBody>, "designerUserId"> & { status?: string };
 
 export type DwSaveEntry = {
   entityKey: string;

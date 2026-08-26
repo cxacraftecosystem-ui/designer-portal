@@ -11,10 +11,19 @@ has an ``institution`` the designer types and the report prints.
 
 Both are all-optional except the roster's ``email``, and every update body is applied with
 ``exclude_unset``: a key that is absent leaves the stored value alone, and a key that is present
-and null clears it. That distinction is load-bearing on ``DesignerProfileUpdate``. The Android
-profile screen renders a subset of these twenty fields, and a PUT that treated "absent" as
-"clear" would silently erase the empanelment number and the signature the designer entered on
-the web the week before — the sort of loss nobody notices until a report prints without them.
+and null clears it. That distinction is load-bearing on ``DesignerProfileUpdate`` — but NOT
+because a client sends a subset of it, because neither client does any more. Both profile editors
+render all twenty-one fields and put every key on the wire on every save
+(``designerProfileUpdateJson`` in ``ApiModels.kt``, ``fullDesignerProfileBody`` in
+``frontend/lib/designers.ts``), which is exactly why an explicit null has to be the thing that
+clears a column.
+
+The partial PUT is the ADMIN's. An admin maintaining the empanelment identifiers a government
+report has to carry — which the designer often does not have to hand — sends those two keys and
+nothing else, which is what ``test_an_admin_may_write_a_designers_profile`` sends. A body applied
+without ``exclude_unset`` would read the other nineteen absent keys as "clear" and blank the
+institution, the biography and the signature the designer typed on the web the week before — the
+sort of loss nobody notices until a report prints without them.
 """
 
 from pydantic import EmailStr, Field
@@ -58,7 +67,7 @@ class DesignerProfileUpdate(APIModel):
     """Every column of ``DesignerProfile`` a person may write — which is all of them but the
     identifiers and the timestamps.
 
-    These twenty values are typed once and copied into every report the designer generates, so
+    These twenty-one values are typed once and copied into every report the designer generates, so
     the field lengths here are the ones the report layout was measured against rather than
     arbitrary caps: a designation that runs to three hundred characters does not fail, it prints
     over the next line of the cover page.
@@ -91,5 +100,14 @@ class DesignerProfileUpdate(APIModel):
     pincode: str | None = Field(default=None, max_length=12)
     photoMediaId: str | None = Field(default=None, max_length=64)
     signatureMediaId: str | None = Field(default=None, max_length=64)
+    #: The designer's CV, as a media id. Bounded at 64 like its two siblings — a cuid is 25
+    #: characters and the ceiling is the same one every media id on this API is given.
+    #:
+    #: NO CONTENT-TYPE CONSTRAINT LIVES HERE, and that is deliberate rather than missing. What was
+    #: uploaded is a fact about the `MediaFile` row, which this column only points at; a body that
+    #: re-declared "must be a PDF" would be a second opinion about a file it cannot see, and the
+    #: one that mattered — is it renderable inline — is answered at render time from the stored
+    #: mime type. The Designer Page previews a PDF and offers a download for anything else.
+    cvMediaId: str | None = Field(default=None, max_length=64)
     empanelmentNo: str | None = Field(default=None, max_length=120)
     empanelmentDate: str | None = Field(default=None, max_length=32)

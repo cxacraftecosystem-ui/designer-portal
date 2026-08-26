@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A designer's profile, read only — the same twenty columns, the same eight groups and the same
+ * A designer's profile, read only — the same twenty-one columns, the same eight groups and the same
  * labels as the editor, because they are one record seen twice.
  *
  * EVERY FIELD IS DRAWN, INCLUDING THE EMPTY ONES, and that is the point of the screen rather than an
@@ -14,6 +14,7 @@
  */
 
 import { StoredMediaImage } from "@/components/designers/StoredMediaImage";
+import { DocumentPreview } from "@/components/media/DocumentPreview";
 import {
   DESIGNER_PROFILE_GROUPS,
   DESIGNER_PROFILE_LABELS,
@@ -54,9 +55,17 @@ function GroupPanel({ group, profile }: { group: DesignerProfileGroup; profile: 
   );
 }
 
-/** The paragraph and the two images need the whole row; a portrait squeezed into half of one is a thumbnail. */
+/**
+ * The paragraph, the two images and the CV need the whole row; a portrait squeezed into half of one
+ * is a thumbnail, and half a row of a rendered PDF page is not readable at all.
+ */
 function wide(field: DesignerProfileField): boolean {
-  return field === "biography" || field === "photoMediaId" || field === "signatureMediaId";
+  return (
+    field === "biography" ||
+    field === "photoMediaId" ||
+    field === "signatureMediaId" ||
+    field === "cvMediaId"
+  );
 }
 
 function FieldValue({ field, profile }: { field: DesignerProfileField; profile: DesignerProfile }) {
@@ -73,6 +82,19 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
         className={field === "photoMediaId" ? "h-32 w-32" : "h-20 w-56"}
       />
     );
+  }
+
+  // THE CV IS DRAWN BY `DocumentPreview` AND NOT BY THE BLANK TEST BELOW, because that component
+  // already draws its own empty state ("No CV on file.") — and it has to, since it is the same
+  // component the editor mounts and the editor needs an empty slot to attach into. Routing an absent
+  // id through `<Blank />` here would give this screen a third wording for one fact.
+  //
+  // A READER OF SOMEBODY ELSE'S PROFILE MAY NOT BE ENTITLED TO THE BYTES, which is the reason this
+  // is worth a comment at all: `MediaFile.url` is gated server-side at the encoder, so an admin
+  // reading a designer's page can legitimately get a row with a filename and no url.
+  // `DocumentPreview` says so in those words rather than drawing an empty frame.
+  if (field === "cvMediaId") {
+    return <DocumentPreview mediaId={typeof raw === "string" ? raw : null} noun="CV" className="h-[26rem]" />;
   }
 
   if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) return <Blank />;

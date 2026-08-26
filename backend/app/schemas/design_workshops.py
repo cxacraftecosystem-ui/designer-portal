@@ -79,6 +79,58 @@ class DesignWorkshopCreate(APIModel):
 
     title: str = Field(min_length=1, max_length=220)
     templateId: str = Field(default="DCH_STANDARD", max_length=48)
+    # ── THE DESIGNER THIS WORKSHOP IS FOR ────────────────────────────────────────────────────────
+    #
+    # THE DEFECT THIS FIELD ENDS, and it is the requirement it ends, not a convenience. Requirement
+    # 3: "All information entered on the Designer Page should be treated as the designer's master
+    # profile information and should be automatically pre-filled in every report that the designer
+    # creates." The mechanism that serves it — ``seed_designer_prefill`` — copied the profile of the
+    # account that POSTED this body, and the route's own gate
+    # (``assert_can_create_design_workshops``) guarantees that account is an ADMIN, because a
+    # DESIGNER may not open a workshop at all. So a designer's profile pre-filled nothing, ever, and
+    # every report named the admin who opened the workshop: on the cover, in the sign-off block, and
+    # in the .docx's own ``dc:creator`` — while the completeness score read 100% and no warning
+    # fired, because ``designerName`` was not MISSING, it was FILLED WITH THE WRONG PERSON. The only
+    # detector in the whole product was a human reading a stranger's name in a box labelled
+    # "Designer". ``tests/test_designer_roster.py`` pinned that outcome by name and its docstring
+    # named this field as the fix.
+    #
+    # WHY IT IS ON THE CREATE AND NOT DERIVED FROM THE VIEWER GRANTS. Designers are attached AFTER
+    # creation, through ``PUT /design-workshops/{id}/viewers``, and a workshop can carry SEVERAL —
+    # "a real workshop is run by two designers alongside a master craftsperson and a reviewing
+    # officer" (``services/design_workshop_viewers``). ``DesignWorkshopViewer`` has no ``role``, no
+    # lead flag and no ordering that survives a multi-name PUT (one ``create_many`` gives every
+    # grantee the same ``createdAt``), so "the designer" is NOT DECIDABLE from that table. Naming
+    # one account here is the only answer that does not require the server to GUESS which of three
+    # grantees to print on a ministry document — and a guess is worse than the defect it replaces,
+    # because the defect is at least consistent.
+    #
+    # SINGULAR, DELIBERATELY. Stage 1 and stage 3 declare exactly ONE designer block — one
+    # ``designerName``, one ``designerProfile``, one signature — so a list here would inherit the
+    # unanswerable question rather than answer it. The second and third designers are added through
+    # the viewers panel exactly as they are today; making the block repeatable is a registry change
+    # and the owner's call.
+    #
+    # OPTIONAL, AND ABSENT MEANS "UNCHANGED". A workshop is opened in a room on day one and the
+    # admin may genuinely not know yet who will run it; the offline create path cannot reach the
+    # eligibility picker at all. When this is absent the seed behaves exactly as it did before this
+    # field existed, which is what makes the field additive for every client that has not adopted
+    # it yet.
+    #
+    # NAMING SOMEBODY HERE ALSO PUTS THEM ON THE WORKSHOP — the create route grants them a
+    # ``DesignWorkshopViewer`` row in the same call, under the same eligibility rule the viewers
+    # screen applies, so an ineligible id refuses the whole create with a 422 naming the account
+    # BEFORE any row is written. The two admin steps this replaces were "create, then remember to
+    # add the designer", and forgetting the second one is how a designer ends up unable to open the
+    # workshop whose stage 1 already carries their name.
+    designerUserId: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "The designer this workshop is FOR. Their DesignerProfile is copied into stage 1 and "
+            "stage 3, and they are granted access in the same call. Omit if not yet known."
+        ),
+    )
     craftName: str | None = Field(default=None, max_length=160)
     clusterName: str | None = Field(default=None, max_length=160)
     state: str | None = Field(default=None, max_length=80)

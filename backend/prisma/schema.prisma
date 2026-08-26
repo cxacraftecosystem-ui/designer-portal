@@ -3706,6 +3706,16 @@ model DesignerProfile {
   /// Media ids, resolved through MediaFile exactly as a stage field's photo is.
   photoMediaId     String?
   signatureMediaId String?
+  /// The designer's CV — a media id like the two above, never a URL, and uploaded under the same
+  /// `linkedRecordType: "designerProfile"` tag they are. Rendered inline on the Designer Page when
+  /// the stored mime type is application/pdf and offered as a download otherwise, which is why no
+  /// format is constrained here: what the file IS belongs to the MediaFile row, not to this pointer.
+  ///
+  /// NOT A TYPED FOREIGN KEY, matching `photoMediaId` beside it. `MediaFile` reaches a designer
+  /// profile only through the `linkedRecordType`/`linkedRecordId` string pair, which is why that tag
+  /// is deliberately absent from the backend's ORPHAN_FK_FIELDS and a profile document can never
+  /// surface on the admin hub's "recovered recordings" table as though its parent had been deleted.
+  cvMediaId        String?
 
   /// Empanelment identifiers a government report is expected to carry.
   empanelmentNo   String?

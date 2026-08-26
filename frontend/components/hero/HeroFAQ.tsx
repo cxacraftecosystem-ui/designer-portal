@@ -5,7 +5,28 @@ import { motion, type Variants } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
+import { STAGE_COUNT_WORD_LOWER } from "@/components/hero/workshopArc";
 
+/**
+ * THE THREE WORKSHOP ANSWERS ARE NEW, and they are here because this list is where a reader goes
+ * with the objection a marketing section cannot answer without becoming defensive. All three were
+ * checked against the code rather than written from the brief:
+ *
+ *  - who may start one: `DESIGN_WORKSHOP_CREATOR_ROLES` is `["ADMIN", "MASTER_ADMIN"]` and
+ *    `DESIGN_WORKSHOP_ROLES` is `["DESIGNER", "ADMIN", "MASTER_ADMIN"]` in `lib/permissions.ts`,
+ *    mirroring `deps.py`. The wording follows `DESIGN_WORKSHOP_CREATE_REFUSAL` in that file, which
+ *    is the sentence a designer actually reads when they try — a FAQ that answered this differently
+ *    from the product would be the more expensive kind of wrong.
+ *  - what "offline" means for a workshop: `lib/designWorkshopStore.ts` (drafts and media blobs in
+ *    IndexedDB, "all 22 stages … in a shape the app can READ BACK") and `WorkshopDraftStore.kt`;
+ *    the report half is `android/…/report/ReportExport.kt` ("entirely offline") against the browser,
+ *    whose preview and download are both API calls.
+ *  - what refuses a submit: `api/routes/design_workshops.py`'s `submit=true` refuses ONE stage, and
+ *    `app/(protected)/design-workshops/[id]/readiness/page.tsx` states in as many words that
+ *    unfilled Basic fields "do NOT refuse the workshop's status".
+ *
+ * The existing eight answers are untouched.
+ */
 const FAQS = [
   {
     q: "Who can sign in?",
@@ -32,8 +53,26 @@ const FAQS = [
     a: "A newly admitted account starts at the bottom of the ladder — Crowdsource Volunteer unless the administrator who admitted it chose a higher tier — and can take interviews, upload media, and comment on existing records. Creating artisans, products, processes and tools begins at Researcher — the two tiers below it fill in records rather than open them, which is deliberate and the thing people are most often surprised by. A Field Contributor adds the extra power of reviewing a volunteer's work. An admin raises the tier when the person's role in the project does."
   },
   {
+    q: "What is a design & prototype workshop?",
+    a: `A sanctioned fortnight in a craft cluster, recorded as ${STAGE_COUNT_WORD_LOWER} stages: setup, the administrative papers and who is in the room; the cluster's craft background, its traditional process and the products already being made; a market survey and the design direction it produces; a brief, sketches and their shortlisting; prototypes through iteration, testing and validation; the final product documented; costing, packaging and market linkage; outcomes, inspection and closing; then the report, a data-quality pass and the follow-up. The stages are the report — every section of the printed document is one of them — so there is no writing-up phase after the workshop ends.`
+  },
+  {
+    q: "Who can start a design workshop, and who does the work inside it?",
+    a: `Admins and the master admin start one; designers, admins and the master admin work inside it. That is a set rather than a rank, which is the one place this app's ladder is not a ladder: a professor outranks a designer and still cannot run a workshop, because the document is submitted under a named designer's name and outranking one is not the same as being one. If you are a designer, ask an admin to create the workshop for your cluster and give you access — you can then fill in all ${STAGE_COUNT_WORD_LOWER} stages, add artisans, products and photographs, and generate the report. Any workshop you already have access to is open to you now.`
+  },
+  {
+    q: "Will an unfilled field stop me submitting a workshop?",
+    a: "No. A workshop is submitted when the designer says it is, and an empty field never refuses it — a readiness screen ranks what is still outstanding and links straight to the box holding each gap. It is built from the local draft, so the question can be asked on the last afternoon with no signal. One thing does refuse: a single stage's own “Save and check required fields”, and it refuses that stage alone. Standard- and Advanced-tier fields are depth and block nothing at all, which is deliberate — a thin stage should be a decision rather than an oversight."
+  },
+  {
+    // AMENDED, and the amendment is a correction rather than an addition. The last sentence read
+    // "The web portal complements it for review, browsing, and administration", which implied the
+    // browser needs a connection. It has not since `lib/designWorkshopStore.ts` landed: drafts and
+    // media blobs live in IndexedDB and all the stages render from a cached registry. Leaving the
+    // old sentence beside a new section about offline workshops would have made the page contradict
+    // itself in two places a reader can reach from the same scroll.
     q: "Does it work offline?",
-    a: "The Android app is offline-first — capture interviews, media, and GPS positions with no signal at all, and everything syncs when you are back online. The web portal complements it for review, browsing, and administration."
+    a: "The Android app is offline-first — capture interviews, media, and GPS positions with no signal at all, and everything syncs when you are back online. It also builds a workshop's report on the handset itself, from its own draft. The web portal complements it for review, browsing, and administration, and it keeps a design & prototype workshop's draft in the browser too, so its stages can be filled in, scored and checked for readiness with no connection; generating the report is the one part of the web half that needs the server."
   },
   {
     q: "What about privacy?",

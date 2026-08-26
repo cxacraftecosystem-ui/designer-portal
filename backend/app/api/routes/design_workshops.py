@@ -166,12 +166,14 @@ from app.services.design_workshops import (
     REFERENCE_LIMIT_DEFAULT,
     REFERENCE_LIMIT_MAX,
     assemble_workshop_data,
+    assert_designer_may_be_named,
     attach_district_anchors,
     attach_report_ai_layers,
     attach_report_custom_sections,
     attach_report_questionnaires,
     attach_report_references,
     attach_report_transcripts,
+    attach_the_named_designer,
     entry_rows,
     load_workshop_or_404,
     media_resolver,
@@ -1226,6 +1228,14 @@ async def create_design_workshop(
     Only the title is required. A workshop is created in a room on day one, before the sanction
     order number is to hand; the Basic-tier fields of stage 1 are enforced when a report is
     generated, not here.
+
+    ``designerUserId`` NAMES THE DESIGNER THE WORKSHOP IS FOR, and it is the one field here that
+    changes what the finished report SAYS rather than what it is filed under. Their
+    ``DesignerProfile`` is what gets copied into stage 1 and stage 3, and they are put on the
+    workshop in the same call. Omitting it is legal and leaves the old behaviour exactly as it was —
+    the CREATOR's profile is copied, which for an admin opening a workshop on somebody else's behalf
+    is the wrong person's name on a ministry document. See ``seed_designer_prefill`` for the whole
+    argument and for why there is no fallback between the two.
     """
     # ONE GATE, AND IT IS NARROWER THAN THE REST OF THIS FILE. Read this before widening it back.
     #
@@ -1256,6 +1266,24 @@ async def create_design_workshop(
     # sync time would have already filled 22 stages into a workshop that can never be accepted.
     # Those are for the designer's benefit; THIS is the one that is load-bearing.
     assert_can_create_design_workshops(current_user)
+    # ── WHO THIS WORKSHOP IS FOR, DECIDED BEFORE A SINGLE ROW EXISTS ────────────────────────────
+    #
+    # BLANK IS ABSENT. A client that sends `designerUserId: ""` — an empty picker, a cleared field,
+    # an offline draft that carried the key but never got an answer — means "nobody named", not "an
+    # account whose id is the empty string". Without the `or None` that empty string would reach
+    # `assert_designer_may_be_named` and 422 the create with "No account exists with this id: ",
+    # which names nothing and is unactionable, on a form where the field is optional.
+    #
+    # AND THE ELIGIBILITY QUESTION IS ASKED HERE, ABOVE THE CREATE, NOT AFTER IT. Naming somebody
+    # who may not hold a viewer row (a PROFESSOR, a designer whose empanelment has lapsed, an
+    # account the platform allow-list has suspended) has to refuse the WHOLE call. Asked after the
+    # `db.designworkshop.create` below, the same 422 would leave a committed, untitled-looking
+    # orphan draft behind on every retry — the failure the seed's blanket `except` exists to prevent,
+    # reached from the other end, and this route has no equivalent guard because a create that
+    # cannot honour the body it was given must not half-succeed.
+    designer_id = (payload.designerUserId or "").strip() or None
+    if designer_id:
+        await assert_designer_may_be_named(designer_id)
     data: dict[str, Any] = {
         "title": payload.title.strip(),
         "templateId": payload.templateId,
@@ -1273,11 +1301,24 @@ async def create_design_workshop(
             data[key] = parsed
 
     record = await db.designworkshop.create(data=data)
+    # NAMING A DESIGNER PUTS THEM ON THE WORKSHOP, AND THAT IS ONE ACT RATHER THAN TWO. Without it
+    # an admin creates the workshop and then has to remember to open the viewers panel and tick the
+    # same person they have just named; forgetting leaves a designer who cannot open the workshop
+    # whose stage 1 already carries their name, and the only symptom is a 404 indistinguishable from
+    # a workshop that does not exist. Eligibility was settled above the create, so this cannot be
+    # the call that refuses. The creator naming THEMSELVES writes no row — their access comes from
+    # `createdById` — and `attach_the_named_designer` carries that rule and the reason for it.
+    if designer_id:
+        await attach_the_named_designer(
+            record.id, designer_id, granted_by_id=current_user.id, creator_id=record.createdById
+        )
     # The designer's own details, copied out of their profile into stage 1 and stage 3 before the
     # form is ever opened, so nobody retypes their institution and biography twenty-two stages
-    # into their fifth workshop of the year. Written as ordinary stage entries — the report reads
-    # them with no special case at all — and copied rather than referenced, because a report is a
-    # historical document. See ``seed_designer_prefill``.
+    # into their fifth workshop of the year. WHOSE profile that is, is `designerUserId` when the
+    # body named somebody and the CREATOR's when it did not — the whole of that argument, including
+    # why there is no fallback from one to the other, is in ``seed_designer_prefill``. Written as
+    # ordinary stage entries — the report reads them with no special case at all — and copied rather
+    # than referenced, because a report is a historical document.
     #
     # AND THIS FORM'S OWN ANSWERS GO WITH THEM, WHICH IS NOT A CONVENIENCE. Every key below is
     # declared in `PROMOTED_COLUMNS` under `workshopSetup.*`, so the loop above wrote COLUMNS
@@ -1309,7 +1350,9 @@ async def create_design_workshop(
         )
         if value
     }
-    record = await seed_designer_prefill(record, current_user, extra=seeded)
+    record = await seed_designer_prefill(
+        record, current_user, designer_id=designer_id, extra=seeded
+    )
     return workshop_summary(record)
 
 

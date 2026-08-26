@@ -158,9 +158,23 @@ def many(key: str, name: str, title: str, fields: tuple[FieldSpec, ...],
 # document asks for photographs at fifteen of the twenty-two stages and the report needs a
 # caption under every one of them.
 def photos(key: str = "photos", label: str = "Photographs", tier: Tier = B,
-           caption_label: str = "Photograph caption") -> tuple[FieldSpec, FieldSpec]:
+           caption_label: str = "Photograph caption", max_items: int = 0,
+           help: str = "") -> tuple[FieldSpec, FieldSpec]:
+    """A gallery and the caption printed under it.
+
+    ``max_items`` DEFAULTS TO 0, WHICH MEANS ``DEFAULT_MAX_ITEMS``, and that default is deliberate
+    rather than lazy: widening or narrowing every one of the eighteen galleries in this registry
+    from one keyword here would be a silent change to seventeen stages nobody asked about. A
+    gallery that has been given a stated ceiling by the owner declares it, and the number then
+    reaches BOTH clients as ``maxItems`` — where it is enforced before the picker rather than
+    only by the save — because ``coerce_value`` REFUSES an over-long array rather than trimming
+    it, and a refusal a designer meets after attaching twenty-five photographs is a refusal they
+    meet too late.
+
+    ``help`` lands on the gallery and not on the caption. The caption's own guidance is its label.
+    """
     return (
-        f(key, label, IMGS, tier, report_role=GALLERY),
+        f(key, label, IMGS, tier, report_role=GALLERY, max_items=max_items, help=help),
         f(f"{key}Caption", caption_label, T, tier, caption_for=key, report_role=CAP),
     )
 
@@ -339,6 +353,139 @@ STAGE_3 = StageSpec(
             f("designerProfile", "Designer’s profile", RICH, B, required=True, report_role=NARR),
             f("designerExperience", "Designer’s experience", INT, S, unit="years",
               min_value=0, max_value=70),
+            # ── THE REST OF THE DESIGNER'S OWN DETAILS ──────────────────────────────────────────
+            #
+            # The owner's instruction on 2026-08-25: everything a designer types on the Designer
+            # Page is master data and is pre-filled into EVERY report they generate, while staying
+            # editable per report. `designers.PREFILL_MAP` is the one place that copying is
+            # declared; these are the boxes it copies INTO, and the two lists are checked against
+            # each other by `test_every_prefilled_profile_column_has_a_receiving_field`.
+            #
+            # WHY BOXES AT ALL, RATHER THAN THE REPORT READING THE PROFILE. Because a report is a
+            # historical document and the profile is a live row. The full argument is in
+            # `designers.prefill_from_profile`'s docstring and it is not repeated here, but the
+            # short form is the reason this block exists as twelve ordinary fields: a designer who
+            # moves from NIFT to NID in 2027 must not retroactively re-institution the 2026 report,
+            # and the only structure that cannot do that is a copy the stage owns.
+            #
+            # WHY STAGE 3 AND NOT STAGE 1. Stage 1 is the COVER, and its `report_role=COVER` fields
+            # are rows of one small table on one page — `designerName` and `designerInstitution` are
+            # there because a cover names who ran the workshop and for whom. A designation, a
+            # department, a qualification, a specialisation and four lines of postal address are
+            # not cover material; they are the designer's profile, which is this stage's stated
+            # purpose ("the designer's own profile"). Putting them on the cover would push the hero
+            # photograph off page one, which is the exact failure the report preview exists to catch.
+            #
+            # KEY_VALUE, which is `f`'s default and is therefore not spelled: a label and a value is
+            # what every one of these is. NONE is required — a designer who has filled in nothing
+            # but their name must still be able to submit, and `validate_registry` refuses a
+            # required field above BASIC anyway.
+            f("designerLocalName", "Designer’s name in the local language", T, S, max_length=180),
+            f("designerDesignation", "Designer’s designation", T, S, max_length=180),
+            f("designerDepartment", "Designer’s department", T, S, max_length=180),
+            f("designerQualification", "Designer’s qualification", T, S, max_length=220),
+            f("designerSpecialisation", "Designer’s specialisation", T, S, max_length=220),
+            # THE DECLARED SHAPES, for the reason `TextFormat`'s own docstring gives: the report
+            # prints the STAGE copy, so a box the record page validates and the stage does not is a
+            # malformed value in a ministry document. `max_length` beside the format because the
+            # format bounds the DIGITS and not the string — see `participant.phone`.
+            f("designerPhone", "Designer’s phone", FieldType.PHONE, S, max_length=20,
+              text_format=TextFormat.PHONE_IN),
+            f("designerEmail", "Designer’s email", FieldType.EMAIL, S, max_length=180,
+              text_format=TextFormat.EMAIL),
+            f("designerWebsite", "Designer’s website", FieldType.URL, S, max_length=300),
+            f("designerAddress", "Designer’s address", T, S, max_length=300),
+            f("designerCity", "Designer’s city", T, S, max_length=120),
+            f("designerState", "Designer’s state", T, S, max_length=80),
+            f("designerPincode", "Designer’s PIN code", T, S, max_length=12,
+              text_format=TextFormat.PINCODE),
+            f("designerEmpanelmentNo", "Designer’s empanelment number", T, S, max_length=120),
+            f("designerEmpanelmentDate", "Designer’s empanelment date", DATE, S),
+            # THE THREE MEDIA BOXES, AND THE ONE CAVEAT THAT COMES WITH THEM.
+            #
+            # These carry a media id copied from the profile, which is the one thing
+            # `design_workshops`' reference hydration explicitly refuses to do ("copying ids onto
+            # the entry would either freeze ids the report is not entitled to render, or overwrite
+            # the designer's own photographs"). Neither half of that refusal applies here and the
+            # difference is worth stating, because the rule is right and a later reader will meet it:
+            #
+            #   * THE GALLERY HALF DOES NOT APPLY. That rule protects galleries the DESIGNER filled
+            #     with workshop photographs from being overwritten by a referenced record's picture.
+            #     These three boxes have no other author — the profile is the only thing that ever
+            #     writes them — and a designer who wants a different signature on one report
+            #     replaces it in the box, which is the per-report editability the instruction asks
+            #     for.
+            #   * THE ENTITLEMENT HALF IS REAL AND IS HANDLED BY DEGRADING. A referenced record's
+            #     files are gated per file, and so are these: a `DesignWorkshopViewer` generating
+            #     this report may not be entitled to the bytes of the designer's own photograph.
+            #     `MediaResolver` answers None for exactly that case, `report_builder` treats None
+            #     as normal, and the file is generated with a warning naming the figure rather than
+            #     failing. That is the same outcome as any other unresolvable media id in the
+            #     registry, so it needs no new machinery — only this paragraph, so nobody reads the
+            #     missing image as a bug in the copy.
+            f("designerPhoto", "Designer’s photograph", IMG, S, report_role=GALLERY),
+            # ⚠ THIS HELP TEXT ONCE PROMISED THE SIGNATURE BLOCK, AND NOTHING DELIVERED IT.
+            #
+            # It read "Printed in the signature block of the report." on the day it was added, which
+            # was measured false the same week: `report_model.SignatureBlock` carries
+            # `signatories: tuple[tuple[str, str], ...]` — a name and a role, two strings — and has no
+            # image slot at all, on either side of the wire. So this photograph printed where every
+            # other GALLERY field prints, in the stage's own plate, and the sentence under the box
+            # described a document nobody could produce.
+            #
+            # That is the precise failure this module's docstring exists to forbid, arriving through
+            # `help` instead of through `notes`: a client-facing string asserting behaviour that no
+            # branch of this codebase implements. `report_builder`'s own annexure comment records the
+            # same shape of defect — "three surfaces telling a designer the office's copy would carry
+            # something no code produced".
+            #
+            # WHETHER IT *SHOULD* REACH THE SIGNATURE BLOCK IS AN OPEN OWNER DECISION, not a bug to
+            # quietly close, and it is a decision about a ministry document. The cheap version is a
+            # builder-only move; the honest version adds an image to `SignatureBlock`, which is a
+            # `report_model.py` change plus `ReportModel.kt` plus four writers plus a re-pin of the
+            # bundled Kotlin asset. Until somebody takes that decision the box says what is TRUE.
+            f("designerSignature", "Designer’s signature", IMG, S, report_role=GALLERY,
+              help="Printed with the report’s photographs, under its own heading. Attach a scan or "
+                   "a photograph of your signature."),
+            # ⚠ AND THIS ONE PROMISED AN ANNEXURE. Same defect, same day, same correction.
+            #
+            # It read "Attached to the report as an annexure", and no annexure in this product carries
+            # a FILE. `report_annexures` is transcripts only — an AUDIO field resolved to
+            # `MediaFile.transcriptText` — and `_render_media_annexure` gathers through `_images`,
+            # which admits IMAGE and IMAGE_LIST and nothing else. `report_templates` records the
+            # refusal as a DELIBERATE decision with its two reasons written out, so this was not a
+            # gap waiting to be filled; it was a sentence contradicting a settled design.
+            #
+            # WHAT ACTUALLY HAPPENS, which is what the box now says: `format_value`'s media branch
+            # prints the field's label and a count — "1 document attached" — because a `FILE` field
+            # declares no `report_role` and therefore defaults to KEY_VALUE. The bytes do not travel,
+            # and `build_report` now says so out loud in `warnings`: "attached file(s) are named in
+            # this report but the files themselves are not inside it … send them alongside it."
+            #
+            # So the designer is told the truth twice: here, before they upload, and in the warnings
+            # beside the generated file. Neither sentence claims the ministry's copy contains the CV.
+            #
+            # ⚠ AND THE PREVIEW CLAUSE OVER-PROMISED FOR TWO OF THE THREE FORMATS IT NAMES.
+            #
+            # It read "PDF, .docx or .odt. Previewable in the app." Both previews draw a PDF and
+            # NOTHING ELSE, decided by a literal mime test with one filename fallback:
+            # `DocumentPreview.tsx`'s `isRenderablePdf` on the web, `looksLikePdf` in
+            # `DwDocumentPreview.kt` on the handset. Both return false for a .docx or an .odt, and
+            # both then render a download card whose own words are "Stored and downloadable. Only a
+            # PDF can be shown inside the app." So a designer who uploaded a .docx CV was promised a
+            # preview by the box and contradicted by the card directly under it — one capability
+            # describing itself two ways on one screen.
+            #
+            # THE PREVIEW CLAUSE IS NOW WORD FOR WORD `surveyDocument`'S AT STAGE 8, deliberately.
+            # That field is the same FILE capability with the same two previews behind it and it
+            # already said this correctly; the rest of this string differs because the CV carries the
+            # report-naming clause too. Two wordings for one capability is how they drift: the next
+            # correction has to be made twice, and the one nobody remembers is the one a designer
+            # reads. If the preview ever admits a second format, both clauses change together.
+            f("designerCv", "Designer’s CV", FILE, S,
+              help="PDF, .docx or .odt. A PDF is previewable in the app; other formats are stored "
+                   "and downloadable. The report NAMES it rather than carrying it, so send the "
+                   "file alongside the report."),
             f("openingNote", "Opening note", RICH, S, report_role=NARR),
             f("officialsPresent", "Officials present at the opening", RICH, S,
               report_role=BULLETS, help="One official per line, with designation."),
@@ -876,10 +1023,22 @@ STAGE_4 = StageSpec(
     # The split this note describes was asked for on the source document: traditional and
     # contemporary DESIGNS belong to the design brief, not to the cluster background. Stage 10
     # carries the matching sentence, so a designer meets the boundary from either side.
+    #
+    # THE BOUNDARY MOVED ON 2026-08-25, AND IT MOVED ALONG THE SAME SEAM RATHER THAN ACROSS IT.
+    # The owner asked for a Traditional Motif AND a Contemporary Motif section here, each with its
+    # own bullet list and its own gallery. That does not overturn the sentence above, because the
+    # sentence was never about the word "contemporary" — it was about VOCABULARY versus DIRECTION.
+    # What a cluster CURRENTLY makes, including the contemporary motifs its younger artisans have
+    # already adopted from the market, is as much an observation of the setting as the motifs their
+    # grandparents used, and observing it is what stage 4 is for. Which motifs THIS WORKSHOP will
+    # carry forward remains a decision, and a decision is stage 10. So the note below now names the
+    # two vocabularies explicitly and keeps the direction where it was, which is the only reading
+    # under which a designer meeting the boundary from either side is told the same thing twice.
     notes=(
-        "Motifs, forms and colours are recorded here as the cluster's existing craft vocabulary. "
-        "Design direction — the traditional and contemporary designs this work will follow — "
-        "belongs to the design brief at stage 10, not here."
+        "Motifs, forms and colours are recorded here as the cluster's existing craft vocabulary — "
+        "the traditional motifs, and the contemporary ones the cluster has already taken up. "
+        "Design direction — which of them this work will follow — belongs to the design brief at "
+        "stage 10, not here."
     ),
     entities=(
         single("clusterBackground", "DwClusterBackground", "Cluster & craft background", (
@@ -903,15 +1062,62 @@ STAGE_4 = StageSpec(
             f("giDetails", "GI registration details", T, S, max_length=220),
             f("localTerminology", "Local terminology", RICH, S, report_role=NARR,
               help="Craft terms in the local language, with their meaning."),
-            f("traditionalMotifs", "Traditional motifs", RICH, S, report_role=BULLETS),
-            f("traditionalForms", "Traditional forms", RICH, S, report_role=BULLETS),
-            f("traditionalColours", "Traditional colours", RICH, S, report_role=BULLETS),
+            # ── THE TWO MOTIF SECTIONS ──────────────────────────────────────────────────────────
+            #
+            # Asked for by the owner on 2026-08-25: a Traditional Motif section and a Contemporary
+            # Motif section, each a bullet list with a gallery of up to twenty photographs beside
+            # it, both browsable as a carousel. See this stage's `notes` for why they belong here
+            # and what stays at stage 10.
+            #
+            # `traditionalMotifs` ALREADY EXISTED AND KEEPS ITS KEY. It is what the cluster's motif
+            # vocabulary has been recorded under since the registry was written, and renaming or
+            # re-keying it to sit symmetrically beside its new sibling would strand every answer
+            # already given — the rule at the top of this module ("append, never renumber") applies
+            # to a field's key just as much as to its position. What it gains is the help sentence
+            # its neighbour `traditionalProducts` has always had, because "one per line" is the
+            # whole convention of a BULLETS field and this box never said so.
+            f("traditionalMotifs", "Traditional motifs", RICH, S, report_role=BULLETS,
+              help="One motif per line."),
+            f("traditionalForms", "Traditional forms", RICH, S, report_role=BULLETS,
+              help="One form per line."),
+            f("traditionalColours", "Traditional colours", RICH, S, report_role=BULLETS,
+              help="One colour per line."),
+            # THE CONTEMPORARY HALF. Deliberately the same three shapes as the traditional half
+            # rather than a single "contemporary notes" box: the pair is what makes the question
+            # "which motifs has this cluster gained, and which has it lost" answerable across two
+            # workshops, and a free-text box on one side of a comparison answers nothing.
+            f("contemporaryMotifs", "Contemporary motifs", RICH, S, report_role=BULLETS,
+              help="One motif per line. The motifs the cluster works today that are not part of "
+                   "its traditional vocabulary."),
+            f("contemporaryForms", "Contemporary forms", RICH, S, report_role=BULLETS,
+              help="One form per line."),
+            f("contemporaryColours", "Contemporary colours", RICH, S, report_role=BULLETS,
+              help="One colour per line."),
+            f("motifSourcesAndInfluences", "Sources & influences", RICH, S, report_role=NARR,
+              help="Where the contemporary motifs came from — a buyer's specification, a design "
+                   "intervention, a neighbouring craft, the market."),
             f("regionalTerminology", "Regional / alternate terminology", RICH, A,
               report_role=NARR, phase_note="Reviewer: “Phase 3 work”."),
             f("clusterLocation", "Cluster location", GEO, A,
               phase_note="Reviewer: “Phase 3 work” (GIS integration)."),
             *photos("clusterPhotos", "Cluster photographs", S, "Cluster photograph caption"),
-            *photos("motifPhotos", "Motif photographs", S, "Motif caption"),
+            # TWENTY, STATED, AND ENFORCED BEFORE THE PICKER RATHER THAN AT THE SAVE.
+            #
+            # `motifPhotos` keeps its key and becomes the TRADITIONAL gallery, which is what it has
+            # always held — every answer already in it is a photograph of a traditional motif, so
+            # relabelling is honest and re-keying would not be. Its ceiling was the unstated
+            # `DEFAULT_MAX_ITEMS` of 200; the owner's number is 20, and because `coerce_value`
+            # REFUSES an over-long array rather than trimming it, a cap that only the server knows
+            # about is a cap a designer discovers after attaching the twenty-first photograph. Both
+            # clients now read `maxItems` off the published registry and stop at it, saying so on
+            # screen — see `photos()` above.
+            *photos("motifPhotos", "Traditional motif photographs", S,
+                    "Traditional motif caption", max_items=20,
+                    help="Up to 20 photographs of the cluster's traditional motifs."),
+            *photos("contemporaryMotifPhotos", "Contemporary motif photographs", S,
+                    "Contemporary motif caption", max_items=20,
+                    help="Up to 20 photographs of the contemporary motifs the cluster works "
+                         "today."),
         )),
     ),
 )
@@ -1953,6 +2159,32 @@ STAGE_8 = StageSpec(
             f("retailerFeedback", "Retailer & buyer feedback", RICH, S, report_role=NARR),
             f("bestSellers", "Best sellers observed", RICH, S, report_role=BULLETS),
             f("marketGaps", "Market gaps", RICH, S, report_role=BULLETS),
+            # ── THE MARKET SURVEY DOCUMENT ──────────────────────────────────────────────────────
+            #
+            # Asked for by the owner on 2026-08-25: the survey as it was written up, uploaded whole,
+            # in PDF or in a word-processor format, and previewed in the app where it is a PDF.
+            #
+            # STAGE 8 AND NOT STAGE 7, which is the one judgement here. Stage 7 already carries
+            # `questionnaireFile`, and that is the BLANK instrument — the questions before anybody
+            # was asked them. This is the FINDINGS: the document a designer or an agency compiles
+            # after the market visits, which is why it sits beside the field notes it summarises
+            # rather than beside the questions it answers. Filing both under one key would make
+            # "show me the questionnaire we used" and "show me what the survey found" the same
+            # request with two different answers depending on who uploaded last.
+            #
+            # STANDARD, NOT ADVANCED, unlike `questionnaireFile` beside it. That field is Advanced
+            # because the source document deferred the upload tool itself; the tool exists now, and
+            # the web form collapses ADVANCED behind a disclosure — a document nobody finds is a
+            # document nobody attaches. No `report_role`: an attachment is not a printable value,
+            # and NO PATH CARRIES A FILE INTO THE DELIVERED DOCUMENT — this line used to name
+            # `report_annexures` as that path and it is not one. That module is transcripts only, and
+            # `_render_media_annexure` gathers through the image path (IMAGE/IMAGE_LIST), so a FILE
+            # reaches the report as its label plus a count and `build_report` warns that the bytes
+            # are not inside it. Corrected here because the identical false claim was made three
+            # times in one wave — see `designerCv` above, which records the measurement in full.
+            f("surveyDocument", "Market survey document", FILE, S,
+              help="The written-up survey — PDF, .docx or .odt. A PDF is previewable in the app; "
+                   "other formats are stored and downloadable."),
             *photos("marketPhotos", "Market photographs", B, "Market photograph caption"),
         )),
         many("surveyResponse", "DwSurveyResponse", "Survey responses", (

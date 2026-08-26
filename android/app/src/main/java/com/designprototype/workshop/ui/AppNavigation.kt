@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Timeline
@@ -381,6 +382,67 @@ enum class NavDestination {
      */
     DESIGN_WORKSHOPS,
     /**
+     * Sketches and prototypes WITH NO WORKSHOP IN HAND — the chooser, which is the half of this
+     * feature the handset was missing.
+     *
+     * ── WHAT WAS AND WAS NOT MISSING, BECAUSE THE DISTINCTION MATTERS ────────────────────────────
+     *
+     * The FEATURE has been on this handset since the sketch wave: `DwSketchRectifyField`,
+     * `DwSketchPlate` and `DwSketchRectify` are all here, `FieldRenderer.dwOffersSketchRectify`
+     * mounts the panel, and `ReportFigures` counts the plates. What did not exist was any way to
+     * REACH it without first opening a workshop and walking to stage 11 — no `NavDestination`, no
+     * menu row, no card. The web grew that chooser and the handset did not, so a designer who knew
+     * the feature existed on their laptop could not find it on their phone even though their phone
+     * could do the work.
+     *
+     * ── WHY IT IS A CHOOSER AND NOT A SECOND SKETCH SCREEN ──────────────────────────────────────
+     *
+     * A sketch belongs to a stage of a workshop: `DwSketch` rows live under stage 11 and prototypes
+     * under 13, and that is where their answers, their plates and their report figures are filed. So
+     * this destination picks the workshop and hands over to the stage that already owns the work.
+     * Building a parallel place to add a sketch is exactly what `InlineRecordDialog`'s header refuses
+     * for the `Dw…` models — "a second, parallel way to add a prototype" — and it would give one
+     * feature two stores.
+     *
+     * LABEL IS THE WEB'S, VERBATIM: "Sketches & prototypes". That row's comment on the web notes it
+     * was the owner's wording with no Android counterpart to match, and asks that when the handset
+     * grows the screen the two be brought into step. This is that moment; the web's string wins
+     * because it is the one a designer has already been reading.
+     */
+    SKETCHES_AND_PROTOTYPES,
+    /**
+     * DESIGN REVIEW — the review half of Sketches & Prototypes, and the last substantial thing this
+     * handset had none of.
+     *
+     * ── WHAT WAS MISSING, WHICH WAS THE WHOLE FEATURE AND NOT AN ENTRY POINT ─────────────────────
+     *
+     * Unlike [SKETCHES_AND_PROTOTYPES], where the WORK was already on the handset and only the
+     * chooser was absent, there was no ratings code anywhere under `app/src/main` at all: no DTO for
+     * the three `/design-ratings` endpoints, no repository method, no screen. The frontend contract's
+     * §16 recorded exactly that — "Design review really is web-only" — and asked that the two be
+     * brought into step when the handset grew it. This is that.
+     *
+     * ── WHY IT IS ITS OWN DESTINATION AND NOT A SCREEN INSIDE ONE WORKSHOP ───────────────────────
+     *
+     * A permission fact rather than a layout one, and it is the same one that made the web build a
+     * page instead of a tab. `load_workshop_or_404` admits the workshop's creator, an admin and the
+     * holder of a viewer grant, and answers everybody else with 404 — and every one of the 22 stage
+     * SAVE routes is gated by that same helper. A POOL reviewer is by definition somebody it turns
+     * away, so reaching the round through the workshop would have meant teaching that helper about
+     * POOL and handing every designer in the country write access to every finished workshop's
+     * fieldwork. `/design-ratings` is a second, narrow door: it yields the rateable rows and their
+     * scores and nothing else about the workshop.
+     *
+     * BROWSE, matching the web's group for the same row: what a designer opens this for is finding
+     * and judging work that already exists, and the recording of a new piece happens on the stage
+     * this screen hands over to.
+     *
+     * LABEL IS THE WEB'S, VERBATIM: "Design review". It is also the dashboard TILE's label on the
+     * web, which that grid's own comment explains — neither of these two destinations is an
+     * `EntryMode`, so there is no second string for the tile and the row to differ by.
+     */
+    DESIGN_REVIEW,
+    /**
      * The questionnaires a designer AUTHORED THEMSELVES — `/api/questionnaires`, plural.
      *
      * Its own destination and not a mode of [TAKE_INTERVIEW], for the same reason [DESIGN_WORKSHOPS]
@@ -501,6 +563,25 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // local, and EVERY sync attempt was refused, for ever, with the work stranded on the handset. The
     // web hides the entry and gates the URL behind an explicit "Designer access required" page.
     NavEntry(NavDestination.DESIGN_WORKSHOPS, "Design workshops", Icons.Filled.DesignServices, NavGroup.RECORD, FieldPermissions::canRunDesignWorkshops, "can_run_design_workshops"),
+    // DECLARED BEFORE Sketches & prototypes, deliberately, because that is the web's order INSIDE
+    // the Browse group ("Share data access", then "Design review", then "Sketches & prototypes") and
+    // the order within a group is what a person actually reads. The two rows sit adjacent on both
+    // clients, which is the point: they are the two halves of one feature.
+    //
+    // `Icons.Filled.Star` IS THE WEB'S OWN GLYPH FOR THIS ROW and appears nowhere else in this list,
+    // so the one-glyph-per-meaning rule holds. The web's PAGE header draws a globe instead, and where
+    // a page and its menu row disagree the menu is what a tile or a second client follows — the
+    // dashboard grid on the web says exactly that.
+    //
+    // The gate names the route this row actually reaches, which is NOT the workshop loader:
+    // `load_ratable_workshop_or_404`'s first line is `if not can_run_design_workshops(user): raise
+    // not_found`, so this predicate is a mirror of the API's own and not a narrowing of it. The
+    // screen re-states the same refusal for somebody who arrives with a workshop id in hand.
+    NavEntry(NavDestination.DESIGN_REVIEW, "Design review", Icons.Filled.Star, NavGroup.BROWSE, FieldPermissions::canRunDesignWorkshops, "can_run_design_workshops (load_ratable_workshop_or_404 on GET /design-ratings/rounds/{round}; get_current_user + visible_to_clause on the picker's list)"),
+    // BROWSE and not RECORD, matching the web's group for the same row: what a designer opens this
+    // for is finding the sketch work they or a colleague already did, and the recording of a new one
+    // happens inside the stage this hands over to.
+    NavEntry(NavDestination.SKETCHES_AND_PROTOTYPES, "Sketches & prototypes", Icons.Filled.Brush, NavGroup.BROWSE, FieldPermissions::canRunDesignWorkshops, "can_run_design_workshops (load_workshop_or_404 on the chosen workshop; get_current_user + visible_to_clause on the picker's list)"),
     // `can_run_design_workshops` and NOT `canCreateRecords`, unlike the row above it: every route
     // under /api/questionnaires runs `_require_designer` first, READS included. Gating this on the
     // looser predicate would put the entry in a researcher's menu and answer them with a 403 on the

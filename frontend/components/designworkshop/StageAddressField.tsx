@@ -3,10 +3,11 @@
 /**
  * The administrative half of an address, inside a stage — state, district and PIN code.
  *
- * WHY THIS EXISTS. `FieldInput` rendered all eleven of the registry's address boxes
+ * WHY THIS EXISTS. `FieldInput` rendered all of the registry's address boxes
  * (`participant.state`/`district`/`pincode`, `workshopSetup.state`/`district`,
  * `existingProduct.recordState`/`recordDistrict`/`recordPincode`, `tool.recordState`/
- * `recordDistrict`/`recordPincode`) as bare `<input type="text">` with a dictation button beside
+ * `recordDistrict`/`recordPincode`, and since 2026-08-26 `workshopPlan.designerState`/
+ * `designerPincode` — thirteen field entries across eight keys) as bare `<input type="text">` with a dictation button beside
  * them, while the record page gives the same facts two dependent closed lists and a digits-only PIN
  * box. Both halves of that mattered:
  *
@@ -61,8 +62,15 @@ type DistrictsByState = Record<string, readonly string[]> | null;
  * The served address reference for this tab, through the SHARED module-level promise.
  *
  * One state per mounted field is the honest cost of `FieldInput` having no place to hang a stage-wide
- * fetch; the REQUEST is not repeated, because `loadAddressReference` memoises it, so eleven address
- * boxes on one stage still issue exactly one `/reference/address` call between them.
+ * fetch; the REQUEST is not repeated, because `loadAddressReference` memoises it, so every address
+ * box on one stage still issues exactly one `/reference/address` call between them.
+ *
+ * NOTE ON THE STAGE-3 PAIR. `workshopPlan` declares a designer state and a designer PIN code and NO
+ * designer district, so that pincode is drawn with a null `districtField` — the arm below handles
+ * it, and the postal-zone check still has the state sibling it needs. That is also why the two had
+ * to be added together: `addressListRole` refuses only the DISTRICT role for a missing state, so a
+ * pincode added on its own would have compiled and looked wired while `addressSibling` returned null
+ * and the zone check silently did nothing.
  */
 function useAddressReference(): { states: readonly string[] | null; districts: DistrictsByState } {
   const [states, setStates] = useState<readonly string[] | null>(null);

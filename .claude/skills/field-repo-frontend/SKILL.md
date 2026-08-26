@@ -26,7 +26,8 @@ traps — check it before "simplifying" anything that looks redundant.
 2. **Never hardcode a neutral.** Every grey goes through the themed `ink-*` / `line-200` /
    `surface-50` / `bg-0` / `card` ladders, which invert under `data-theme="dark"`.
 3. **Copy Android's words verbatim.** Feature names, tile labels, button wording, menu entries. A
-   researcher moves between the two apps mid-workshop.
+   researcher moves between the two apps mid-workshop. **Words, not claims** — Android is the
+   authority on what a thing is CALLED and never on what a report CONTAINS (§17).
 4. **Reduced motion needs BOTH paths.** CSS covers CSS; framer-motion writes inline styles and needs a
    JS branch. Use `useAppReducedMotion()` inside the app, `useHeroReducedMotion()` on public pages.
 5. **A signal that only exists as motion is a signal reduced-motion readers never get.** Pair every
@@ -577,7 +578,7 @@ translate class — see §9.6. `inset-y-6` lines the track's ends up with the fi
 // card: grid grid-cols-[var(--guide-rail,2rem)_minmax(0,1fr)] gap-x-4
 // bubble: a grid item in column 1 with justify-self-center
 ```
-Track, fill, node and all ten bubbles share one centre line **by construction**. This replaced three
+Track, fill, node and every numbered bubble share one centre line **by construction**. This replaced three
 independent guesses reconciled by `-translate-x-1/2` — a three-way agreement that had to be re-derived
 by hand every time a size or breakpoint moved, and had already broken. The `,2rem` fallback keeps a
 card usable outside the `<ol>`.
@@ -609,6 +610,16 @@ uses different thresholds and therefore lives on a **different element** — `wh
   single `<motion.span layoutId="guide-rail-marker" className="absolute inset-y-1 left-0 w-[3px]
   rounded-full bg-purple-700" />` rendered **only** in the active row, so it slides between entries.
   Bubbles are filled purple for `index <= activeIndex`, `bg-surface-50 … ring-1 ring-line-200` after.
+- **The step list has a CEILING, and the rail is where a new step gets expensive.** The `<ol>` is
+  `grid max-h-[calc(100vh-19rem)] min-h-[12rem] gap-0.5 overflow-y-auto pr-1` (`GuideRail.tsx:124`).
+  Because the panel is `sticky top-28` it never leaves the viewport, so a list taller than the
+  viewport is unreachable **at all** — page scroll moves the cards past a rail that stays exactly
+  where it is. At ten steps the panel was ~470px and the question did not arise; at nineteen it is
+  ~770px, which overflows a 1366×768 laptop and silently swallowed the last five rows, the whole
+  designer arc among them. The `19rem` is the sticky offset plus the panel's padding, the ring row,
+  the nav's own spacing and a little air, **rounded up on purpose**: short costs a few pixels of
+  scroll, long costs the reader the last row. `min-h-[12rem]` keeps it usable on a very short
+  window. Adding a step is free; adding a ROW OF CHROME above the list owes `19rem` a recount.
 
 ### 9.6 The card, its reveal, and its accordion
 
@@ -678,12 +689,27 @@ thing**; a second GSAP animation would mean two systems fighting over the same p
   then `requestAnimationFrame(() => scrollToStep(hash, true))` — one frame so the expanded card has its
   final height, and `reduce` forced **true** because smooth-scrolling a freshly loaded page is not a
   transition the reader initiated.
-- `GUIDE_STEPS` is ten hand-ordered objects in field order: `workshop, craft, artisan, product, process,
-  tool, questionnaire, media, review, view-data`. Nine documented fields: `id` (stable anchor),
-  `label` (**Android-parity name — never invented**), `action` (the tile's verb), `icon`, `href`,
-  `summary`, `why`, `fields[]` (**the real form labels, in screen order, "(required)" marked**),
-  `watch[]`. Renaming a form field obliges a rename here **and** in `docs/WALKTHROUGH.md`.
-- `GUIDE_STEPS[0].id` is indexed **unguarded** twice — the array must never be empty.
+- `GUIDE_STEPS` is **two arcs in one hand-ordered array**, and the ARC is the register worth
+  carrying in your head: the repository **record** steps first (`workshop` … `view-data`), then the
+  **design & prototype workshop** steps that consume them (`designer-profile` …
+  `design-workshop-history`), because the records have to exist before a stage form can point at
+  them. **The ids are deliberately not enumerated here.** §16's dashboard list is what a register
+  written down twice costs, and this array is still growing — it was ten, then sixteen, and
+  `grep -cE '^    id: "' frontend/components/guide/steps.ts` answered **19** on 2026-08-26.
+  **Never print a literal count in copy either:** the page header said "Ten steps" while the array
+  held sixteen, and now derives it (`GUIDE_STEPS.length`, `app/(protected)/guide/page.tsx:42` and
+  `:47`) — the one sentence a reader sees before scrolling was the one place that disagreed with the
+  page. What holds the shape is a test rather than prose:
+  `frontend/e2e/guide-walkthrough-unit.spec.ts` pins the workshop arc's ids **and their printed
+  order**, that the arc comes after `view-data`, that every `href` resolves to a real `page.tsx`,
+  that the ids are unique (the rail scrolls to `#${id}`), and that no card in the arc promises a live
+  re-read of a referenced record. Add a step there when you add one here.
+- Nine fields on the `GuideStep` type (`steps.ts:83`): `id` (stable anchor), `label`
+  (**Android-parity name — never invented**), `action` (the tile's verb), `icon`, `href`, `summary`,
+  `why`, `fields[]` (**the real form labels, in screen order, "(required)" marked**), `watch[]`.
+  Renaming a form field obliges a rename here **and** in `docs/WALKTHROUGH.md`.
+- `GUIDE_STEPS[0].id` is indexed **unguarded** twice (`guide/page.tsx:47`, `GuideJourney.tsx:41`) —
+  the array must never be empty.
 
 ### 9.10 Accessibility contract
 
@@ -1033,6 +1059,80 @@ break `feImage`. The classes toggled are `lg-active` / `lg-fallback`; the compan
   is load-bearing every time: a grid/flex item defaults to `min-width: auto` and refuses to shrink below
   its content's intrinsic width, so a long option label widens the column and spills over the field
   beside it. **`truncate` cannot save it** — truncation clips inside a box that has already grown.
+- **`components/media/MediaCarousel.tsx`** — a gallery browsed one picture at a time, mounted by
+  `FieldInput` on a capped gallery. **It is not `MediaLightbox` and must not become it:** the
+  lightbox is a focus-trapping `aria-modal` dialog over a blacked-out page for one clicked file,
+  while this is a reading control that sits in the form beside the box it belongs to, so a designer
+  can flick through twenty motifs with the bullet list they are writing still on screen. Trapping
+  focus there would be actively wrong — the reader's next stop is the textarea underneath. The two
+  **compose**: the big frame is a button that opens the lightbox. The position is printed as a
+  number ("3 of 12") and the active thumbnail carries a ring, because non-negotiable 5 applies to a
+  signal that exists only as a POSITION exactly as it does to one that exists only as motion — the
+  slide is the ornament, the readout is the state. One `AnimatePresence` cross-fade + a directional
+  12px slide, gated on `useAppReducedMotion()`; **`mode="wait"` is deliberately not used**, because
+  waiting for the outgoing image means a blank frame on every step and on a village connection that
+  blank is where a 2 MB photograph is being fetched. Arrow keys are bound to the region, never to
+  `window` — unlike a modal it shares the page with a form full of text boxes, and a global
+  Left-arrow handler would fight the caret in every one of them.
+- **`components/media/DocumentPreview.tsx`** — a stored document resolved from its media id and
+  rendered where the browser can render it: `<object>` for `application/pdf`, a named download card
+  for everything else. Mounted by `FieldInput` on a FILE field holding **one server-acknowledged
+  id** — a `dwlocal:` reference is a blob in IndexedDB with no `MediaFile` row, so `GET /media/{id}`
+  would 404 and the preview would report a readable document as unreadable; the tile above already
+  says "On this device only" — and by the designer profile for the CV.
+  **No PDF library, and adding one is the thing to argue against:** pdf.js is ~350 KB of worker plus
+  a font bundle to reproduce a viewer every browser already ships with its own search, zoom, print
+  and accessibility tree. The cost is stated rather than hidden — an embedded PDF looks different per
+  browser and many phones decline the embed, which is why `<object>`'s children are real content and
+  not an apology. A `.docx` is drawn as a card and **never as an error**: it is a perfectly good
+  upload that simply cannot be rendered without shipping a word processor, and "unsupported" reads as
+  a rejected upload. It repeats `components/designers/StoredMediaImage.tsx`'s three normal states
+  verbatim — lookup failed, row arrived with **no `url`** (an entitlement ANSWER, worded differently
+  because it needs a different action), id absent — and none of them clears the stored id or renders
+  a broken frame. The mime test is a **literal**, not a substring: matching "pdf" anywhere would
+  embed `application/vnd.pdf-is-not-this`, and the filename is checked as well because a handset
+  whose content resolver answered `application/octet-stream` is a common case, not a belt.
+
+### 11.10 `useDragReorder` — the ONE drag implementation
+
+`components/hooks/useDragReorder.ts`. Extracted from `RankableList` on 2026-08-25 and now has
+**three** renderers over it: `components/sketches/RankableList.tsx` (which shrank 360 → 219 lines),
+`CustomSectionsEditor` (sections *and* questions), and `EntityForm` (a collection's rows). A fourth
+private re-implementation is refused by name, the same way `readableError` refuses a third: every
+subtlety below is a bug already paid for once.
+
+- **Pointer events, no library, and the choice that matters most is not the bundle size.**
+  `dragstart`/`dragover` **do not fire for touch at all on Android Chrome**, so the HTML5 drag API
+  gives a gesture that works on a laptop and silently does nothing on the phone the fieldwork is done
+  on. `setPointerCapture` + one rectangle snapshot + an index calculation is the whole mechanism.
+- **The five rules.** (1) Rectangles are snapshotted **once, at pointerdown** — the dragged row is
+  translated and its neighbours shifted by CSS, so re-measuring mid-gesture feeds the shift back into
+  the measurement and the target index oscillates under the finger. (2) The **arrangement** is
+  snapshotted with them and a gesture whose ground moved is **abandoned with a sentence**, never
+  repaired: re-deriving `from` by id and keeping `to` is the same guess in a smaller coat. (3)
+  Nothing commits until release; Escape cancels outright — a reorder is a write with a person's name
+  on it. (4) Every move is **announced in words** through a polite live region *the consumer* renders
+  and that is present from first paint. (5) The in-flight drag is `useState` **inside the hook**, so
+  it dies with the consumer — a route change mid-gesture cannot leave a lifted row drawn, and
+  nothing needs an unmount `setDrag(null)` or a `releasePointerCapture`; the only cleanup that is
+  load-bearing is the `window` `keydown` listener rule 3's Escape half adds. (This rule read
+  "teardown on unmount" until 2026-08-26, describing a mechanism neither client has.)
+- **`moveIndex(items, from, to)` is exported and pure**, and on `CustomSectionsEditor` and
+  `EntityForm` it is what the arrow buttons call too, so on those screens the buttons and the drag
+  cannot disagree about what a move means. **`RankableList` is the exception and deliberately so**:
+  it renders over this hook but commits through `reviewRanking.moveTo`, arrows included, because
+  `moveTo` **clamps** an out-of-range `to` where `moveIndex` **refuses** it — and `moveBy` hands
+  `from + delta` down with no bounds check of its own. Do not unify them for tidiness; the refusal is
+  for callers holding indices from a possibly stale measurement, the clamp for callers that already
+  resolved the row by id. `announceMove`, by contrast, IS shared by every renderer and both paths —
+  arrows included — so one move never produces two different sentences.
+- **The neighbours' shift is a CSS `transition-transform` applied by the consumer**, deliberately not
+  framer — the global reduced-motion rules reach CSS and cannot reach framer's inline styles, and a
+  framer transform would be fighting this hook for the same property (§17).
+- Android's port is `ui/designworkshop/DwRankableList.kt`, which carries the same five rules and
+  says in a comment why it uses `detectDragGestures` on a dedicated grip rather than
+  `detectDragGesturesAfterLongPress` on the row: the row there is a whole review card with a
+  five-way control and two text boxes in it.
 
 ---
 
@@ -1229,6 +1329,35 @@ Call `carry.prune(node)` **before** `carry.remember(...)` when the researcher ov
   is not universal and a rejected fillStyle silently keeps the previous colour.
 - Object URLs are revoked in the effect cleanup that created them — building the list and the
   revocation in one effect is what keeps them paired.
+- **`allowedTypes` narrows the chooser AND filters what is admitted, and the two lists must agree
+  exactly.** `pickAccept` joins `ACCEPT_BY_TYPE` for the tokens passed, and `addFiles` then drops
+  every incoming file whose `inferMediaType(file)` is not in the same array — silently, which reads
+  to a designer as the app losing their file rather than refusing it. Today three call sites narrow:
+  `["IMAGE"]`, `["AUDIO"]`, `["VIDEO"]`. `documentAccept` is the **FILE field's attachment list, not
+  a `DOCUMENT` classifier** — a FILE field passes no `allowedTypes` at all, so its chooser is the
+  four lists joined and nothing is filtered, which is why `.pdf` belongs there even though
+  `inferMediaType` answers `"PDF"` for it. See §17 for the trap in the other direction.
+- **The `maxItems` contract — declared in the registry, read by BOTH clients since 2026-08-25,
+  enforced BEFORE the picker.** `FieldSpec.max_items` is emitted as `maxItems` by `field_to_dict`
+  **only when a field declares one** (`stage_schema.py`), so `DwField.maxItems` is `number |
+  undefined` on the wire — and **the client splits that one absence into two different answers.**
+  `FieldInput` derives `declaredCap` (`declaredMaxItems(field)`, null where the key is missing) for
+  everything it PRINTS, and `cap` (`effectiveMaxItems(field)` = `declaredMaxItems(field) ??
+  DW_DEFAULT_MAX_ITEMS`, so **200** where the key is missing) for everything it ENFORCES. Android
+  holds the same pair through `dwEffectiveMaxItems`. **Until 2026-08-26 this paragraph said `cap` was
+  "null, not 200" and both clients read the absence as no ceiling at all** — which is the half of the
+  contract `docs/DESIGN_WORKSHOP.md:229-232` forbids in as many words, and it lost whole stage saves.
+  The
+  reason to enforce it early is that `coerce_value` **REFUSES an over-long array rather than trimming
+  it** — deliberately, because silently keeping the first N of a list the client believes it stored is
+  the "Stage saved, and the photographs are gone" failure — so a cap only the server knows about is a
+  cap a designer meets after attaching the twenty-fifth photograph. `FieldInput` therefore reads the
+  cap, trims **before** upload, states the number under the box, and mounts `MediaCarousel` on a
+  capped gallery. Android does the same in `DwMediaCapture`, and trims **before** import for a reason
+  the web does not have: `media.attach` copies the bytes into the workshop's media directory, so
+  trimming after would orphan files. Not part of `registry_version()`, so a field gaining a cap does
+  not invalidate cached drafts — which also means a client that has not refetched is enforcing the
+  previous cap and the server is the authority either way.
 
 ### 12.11 Error surfacing — four treatments, chosen by meaning
 
@@ -1373,6 +1502,28 @@ a `recordHref` or a `RECORD_HREF` entry whose signature takes an `id`, use it.
 - `describeTrouble` writes its own sentence per HTTP status because FastAPI's 404 body is the literal
   string "Not Found". **A failed load must not empty the screen** — the built-in default stays visible,
   explicitly labelled as not the live ranking.
+- **The report, previewed from the screen where the words are typed:
+  `components/designworkshop/report/StageDocumentPreview.tsx`** — a disclosure on the stage page,
+  added 2026-08-25. **It is not a fifth renderer and that is the constraint everything about it bends
+  around.** `GET /report/preview` builds the same `ReportDocument` the .docx writer, the server .pdf
+  writer and the two on-device Kotlin writers consume; this component fetches it and hands the blocks
+  to the same `ReportBlock` the full report page uses, and reconstructs nothing. Rendering the preview
+  from the LOCAL DRAFT is the tempting alternative — it would update on every keystroke with no round
+  trip — and it is refused outright: there are already four renderers of a document a ministry
+  receives that must agree line for line, and a fifth built in the browser from the form's own state
+  would be the only one nobody ever opens a file to check, drifting silently on the one screen a
+  designer trusts *precisely so that* they need not open the file.
+  Three consequences to keep, each of which is rule 10 wearing a different hat. **"Live" follows the
+  SAVES, not the keystrokes**, and the strip at the top of the panel says so in those words — a
+  preview that silently lagged the form would have the designer read the absence of their last edit
+  as the report dropping it. **The stage's slice is LOCATED, never re-derived:** the payload is the
+  whole document and its blocks carry no stage identity (`HeadingBlock.bookmark` exists on the
+  dataclass and the builder never assigns it), so the slice runs from the heading whose text is this
+  stage's title to the next heading at the same level or above; when that match fails it **shows the
+  whole document and says why**. And **it is closed until asked for**: building the document loads
+  every stage, resolves the media rows and rasterises the figures, which is the right cost for a
+  designer who wants to see the document and the wrong one to pay on every stage open by every
+  designer on a village connection. It refreshes on a token the save path bumps.
 - ⚠ The explicit `{" "}` after `<strong>not</strong>` is load-bearing: the JSX transform drops the
   leading space of a text node following an inline element, so without it the sentence reads
   "does notapprove it".
@@ -1540,21 +1691,54 @@ This list was stale for a long time and that is worth knowing about, because it 
 of writing a register down twice. It carried eleven tiles under "never invent a label", omitting six
 that already existed, so the honest reading of a missing tile was "this tile is not expected" — and
 a page whose tile was never added reads to its owner as a page that was never built. Four of the
-twenty are **web-only, with no Android counterpart to agree with**: Design workshop (Android draws a
-bespoke `DesignWorkshopCard`, not an `EntryMode`), My designer profile (Android has the nav
-destination and no card), and Sketches & prototypes and Design review. Be exact about those last
-two, because this line used to say "the feature does not exist on the handset at all" and that is
-false of one of them. **Design review** really is web-only: there is no ratings code anywhere under
-`android/app/src/main`. **Sketches & prototypes** is only the top-level ENTRY POINT that is web-only
-— the feature itself is on the handset inside the workshop stage flow (`DwSketchRectifyField.kt`,
-`DwSketchPlate.kt`, `DwSketchRectify.kt`, `FieldRenderer.kt`'s `dwOffersSketchRectify`,
-`ReportFigures.kt`'s `"Sketches"` count over `SKETCH_DEVELOPMENT`), reachable only by opening a
-workshop and walking to stage 11. What Android has no member for is `EntryMode`/`NavDestination`,
-i.e. the chooser. Say "no entry point", not "no feature": this document is loaded before any
-frontend UI work here, so the over-claim sent every reader of it looking for the wrong gap and
-stopped them matching Android's existing stage-11 wording. The array's own comment names all four;
-do not "restore parity" by deleting one.
-`e2e/dashboard-tile-parity-unit.spec.ts` is what holds the last two in place.
+twenty have **no Android dashboard tile to agree with**, because the handset's grid is
+`DesignWorkshopCard` + `EntryMode.entries` + Settings and none of the four is an `EntryMode`: Design
+workshop (Android draws the bespoke `DesignWorkshopCard`), My designer profile (Android has
+`NavDestination.DESIGNER_PROFILE` and no card), Sketches & prototypes and Design review.
+
+**"No tile" is the whole of the claim, and for the last two it is now the ONLY part of it that is
+still true.** Both of them are on the handset as menu destinations with real screens — read the tree,
+not this sentence: `grep -n "SKETCHES_AND_PROTOTYPES\|DESIGN_REVIEW" android/.../ui/AppNavigation.kt`
+answers it in one command. What each lacks is a member of `EntryMode`, and nothing else:
+
+- **Design review.** `NavDestination.DESIGN_REVIEW` → `"Design review"`, `Icons.Filled.Star`,
+  `NavGroup.BROWSE`, gated `canRunDesignWorkshops` — declared immediately before
+  `SKETCHES_AND_PROTOTYPES` so the Browse group reads in the web's order. The screen is
+  `ui/designworkshop/DesignReviewScreen.kt` over `ui/designworkshop/DwRankableList.kt` (the arrows
+  and the drag grip) and `data/DwDesignRatings.kt` (the pure rules: the two rounds, the five orders,
+  the pool gate, the override stamp, every sentence it prints), with all three `/design-ratings`
+  endpoints bound in `WorkshopRepository`/`WorkshopRepositoryApi` and a new `OFFLINE_DESIGN_RATING`
+  outbox type behind the write. **This paragraph said "there is no ratings code anywhere under
+  `android/app/src/main`" until 2026-08-26, and by then that was false** — which is the same defect
+  as the eleven-tile list above, one release later and one line down.
+  Four things the handset deliberately does NOT do, so a reader does not go hunting for them:
+  it renders the **server's** 403 for rating your own piece rather than pre-empting it (no payload
+  carries `createdById`); it reaches the pool round one workshop at a time, through the picker or a
+  pasted id, because `workshopId` is required and no cross-workshop browse endpoint exists; it says
+  "this screen does not claim either way" about a fixed order it cannot see, because
+  `rankFixedBy`/`rankFixedAt` are readable only where the stage rows are; and it never reads the
+  stage rows itself, so a designer arriving from the menu gets the arrange controls **disabled with a
+  reason and a button that fetches them**, where the web's `ReviewPanel` populates its rows by
+  opening.
+- **Sketches & prototypes.** `NavDestination.SKETCHES_AND_PROTOTYPES` and
+  `ui/designworkshop/SketchesAndPrototypesScreen.kt` exist, so the ENTRY POINT is no longer web-only
+  either. It was always only the chooser that was missing: the sketch and prototype WORK has been on
+  the handset inside the workshop stage flow (`DwSketchRectifyField.kt`, `DwSketchPlate.kt`,
+  `DwSketchRectify.kt`, `FieldRenderer.kt`'s `dwOffersSketchRectify`, `ReportFigures.kt`'s
+  `"Sketches"` count over `SKETCH_DEVELOPMENT`), reachable only by opening a workshop and walking to
+  stage 11. Its screen is a chooser and nothing else — two navigating buttons per row, to stage 11
+  and stage 13 — because a second way to ADD a sketch would be one feature with two stores and the
+  report would read the wrong one.
+
+**Say what is missing, precisely, and never a tier more than that.** "No feature" was wrong about
+sketches, "web-only outright" is now wrong about design review, and both errors cost the same thing:
+this document is loaded before any frontend UI work here, so an over-claim sends every reader looking
+for a gap that is not there and stops them matching wording Android already ships. The array's own
+comment names all four tiles; do not "restore parity" by deleting one — the tile really is web-only
+even where the destination is not.
+`e2e/dashboard-tile-parity-unit.spec.ts` is what holds the last two tiles in place, and its own
+comment still describes design review as web-only outright, as does the `tiles` array's — **both
+outside this document, both now stale, neither mine to edit.**
 
 Grid: `grid-cols-2 md:grid-cols-3` — 2 per row on phones, 3 on tablets and laptops.
 Card anatomy (Android `DashboardActionCard`): white `rounded-2xl` card, small dark-purple icon tile
@@ -1659,6 +1843,27 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
 - Empty means everything (`filters.types`) / all (`workshopIds`).
 - `FunnelFilters` fires once after load — wait for it.
 - Date parsing: local for `parseDateInput`, **UTC** for `DateRangeField`.
+- **`maxItems` ABSENT means the server's default of 200, NOT unbounded** — `field_to_dict` emits the
+  key only where a field declares a cap, so a client that reads the absence as "no limit" is wrong,
+  and one that draws "up to 200" is worse: **never print a cap you did not read.** `DEFAULT_MAX_ITEMS`
+  is the server's to change, and a stated cap that is not the enforced cap is worse than no sentence
+  at all. **BOTH HALVES, AND NEITHER TRADED FOR THE OTHER: enforcement is UNCONDITIONAL — 200 where
+  nothing is declared — while printing is CONDITIONAL on the declared value.** `FieldInput` keeps
+  `cap` (enforced, `effectiveMaxItems`) apart from `declaredCap` (printed, null where absent), and
+  Android keeps the same pair through `dwEffectiveMaxItems`; `FieldDto.maxItems` still defaults to
+  `0`, which means "nothing DECLARED", never "no ceiling". **And the trim notice must fire on BOTH
+  branches** — gating it on a declared cap while enforcing 200 turns a loud trim into a silent drop
+  of the 201st file, which is the one outcome this rule exists to prevent. `coerce_value` refuses
+  rather than trims (§12.10). This entry said "enforce it where it IS declared" until 2026-08-26 and
+  an agent following that sentence would reintroduce exactly that silent drop.
+- **`allowedTypes` filters through `inferMediaType`, which answers `"PDF"` and NOT `"DOCUMENT"` for a
+  PDF.** So `allowedTypes={["DOCUMENT"]}` on `MediaCaptureField` offers `documentAccept` (which lists
+  `.pdf`) in the chooser and then **silently drops every PDF** in `addFiles` — the file is picked, the
+  tile never appears, and nothing is said. `inferMediaType` is four ordered arms: `image/` → IMAGE,
+  `video/` → VIDEO, `audio/` → AUDIO, `application/pdf` → **PDF**, everything else → DOCUMENT. A
+  document slot that means "any attachment" must pass **no `allowedTypes` at all** (that is what a
+  FILE field does) or list `["DOCUMENT", "PDF"]`. No call site narrows to DOCUMENT today; that is why
+  this is a trap and not a bug.
 
 **Data**
 - Blank `NEXT_PUBLIC_API_URL` silently falls back to localhost.
@@ -1706,6 +1911,40 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
   three things: a backfill, a way to close later gaps, and a visible count of what the scope excludes.**
 - Every cap, truncation or skipped row must say so: `rowsTruncated`, `childrenTruncated`,
   `captureTruncated`, `anchorsTruncated`, "the busiest are listed", "Page 0 of 0".
+
+**Claims about the REPORT — copy written from copy**
+- **Copy written from another surface's copy inherits its errors, and no client can check a claim
+  about the report.** "The designer's CV reaches the report as an annexure" travelled the registry's
+  help text → the web profile copy → the Android screen → the walkthrough → the prose doc: five
+  surfaces in one day, each writer with good reason to trust the previous one. §1's "copy Android's
+  words verbatim" governs what a thing is CALLED. It is not a source for what a document CONTAINS —
+  the document is assembled server-side and nothing under `frontend/` or `android/` ever sees the
+  result, so a claim about it cannot be verified from the surface you are writing on.
+- **The authority is three files.** `backend/app/services/report_templates.py` — `SpecialSection`
+  (:45) is the complete list of things a report can contain, and each member's own comment says what
+  it prints **and when it prints nothing**; `TEMPLATES` (:360) says which of the six templates
+  carries which. Then `report_builder.py` for what a section actually renders, and
+  `report_annexures.py` for the transcript blocks. Two members are carried by **no** template
+  (`ANNEXURE_AI_LAYERS`, `CUSTOM_SECTION`, spliced in per report), so "the report has X" can be
+  false for the template your reader actually generates.
+- **Four annexures exist, and the media one is photographs only** — so **no attached file is carried INTO
+  the document**, the CV included — a FILE field’s bytes stay in the workshop record. `_image_sources` skips every field whose type is not
+  `IMAGE`/`IMAGE_LIST` (`report_builder.py:1221`), `_images` is the only placement path there is, and
+  `_render_media_annexure` (:2608) gathers through it. What IS true is the other half:
+  `ReportBuilder.attachments_named_but_not_carried` (:990) counts the files a report NAMES (via
+  `format_value`'s "1 document attached") and does not hold — and that is said **beside the
+  download, never inside the .docx**. Write that sentence, not the annexure one.
+
+**Android — you will be editing Kotlin the moment a feature lands on both clients (§16)**
+- **Kotlin block comments NEST, unlike Java's.** So an unbalanced `/*` anywhere inside a KDoc — and
+  the one that bites is a mime wildcard, `image/*` or `*/*`, written out in prose — opens a second
+  comment, the block's own `*/` closes only that one, and the outer comment swallows the rest of the
+  file. The failure is a compile error a long way from the sentence you typed, and on a 900-line
+  screen file it does not read as a comment problem at all. The tree's own convention is to write the
+  concept in words — "the match-anything wildcard" (`QuestionnaireBundle.kt`), "the image wildcard is
+  in the picker's list" (`DesignerProfileScreen.kt`) — and where an opener really must appear it is
+  **closed on the same line**, which is why `MainActivity.kt`'s quoted `` `/** Right-side navigation
+  drawer …*/` `` compiles. Same rule for a glob or a regex in a comment: balance it or reword it.
 
 ---
 

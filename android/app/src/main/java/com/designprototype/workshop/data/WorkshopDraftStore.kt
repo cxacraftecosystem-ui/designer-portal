@@ -455,6 +455,36 @@ data class WorkshopDraft(
     val workshopId: String = "",
     val title: String = "",
     val templateId: String = "",
+    /**
+     * WHO THE WORKSHOP WAS OPENED FOR, as an account id, chosen before the workshop existed.
+     *
+     * A CREATE-ONLY INPUT, and it belongs to neither of the two kinds of field around it. It is not
+     * something a stage screen edits, and it is not something the server sends down: nothing
+     * deserialises it back on any read, because what survives `seed_designer_prefill` is
+     * `designerName`, promoted out of stage 1. It is carried here for exactly one reason — a
+     * workshop started in a courtyard with no signal must still remember the designer the admin
+     * picked, so that `WorkshopSync`'s create arm can name them the moment the phone finds a bar of
+     * signal and the seed copies THAT profile rather than the creator's. `WorkshopSync` is its only
+     * reader; nothing else may send it, and `PATCH /design-workshops/{id}` is closed to it in any
+     * case (`DesignWorkshopUpdate` has no such member and `APIModel` is `extra="forbid"`).
+     *
+     * NULL IS THE ORDINARY STATE and it means "nobody was named" — which the server reads as "leave
+     * the seed exactly as it behaved before this field existed" and copies the CREATOR's profile.
+     * The picker's own "Not decided yet" row writes null here through `dwNamedDesignerId`, so a
+     * blank pick and an unanswered one are one state on the disk rather than two.
+     *
+     * NEVER THE DISPLAY NAME. `designerName` is DENORMALISED from stage 1 by `promoted_values()` and
+     * is display-only on both clients; this is an account id an admin chose, one step EARLIER, and
+     * it is what drives that promotion. A picker that wrote both would give one fact two writers,
+     * which is the exact shape the promoted block exists to forbid. (The web says the same at
+     * `DwDraftHeader.designerUserId` in `frontend/lib/designWorkshopStore.ts`.)
+     *
+     * ADDITIVE AND DEFAULTED, so it owes no rung of [WORKSHOP_DRAFT_SCHEMA_VERSION] by that
+     * constant's own rule: a draft written by any earlier build decodes with null, which is the same
+     * thing "nobody was named" has always meant, and a build from before this field reads a draft
+     * that has it and ignores the key.
+     */
+    val designerUserId: String? = null,
     val createdAt: String = "",
     val updatedAt: String = "",
     /**

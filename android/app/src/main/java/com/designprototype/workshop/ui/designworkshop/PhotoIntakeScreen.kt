@@ -613,6 +613,24 @@ internal data class DwIntakeDestination(
     val fieldKey: String,
     val label: String,
     val multiple: Boolean,
+    /**
+     * [FieldDto.maxItems] verbatim — the DECLARED ceiling of the field this photograph is headed for,
+     * or 0 where the registry declares none.
+     *
+     * 0 IS NOT "no ceiling", and it is carried raw rather than resolved so the one place that spells
+     * the fallback out stays [dwEffectiveMaxItems]. It is here because a confirmation WRITES, and
+     * [multiple] told the write that a gallery holds many without saying how many: until this field
+     * existed, a two-hundred-photograph camera dump appended straight past the motif galleries'
+     * declared twenty. That is not a cosmetic overrun — `coerce_value` REFUSES an over-long array
+     * rather than trimming it (backend/app/services/stage_schema.py:1822) and `save_stage` restores
+     * the rejected key from `previous`, so the sync that followed lost the whole field's write with
+     * every byte already copied into the workshop's media directory.
+     *
+     * Filled from [DwPhotoTarget.maxItems], which is where it comes off the registry, and defaulted so
+     * that a destination built by a caller that has not been taught about it is still held to the
+     * server's default rather than to nothing at all.
+     */
+    val maxItems: Int = 0,
 )
 
 /** One line of the list: the file, what the intake made of it, and where it is currently headed. */
@@ -661,6 +679,10 @@ internal fun dwIntakeDestinations(
                             rowKey = null,
                             fieldKey = target.fieldKey,
                             multiple = target.multiple,
+                            // The field's own ceiling travels WITH the destination, because the
+                            // confirm walk has nothing but this record when it writes — see
+                            // [DwIntakeDestination.maxItems].
+                            maxItems = target.maxItems,
                             label = "${stage.number}. ${stage.title} — ${target.fieldLabel}",
                         )
                     )
@@ -699,6 +721,7 @@ internal fun dwIntakeDestinations(
                             rowKey = rowKey,
                             fieldKey = target.fieldKey,
                             multiple = target.multiple,
+                            maxItems = target.maxItems,
                             label = "${stage.number}. ${stage.title} — ${entity.title} “$label” — ${target.fieldLabel}",
                         )
                     )
@@ -762,6 +785,66 @@ private suspend fun dwReadCaptureStamp(context: Context, uri: Uri): Pair<String?
 // --------------------------------------------------------------------------------------
 // Confirming
 // --------------------------------------------------------------------------------------
+
+/**
+ * WHAT A FULL GALLERY REFUSED, IN WORDS — AND ITS CEILING ONLY WHERE THE REGISTRY DECLARED IT.
+ *
+ * The intake's twin of [dwCapNotice], and a twin rather than a call of it because the two refusals
+ * differ in the two things a designer acts on. The capture card trims Uris BEFORE anything is copied,
+ * so all it can honestly say is how many were dropped; by the time this fires the bytes are in the
+ * workshop's media directory and the rows are still on screen, so this names the FILES and says where
+ * they are. Sharing one sentence would mean one of the two lying about the state of the phone.
+ *
+ * THE ONE CLAUSE THAT CHANGES IS THE CEILING, exactly as it is there. With a declared cap the number
+ * is stated, because it came off the registry and the field's own capture card has been printing it
+ * all along. With none, the ceiling in force is the server's `DW_DEFAULT_MAX_ITEMS` and this says the
+ * gallery is FULL and stops: docs/DESIGN_WORKSHOP.md:229-232 forbids a client printing a number it did
+ * not read, since "a stated cap that is not the enforced cap is worse than no sentence at all".
+ *
+ * AND IT IS NEVER TRADED FOR SILENCE. Saying nothing on an undeclared gallery — the obvious way to
+ * avoid printing 200 — turns a loud refusal into a camera dump whose tail vanishes, which is the one
+ * outcome that paragraph and `DwMediaCaptureCard`'s `adopt` both refuse: "the honest act is to take
+ * what fits and SAY what did not". Here it is worse than on the card, because the designer confirmed
+ * two hundred rows at once and has no way to work out which twenty are missing.
+ *
+ * [DwIntakeDestination.label] is the whole path ("13. Prototype Development — Stage logs “Warping the
+ * loom” — Photographs") rather than the field's own label, because one confirmation writes into many
+ * fields and "Photographs is full" would not say which of them.
+ *
+ * A LONG LIST IS SHORTENED BY WHOLE NAMES AND SAYS THAT IT WAS. This joined the names and then cut
+ * the result with `.take(200)` until 2026-08-26, which on a forty-file refusal ended the sentence
+ * mid-filename with nothing to mark it — an unmarked truncation inside the one receipt whose whole
+ * job is to NAME the files rather than count them. A half-written filename is worse than an honest
+ * "and 24 more": the designer goes looking for a photograph by a name that does not exist.
+ *
+ * `internal` and a pure function of its inputs so [DwListCapCeilingTest] can hold it to both halves of
+ * the rule on a desktop JVM, where nothing composes.
+ */
+internal fun dwIntakeFullNotice(destination: DwIntakeDestination, fileNames: List<String>): String {
+    val one = fileNames.size == 1
+    val ceiling = if (destination.maxItems > 0) {
+        "${destination.label} already holds the ${destination.maxItems} " +
+            "photograph${if (destination.maxItems == 1) "" else "s"} it may"
+    } else {
+        "${destination.label} is already full"
+    }
+    // Whole names only, and the remainder counted rather than cut. The first name is always kept
+    // even if it alone is longer than the budget: a receipt that names nothing is not a receipt.
+    val shown = mutableListOf<String>()
+    var used = 0
+    for (name in fileNames) {
+        val cost = name.length + if (shown.isEmpty()) 0 else 2
+        if (shown.isNotEmpty() && used + cost > 200) break
+        shown += name
+        used += cost
+    }
+    val listed = shown.joinToString(", ") +
+        if (shown.size < fileNames.size) " and ${fileNames.size - shown.size} more" else ""
+    return "$ceiling, so ${fileNames.size} ${if (one) "was" else "were"} not attached: " +
+        "$listed. ${if (one) "It is" else "They are"} still on this " +
+        "device and still in the list below — remove something from that field first, or choose " +
+        "another destination."
+}
 
 /** What one Confirm did, in the words the surface says it in. */
 private data class DwIntakeOutcome(
@@ -884,12 +967,35 @@ private suspend fun dwConfirmIntake(
     }
 
     val missed = ArrayList<String>()
+    /**
+     * Copied, and then refused by the field's own ceiling — SAID, never counted as attached.
+     *
+     * The gallery this photograph was headed for is already holding as many as it may, and the write
+     * below declines it: `coerce_value` REFUSES an over-long array rather than trimming it
+     * (backend/app/services/stage_schema.py:1822) and `save_stage` restores the rejected key from
+     * `previous`, so appending anyway would not cost the designer the surplus photographs — it would
+     * cost the whole field's write at the next sync, with every byte already on the phone.
+     *
+     * WHY IT IS A LIST AND NOT A COUNTER. A refusal that is not spoken is the silent drop
+     * docs/DESIGN_WORKSHOP.md:229-232 and `DwMediaCaptureCard`'s `adopt` both refuse in as many words
+     * — "the honest act is to take what fits and SAY what did not" — and a camera dump whose tail
+     * vanishes is that failure at its worst, because the designer has two hundred rows and no way to
+     * tell which twenty did not land. So the whole write is kept: [dwIntakeFullNotice] needs the
+     * destination to name the field and to decide whether it may print the ceiling, and the file name
+     * to say which photograph.
+     *
+     * Judged against the draft the store hands the transform, exactly as [missed] is, and cleared in
+     * the same place for the same reason.
+     */
+    val overCap = ArrayList<DwIntakeWrite>()
     val grouped = writes.groupBy { it.destination.stageKey }
     if (grouped.isNotEmpty()) {
         WorkshopDraftStore.update(context, workshopId) { current ->
             // Cleared inside the transform, not outside it: the store hands this lambda whatever is
-            // on disk right now, and the row it fails to find has to be judged against THAT.
+            // on disk right now, and the row it fails to find — or the gallery it finds already full
+            // — has to be judged against THAT.
             missed.clear()
+            overCap.clear()
             var stages = current.stages
             for ((stageKey, stageWrites) in grouped) {
                 val spec = schema.stages.firstOrNull { it.key == stageKey } ?: continue
@@ -901,9 +1007,31 @@ private suspend fun dwConfirmIntake(
                 for (write in stageWrites) {
                     val target = write.destination
                     if (target.rowKey == null) {
+                        /*
+                         * ASKED BEFORE IT IS WRITTEN, BECAUSE THE ANSWER HAS TO BE SAID.
+                         *
+                         * [DwPhotoIntake.appendMediaRef] stops at the field's ceiling and returns the
+                         * list unchanged when it will not take another — it hands back a value, not a
+                         * receipt, so `landed.add` below would count a photograph the draft does not
+                         * hold and put its id into `StageDraft.mediaIds` with nothing referencing it.
+                         * [DwPhotoIntake.mediaRefFits] is the same question asked in a statement that
+                         * shows up in a diff. It answers TRUE for a single-valued field and for a ref
+                         * the gallery already holds, so the only refusal it reports is real growth
+                         * past the ceiling — the one a receipt has to account for.
+                         *
+                         * The ceiling is the DECLARED one where the registry gave it and the server's
+                         * default where it did not; the branch has to pass [target.maxItems] to get
+                         * the first, because [dwEffectiveMaxItems] reads 0 as the second.
+                         */
+                        val held = singleton[target.fieldKey]
+                        if (!DwPhotoIntake.mediaRefFits(held, write.mediaId, target.multiple, target.maxItems)) {
+                            overCap.add(write)
+                            unresolved.add(write.uri)
+                            continue
+                        }
                         singleton = singleton + (
                             target.fieldKey to DwPhotoIntake.appendMediaRef(
-                                singleton[target.fieldKey], write.mediaId, target.multiple,
+                                held, write.mediaId, target.multiple, target.maxItems,
                             )
                             )
                         landed.add(write.mediaId)
@@ -922,11 +1050,22 @@ private suspend fun dwConfirmIntake(
                         continue
                     }
                     val row = rows[index]
+                    // The same ceiling question as the singleton branch above, asked against the row's
+                    // own copy of the field. Both branches need it and for different reasons: the
+                    // galleries that DECLARE a cap sit on a singleton entity, while a collection row's
+                    // gallery is held to the server's default — which is a ceiling too, and the one a
+                    // camera dump aimed at a single row would reach.
+                    val heldInRow = row.values[target.fieldKey]
+                    if (!DwPhotoIntake.mediaRefFits(heldInRow, write.mediaId, target.multiple, target.maxItems)) {
+                        overCap.add(write)
+                        unresolved.add(write.uri)
+                        continue
+                    }
                     rows = rows.toMutableList().also { list ->
                         list[index] = row.copy(
                             values = row.values + (
                                 target.fieldKey to DwPhotoIntake.appendMediaRef(
-                                    row.values[target.fieldKey], write.mediaId, target.multiple,
+                                    heldInRow, write.mediaId, target.multiple, target.maxItems,
                                 )
                                 )
                         )
@@ -960,7 +1099,12 @@ private suspend fun dwConfirmIntake(
         }
     }
 
-    val attached = writes.size - missed.size
+    // EVERY WAY A COPIED PHOTOGRAPH CAN FAIL TO LAND COMES OFF THIS TOTAL. `writes` counts what was
+    // copied, not what was written: a row that went missing under the transform and a gallery that
+    // was already at its ceiling both leave the bytes on the device with no field referencing them.
+    // Counting them as attached is how a receipt comes to claim more than the draft holds — and this
+    // screen's whole job is to be believed about a two-hundred-file import.
+    val attached = writes.size - missed.size - overCap.size
     // Counted from the URIs rather than the names, because two cards can hold two different
     // photographs called IMG_0001.JPG and a stage that landed nothing must not be counted.
     val stageCount = grouped.count { (_, stageWrites) -> stageWrites.any { it.uri !in unresolved } }
@@ -987,6 +1131,13 @@ private suspend fun dwConfirmIntake(
                     "in this workshop: ${missed.joinToString(", ").take(200)}. They are still on this " +
                     "device — choose another destination for them."
             )
+        }
+        // ONE SENTENCE PER FULL GALLERY, and grouped rather than pooled because the remedy is
+        // per-field: "remove something first" is only actionable if the designer knows WHICH field to
+        // remove it from, and one import can fill two of them. `groupBy` keeps the order the writes
+        // were made in, so the sentences read in the order the list did.
+        overCap.groupBy { it.destination }.forEach { (destination, refused) ->
+            add(dwIntakeFullNotice(destination, refused.map { it.fileName }))
         }
         // Worded apart from `missed` rather than folded into it, because these were never copied:
         // saying "they are still on this device" of a file this app has not touched would send a

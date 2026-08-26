@@ -879,6 +879,15 @@ class ReportBuilder:
         #: off the builder AFTER the render rather than recomputed beside it: a second copy of
         #: "what did the cover print" is exactly how two statements about one document come apart.
         self.cover_fields_dropped: tuple[str, ...] = ()
+        #: Photographs this template's ``max_photos`` cap kept out, by STAGE KEY — written by
+        #: :meth:`_note_photographs_over_cap`, read by :func:`build_report` for a warning. Off the
+        #: builder after the render for the reason ``cover_fields_dropped`` above is: a second copy
+        #: of "what did the cap drop" is how two statements about one document come apart.
+        self._photographs_over_cap: dict[str, int] = {}
+        #: The stage whose section is being rendered. The ONE piece of "where am I" state on this
+        #: builder, and it exists so a capped photograph can be reported against a stage the
+        #: designer can go and open — see :meth:`_note_photographs_over_cap`.
+        self._stage_key: str = ""
 
     # -- tier and emptiness -----------------------------------------------------------
 
@@ -960,6 +969,106 @@ class ReportBuilder:
                         lost.append(field_spec.label)
             if lost:
                 out.append((spec, lost))
+        return out
+
+    def photographs_over_cap(self) -> list[tuple[StageSpec, int]]:
+        """The photographs this template's ``max_photos`` kept out of the document, by stage.
+
+        AFTER THE RENDER AND OFF THE BUILDER, for the reason :meth:`fields_hidden_by_tier` and
+        ``cover_fields_dropped`` are: the placement paths are what actually dropped these pictures,
+        and a count recomputed beside the warning would be a second copy of the cap arithmetic. Two
+        statements about one document that are free to disagree is the defect the two
+        custom-section warnings already taught this module.
+
+        Empty for five of the six templates — ``max_photos`` is 0 everywhere in ``TEMPLATES``
+        except COMPACT_SUMMARY's final-products section, and ``apply_report_settings`` cannot set
+        it — so no existing report gains a warning unless a cap really did bite.
+        """
+        return [(spec, self._photographs_over_cap[spec.key])
+                for spec in stages() if self._photographs_over_cap.get(spec.key)]
+
+    def attachments_named_but_not_carried(self) -> list[tuple[StageSpec, int]]:
+        """The files this report NAMES and does not CONTAIN, counted by stage.
+
+        WHAT AN OFFICER READS, AND WHAT IS TRUE. ``format_value``'s media branch prints "1 document
+        attached" against the field's own label, and that line ended a real defect: a designer
+        attached the ministry's sanction order at stage 1 and the .docx the officer received did not
+        mention that a sanction order existed. What it did not end is the reading that line invites
+        in a document submitted to a ministry, which is *a document is attached to this report*. It
+        is not. Neither writer can draw a PDF, a fifteen-minute recording or a process video;
+        ``_images`` — the only placement path there is — filters on IMAGE and IMAGE_LIST; and
+        ``ANNEXURE_MEDIA`` gathers through ``_images``, so the contact sheet cannot carry one
+        either. The bytes stay in the workshop record, and until this method existed no surface
+        said so.
+
+        THE REGISTRY IS NOT WHERE THAT IS DECIDED, WHICH IS THE HALF THIS DOCSTRING KEEPS GETTING
+        WRONG. It used to end by saying the registry's help text on ``designerCv`` promised the
+        opposite in as many words. It did, it no longer does — that help text now says the report
+        NAMES the file rather than carrying it — and pointing at it was the mistake even while the
+        claim was accurate, because it aims the next reader at an instance instead of at the rule.
+        The rule is the SHAPE: a claim about what a report CONTAINS cannot be verified from any
+        client, and both the web form and the handset render their help straight off the published
+        registry, so the same wrong sentence can be written in ``stage_definitions`` any number of
+        times without a single surface disagreeing with it. The authority is here, in
+        ``report_annexures`` (transcripts only) and in ``report_templates`` (which records the
+        refusal of a FILE annexure as a decision, with its two reasons). Correct the help text
+        against those three; do not maintain a list of the help texts that have gone wrong. The
+        count is the argument. ``report_annexures`` and ``report_custom_sections`` both open by
+        recording "three surfaces told the designer the office's copy would carry it";
+        ``stage_definitions`` records at ``surveyDocument`` that the identical false claim was made
+        three times in one wave; and correcting the two sentences in THIS module is the fourth pass
+        over the same claim in a day. Every one of those is a client-facing string, and no client
+        can check any of them. That is what recording the instance rather than the shape costs.
+
+        SO IT IS SAID BESIDE THE DOWNLOAD AND NOT IN THE DOCUMENT. The file is honest about what it
+        holds — it says an attachment exists and how many — and the person who has to act is
+        the designer, on the day, whose action is to send those files with it. Writing the note into
+        the .docx would break the rule every warning here is under.
+
+        THIS IS NOT AN ARGUMENT THAT THE BYTES SHOULD BE EMBEDDED. That is a change to five
+        renderers, two of which run on a handset with no network, and a new ``SpecialSection`` for
+        them is a decision ``report_templates`` has already recorded against itself with its
+        reasons. Neither is a builder change. Naming the loss is.
+
+        COUNTED IN FILES AND NOT IN FIELDS, because a field holding three recordings is three
+        things for somebody to go and find. Only fields the tier ADMITS and the registry does not
+        HIDE are counted: one above the cap is already named by :meth:`fields_hidden_by_tier`, and a
+        HIDDEN one is nowhere in the document for this sentence to be about. The two warnings are
+        disjoint by construction and neither double-counts the other.
+
+        AUDIO IS COUNTED EVEN WHEN ITS TRANSCRIPT IS PRINTED, and the sentence this feeds says "the
+        files themselves" for exactly that reason. A transcribed recording reaches the back of the
+        report as WORDS through ``append_transcript_annexure``; the recording is still not in the
+        file, and somebody comparing the annexure against the tape still has to be sent the tape.
+        Excluding it would have made this count depend on a stage-20 toggle and on whether the
+        media queue had finished, which is two more ways for one document to make two claims.
+        """
+        out: list[tuple[StageSpec, int]] = []
+        for spec in stages():
+            if self.template.section_for(spec.key) is None:
+                continue
+            named = 0
+            for entity in spec.entities:
+                rows = ([self.data.singleton(spec.key)]
+                        if entity.cardinality is Cardinality.SINGLETON
+                        else self.data.rows(spec.key, entity.key))
+                for field_spec in entity.fields:
+                    # IMAGE and IMAGE_LIST are excluded because they ARE carried: they are the two
+                    # types ``_images`` places. DERIVED from that filter rather than written out as
+                    # (FILE, AUDIO, VIDEO) so that a sixth media type added to ``FieldType``
+                    # tomorrow joins this count by existing — the same rule, for the same set,
+                    # that ``tests/test_report_attachments.py`` states about its own census.
+                    if not field_spec.type.is_media:
+                        continue
+                    if field_spec.type in (FieldType.IMAGE, FieldType.IMAGE_LIST):
+                        continue
+                    if not self._visible(field_spec):
+                        continue
+                    if field_spec.report_role is ReportRole.HIDDEN:
+                        continue
+                    named += sum(len(_media_ids(row.get(field_spec.key))) for row in rows)
+            if named:
+                out.append((spec, named))
         return out
 
     # -- references -------------------------------------------------------------------
@@ -1093,9 +1202,9 @@ class ReportBuilder:
 
     # -- media ------------------------------------------------------------------------
 
-    def _images(self, entity: EntitySpec, row: dict[str, Any],
-                *, limit: int = 0) -> list[tuple[ImageRef, str]]:
-        """Every resolvable image on a row, paired with its caption.
+    def _image_sources(self, entity: EntitySpec, row: dict[str, Any],
+                       ) -> dict[str, tuple[FieldSpec, str]]:
+        """Every image id this row can show, mapped to THE FIELD THAT CLAIMED IT and its caption.
 
         TWO SOURCES, in this order: the row's own media fields, then the photograph of any record
         a REF field on the row points at. The second one is the whole of "a photograph appears
@@ -1106,12 +1215,21 @@ class ReportBuilder:
         substitute. A prototype whose maker shot four progress photographs must not lead with a
         catalogue picture of the product it was based on — the report is about the workshop, and
         the borrowed image is context.
+
+        WHY THE FIELD IS CARRIED OUT OF HERE, which is the whole of what changed when this was
+        split out of :meth:`_images`. ONE dict per ENTITY is what deduplicates a participant's
+        photograph against the artisan record it was copied from, and it has to stay entity-wide or
+        that picture prints twice. But a dict that then FORGOT which field each id came from is what
+        merged stage 4's three declared galleries — the cluster's photographs, the traditional
+        motifs and the contemporary ones — into one undifferentiated grid. Keeping the field is
+        what lets :meth:`_image_groups` name each gallery while the dedupe stays where it was.
         """
-        # (media id -> caption), first caption wins, insertion-ordered. Deduplicating by ID rather
-        # than by field is what keeps a participant's photograph from printing twice: hydration
-        # already copied the artisan's picture onto ``participant.photo`` at save time, so the
-        # ``artisanRef`` beside it resolves to the very same media row.
-        wanted: dict[str, str] = {}
+        # (media id -> (the field that claimed it, its caption)), first claim wins,
+        # insertion-ordered. Deduplicating by ID rather than by field is what keeps a participant's
+        # photograph from printing twice: hydration already copied the artisan's picture onto
+        # ``participant.photo`` at save time, so the ``artisanRef`` beside it resolves to the very
+        # same media row.
+        wanted: dict[str, tuple[FieldSpec, str]] = {}
 
         # PASS ONE, the row's own media fields. Separate passes rather than one walk of the field
         # list, because the registry's field ORDER decides nothing here and would otherwise decide
@@ -1128,7 +1246,7 @@ class ReportBuilder:
             caption = format_value(caption_spec, row.get(caption_spec.key)) \
                 if caption_spec else ""
             for media_id in _media_ids(row.get(spec.key)):
-                wanted.setdefault(media_id, caption)
+                wanted.setdefault(media_id, (spec, caption))
 
         # PASS TWO, the photograph of whatever each REF points at.
         for spec in entity.fields:
@@ -1138,17 +1256,170 @@ class ReportBuilder:
             if reference is None or not reference.photo:
                 continue
             wanted.setdefault(reference.photo,
-                              self._reference_caption(entity, spec, row, reference))
+                              (spec, self._reference_caption(entity, spec, row, reference)))
+        return wanted
 
+    def _images(self, entity: EntitySpec, row: dict[str, Any],
+                *, limit: int = 0) -> list[tuple[ImageRef, str]]:
+        """Every resolvable image on a row, paired with its caption, in the registry's own order.
+
+        THE FLAT VIEW, and it is kept for the three callers that want a row's PICTURES rather than
+        its galleries: the cover's hero photograph (one image, whichever is declared first), the
+        photographic annexure's contact sheet, and the GALLERY presentation, which pools a whole
+        COLLECTION onto one plate and so has no single field to name a grid after. Everything that
+        draws a gallery beside the record it belongs to goes through :meth:`_image_groups`.
+
+        ``limit`` STILL BREAKS OUT OF THE RESOLVE LOOP instead of slicing afterwards, and that is
+        load-bearing rather than a micro-optimisation. ``design_workshops.media_resolver`` records
+        every id it was asked for and could not answer, and the route turns that record into a
+        "photograph(s) could not be read" warning beside the download — so resolving ids the
+        document was never going to print would grow that warning on reports that suffered no such
+        loss. PHOTO_CATALOGUE is where it would show: its cover asks for one hero image and its
+        sections print no stage 1 at all, so the rest of stage 1's pictures are never asked for.
+
+        A CAPTION FALLS BACK TO ITS FIELD'S LABEL. Every ``*Caption`` box in the registry is
+        optional and a blank one used to print a photograph with nothing underneath it — a
+        designer's passport portrait, copied onto stage 3 by ``designers.PREFILL_MAP`` without
+        anybody choosing it, arrived in the middle of the workshop plan at 62% of the page width
+        with no word anywhere saying what it was. The field's own label is the honest minimum and
+        the registry has already written it.
+
+        HERE IT FALLS BACK ON EVERY PICTURE, which is where this view and :meth:`_image_groups`
+        differ and why. These captions are the only place a name can go: a contact sheet and a
+        pooled catalogue draw one grid over pictures from many fields and many records, so the grid
+        cannot be named after any of them. A named gallery CAN be, and is, so it does not repeat
+        that name under each of its own photographs.
+        """
         found: list[tuple[ImageRef, str]] = []
-        for media_id, caption in wanted.items():
+        for media_id, (spec, caption) in self._image_sources(entity, row).items():
             ref = self.resolve_media(media_id)
             if ref is None:
                 continue
-            found.append((ref, caption))
+            found.append((ref, caption or spec.label))
             if limit and len(found) >= limit:
                 break
         return found
+
+    def _image_groups(self, entity: EntitySpec, row: dict[str, Any],
+                      *, cap: int = 0) -> list[tuple[str, list[tuple[ImageRef, str]]]]:
+        """A row's pictures as the PLATES they should be drawn as: ``[(grid caption, images)]``.
+
+        WHAT THIS ENDS. ``clusterBackground`` declares three galleries — the cluster's
+        photographs, the traditional motifs and the contemporary ones — and one merged grid drew
+        them as six interchangeable pictures. Three costs, all of them in the delivered file: uneven
+        galleries straddled grid rows, so row two read "third cluster photograph | first traditional
+        motif"; there was no heading and no rule anywhere between one gallery and the next; and
+        because all three ``*Caption`` boxes are optional, a reader with them left blank had NOTHING
+        on the page to tell a motif that has been woven for two centuries from one drawn last week.
+        In a document a ministry reads as the evidence for a design intervention, that distinction
+        is most of what stage 4 is for.
+
+        ``ImageGridBlock.caption`` was already the answer and was already drawn by ALL FIVE
+        renderers — the server .docx writer, the server .pdf writer, the web preview and both
+        on-device Kotlin writers. The builder simply never filled it, so this reaches every surface
+        at once and needs no new block type, which is what a new plate would have cost: five
+        implementations that must agree line-for-line, plus the 485 KB Kotlin template pin.
+
+        A FIELD HOLDING SEVERAL PHOTOGRAPHS IS A GALLERY AND GETS ITS OWN NAMED GRID. A field
+        holding ONE holds one picture, and the fields that hold one picture SHARE a plate. That
+        second half is not tidiness, it is what keeps this change inside the defect it was reported
+        for: ``prototypeIteration`` declares ``beforePhoto`` and ``afterPhoto``, and a before and an
+        after belong side by side — splitting them into two half-page pictures stacked one above
+        the other is a different document, and no defect asked for it. So is ``existingProduct``'s
+        front, back and detail view, which is a plate of three views and was never three galleries.
+        Each of those pictures now carries its own field's label wherever its caption box is blank,
+        so the plate says which view is which, and not one thing about its layout moves.
+
+        THE BORROWED PHOTOGRAPH OF WHATEVER A REF POINTS AT IS ALWAYS ONE PICTURE, so it lands on
+        that shared plate captioned with the referenced record's frozen name, exactly as it was
+        before — see :meth:`_reference_caption` for why the field's label ("Artisan") is the
+        RELATIONSHIP and not the caption, and why it is only ever the last resort.
+
+        ``cap`` IS THE TEMPLATE'S ``max_photos``, AND IT IS APPLIED PER PLATE rather than across the
+        row. Across the row it truncated an insertion-ordered walk, so the galleries declared LAST
+        lost every photograph they held while the first kept all of its own: three cluster
+        photographs and three of each kind of motif, capped at four, printed four cluster
+        photographs and erased both motif galleries entirely. Per plate, the loss falls on the
+        gallery that caused it. Whatever it drops is COUNTED — see
+        :meth:`_note_photographs_over_cap` — because a photograph dropped in silence is exactly
+        the omission rule 10 exists to forbid.
+        """
+        claims: dict[str, list[tuple[str, FieldSpec, str]]] = {}
+        order: list[str] = []
+        for media_id, (spec, caption) in self._image_sources(entity, row).items():
+            if spec.key not in claims:
+                claims[spec.key] = []
+                order.append(spec.key)
+            claims[spec.key].append((media_id, spec, caption))
+
+        # The plates in the registry's own declaration order, with the shared plate of
+        # single-photograph fields sitting where the FIRST of them was declared — so the pictures
+        # still run down the page in the order their fields do, and no photograph moves past a
+        # gallery it used to come before.
+        plates: list[tuple[str, list[tuple[str, FieldSpec, str]]]] = []
+        shared: int | None = None
+        for key in order:
+            claimed = claims[key]
+            if len(claimed) > 1:
+                plates.append((claimed[0][1].label, claimed))
+                continue
+            if shared is None:
+                shared = len(plates)
+                plates.append(("", []))
+            plates[shared][1].extend(claimed)
+
+        groups: list[tuple[str, list[tuple[ImageRef, str]]]] = []
+        for grid_caption, claimed in plates:
+            images: list[tuple[ImageRef, str]] = []
+            over = 0
+            for media_id, spec, caption in claimed:
+                if cap and len(images) >= cap:
+                    # COUNTED AND NOT RESOLVED. The resolver records every id it was asked for and
+                    # could not answer, and the route warns about it, so asking it for a picture
+                    # this template has already decided not to print would manufacture a second,
+                    # different loss out of this one.
+                    over += 1
+                    continue
+                ref = self.resolve_media(media_id)
+                if ref is None:
+                    continue
+                # A PLATE'S NAME IS NOT REPEATED UNDER EVERY PICTURE ON IT. The field's label
+                # falls in only where the plate has no name of its own — the shared plate, whose
+                # pictures come from several fields and where the label under each one is the only
+                # thing that says which is which. On a named gallery the grid caption has already
+                # said it once, and saying it again eight times is the "Cluster photographs"
+                # printed nine times that the first draft of this change produced.
+                images.append((ref, caption or ("" if grid_caption else spec.label)))
+            if over:
+                self._note_photographs_over_cap(over)
+            if images:
+                groups.append((grid_caption, images))
+        return groups
+
+    def _note_photographs_over_cap(self, count: int) -> None:
+        """Record photographs the template's ``max_photos`` kept out, against the stage they are in.
+
+        RULE 10, and the reason this is a counter on the builder rather than a note written into the
+        document: the loss belongs to the act of generating and not to the report. An officer
+        opening the .docx next month must not find a sentence about what was missing on the day —
+        which is the rule :func:`build_report` states for every one of its warnings.
+
+        IT QUALIFIES AS A WARNING AT ALL because it is a loss the designer CANNOT SEE from the
+        picker, which is the test ``build_report`` sets for adding one. "One photograph per
+        prototype" is in COMPACT_SUMMARY's own description; the number is not, no other template
+        names it, stage 20 cannot change it, and nothing on the page said that nine photographs of
+        a finished product became six.
+
+        Attributed to the STAGE being rendered, because that is the only thing a designer can act
+        on — they go and look at that stage. ``_stage_key`` is set by :meth:`_render_stage` and is
+        the one piece of "where am I" state on this builder; the cover's hero photograph and the
+        photographic annexure both go through :meth:`_images`, which takes no cap, so neither can
+        reach this counter and file a loss against whichever stage happened to be rendered last.
+        """
+        if count > 0 and self._stage_key:
+            self._photographs_over_cap[self._stage_key] = (
+                self._photographs_over_cap.get(self._stage_key, 0) + count
+            )
 
     def _reference_caption(self, entity: EntitySpec, spec: FieldSpec, row: dict[str, Any],
                            reference: ReferencedRecord) -> str:
@@ -1420,13 +1691,13 @@ class ReportBuilder:
                     ReportRole.KEY_VALUE, ReportRole.COVER_FIELD, ReportRole.BULLETS,
                 })
             )
-            images = self._images(entity, row, limit=section.max_photos) \
+            plates = self._image_groups(entity, row, cap=section.max_photos) \
                 if section.include_photos else []
-            if not has_extra and not images:
+            if not has_extra and not plates:
                 continue
             self.doc.heading(self._row_label(entity, row, index), min(4, level + 1),
                              numbered=self.template.number_headings)
-            self._place_images(images, section)
+            self._place_image_groups(plates, section)
             self._render_narrative(entity, row, level + 1, skip=column_keys)
         return True
 
@@ -1437,7 +1708,8 @@ class ReportBuilder:
             self.doc.heading(self._row_label(entity, row, index), min(4, level + 1),
                              numbered=self.template.number_headings)
             if section.include_photos:
-                self._place_images(self._images(entity, row, limit=section.max_photos), section)
+                self._place_image_groups(
+                    self._image_groups(entity, row, cap=section.max_photos), section)
             self._render_narrative(entity, row, level + 1)
         return bool(rows)
 
@@ -1533,8 +1805,14 @@ class ReportBuilder:
         if presentation is Presentation.CARDS:
             return self._render_cards(entity, rows, section, level)
         if presentation is Presentation.GALLERY:
+            # THE ONE PLATE THAT CROSSES ROWS, and so the one that is still capped across a whole
+            # COLLECTION rather than per gallery field: a pooled catalogue of every record's
+            # photographs has no single field to name a grid after, so it stays one uncaptioned
+            # grid and its cap stays what it always was. What it never did was SAY what it dropped.
             every = [img for row in rows for img in self._images(entity, row)]
-            self._place_images(every[:section.max_photos or len(every)], section)
+            shown = every[:section.max_photos or len(every)]
+            self._note_photographs_over_cap(len(every) - len(shown))
+            self._place_images(shown, section)
             return True
         wrote = False
         for row in rows:
@@ -1562,6 +1840,33 @@ class ReportBuilder:
             images=tuple(images),
             columns=max(1, min(4, section.photo_columns)),
         ))
+
+    def _place_image_groups(self, groups: list[tuple[str, list[tuple[ImageRef, str]]]],
+                            section: TemplateSection) -> None:
+        """One plate per group, each grid named by the gallery field its pictures came from.
+
+        :meth:`_place_images` WITH A CAPTION, and deliberately nothing else. The block types, the
+        62% width for a lone photograph and the column clamp are the ones every report already
+        used, so no renderer learns a new shape and none of them can drift apart over this.
+
+        The caption is empty for the shared plate of single-photograph fields, where the pictures
+        come from several fields and each one carries its own — see :meth:`_image_groups`.
+        """
+        for caption, images in groups:
+            if not images:
+                continue
+            if len(images) == 1:
+                # A LONE PICTURE HAS NO GRID CAPTION TO SIT UNDER, so a named plate that a cap cut
+                # down to one photograph puts its name on the picture instead of losing it.
+                ref, image_caption = images[0]
+                self.doc.add(ImageBlock(image=ref, width_pct=62.0,
+                                        caption=image_caption or caption))
+                continue
+            self.doc.add(ImageGridBlock(
+                images=tuple(images),
+                columns=max(1, min(4, section.photo_columns)),
+                caption=caption,
+            ))
 
     # -- the map ------------------------------------------------------------------------
 
@@ -1856,6 +2161,10 @@ class ReportBuilder:
     # -- stage --------------------------------------------------------------------------
 
     def _render_stage(self, spec: StageSpec, section: TemplateSection) -> None:
+        # WHERE A CAPPED PHOTOGRAPH IS REPORTED FROM — see
+        # :meth:`_note_photographs_over_cap`. Set before the emptiness check so a stage that
+        # renders nothing cannot leave the previous stage's key standing.
+        self._stage_key = spec.key
         singleton_data = self.data.singleton(spec.key)
         has_rows = any(self.data.rows(spec.key, e.key) for e in spec.collections)
         has_any = bool(singleton_data) or has_rows
@@ -1879,9 +2188,9 @@ class ReportBuilder:
                 ))
                 wrote = True
             if section.include_photos:
-                gallery = self._images(single, singleton_data, limit=section.max_photos)
-                if gallery:
-                    self._place_images(gallery, section)
+                plates = self._image_groups(single, singleton_data, cap=section.max_photos)
+                if plates:
+                    self._place_image_groups(plates, section)
                     wrote = True
 
         for entity in spec.collections:
@@ -2540,22 +2849,23 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
     """Build the report document for one workshop under one template.
 
     Returns the document and any warnings — a substituted template, a stage whose required fields
-    are unfilled, REGISTRY FIELDS AND COVER FIELDS THIS TEMPLATE LEFT OUT, and a designer's own
-    section this template's capture tier left out — which the caller shows beside the download
-    rather than writing into the file. A warning belongs to the act of generating, not to the
-    document: the officer who opens the .docx next month should not find a note about what was
-    missing on the day.
+    are unfilled, REGISTRY FIELDS AND COVER FIELDS THIS TEMPLATE LEFT OUT, PHOTOGRAPHS A TEMPLATE'S
+    CAP KEPT OUT, ATTACHED FILES THE REPORT NAMES AND DOES NOT CONTAIN, and a designer's own section
+    this template's capture tier left out — which the caller shows beside the download rather than
+    writing into the file. A warning belongs to the act of generating, not to the document: the
+    officer who opens the .docx next month should not find a note about what was missing on the day.
 
-    THE LAST THREE ARE HERE AND NOT IN THE LOADER because this is the only place that knows both
+    ALL BUT THE FIRST ARE HERE AND NOT IN THE LOADER because this is the only place that knows both
     halves: the data attached to ``data`` and the SHAPED ``template`` that decided which of it could
     print. See the blocks that raise them, at the end of this function.
 
-    WHAT THE THREE OF THEM SHARE, and it is the rule for adding a fourth: each names a loss the
-    designer CANNOT SEE from the picker. A template printing three of the twenty-two stages is a
-    decision they made and can read in the template's own description; a Basic-tier cap silently
-    dropping every Standard answer they typed, and a ten-row cover table silently dropping the
-    eleventh field, are not. Warn about the invisible ones only — a warning that fires on every
-    report is one nobody reads, including on the report where it mattered.
+    WHAT THEY ALL SHARE, and it is the rule for adding another: each names a loss the designer
+    CANNOT SEE from the picker. A template printing three of the twenty-two stages is a decision
+    they made and can read in the template's own description; a Basic-tier cap silently dropping
+    every Standard answer they typed, a ten-row cover table silently dropping the eleventh field, a
+    photograph cap silently shortening a gallery, and a .docx that says "1 document attached" about
+    a file it does not contain, are not. Warn about the invisible ones only — a warning that fires
+    on every report is one nobody reads, including on the report where it mattered.
 
     ``theme`` overrides the template's palette for this one document, exactly as ``meta``
     overrides its page size and running furniture, and for the same reason: a designer trying
@@ -2671,6 +2981,72 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
             f"({template.max_tier.value.title()}) and are not in this file — {where}"
             + ("…" if len(lost_by_tier) > 4 else "")
             + ". Generate the report with a template that captures every tier to include them."
+        )
+
+    # ── the photographs a template's photograph cap kept out ──────────────────────────────
+    #
+    # RULE 10, AND IT PASSES THE TEST THIS DOCSTRING SETS FOR A NEW WARNING: a loss the designer
+    # cannot see from the picker. COMPACT_SUMMARY's description says "one photograph per prototype";
+    # it does not say six, no other template caps anything, stage 20's photograph settings cannot
+    # reach the number, and until this block a capped gallery simply came out shorter with nothing
+    # anywhere — in the file, beside the download, or on the handset — saying that it had.
+    #
+    # WORTH THE LINE BECAUSE OF WHAT THE CAP USED TO TAKE. Applied across a whole row it truncated
+    # an insertion-ordered walk, so the galleries a stage declared LAST lost every photograph they
+    # held: stage 4's two motif galleries vanished entirely behind the cluster's own photographs,
+    # which is not a shorter report but a different claim about the craft. ``_image_groups`` now
+    # caps each gallery separately; this says what that still costs.
+    #
+    # ASKED OF THE BUILDER AFTER THE RENDER, exactly as ``fields_hidden_by_tier`` is and for the
+    # same reason: the placement paths are what dropped the pictures. Five of the six templates set
+    # no cap at all, so this is empty for them and no existing report gains a warning it did not
+    # have.
+    over_cap = builder.photographs_over_cap()
+    if over_cap:
+        total = sum(count for _spec, count in over_cap)
+        where = ", ".join(f"stage {spec.number}" for spec, _count in over_cap[:4])
+        warnings.append(
+            f"{total} photograph(s) recorded in this workshop did not fit {template.name}'s "
+            f"photograph cap and are not in this file — {where}"
+            + ("…" if len(over_cap) > 4 else "")
+            + ". Generate the report with a template that prints every photograph to include them."
+        )
+
+    # ── the attached files this report names and does not contain ────────────────────────
+    #
+    # THE SECOND HALF OF THE FIX THAT MADE AN ATTACHMENT VISIBLE AT ALL. ``format_value`` prints "1
+    # document attached" under the field's own label, and that ended a .docx which did not mention
+    # that the ministry's own sanction order had been attached. What it did not end is the reading
+    # that line invites in a document submitted to a ministry, which is *a document is attached to
+    # this report*: neither writer can draw a PDF, a recording or a video, ``_images`` places IMAGE
+    # and IMAGE_LIST only, and ``ANNEXURE_MEDIA`` gathers through ``_images`` — so the bytes are in
+    # the workshop record and nowhere else.
+    #
+    # THIS WARNING IS THE AUTHORITY ON THAT, ALONG WITH ``report_annexures`` AND
+    # ``report_templates``, AND THE REGISTRY IS NOT. These lines used to finish by naming the
+    # registry's ``designerCv`` help text as promising an annexure no branch here produces. That
+    # was true when written and is not now (the help text says the report names the file rather
+    # than carrying it), but the reason to stop naming it is not that it was fixed: what a report
+    # CONTAINS is unobservable from any client, so a help string can promise an annexure for as
+    # long as nobody reads these three modules, and citing whichever help string was wrong last
+    # sends the next reader to the surface that cannot answer the question. Cite the shape, not the
+    # instance — see ``ReportBuilder.attachments_named_but_not_carried``, which carries it in full.
+    #
+    # BESIDE THE DOWNLOAD AND NOT IN THE FILE, under the rule this whole list is under. The document
+    # is honest about what it holds; it is the designer, on the day, who has to send the files with
+    # it, and it is the designer this sentence is addressed to. See
+    # ``ReportBuilder.attachments_named_but_not_carried`` for why this is a sentence rather than an
+    # embedded object or a new annexure, neither of which is a builder change.
+    attachments = builder.attachments_named_but_not_carried()
+    if attachments:
+        total = sum(count for _spec, count in attachments)
+        where = ", ".join(f"stage {spec.number}" for spec, _count in attachments[:4])
+        warnings.append(
+            f"{total} attached file(s) are named in this report but the files themselves are not "
+            f"inside it — {where}"
+            + ("…" if len(attachments) > 4 else "")
+            + ". A report file cannot carry a document, a recording or a video; send them "
+              "alongside it."
         )
 
     # ── the cover fields that fell off the ten-row cover table ─────────────────────────────────

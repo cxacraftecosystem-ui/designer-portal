@@ -21,6 +21,12 @@ import { PageHeader } from "@/components/PageHeader";
  *
  * The same content in prose lives at `docs/WALKTHROUGH.md`, for handing to a researcher who is
  * not sitting at a screen.
+ *
+ * THE COUNT IS DERIVED AND NOT WRITTEN DOWN, in the description below as well as in the hero. It
+ * said "Ten steps" as a literal while `GUIDE_STEPS` held sixteen, and then nineteen — so the one
+ * sentence a reader sees before scrolling was the one place on the page that disagreed with the
+ * page. `GUIDE_STEPS.length` is already passed to `GuideHero`; there is no reason for the header to
+ * be told separately.
  */
 export default function GuidePage() {
   // Both switches, OR-ed: the OS media query and the app's own Settings toggle. Smooth scrolling
@@ -31,7 +37,10 @@ export default function GuidePage() {
     <>
       <PageHeader
         title="Walkthrough"
-        description="How a craft gets documented, from opening a workshop to exporting the dataset. Ten steps, in the order you do them."
+        description={
+          `How a craft gets documented and how a design & prototype workshop is run, from your own ` +
+          `designer profile to the report a ministry officer receives. ${GUIDE_STEPS.length} steps, in the order you do them.`
+        }
         icon={<Compass className="h-5 w-5" aria-hidden />}
       />
 

@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
@@ -207,6 +208,27 @@ fun ReportScreen(
      */
     var exportNotes by remember(workshopId) { mutableStateOf<List<String>>(emptyList()) }
     /**
+     * The document as it stands, when the designer has asked to read it. Null while they have not.
+     *
+     * ── WHY IT IS BUILT ON DEMAND AND NOT KEPT IN STEP ──────────────────────────────────────────
+     *
+     * `buildWorkshopDocument` walks the whole registry over the whole draft and resolves every media
+     * token; on a fortnight-old workshop with sixty photographs that is not a thing to do on every
+     * recomposition of a screen the designer is scrolling. So it is built when the button is pressed
+     * and rebuilt when it is pressed again — which is also the honest contract, because the answer
+     * can only have changed if a stage was saved in between, and pressing the button is when the
+     * designer is asking about now.
+     *
+     * ── AND WHY IT IS THE SAME DOCUMENT THE FILE IS WRITTEN FROM ────────────────────────────────
+     *
+     * Exactly the call the export path makes, with the same plan, the same accent, the same template
+     * and the same custom definition. That is the whole value of previewing on this platform: there
+     * is no round trip and no second traversal, so what is on screen IS what `DocxWriter` and
+     * `PdfWriter` will be handed. `format` is the one argument that differs and it is passed
+     * deliberately — see the call.
+     */
+    var previewDocument by remember(workshopId) { mutableStateOf<ReportDocument?>(null) }
+    /**
      * How many distinct photographs the last export referenced and could not find on this device.
      *
      * BESIDE [ReportExport.Result.droppedImages] AND NOT FOLDED INTO IT, because they are different
@@ -219,6 +241,34 @@ fun ReportScreen(
      * common case would swamp the rare one that really is a fault.
      */
     var unresolvedMedia by remember(workshopId) { mutableStateOf(0) }
+    /**
+     * What the LAST EXPORT's template and file format could not carry — see [dwReportLossNotes].
+     *
+     * A SIBLING OF [unresolvedMedia] AND [exportNotes], AND NOT A MEMBER OF EITHER. Held apart from
+     * `exportNotes` because those are `plan.warnings`, which are known before any button is pressed
+     * and are resolved by [reportPlanFor]; these can only be known once the template has actually
+     * been walked over this draft, because the number a cap dropped depends on which plate each
+     * photograph landed on. Held apart from `unresolvedMedia` because that is a fault-shaped fact
+     * about THIS HANDSET (bytes it does not hold) whose remedy is to generate the office's copy,
+     * while these are the TEMPLATE's and the FORMAT's own decisions, identical at the office, whose
+     * remedies are a different template and an email with the attachments on it. Counting them
+     * together would offer one remedy for three different problems.
+     */
+    var exportLosses by remember(workshopId) { mutableStateOf<List<String>>(emptyList()) }
+    /**
+     * The same two facts for the document ON SCREEN, and the reason they are a second pair of states.
+     *
+     * [buildPreview] must not touch what describes the last FILE — the three points in its own KDoc
+     * say why at length, and the short version is that a designer reading "6 photographs did not fit"
+     * beside a .docx written an hour ago is entitled to assume the sentence is about that .docx. A
+     * preview writes no file, so it gets its own pair and clears them when it is dismissed.
+     *
+     * WHICH IS ALSO THE ANSWER TO "SHOULD A PREVIEW SAY THIS AT ALL". It is the only surface a
+     * designer sees BEFORE they hand a document over; a warning that waits for the export has waited
+     * one step too long.
+     */
+    var previewUnresolvedMedia by remember(workshopId) { mutableStateOf(0) }
+    var previewLosses by remember(workshopId) { mutableStateOf<List<String>>(emptyList()) }
     /**
      * The report's accent colour for the next export, blank for "the colour the record already has".
      *
@@ -419,10 +469,145 @@ fun ReportScreen(
         loading = false
     }
 
+    /**
+     * Build the document and put it on screen. No file is written and nothing is recorded.
+     *
+     * ── THE THREE THINGS IT DELIBERATELY DOES *NOT* DO, ALL OF WHICH `export` DOES ───────────────
+     *
+     * 1. **It does not write `exportNotes`.** Those notes describe A FILE — "the PDF is not in your
+     *    chosen typeface", "one photograph was dropped" — and they are printed beside the saved file
+     *    as an account of what was handed over. Overwriting them from a preview would leave a
+     *    designer reading a description of a document that was never written, next to a file from an
+     *    hour ago that the description does not match.
+     * 2. **It does not touch `unresolvedMedia` or `exportLosses`.** Same reason: those are assigned on
+     *    every export precisely so they describe the last file. A preview must not move them — it
+     *    assigns [previewUnresolvedMedia] and [previewLosses] instead, which is not the same thing as
+     *    saying nothing (see below).
+     * 3. **It does not call `recordDesignWorkshopExport`.** Nothing left this device. An export log
+     *    that counted previews would tell an office that a report had been handed over when it had
+     *    only been read.
+     *
+     * ── WHY `format = "DOCX"` ────────────────────────────────────────────────────────────────────
+     *
+     * The builder takes the format because a few decisions genuinely differ between the two writers,
+     * and a preview has to pick one. DOCX is the right pick: it is the format this product's reports
+     * are actually submitted in, and it is the less lossy of the two on screen — the PDF path makes
+     * typeface substitutions this preview cannot show anyway (which is exactly what one of the export
+     * notes exists to say). Named rather than defaulted so the choice is visible here.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════════════
+     * AND WHY THE PREVIEW *DOES* COUNT WHAT WAS LEFT OUT, HAVING PREVIOUSLY SWALLOWED IT
+     * ══════════════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * `onUnresolvedMedia = {}` used to stand here with the note "the preview draws a named placeholder
+     * for every figure it cannot resolve, which tells the designer the same thing in the place they are
+     * looking at". That reason was false twice over, and both halves matter:
+     *
+     *  1. **The placeholder said the opposite of the truth.** It read "the exported file will fetch it",
+     *     while `unresolvedMediaNote` — about the very same files — says they are not on this handset
+     *     and are therefore not in the file at all. `DocxWriter`'s loader resolves a media id against
+     *     LOCAL storage and has no network path; the handset's export cannot fetch anything. A designer
+     *     who read that sentence exported and handed over a document with the photographs missing. The
+     *     placeholder now says what is true — see `MissingFigure` in `DwReportPreview.kt`.
+     *  2. **And the placeholder is not drawn for this case at all.** `imagesOf` does
+     *     `imageFor(id) ?: continue`, so an id this device cannot resolve never becomes an `ImageRef`,
+     *     so no `ImageBlock`, no grid cell and no `CoverBlock.heroImage` exists for the preview to draw
+     *     a placeholder in place of. The pictures are not shown as missing; they are simply not there,
+     *     and a preview of a colleague's workshop looked like a complete report of a workshop with fewer
+     *     photographs in it. The placeholder covers a narrower case: a file the builder DID resolve and
+     *     the preview then cannot open.
+     *
+     * So the count is taken, into its own state, and printed above the document — above rather than
+     * below, by `renderMediaAnnexure`'s rule: a reader who counts twelve plates against a workshop they
+     * know held fifteen has to meet the explanation before they start counting.
+     *
+     * The two `onReportLosses` sentences are taken here for the same reason and one more: a capped
+     * gallery and an uncarried attachment are the two losses that leave a document *internally
+     * consistent*, so the preview is the last surface on which they can be noticed at all.
+     */
+    fun buildPreview() {
+        val registry = schema ?: return
+        busy = true
+        scope.launch {
+            runCatching {
+                // THE SAME MERGED DRAFT `export` USES, read from the same state. Calling
+                // `reportSourceFor` again here would be a second merge of local and remote stages,
+                // which could straddle a stage save and preview a document the export would not
+                // write — the exact "two readings of one entry" this screen already refuses above.
+                val stored = draft
+                val plan = reportPlanFor(
+                    schema = registry,
+                    draft = stored,
+                    workshopId = workshopId,
+                    requestedTemplateId = templateId,
+                    requestedAccent = accent,
+                    format = "DOCX",
+                    generatedAt = Instant.now().toString(),
+                    serverCopyUnread = serverCopyUnread,
+                    questionnaires = dwQuestionnaireCopy(questionnaires),
+                    customSections = customSections,
+                )
+                // COLLECTED ON THE RENDER THREAD AND READ BACK ON THIS ONE, after `withContext`
+                // returns, exactly as `export` does it: assigning the Compose states from inside
+                // the builder's lambdas would be a write from Dispatchers.Default whose ordering is
+                // the snapshot system's business rather than this function's.
+                var unresolvedIds: List<String> = emptyList()
+                var losses: List<String> = emptyList()
+                val document = withContext(Dispatchers.Default) {
+                    buildWorkshopDocument(
+                        context = appContext,
+                        schema = registry,
+                        draft = stored,
+                        workshopId = workshopId,
+                        templateId = templateId,
+                        warnings = warnings,
+                        accent = accent,
+                        format = "DOCX",
+                        plan = plan,
+                        questionnaires = questionnaires,
+                        customSections = customSections,
+                        // NO LONGER SWALLOWED — see the two numbered points in this function's KDoc
+                        // for why the reason it was swallowed under ("the placeholder says the same
+                        // thing") was false in both of its halves.
+                        onUnresolvedMedia = { ids -> unresolvedIds = ids },
+                        onReportLosses = { notes -> losses = notes },
+                    )
+                }
+                Triple(document, unresolvedIds.size, losses)
+            }.onSuccess { (document, missing, losses) ->
+                previewDocument = document
+                previewUnresolvedMedia = missing
+                previewLosses = losses
+            }.onFailure {
+                /*
+                  A PREVIEW THE DESIGNER WALKED AWAY FROM IS NOT AN ERROR, AND THIS IS THE WIDEST
+                  WINDOW IN THE APP FOR IT. `runCatching` catches `Throwable`, cancellation included,
+                  and this coroutine builds a WHOLE DOCX in memory on `Dispatchers.Default` — seconds
+                  on a field handset with a photograph-heavy workshop. Anyone who taps Preview and
+                  then goes back cancels it, and `onError` is the HOST's snackbar, not this screen's
+                  state: "Unable to build the preview." would land on the stage screen they moved on
+                  to, about a document they no longer want.
+
+                  Nothing is left half-done by the rethrow. `previewDocument` is only ever assigned on
+                  the success path, `busy` dies with the screen, and this path — by the three points
+                  in the block above — writes no export log, no warning count and no server state.
+                */
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                onError(it.message ?: "Unable to build the preview.")
+            }
+            busy = false
+        }
+    }
+
     fun export(format: String) {
         val registry = schema ?: return
         busy = true
         result = null
+        // Cleared with `result`, and for its reason: these describe A FILE, and between pressing the
+        // button and the write finishing there is no file for them to be about. A build that throws
+        // leaves `result` null so nothing is drawn either way; clearing here is what stops the pair
+        // being drawn beside a file they were not measured from.
+        exportLosses = emptyList()
         scope.launch {
             runCatching {
                 // THE MERGED DRAFT AND NOTHING ELSE. There was a `?: WorkshopDraftStore.load(…)`
@@ -466,6 +651,10 @@ fun ReportScreen(
                 // ordering would then be the snapshot system's business rather than this function's,
                 // and the count would be applied on a frame nobody can name.
                 var unresolvedIds: List<String> = emptyList()
+                // The template's and the format's own losses, collected the same way and for the
+                // same reason — see [dwReportLossNotes] and `buildWorkshopDocument`'s
+                // `onReportLosses`.
+                var losses: List<String> = emptyList()
                 val document = withContext(Dispatchers.Default) {
                     buildWorkshopDocument(
                         context = appContext,
@@ -480,8 +669,12 @@ fun ReportScreen(
                         questionnaires = questionnaires,
                         customSections = customSections,
                         onUnresolvedMedia = { ids -> unresolvedIds = ids },
+                        onReportLosses = { notes -> losses = notes },
                     )
                 }
+                // ASSIGNED ON EVERY EXPORT for the reason the line below is, empty list included:
+                // a designer who re-exports as a template with no cap must see the sentence go.
+                exportLosses = losses
                 // ASSIGNED ON EVERY EXPORT, including the one that resolves everything — the builder
                 // hands back an empty list there and this clears. A designer who re-exports after
                 // opening the workshop with a connection must see the count go, or the notice beside
@@ -542,7 +735,15 @@ fun ReportScreen(
                                         listOfNotNull(
                                             unresolvedIds.size.takeIf { it > 0 }
                                                 ?.let { unresolvedMediaNote(it) },
-                                        )
+                                        ) +
+                                        // AND THE TWO THE RENDER FOUND, for the reason stated
+                                        // directly above about the other two: this row is where
+                                        // somebody at a desk decides whether the delivered file is
+                                        // the whole of the record, and both of these are invisible
+                                        // from inside the file — a thinned gallery is internally
+                                        // consistent, and "1 document attached" reads as though the
+                                        // document were attached to the report.
+                                        losses
                                     ).joinToString("\n").takeIf { it.isNotBlank() },
                             )
                         )
@@ -716,6 +917,117 @@ fun ReportScreen(
 
         HorizontalDivider()
 
+        /*
+          READ IT BEFORE EXPORTING IT, and the control sits ABOVE the two export buttons because that
+          is the order the work happens in. A designer at the end of a fortnight wants to check the
+          prose reads correctly and that the right photographs landed under the right headings; doing
+          that by exporting a .docx, finding a file manager, opening it in another app and coming back
+          is what this button replaces.
+
+          AN OutlinedButton AND NOT A THIRD FILLED ONE. Two filled buttons already carry the actions
+          that produce a deliverable; a third of equal weight for the one that produces nothing would
+          read as a third kind of export.
+        */
+        OutlinedButton(
+            onClick = {
+                if (previewDocument == null) {
+                    buildPreview()
+                } else {
+                    previewDocument = null
+                    // Cleared WITH the document they are about. They are only drawn inside
+                    // `previewDocument?.let`, so this changes nothing on screen today; it is here so
+                    // that a later edit which draws them anywhere else cannot draw last week's
+                    // numbers over a preview that has been dismissed.
+                    previewUnresolvedMedia = 0
+                    previewLosses = emptyList()
+                }
+            },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(if (previewDocument == null) "Preview the document" else "Hide the preview")
+        }
+
+        previewDocument?.let { document ->
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.field.surface50, RoundedCornerShape(12.dp))
+                    .padding(10.dp)
+            ) {
+                /*
+                  WHAT THIS SCREEN IS AND IS NOT, said above the document rather than left to be
+                  inferred. Two claims, both load-bearing:
+
+                  · it is built from the DRAFT ON THIS DEVICE, so it needs no signal and reflects
+                    every stage saved here — including ones that have not synced;
+                  · it is NOT laid out on pages. See `DwReportPreview`'s header for why an A4 sheet is
+                    unreadable at 360dp. A designer who needs to check pagination exports the .pdf,
+                    which is the button directly below.
+                */
+                Text(
+                    "Built on this device from what has been saved here — the same document the " +
+                        "export writes. It is not laid out in pages: export the .pdf to check where " +
+                        "the breaks fall.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                )
+                /*
+                  WHAT THE DOCUMENT BELOW IS SHORT OF, ABOVE THE DOCUMENT AND NOT UNDER IT.
+
+                  `renderMediaAnnexure`'s rule, applied to the screen: a reader who counts twelve
+                  plates against a workshop they know held fifteen must meet the explanation before
+                  they start counting, and a reader of a section with no plates at all must meet it
+                  instead of a blank space.
+
+                  THESE ARE THE PREVIEW'S OWN NUMBERS AND NOT THE LAST EXPORT'S. See
+                  [previewUnresolvedMedia]: the export's pair is printed beside the saved file, where
+                  it describes that file, and the two must never be drawn from one state.
+
+                  THE PREFIX AND THE COLOUR TOGETHER, NEVER THE COLOUR ALONE (rule 5). The "·" is
+                  what marks these as notes rather than as part of the document for a reader who
+                  cannot see the amber, and the sentences are the whole signal for a reader using
+                  TalkBack.
+                */
+                if (previewUnresolvedMedia > 0) {
+                    Text(
+                        "· " + unresolvedMediaNote(previewUnresolvedMedia),
+                        color = MaterialTheme.field.warning,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
+                }
+                previewLosses.forEach { note ->
+                    Text(
+                        "· $note",
+                        color = MaterialTheme.field.warning,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
+                }
+                DwReportPreview(
+                    document = document,
+                    /*
+                      THE SAME RESOLUTION `deviceImageLoader` PERFORMS, and by the same rule:
+                      `ImageRef.source` IS an absolute path on this device, put there by the builder
+                      when it resolved the draft's media. So there is no id lookup to do and no
+                      workshop context to thread — a token that names a file which is not there is a
+                      photograph attached on another client, which is `null` and which the preview
+                      draws as a named placeholder rather than an empty frame.
+
+                      Kept as a lambda rather than reusing `deviceImageLoader` because that returns
+                      the BYTES (which is what a writer needs) and Coil wants the File (which is what
+                      lets it decode and cache off the main thread).
+                    */
+                    resolveImage = { source -> File(source).takeIf { it.exists() } },
+                )
+            }
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(onClick = { export("DOCX") }, enabled = !busy, modifier = Modifier.weight(1f)) {
                 Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -755,6 +1067,20 @@ fun ReportScreen(
                 // in an office, about a document that has already been submitted.
                 exportNotes.forEach { note ->
                     Text("· $note", color = MaterialTheme.field.warning, fontSize = 11.sp)
+                }
+                // THE TEMPLATE'S AND THE FORMAT'S OWN LOSSES, in the same register and the same
+                // place, because they answer the same question a designer holding a finished file
+                // asks: is this the whole of the record. They are NOT folded into `exportNotes`,
+                // which is `plan.warnings` and is resolved before the document is walked — see
+                // [exportLosses]. Both sentences carry their own remedy, which is what makes them
+                // worth the line: a different template, or an email with the attachments on it.
+                exportLosses.forEach { note ->
+                    Text(
+                        "· $note",
+                        color = MaterialTheme.field.warning,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
                 }
                 if (exported.droppedImages.isNotEmpty()) {
                     // Reported, not thrown. A report missing one photograph is still worth having;
@@ -992,12 +1318,15 @@ private fun buildWorkshopDocument(
     customSections: DwCustomCache? = null,
     /** See the internal overload below — the media tokens this device could not resolve to a file. */
     onUnresolvedMedia: (List<String>) -> Unit = {},
+    /** See the internal overload below — what the template's own caps and the file format cost. */
+    onReportLosses: (List<String>) -> Unit = {},
 ): ReportDocument {
     val mediaById = draft?.media.orEmpty().associateBy { it.id }
     return buildWorkshopDocument(
         format = format,
         plan = plan,
         onUnresolvedMedia = onUnresolvedMedia,
+        onReportLosses = onReportLosses,
         schema = schema,
         draft = draft,
         workshopId = workshopId,
@@ -1111,6 +1440,36 @@ internal fun buildWorkshopDocument(
      * count of a third of the document.
      */
     onUnresolvedMedia: (List<String>) -> Unit = {},
+    /**
+     * The sentences for what this template and this FILE FORMAT could not carry, handed back ONCE
+     * after the whole template has been walked — `build_report`'s over-cap and attachment warnings.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════════════
+     * WHY THIS IS A CALLBACK AND NOT A `builder.warn`
+     * ══════════════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * `builder.warn` is the right channel on the face of it: [ReportDocument.warnings] is documented
+     * "surfaced in the UI not the file", neither writer reads it, and the server's own equivalents
+     * are appended to a list the route returns rather than written into the .docx. It is the wrong
+     * channel HERE for one reason: on this client that list is already a UNION. [buildWorkshopDocument]
+     * warns with the caller's incompleteness list AND with every one of `plan.warnings`, and the
+     * report screen prints both of those from their own state — the first above the export buttons
+     * under "N stage(s) are incomplete", the second beside the saved file. A screen that rendered
+     * [ReportDocument.warnings] wholesale would print all of them twice, and one that picked these two
+     * back out of it would be matching on sentence text, which is worse than either.
+     *
+     * So these come back on their own, exactly as [onUnresolvedMedia] does and for the same reason.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════════════
+     * ALWAYS CALLED, EMPTY LIST AND ALL
+     * ══════════════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * A caller that assigns this to a screen counter must be able to CLEAR that counter on the
+     * export that lost nothing. Handing back nothing on the clean path is how a stale "6 photographs
+     * did not fit" survives onto a file that carries every one of them — the identical rule
+     * [onUnresolvedMedia] states, and it was written there after that exact failure.
+     */
+    onReportLosses: (List<String>) -> Unit = {},
 ): ReportDocument {
     val resolved = plan ?: reportPlanFor(
         schema = schema,
@@ -1156,6 +1515,13 @@ internal fun buildWorkshopDocument(
         imageFor(token).also { if (it == null && token.isNotBlank()) unresolvedMedia.add(token) }
     }
 
+    /*
+      ONE TALLY FOR THE WHOLE DOCUMENT, for the reason [resolveImage] above is one resolver: a count
+      kept by a section is a count of a section. See [DwReportLosses] for why the arithmetic is
+      reported by the paths that perform it rather than recomputed beside the sentence.
+    */
+    val losses = DwReportLosses()
+
     // THE TEMPLATE'S SECTION LIST IS THE DOCUMENT, and this loop is the whole of `ReportBuilder.build`.
     // What it replaces is `schema.stages.sortedBy { it.number }`, which printed CAPTURE order — the
     // designer's — where a reviewing officer expects the narrative order, printed stages 20 and 21
@@ -1172,6 +1538,7 @@ internal fun buildWorkshopDocument(
             stages[section.stageKey]?.let { stage ->
                 renderStageSection(
                     builder, stage, section, resolved, schema, draft, resolveImage, refs, figures,
+                    losses = losses,
                 )
             }
         }
@@ -1202,6 +1569,29 @@ internal fun buildWorkshopDocument(
     // clean path is how a stale "3 photographs are missing" survives onto a file that is whole.
     onUnresolvedMedia(unresolvedMedia.toList())
 
+    /*
+      WHAT THE TEMPLATE AND THE FORMAT COST, SAID TO THE DESIGNER AND *NOT* WRITTEN INTO THE FILE.
+
+      The contrast with the block directly above is the whole of the rule, and the two cases really
+      are different rather than inconsistently handled:
+
+      * An unresolved photograph leaves a HOLE IN THE DOCUMENT that its own reader can detect — a
+        report of a photographed workshop with fewer plates than it had — and that reader is an
+        officer next month who was never at the phone. So `unresolvedMediaNote` goes in the file too.
+      * These two do not. A capped gallery is internally consistent (right cover, right contents,
+        fewer pictures) and a named-but-not-carried attachment is already stated honestly in the file
+        by [displayValue]: "1 document attached" is true. What is missing is not information the
+        DOCUMENT owes its reader; it is an act the DESIGNER owes the recipient, today — generate it
+        from a template that prints every photograph, and send the attachments alongside. That is
+        `build_report`'s stated rule for every warning in its list, and
+        `_note_photographs_over_cap`'s own docstring puts it in one line: "an officer opening the
+        .docx next month must not find a sentence about what was missing on the day".
+
+      So this is the ONE emission, and it is a callback rather than a `builder.warn` — see
+      [onReportLosses] for why that distinction matters on this client and not on the server.
+    */
+    onReportLosses(dwReportLossNotes(schema, draft, resolved.template, losses))
+
     return builder.build()
 }
 
@@ -1231,6 +1621,239 @@ internal fun unresolvedMediaNote(count: Int): String {
         "so when handing this one over."
 }
 
+// --------------------------------------------------------------------------------------
+// The two losses a report can only discover while it is being built
+// --------------------------------------------------------------------------------------
+
+/**
+ * What a render DROPPED, counted against the stage it was dropped from — `ReportBuilder`'s
+ * `_photographs_over_cap` and the `_stage_key` beside it.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY A MUTABLE COLLECTOR AND NOT A SECOND WALK OF THE DRAFT
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The number of photographs a template's cap kept out is not a property of the draft: it is a
+ * property of the PLACEMENT — which plate each picture landed on, in which order, after the
+ * deduplication by media id and after the reference pass. [imageGroupsOf] is what decides all of
+ * that. A note that re-derived the arithmetic beside the warning would be a second copy of the cap
+ * rule, free to disagree with the first the day either moves; the server's own docstring for
+ * `photographs_over_cap` records exactly that reasoning — "the placement paths are what actually
+ * dropped these pictures" — and this file has already paid for the general version of the mistake
+ * twice: [reportPlanFor] exists because two readings of one stage-20 answer gave a designer a screen
+ * and a file that disagreed about the same document.
+ *
+ * So the paths that drop count what they dropped, and this holds the tally.
+ *
+ * ATTRIBUTED TO A STAGE, because a stage is the only thing a designer can act on — they go and
+ * open it. [stageKey] is the one piece of "where am I" state here, set by [renderStageSection]
+ * BEFORE its own emptiness return, so a stage that renders nothing cannot leave the previous
+ * stage's key standing and collect the next one's losses.
+ *
+ * NOTHING ELSE CAN REACH IT, and that is by construction rather than by care. The cover's hero
+ * photograph and the photographic annexure both gather through [imagesOf], which takes no cap;
+ * [renderCustomSection] builds its own [RenderOptions] with `includePhotos = false` and no collector
+ * at all. Only a stage section carries one, so only a stage section can file against one.
+ */
+internal class DwReportLosses {
+    private val overCap = LinkedHashMap<String, Int>()
+
+    /** The stage whose section is being rendered. Set by [renderStageSection], read nowhere else. */
+    var stageKey: String = ""
+
+    /**
+     * Record [count] photographs the template's `maxPhotos` kept out of the stage now rendering.
+     *
+     * Zero and negative are dropped rather than stored, so an uncapped section — five of the six
+     * templates set no cap anywhere — cannot put a stage into the tally with nothing in it and
+     * earn the workshop a warning naming a stage and a count of none.
+     */
+    fun notePhotographsOverCap(count: Int) {
+        if (count <= 0 || stageKey.isEmpty()) return
+        overCap[stageKey] = (overCap[stageKey] ?: 0) + count
+    }
+
+    /**
+     * The tally in the registry's own stage order — `photographs_over_cap`.
+     *
+     * Ordered by the SCHEMA and not by the order the losses happened in, because the sentence names
+     * stages by number and a reader scanning "stage 4, stage 13" expects them to climb. This map's
+     * insertion order is the TEMPLATE's running order, which is the reader's order and not the
+     * registry's — see [NARRATIVE_ORDER] for why those two differ.
+     */
+    fun photographsOverCap(schema: SchemaResponse): List<Pair<StageDto, Int>> =
+        schema.stages.sortedBy { it.number }.mapNotNull { stage ->
+            overCap[stage.key]?.takeIf { it > 0 }?.let { stage to it }
+        }
+}
+
+/**
+ * "stage 4, stage 13" — at most four of them, with an ellipsis when there were more.
+ *
+ * The server's `where` expression, INCLUDING the placement of the ellipsis: it is appended to the
+ * LIST, and the full stop of the sentence that follows it follows that. So five or more stages read
+ * "… stage 13…. Generate the report …". That doubled mark is not a defect to tidy away here.
+ * The two clients print one product and a designer moving between laptop and handset must not be
+ * able to tell which of them wrote a sentence; if it changes it changes on both surfaces, in
+ * `build_report`, at once.
+ */
+private fun stagesNamed(counted: List<Pair<StageDto, Int>>): String =
+    counted.take(4).joinToString(", ") { (stage, _) -> "stage ${stage.number}" } +
+        (if (counted.size > 4) "…" else "")
+
+/**
+ * The photographs this template's cap kept out of the file — `build_report`'s over-cap warning.
+ *
+ * ── WHY THE HANDSET NEEDED IT AT ALL ────────────────────────────────────────────
+ *
+ * This file is a SECOND BUILDER and not a renderer — see [imageGroupsOf]'s header — so a warning
+ * the server grew is a warning the handset does not have until it is ported. The per-plate cap
+ * itself WAS ported the same day the server changed; what did not come with it was the saying. A
+ * designer exporting the Compact summary in a courtyard got a thinned gallery, no line beside the
+ * saved file, no line in the preview, and no way to know from the picker either: "one photograph per
+ * prototype" is in that template's own description, the number six is not, no other template caps
+ * anything, and stage 20's photograph settings cannot reach it.
+ *
+ * COPIED VERBATIM FROM `build_report`, AND NO PLATFORM DIFFERENCE APPLIES TO THIS ONE. The loss is
+ * the TEMPLATE's decision, identical on both clients, and the remedy named at the end — generate it
+ * with a template that prints every photograph — is available on both. Contrast
+ * [unresolvedMediaNote], which genuinely cannot be shared: the server can always reach the bytes of
+ * a photograph it did not print and this handset never can, so that sentence says a different thing
+ * on the two surfaces on purpose, and says so in words.
+ *
+ * Null rather than a blank string when nothing was dropped, so no caller can print an empty bullet.
+ */
+internal fun dwPhotographsOverCapNote(
+    template: ReportTemplate,
+    counted: List<Pair<StageDto, Int>>,
+): String? {
+    if (counted.isEmpty()) return null
+    val total = counted.sumOf { it.second }
+    return "$total photograph(s) recorded in this workshop did not fit ${template.name}'s " +
+        "photograph cap and are not in this file — " + stagesNamed(counted) +
+        ". Generate the report with a template that prints every photograph to include them."
+}
+
+/**
+ * The attached files this report NAMES and does not CONTAIN, by stage —
+ * `ReportBuilder.attachments_named_but_not_carried`.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE SECOND HALF OF THE FIX THAT MADE AN ATTACHMENT VISIBLE ON THIS DEVICE AT ALL
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * [displayValue] prints "1 document attached" under the field's own label, and that ended a .docx
+ * which did not mention that the ministry's own sanction order had been attached. What it did not
+ * end is the reading that line invites in a document submitted to a ministry, which is *a document
+ * is attached to this report*. It is not. [imagesOf] — the only placement path on this device —
+ * filters on [isPicture] and not on `isMedia`, and its own comment says why; `renderMediaAnnexure`
+ * gathers through that same call, so the contact sheet cannot carry one either; and neither
+ * [DwFieldType.FILE], [DwFieldType.AUDIO] nor [DwFieldType.VIDEO] has any renderer in `DocxWriter`
+ * or `PdfWriter` that could draw its bytes. The files stay in the workshop record, and no surface on
+ * this handset said so.
+ *
+ * COUNTED IN FILES AND NOT IN FIELDS, because a field holding three recordings is three things for
+ * somebody to go and find.
+ *
+ * ONLY FIELDS THE TIER ADMITS AND THE REGISTRY DOES NOT HIDE. One above the tier cap is a different
+ * warning's business, and a HIDDEN one is nowhere in the document for this sentence to be about, so
+ * the two counts are disjoint by construction and neither double-counts the other.
+ *
+ * AUDIO IS COUNTED EVEN WHERE ITS TRANSCRIPT IS PRINTED, and the sentence this feeds says "the files
+ * themselves" for exactly that reason: a transcribed recording reaches the back of the report as
+ * WORDS, the recording is still not in the file, and somebody comparing the annexure against the tape
+ * still has to be sent the tape. Excluding it would make this count depend on a stage-20 toggle and
+ * on whether the media queue had finished, which is two more ways for one document to make two
+ * claims.
+ *
+ * PURE, AND THAT IS THE POINT OF ITS SHAPE. Unlike the over-cap tally, this needs nothing the render
+ * discovered: it is a question about the DRAFT and the TEMPLATE, so it is a function of them and can
+ * be asserted on a desktop JVM without building a document at all — which is what
+ * [buildWorkshopDocument]'s internal overload exists for, and the reason 98 RICH_TEXT fields could go
+ * missing for as long as they did.
+ */
+internal fun dwAttachmentsNamedButNotCarried(
+    schema: SchemaResponse,
+    draft: WorkshopDraft?,
+    template: ReportTemplate,
+): List<Pair<StageDto, Int>> {
+    val out = ArrayList<Pair<StageDto, Int>>()
+    schema.stages.sortedBy { it.number }.forEach { stage ->
+        // A STAGE THIS TEMPLATE DOES NOT PRINT NAMES NOTHING, so there is nothing for this sentence
+        // to be about. `sectionFor` is the same test the server's tier warning applies, and it is
+        // what keeps the Photo catalogue from warning about a sanction order it never mentions.
+        if (template.sectionFor(stage.key) == null) return@forEach
+        val stored = draft?.stages?.get(stage.key)
+        var named = 0
+        stage.entities.forEach { entity ->
+            val rows = if (entity.cardinality == "SINGLETON") {
+                listOf(stored?.values.orEmpty())
+            } else {
+                stored?.rowsFor(entity.key).orEmpty().map { it.values }
+            }
+            // `liveFields` IS the `not spec.deprecated` half of `_visible`; the tier is the other
+            // half and is applied below. A retired FILE field holding an answer is named in the
+            // report by no path at all, so it is not a file anybody has to be sent.
+            entity.liveFields.forEach { field ->
+                val type = DwFieldType.of(field.type)
+                if (!type.isMedia) return@forEach
+                // IMAGE and IMAGE_LIST are excluded because they ARE carried: they are the two types
+                // [imagesOf] places. DERIVED from [isPicture] rather than written out as (FILE,
+                // AUDIO, VIDEO), so a sixth media type added to [DwFieldType] tomorrow joins this
+                // count by existing rather than by somebody remembering this line.
+                if (type.isPicture) return@forEach
+                if (DwTier.of(field.tier).ordinal > template.maxTier.ordinal) return@forEach
+                if (field.reportRole == "HIDDEN") return@forEach
+                named += rows.sumOf { values -> mediaIdsOf(values[field.key]).size }
+            }
+        }
+        if (named > 0) out += stage to named
+    }
+    return out
+}
+
+/**
+ * The sentence for [dwAttachmentsNamedButNotCarried] — `build_report`'s attachment warning.
+ *
+ * COPIED VERBATIM, AND NO PLATFORM DIFFERENCE APPLIES TO THIS ONE EITHER. "A report file cannot
+ * carry a document, a recording or a video" is true of a .docx written by `DocxWriter` on a phone for
+ * exactly the reason it is true of one written at the office, and the remedy — send them alongside
+ * it — is the designer's on either client.
+ *
+ * BESIDE THE SAVED FILE AND NEVER INSIDE IT, under the rule every warning on this screen is under.
+ * The document is honest about what it holds (it says an attachment exists, and how many); the person
+ * who has to act is the designer, on the day, and an officer opening the .docx next month must not
+ * read a note about what was missing when it was made.
+ */
+internal fun dwAttachmentsNotCarriedNote(counted: List<Pair<StageDto, Int>>): String? {
+    if (counted.isEmpty()) return null
+    val total = counted.sumOf { it.second }
+    return "$total attached file(s) are named in this report but the files themselves are not " +
+        "inside it — " + stagesNamed(counted) +
+        ". A report file cannot carry a document, a recording or a video; send them alongside it."
+}
+
+/**
+ * Both of the render's own losses, in `build_report`'s order.
+ *
+ * ONE CALL SO ONE ORDER. The server appends the over-cap sentence before the attachment one, and a
+ * designer reading the two clients side by side reads the same list in the same sequence. Two call
+ * sites choosing for themselves is the shape `applyReportSettings` was made the single arbiter of
+ * the running order to stop.
+ *
+ * ALWAYS A LIST, EMPTY INCLUDED — see [buildWorkshopDocument]'s `onReportLosses` for why an export
+ * that loses nothing has to be able to CLEAR a stale count rather than leave the last one standing.
+ */
+internal fun dwReportLossNotes(
+    schema: SchemaResponse,
+    draft: WorkshopDraft?,
+    template: ReportTemplate,
+    losses: DwReportLosses,
+): List<String> = listOfNotNull(
+    dwPhotographsOverCapNote(template, losses.photographsOverCap(schema)),
+    dwAttachmentsNotCarriedNote(dwAttachmentsNamedButNotCarried(schema, draft, template)),
+)
+
 /**
  * One of the 22 stages, as the template's section for it asks for it — `ReportBuilder._render_stage`.
  *
@@ -1255,13 +1878,31 @@ private fun renderStageSection(
     imageFor: (String) -> ImageRef?,
     refs: DwRefLabels,
     figures: DwFigures,
+    /**
+     * The document's one tally of what the photograph cap dropped — see [DwReportLosses].
+     *
+     * Nullable so nothing that calls this without one has to change, and so a test asserting on a
+     * stage's BLOCKS does not have to build a collector to be handed a document.
+     */
+    losses: DwReportLosses? = null,
 ) {
     val template = plan.template
+    /*
+      WHERE A CAPPED PHOTOGRAPH IS REPORTED FROM, and it is set BEFORE the emptiness return below.
+
+      `_render_stage` sets `self._stage_key` on the same line for the same stated reason: a stage that
+      renders nothing must not leave the PREVIOUS stage's key standing, or the next section to drop a
+      photograph files the loss against a stage the designer would open and find nothing wrong with.
+    */
+    losses?.stageKey = stage.key
     val options = RenderOptions(
         maxTier = template.maxTier,
         includePhotos = section.includePhotos,
         photoColumns = section.photoColumns,
         maxPhotos = section.maxPhotos,
+        // THE COLLECTOR TRAVELS WITH THE CAP IT IS ABOUT. `maxPhotos` is set here and nowhere else
+        // that can bite, so this is the one place the tally has to be attached.
+        losses = losses,
         numbered = template.numberHeadings,
         // ALL SIX TEMPLATES SET THIS TRUE on both surfaces — `grep -rn showEmptyNote
         // android/app/src/main` and `grep -rn show_empty_note backend/app` each return the
@@ -2220,6 +2861,25 @@ internal data class RenderOptions(
      * exactly why it is worth pinning before it is not.
      */
     val metricRow: Boolean = false,
+    /**
+     * Where a photograph the cap kept out gets counted, or null for "nobody is counting".
+     *
+     * NULL IS THE HONEST DEFAULT AND NOT A SHORTCUT. Only a STAGE section can lose a photograph to
+     * `maxPhotos` — the cover's hero and the photographic annexure gather through [imagesOf], which
+     * takes no cap, and [renderCustomSection] renders with `includePhotos = false` — so a call site
+     * with no collector is a call site where the cap cannot bite. Defaulted so that every existing
+     * caller, every test and the desktop-JVM overload behave exactly as they did.
+     *
+     * CARRIED ON THE OPTIONS RATHER THAN AS ITS OWN PARAMETER because [renderCollection] and
+     * [renderEntity] hand these options to each other four levels deep (a stage, a parent group, a
+     * card, its fields), and a separate argument would have to be remembered at each of those
+     * hand-offs. One forgotten hand-off is a whole card's losses silently uncounted, which is the
+     * class of defect this collector exists to end rather than to join.
+     *
+     * MUTABLE STATE SHARED BY `copy()`, deliberately: [DwReportLosses] is one tally for the whole
+     * document, so every derived options object must point at the same instance.
+     */
+    val losses: DwReportLosses? = null,
 )
 
 /**
@@ -2263,6 +2923,23 @@ private val DwFieldType.isPicture: Boolean
  *
  * A caller with no [refs] gets pass one only. Nothing in `main/` passes null — it is there so a test
  * that only cares about a row's own pictures does not have to build a label index for it.
+ *
+ * [fallbackLabels] IS THE ONE THING A CALLER TURNS OFF, and only [imageGroupsOf] does. When the paired
+ * caption box is blank this fills the cell caption with the FIELD'S LABEL, which is right for a plate
+ * that mixes several fields' pictures: there is no caption over that plate, so the label under a cell
+ * is the only thing saying where the picture came from. It is WRONG for a named gallery plate, whose
+ * grid caption already prints that label once — `report_builder.py:1392`
+ * (`caption or ("" if grid_caption else spec.label)`) falls back only when there is no grid caption,
+ * and baking it in unconditionally here printed a gallery's name again under every one of its
+ * photographs on the handset while the office's copy printed it once. So [imageGroupsOf] passes
+ * `false` and re-applies the fallback itself, where it knows which plate each picture is going onto.
+ * The three flat callers keep the default and are unchanged. A GALLERY-presentation section pools
+ * every row's pictures into ONE uncaptioned grid, and the photographic annexure pools every entity's,
+ * so on both of those the cell label is all a reader gets (the annexure then falls back again, to the
+ * stage title, for a picture whose field had no label to give). The cover hero takes `.first` and
+ * discards the caption altogether, so the flag cannot reach it in either position. PASS TWO is
+ * unaffected too: it assigns [referenceCaption] outright and not through `ifBlank`, so a reference
+ * photo's caption never depended on this flag.
  */
 private fun imagesOf(
     entity: EntityDto,
@@ -2271,6 +2948,7 @@ private fun imagesOf(
     maxTier: DwTier,
     limit: Int = 0,
     refs: DwRefLabels? = null,
+    fallbackLabels: Boolean = true,
 ): List<Pair<ImageRef, String>> {
     val visible = entity.liveFields.filter { DwTier.of(it.tier).ordinal <= maxTier.ordinal }
     val captionByTarget = visible.filter { it.captionFor.isNotBlank() }.associateBy { it.captionFor }
@@ -2292,7 +2970,7 @@ private fun imagesOf(
         val caption = captionByTarget[field.key]?.let { DwValues.text(values[it.key]) }.orEmpty()
         val ids = if (type == DwFieldType.IMAGE_LIST) DwValues.list(stored) else listOf(DwValues.text(stored))
         ids.filter { it.isNotBlank() }.forEach { id ->
-            wanted.putIfAbsent(id, caption.ifBlank { field.label })
+            wanted.putIfAbsent(id, if (fallbackLabels) caption.ifBlank { field.label } else caption)
         }
     }
 
@@ -2404,6 +3082,188 @@ private fun placeImages(builder: DocumentBuilder, images: List<Pair<ImageRef, St
         return
     }
     builder.add(ImageGridBlock(images = images, columns = columns.coerceIn(1, 4)))
+}
+
+/**
+ * One entity's photographs, GROUPED BY THE FIELD THAT HOLDS THEM — the port of the server's
+ * `ReportBuilder._image_groups`.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY THIS EXISTS, AND WHY IT HAD TO BE PORTED RATHER THAN LEFT TO THE SERVER
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Stage 4 now declares THREE galleries on one entity — `clusterPhotos`, `motifPhotos` (traditional)
+ * and `contemporaryMotifPhotos` — because the owner asked on 2026-08-25 for a Traditional Motif and a
+ * Contemporary Motif section, each with its own photographs. [imagesOf] flattens every picture on the
+ * entity into ONE list and [placeImages] emits ONE grid, so all three printed as a single
+ * undifferentiated block: `c1 c2 t1 t2 n1 n2`, in a document submitted to a ministry, with nothing
+ * saying where one gallery ended and the next began. With the optional `*Caption` boxes left blank —
+ * which they are by default — a reader could not tell a traditional motif from a contemporary one at
+ * all, which is the whole distinction the owner asked for.
+ *
+ * The server was fixed the same day. THIS FILE IS A SECOND BUILDER, not a renderer: it walks the
+ * registry itself and produces its own `ReportDocument` so a designer can export in a courtyard with
+ * no signal. So a server-only fix would have left the handset printing the merged grid — the two
+ * copies of one ministry document disagreeing about a section the owner had just asked for.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE RULE, WHICH IS THE SAME ONE THE SERVER APPLIES, AND WHY ITS SECOND HALF MATTERS MOST
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A field holding SEVERAL photographs is a gallery: it gets its own grid, captioned by the field's
+ * own label. Every field holding ONE photograph shares a single plate.
+ *
+ * That second half is what keeps this change inside the defect it is fixing. Without it,
+ * `prototypeIteration`'s before-and-after stops being side by side, and `existingProduct`'s front,
+ * back and detail views become three half-page pictures down a page instead of one comparable row.
+ * Splitting every field would have been the simpler rule and a worse document.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHAT IS DELIBERATELY UNCHANGED
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * DEDUPLICATION STAYS ENTITY-WIDE. [imagesOf]'s `wanted` map is keyed on the media id precisely so a
+ * participant's photograph does not print twice when `artisanRef` resolves to the same file hydration
+ * copied onto `participant.photo`. Grouping happens AFTER that map, by asking which field first
+ * claimed each id, so the dedupe is untouched — a picture claimed by one field cannot reappear in
+ * another's plate.
+ *
+ * THE FLAT [imagesOf] IS STILL THE ONLY GATHERER. This groups its OUTPUT rather than walking the
+ * fields again, so the two cannot disagree about which pictures exist, about tier visibility, about
+ * the caption-field pairing, or about the reference-photo pass. It also means the cover hero
+ * (`limit = 1`) and the media annexure keep the exact list they had before.
+ */
+private fun imageGroupsOf(
+    entity: EntityDto,
+    values: Map<String, JsonElement>,
+    imageFor: (String) -> ImageRef?,
+    maxTier: DwTier,
+    refs: DwRefLabels? = null,
+    cap: Int = 0,
+    /**
+     * How many photographs [cap] kept off a plate, called once per plate that lost any.
+     *
+     * PER PLATE AND NOT ONCE FOR THE WHOLE CALL, matching `_image_groups`, which calls
+     * `_note_photographs_over_cap(over)` inside its own plate loop. The collector sums, so the tally
+     * is the same either way; what a per-plate call buys is that the arithmetic is reported by the
+     * loop that performed it, and nothing downstream has to re-derive "how many did all the plates
+     * lose between them" from a list it can no longer see.
+     */
+    onOverCap: (Int) -> Unit = {},
+): List<Pair<String, List<Pair<ImageRef, String>>>> {
+    // `fallbackLabels = false` BECAUSE THE LABEL GOES ON THE GRID HERE, NOT UNDER EVERY CELL. A named
+    // plate prints its gallery's name once as the grid caption below, so letting [imagesOf] bake that
+    // same label into each cell caption printed it again under all two-to-twenty of the gallery's
+    // photographs — a divergence from `report_builder.py:1392`, which falls back to the field label
+    // only on the plate that has no grid caption. The fallback is re-applied per picture in the plate
+    // loop below, where it is known which plate that picture lands on.
+    val flat = imagesOf(entity, values, imageFor, maxTier, refs = refs, fallbackLabels = false)
+    if (flat.isEmpty()) return emptyList()
+
+    // WHICH FIELD CLAIMED EACH PICTURE, resolved by re-reading the stored ids rather than by
+    // re-walking the visible fields and re-deciding what is visible. A `LinkedHashMap` so the plates
+    // come out in the registry's declared field order, which is the order the stage form asked for
+    // them in and therefore the order a designer expects to read.
+    val visible = entity.liveFields.filter { DwTier.of(it.tier).ordinal <= maxTier.ordinal }
+    val owner = LinkedHashMap<String, String>()
+    val multi = LinkedHashSet<String>()
+    visible.forEach { field ->
+        if (field.reportRole == "HIDDEN" || field.captionFor.isNotBlank()) return@forEach
+        val type = DwFieldType.of(field.type)
+        if (!type.isPicture) return@forEach
+        val stored = values[field.key]
+        if (!DwValues.isFilled(stored)) return@forEach
+        val ids = if (type == DwFieldType.IMAGE_LIST) DwValues.list(stored) else listOf(DwValues.text(stored))
+        val mine = ids.filter { it.isNotBlank() }
+        // `putIfAbsent`, matching the dedupe above: the FIRST field to claim an id owns it.
+        mine.forEach { id -> owner.putIfAbsent(id, field.key) }
+        if (mine.count { owner[it] == field.key } > 1) multi += field.key
+    }
+    val labelOf = visible.associate { it.key to it.label }
+
+    // THE SHARED PLATE KEEPS THE KEY "", which is never a field key, so it cannot collide with one.
+    val plates = LinkedHashMap<String, MutableList<Pair<ImageRef, String>>>()
+    flat.forEach { entry ->
+        // The id is not carried on the pair, so the owner is resolved by the ImageRef's source — the
+        // same token `imageFor` was handed. A reference photo has no owning picture field and belongs
+        // on the shared plate, which is where it printed before this change.
+        val fieldKey = owner.entries.firstOrNull { it.key == entry.first.source }?.value
+            ?: owner.entries.firstOrNull { imageFor(it.key)?.source == entry.first.source }?.value
+        val plate = if (fieldKey != null && fieldKey in multi) fieldKey else ""
+        // THE FIELD-LABEL FALLBACK, RE-APPLIED HERE AND ONLY FOR THE SHARED PLATE — the case
+        // [imagesOf]'s own fallback existed for. That plate carries pictures from several fields and
+        // is drawn with no caption at all (see [placeImageGroups]), so a blank cell caption there
+        // would leave nothing saying which field a picture came from. A NAMED plate already prints
+        // the label above the grid, so its cells stay as the designer left them. A reference photo
+        // owns no picture field, and PASS TWO gave it a caption outright, so `ifBlank` skips it.
+        val cell = entry.second.ifBlank {
+            if (plate.isEmpty()) fieldKey?.let { labelOf[it] }.orEmpty() else ""
+        }
+        plates.getOrPut(plate) { ArrayList() } += entry.first to cell
+    }
+
+    return plates.map { (key, images) ->
+        // CAPPED PER PLATE AND NOT ACROSS THE RUN. Applied across the whole list, a cap amputates the
+        // LAST galleries entirely — three photographs each and a cap of four leaves gallery one whole
+        // and galleries two and three erased, which is exactly the silent truncation rule 10 exists to
+        // forbid. Per plate, a cap thins every gallery instead of deleting some.
+        val kept = if (cap > 0) images.take(cap) else images
+        // AND WHATEVER IT THINNED IS COUNTED, which is the half that was missing. The cap was ported
+        // from `_image_groups` on the day the server grew it; `_note_photographs_over_cap` was not,
+        // so the handset thinned a gallery in exactly the silence rule 10 forbids — nothing beside
+        // the saved file, nothing in the preview, and nothing in the picker that names the number.
+        // See [dwPhotographsOverCapNote] for the sentence this feeds and where it is printed.
+        onOverCap(images.size - kept.size)
+        (if (key.isEmpty()) "" else labelOf[key].orEmpty()) to kept.toList()
+    }.filter { it.second.isNotEmpty() }
+}
+
+/**
+ * Draw the plates [imageGroupsOf] produced, each captioned by its own gallery's name.
+ *
+ * `ImageGridBlock.caption` already existed on this model and both on-device writers already drew it
+ * (`DocxWriter` and `PdfWriter`); it was dead only because no builder ever filled it in. So this
+ * needs no model change and no writer change, and cannot move the bundled-asset digest.
+ *
+ * THE SHARED PLATE IS DRAWN WITHOUT A CAPTION, because it holds pictures from several different
+ * fields and any single name over it would be false about the rest. Each of its cells keeps its own
+ * caption instead, and that plate is the ONLY one whose blank cell captions [imageGroupsOf] fills in
+ * with the owning field's label. A named plate does not: the label it would fall back to is the very
+ * text drawn above the grid, so repeating it under each photograph said the gallery's name two to
+ * twenty times where `report_builder.py:1392` says it once.
+ */
+private fun placeImageGroups(
+    builder: DocumentBuilder,
+    groups: List<Pair<String, List<Pair<ImageRef, String>>>>,
+    columns: Int,
+) {
+    groups.forEach { (caption, images) ->
+        if (images.isEmpty()) return@forEach
+        if (images.size == 1) {
+            val (ref, own) = images.first()
+            // A LONE PICTURE HAS NO GRID CAPTION TO SIT UNDER, so a named plate reduced to one
+            // photograph puts its name ON the picture rather than losing it — `report_builder`'s
+            // `_place_image_groups` is `caption=image_caption or caption` for this same reason, and
+            // the two must not disagree about a document a ministry receives.
+            //
+            // THE `ifBlank` IS LOAD-BEARING AND IS NEW WITH THE 2026-08-26 CAPTION FIX. Until then
+            // `imagesOf` baked `field.label` into every cell caption, so `own` was never blank on a
+            // named plate and this line agreed with the server BY ACCIDENT. Moving that fallback out
+            // of the gather step — which is what stopped the handset repeating a gallery's name
+            // under every photograph of it — made `own` genuinely empty here, and a named plate of
+            // one then printed no caption at all.
+            //
+            // It is not an exotic state. `multi` is decided from the STORED ids while `flat` holds
+            // only the ids `imageFor` could resolve, so a gallery of several photographs of which
+            // one is on this device is a named plate of one — the partially-resolvable case
+            // `ReportUnresolvedMediaTest` exists for.
+            builder.add(ImageBlock(image = ref, widthPct = 62.0f, caption = own.ifBlank { caption }))
+            return@forEach
+        }
+        builder.add(
+            ImageGridBlock(images = images, columns = columns.coerceIn(1, 4), caption = caption)
+        )
+    }
 }
 
 /**
@@ -2713,13 +3573,20 @@ private fun renderEntity(
         // buyer sees, the narrative stages of the compact summary — gather nothing at all. The
         // photographs are not merely hidden by the writer, they never enter the document, so a
         // report that excludes them does not carry their bytes either.
-        val every = imagesOf(entity, values, imageFor, options.maxTier, refs = refs)
-        if (options.maxPhotos > 0) every.take(options.maxPhotos) else every
+        //
+        // GROUPED BY GALLERY since 2026-08-26, so stage 4's three galleries print as three named
+        // plates instead of one merged grid — see [imageGroupsOf] for the defect and the rule. The
+        // cap moves INSIDE the grouping with it: applied to the flattened list it deleted whole
+        // galleries rather than thinning them.
+        imageGroupsOf(
+            entity, values, imageFor, options.maxTier, refs = refs, cap = options.maxPhotos,
+            onOverCap = { dropped -> options.losses?.notePhotographsOverCap(dropped) },
+        )
     } else {
         emptyList()
     }
 
-    fun drawImages() = placeImages(builder, gallery, options.photoColumns)
+    fun drawImages() = placeImageGroups(builder, gallery, options.photoColumns)
     if (options.photosFirst) drawImages()
 
     // THE GRID FIRST, which is the whole of the ordering fix — `_render_narrative` emits its
@@ -2855,7 +3722,19 @@ private fun renderCollection(
     // GALLERY prints the pictures and nothing else: every image on every row, under one heading.
     if (options.presentation == Presentation.GALLERY) {
         val every = rows.flatMap { imagesOf(entity, it, imageFor, options.maxTier, refs = refs) }
-        placeImages(builder, if (options.maxPhotos > 0) every.take(options.maxPhotos) else every, options.photoColumns)
+        /*
+          THE ONE PLATE THAT CROSSES ROWS, and so the one still capped across a whole COLLECTION
+          rather than per gallery: a pooled catalogue of every record's photographs has no single
+          field to name a grid after, so it stays one uncaptioned grid and its cap stays what it
+          always was. That is `_render_collection`'s GALLERY arm exactly.
+
+          WHAT IT NEVER DID WAS SAY WHAT IT DROPPED, and this is the second of the two places on this
+          device where `maxPhotos` silently deletes a photograph the designer took. The server counts
+          it in the same arm, on the same line, for the same reason.
+        */
+        val shown = if (options.maxPhotos > 0) every.take(options.maxPhotos) else every
+        options.losses?.notePhotographsOverCap(every.size - shown.size)
+        placeImages(builder, shown, options.photoColumns)
         return builder.blockCount != before
     }
 
