@@ -77,6 +77,7 @@ const ROLES: UserRole[] = [
   "MASTER_ADMIN",
   "ADMIN",
   "PROFESSOR",
+  "INSPECTOR",
   "DESIGNER",
   "RESEARCHER",
   "FIELD_CONTRIBUTOR",
@@ -95,6 +96,10 @@ const OFFERED: Record<UserRole, boolean> = {
   MASTER_ADMIN: true,
   ADMIN: true,
   DESIGNER: true,
+  // FALSE, and it is the same answer PROFESSOR gets one line down for the same reason: the tile
+  // leads to running a workshop, and `canRunDesignWorkshops` is a SET that INSPECTOR is not in.
+  // Outranking a designer buys review authority over their records, not the ability to run one.
+  INSPECTOR: false,
   PROFESSOR: false,
   RESEARCHER: false,
   FIELD_CONTRIBUTOR: false,

@@ -1859,21 +1859,156 @@ export async function transcribeMediaFile(file: File, mediaType = inferMediaType
   };
 }
 
-export async function analyzeMeasurementImage(file: File, dimension?: "length" | "breadth" | "height") {
+/**
+ * HOW A DIMENSION CAME TO BE KNOWN, in the shape a client echoes back UNCHANGED when it saves the
+ * value it was given.
+ *
+ * `backend/app/services/measurement_provenance.py` composes this (`MeasurementProvenance.marker()`)
+ * and reads it back off the save body; the server then writes the method BESIDE the `{by, byName,
+ * at}` stamp, so the row reads *a vision model estimated this, and this person accepted it into the
+ * record at that moment* rather than as a measurement that person took.
+ *
+ * DELIBERATELY ONE FORMAT FOR EVERY ORIGIN — a client composes the same shape by hand for a typed
+ * measurement (`{method: "TYPED"}`) or for the on-device geometry path
+ * (`{method: "PHOTO_GEOMETRY", technique: "SCALE" | "RECTIFIED"}`). Keys whose answer is not a known
+ * fact are OMITTED rather than sent as a placeholder: a `provider` on a hand-typed dimension is a
+ * question that does not apply.
+ *
+ * SENDING NOTHING IS LEGAL AND MEANS `UNRECORDED`; **it must never mean TYPED.** The rows already in
+ * this database include model estimates that auto-filled a form field, so defaulting an absent marker
+ * to TYPED would assert a human measured a number a machine guessed, for exactly the rows where the
+ * assertion is false.
+ */
+export type MeasurementMethodMarker = {
+  method: string;
+  provider?: string;
+  modelId?: string;
+  selfReportedConfidence?: number;
+  technique?: string;
+};
+
+/**
+ * What `POST /media/analyze-measurement` answers with.
+ *
+ * EVERY PROVENANCE KEY IS OPTIONAL, and that is not laziness. A web build outlives a backend deploy,
+ * and a client that required `methodMarker` would break outright against a server that predates it —
+ * the same reasoning that makes `ApiClient.kt` build its `Json` with `ignoreUnknownKeys = true` in the
+ * other direction. An absent marker is read as "this server does not say", never as "typed".
+ *
+ * `requiresAcceptance` is `true` on every response this endpoint can produce, INCLUDING the failures:
+ * it is a statement about what kind of thing this endpoint produces, not about one reading. Nothing
+ * here branches on it — `components/media/gridProposal.ts` treats every reading as a proposal
+ * unconditionally, which is the stronger reading of the same rule — but it is declared so a future
+ * caller can see that the server has an opinion about it.
+ *
+ * `confidenceIsCalibrated` is hard `false` server-side and there is no code path that sets it true.
+ * It exists so `selfReportedConfidence` can never be mistaken for a measured error bar — which is
+ * what `lib/photoMeasure.ts`'s `uncertainty` is, and the two must not look alike on a wire that
+ * carries both.
+ */
+export type MeasurementAnalysisResponse = {
+  available: boolean;
+  status: string;
+  analysis?: {
+    valueInches?: number | string | null;
+    lengthInches?: number | string | null;
+    breadthInches?: number | string | null;
+    notes?: string;
+  } | null;
+  message?: string;
+  method?: string;
+  provider?: string | null;
+  modelId?: string | null;
+  selfReportedConfidence?: number | null;
+  confidenceIsCalibrated?: boolean;
+  requiresAcceptance?: boolean;
+  methodMarker?: MeasurementMethodMarker | null;
+};
+
+/**
+ * THIS CLIENT STOPPED WAITING. Thrown by {@link analyzeMeasurementImage} and by nothing else.
+ *
+ * A TYPE RATHER THAN AN ERROR NAME, and the reason is that the alternative does not work. An aborted
+ * `fetch` rejects with a `DOMException` whose `name` is `"AbortError"` or `"TimeoutError"` depending
+ * on the runtime and on how the signal was built — and, worse, a CALLER's abort (the designer replaced
+ * the photograph, the component unmounted, the group was unchecked) produces the identical rejection.
+ * Only the layer that started the clock can tell the two apart, so it says which happened instead of
+ * leaving `lib/measurementFailure.ts` to guess from a string. A caller's own abort is deliberately NOT
+ * this: it is not a timeout, and reporting it as one would put a sentence about a slow connection
+ * under a photograph the designer themselves discarded.
+ */
+export class MeasurementTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`No answer from the measurement service within ${Math.round(timeoutMs / 1000)} seconds.`);
+    this.name = "MeasurementTimeoutError";
+  }
+}
+
+/**
+ * The wait before this client gives up on a grid reading, in milliseconds.
+ *
+ * ABOVE THE SERVER'S OWN BUDGET, DELIBERATELY, AND THE MARGIN IS THE POINT.
+ * `_post_gemini_measurement` calls the provider with `timeout=90` (seconds) and ROTATES ONTO THE NEXT
+ * KEY on a network error, so a request that is going to succeed can legitimately still be in flight
+ * well past a minute. A client timeout under that would abort calls that were about to answer and
+ * report them as "timed out" — the same class of lie the rest of this work exists to end, with the
+ * added cost that the deployment has already paid the provider for the reading that got thrown away.
+ *
+ * A TIMEOUT AT ALL, RATHER THAN NONE, because a connection that opens and then stalls never rejects
+ * `fetch` on its own — a captive portal, a lift, a tower handover halfway through an 8 MB upload. Until
+ * this existed the status line said "Analyzing…" until the designer navigated away, which is the one
+ * outcome with no sentence at all.
+ *
+ * True on 2026-08-27; re-check the server's half with `grep -n "timeout=90" backend/app/services/ai.py`.
+ */
+export const MEASUREMENT_TIMEOUT_MS = 120_000;
+
+/**
+ * Send one grid photograph to be read, and wait no longer than {@link MEASUREMENT_TIMEOUT_MS}.
+ *
+ * THROWS RATHER THAN RETURNING A VERDICT, and the classification lives in `lib/measurementFailure.ts`
+ * — `classifyMeasurementFailure` for what this throws, `measurementBodyFailure` for the two 200 bodies
+ * that are failures anyway. Kept apart so that this function is only the wire and the sentences are
+ * only in one place; `components/media/gridProposal.ts` is the caller that reads both.
+ *
+ * @param options.signal the CALLER's cancellation — a replaced photograph, an unmounted component. It
+ *   aborts the request like the timeout does and is deliberately NOT reported as a timeout.
+ */
+export async function analyzeMeasurementImage(
+  file: File,
+  dimension?: "length" | "breadth" | "height",
+  options: { timeoutMs?: number; signal?: AbortSignal } = {}
+) {
   const form = new FormData();
   form.append("file", file);
   const query = dimension ? `?dimension=${dimension}` : "";
-  return apiFetch<{
-    available: boolean;
-    status: string;
-    analysis?: {
-      valueInches?: number | string | null;
-      lengthInches?: number | string | null;
-      breadthInches?: number | string | null;
-      notes?: string;
-    } | null;
-    message?: string;
-  }>(`/media/analyze-measurement${query}`, { method: "POST", body: form });
+  const timeoutMs = options.timeoutMs ?? MEASUREMENT_TIMEOUT_MS;
+
+  const controller = new AbortController();
+  let weStoppedWaiting = false;
+  const timer = setTimeout(() => {
+    weStoppedWaiting = true;
+    controller.abort();
+  }, timeoutMs);
+  const relay = () => controller.abort();
+  options.signal?.addEventListener("abort", relay);
+
+  try {
+    return await apiFetch<MeasurementAnalysisResponse>(`/media/analyze-measurement${query}`, {
+      method: "POST",
+      body: form,
+      signal: controller.signal
+    });
+  } catch (error) {
+    // The flag is read rather than the rejection, for the reason on {@link MeasurementTimeoutError}.
+    // Anything else — including the caller's own abort — is re-thrown exactly as it arrived, so the
+    // triage sees the `ApiError` or the `TypeError` the server or the transport actually produced.
+    if (weStoppedWaiting) throw new MeasurementTimeoutError(timeoutMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", relay);
+  }
 }
 
 /**

@@ -129,12 +129,18 @@ Here is where each of these lands:
    only caller who can tell ALREADY_SPENT from the uniform refusal is one already holding a real
    card for the record they are being told about.
 
-   ⚠ **DO NOT REST THIS ON A RATE LIMIT. THERE ISN'T ONE, AND THE CLAUSE THAT SAID THERE WAS HAS
-   BEEN REMOVED FROM THIS FILE AND FROM THE SCHEMA.** ``core/config.py`` states the measured fact
-   next to ``scale_rate_limit_enabled``: nothing in this repository rate-limits any endpoint —
-   ``app/scale/rate_limit.py`` is dead code whose own flag defaults off, no rate-limit middleware is
-   installed in ``main.py``, and nginx carries no ``limit_req``. Against 110 bits of ``secrets``
-   output that costs this design nothing, which is why the CONCLUSION stands unchanged. It matters
+   ⚠ **DO NOT REST THIS ON A RATE LIMIT. YOU CANNOT COUNT ON ONE, AND THE CLAUSE THAT SAID THERE
+   WAS HAS BEEN REMOVED FROM THIS FILE AND FROM THE SCHEMA.** Re-checked 2026-08-27: this
+   paragraph used to say *"nothing in this repository rate-limits any endpoint —
+   ``app/scale/rate_limit.py`` is dead code whose own flag defaults off, no rate-limit middleware
+   is installed in ``main.py``"*, and half of that has expired. The middleware IS installed now:
+   ``create_app`` calls ``install_rate_limit(app)`` (``grep -n install_rate_limit
+   backend/app/main.py`` answers twice, the import and the call). The half that stands is the half
+   this argument rests on — ``scale_rate_limit_enabled`` is ``Field(default=False, ...)`` and
+   ``install_rate_limit`` returns ``False`` without adding anything when the flag is off, so a
+   default deployment is still unlimited, and this file may not assume otherwise. Against 110 bits
+   of ``secrets`` output that costs this design nothing, which is why the CONCLUSION stands
+   unchanged. It matters
    because a future reader adding a SIXTH outcome will lean on the argument written here, and an
    argument resting on a limiter that does not exist would license a distinction the entropy does
    not actually pay for. If a sixth outcome is ever wanted, either wire the limiter first or make

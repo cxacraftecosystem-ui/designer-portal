@@ -192,7 +192,7 @@ fun PlaceSearchOverlay(
         state = PlaceSearchState.Searching
         delay(PLACE_SEARCH_DEBOUNCE_MS)
         /*
-         * ASKED BEFORE THE REQUEST, not after it times out — the same call [DwIdentityOcrControl]
+         * ASKED BEFORE THE REQUEST, not after it times out — the same call `DwIdentityCardControl`
          * makes for the same reason. With no signal, `searchPlaces` sits on a ten-second connect
          * timeout, and ten seconds of a spinner that then says "no connection" is indistinguishable
          * from a hung app to somebody standing in a courtyard. Saying it in 350 ms is the same

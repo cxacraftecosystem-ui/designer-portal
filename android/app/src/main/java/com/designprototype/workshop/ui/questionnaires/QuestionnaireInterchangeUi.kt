@@ -235,7 +235,20 @@ internal fun WorkbookUploadRow(
  * [qFormProblemsToShow] drops the copy rather than the block.
  */
 @Composable
-internal fun UploadReportPanel(report: QFormChangeReportDto, onDismiss: () -> Unit) {
+internal fun UploadReportPanel(
+    report: QFormChangeReportDto,
+    onDismiss: () -> Unit,
+    /**
+     * What the panel calls the operation it is reporting on.
+     *
+     * A PARAMETER RATHER THAN A LITERAL because this panel is now reached by two things. The reuse
+     * route answers in the upload response's shape deliberately — key for key — so that one panel
+     * renders both; the price of that is that the panel must not assert a file was read. "What the
+     * upload did" over a server-side copy is a small lie in the loudest line on the panel, and it is
+     * the same lie `qFormProvenanceNotice` had to grow a third branch to stop telling.
+     */
+    heading: String = "What the upload did",
+) {
     val provenance = remember(report) { qFormProvenanceNotice(report) }
     val problems = remember(report) { qFormProblemsToShow(report) }
     Column(
@@ -246,7 +259,7 @@ internal fun UploadReportPanel(report: QFormChangeReportDto, onDismiss: () -> Un
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            "What the upload did",
+            heading,
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,

@@ -71,6 +71,36 @@ on:
       - "backend/app/services/stage_definitions.py"
       - "backend/app/services/stage_schema.py"
       - "backend/app/services/design_workshops.py"
+      # The record-revision redaction, for exactly the same reason and by exactly the same test.
+      # `RecordEditHistoryRedactionTest` reads these three off disk and asserts the handset's copy of
+      # the rules still matches them — the five redacted columns, the five placeholder wordings, the
+      # key-masked columns, and the edit-history caption. A PR that moves the Python or the TSX
+      # without moving the Kotlin must reach the Android suite, or the mismatch sits in the gap
+      # between two lanes until the next push to main, which is the 2026-08-24 failure above.
+      #
+      # Without these entries the drift tests still RUN — the job checks out the whole repository and
+      # fires on every workflow_run and on any `android/**` PR — they simply would not gate the pull
+      # request that caused the drift, which is the only moment the answer is cheap.
+      - "backend/app/services/access.py"
+      - "backend/app/services/records.py"
+      - "frontend/components/CollabPanel.tsx"
+      # The trace engine, for the same reason and by the same kind of test. The handset and the
+      # browser run two vendorings of ONE upstream engine — `android/core-*` in Kotlin, hashed in
+      # `android/UPSTREAM-MANIFEST-KOTLIN.txt`, and `frontend/lib/trace/engine/` in TypeScript,
+      # hashed in `frontend/lib/trace/UPSTREAM-MANIFEST.txt` — and the only mechanical check that
+      # the two draw the same thing is `:core-pipeline`'s `ParityTest`, which replays the shared
+      # fixtures under `docs/fixtures/` through the Kotlin and holds it to the TypeScript's numbers.
+      # A pull request that moves the TypeScript engine without moving the Kotlin must therefore
+      # reach this job, or the same sheet of paper produces two different drawings depending on
+      # which client the designer used, in a document that goes to a ministry. `android/**` covers
+      # the Kotlin side; this entry adds the case where only the TypeScript moved.
+      #
+      # This used to name `frontend/components/sketches/upload/geometryToSvg.ts` as well, because
+      # the handset's JavaScript bundle COMPILED THAT FILE IN and an edit to it left the committed
+      # asset stale. There is no bundle and no asset now — `core-export`'s `SvgExport` is the writer
+      # on the handset — so that path can no longer stale anything on this side, and it is gone with
+      # the rest of the bundle lane.
+      - "frontend/lib/trace/**"
   workflow_dispatch:
 
 permissions:

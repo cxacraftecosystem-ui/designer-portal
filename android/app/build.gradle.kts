@@ -588,16 +588,143 @@ dependencies {
      * on first use, and first use is a courtyard that has had no signal for two days, where the
      * failure reads as a broken camera.
      *
-     * TWO THINGS THE LIVE PATH DOES THAT MAKE THE TRADE BETTER, NOT WORSE. The frame is CROPPED to
-     * the reticle before ZXing sees it (`dwQrCropInBuffer`), so the binarizer never looks at the
-     * courtyard — which is `DW_QR_SAMPLE_LADDER`'s own insight applied at capture instead of after.
-     * And a miss costs 33 ms rather than a retake, so thirty attempts a second replace three per
-     * shutter press. The one thing that has NOT changed is the only reason this line is here at all:
-     * ZXing is pure Java, so `DwQrLiveFrameTest` runs the shipping live decoder on the desktop over
-     * symbols this app's own `DwQrEncode` produced. Choosing ML Kit forfeits the only accuracy
-     * evidence a repository with no handset can produce.
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     * ⚠ HALF OF THE ARGUMENT ABOVE WAS OVERTURNED ON 2026-08-28. READ THIS BEFORE ACTING ON IT.
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * EVERYTHING ABOVE IS KEPT DELIBERATELY, and it is kept because it is still the reasoning that
+     * decides half the question. Nothing in it was wrong when it was written; the sizes were and are
+     * correct, and the paragraph naming the live-frame regression was the one that turned out to
+     * matter. What follows says which sentences no longer describe this build.
+     *
+     * WHAT HAPPENED. The owner reported on 2026-08-27: "QR scan on android devices does not pick up
+     * the region of interest and scan while the camera is on", and "I do not mind MLKit, use it if it
+     * guarantees the behaviour." THE ACCEPTED REGRESSION NAMED ABOVE BECAME THE REPORTED DEFECT, and
+     * a trade whose cost has been paid in the field is re-taken rather than re-defended. The line
+     * below this block adds `com.google.mlkit:barcode-scanning:17.3.0`, and the paragraph two above
+     * ("sixteen times the size, for a symbol that a designer is holding inside a reticle") is now the
+     * PRICE OF THE FIX rather than a reason against it.
+     *
+     * THE UNBUNDLED VARIANT IS STILL DISQUALIFIED AND THE OWNER'S WORDS MAKE THAT REASON STRONGER,
+     * not weaker. A model fetched on first use cannot "guarantee the behaviour" anywhere this app is
+     * used. That clause of the argument above stands in full.
+     *
+     * WHAT IS FALSE NOW, SENTENCE BY SENTENCE:
+     *
+     *  * "The frame is CROPPED to the reticle before ZXing sees it" — true only of the FALLBACK
+     *    reader. ML Kit takes no crop parameter, so the live camera reads the whole frame and a
+     *    sighting whose bounding-box centre falls outside the reticle is refused afterwards, with a
+     *    sentence on screen when that happens. Cropping was the alternative and was rejected on the
+     *    direction of the defect: the complaint is a FALSE NEGATIVE, and cropping is the operation
+     *    that manufactures false negatives.
+     *  * "Choosing ML Kit forfeits the only accuracy evidence a repository with no handset can
+     *    produce" — this was the strongest sentence in the argument and it was engineered around
+     *    rather than accepted. ZXING IS NOT REMOVED AND IS NOT DEAD CODE. It reads every photograph
+     *    and every picked picture, unchanged; it is the live path's fallback on a device where ML
+     *    Kit cannot start, said out loud on screen when it engages; and `DwQrLiveFrameTest` still
+     *    runs THAT decoder on the desktop over symbols this app's own `DwQrEncode` produced. The
+     *    seam that makes both true is `data/DwQrFrameReader.kt`.
+     *
+     * WHAT IS STILL TRUE AND IS WHY THIS LINE STAYS: ZXing is pure Java, it is 607,650 bytes
+     * (re-measured on this machine on 2026-08-28, unchanged), and it is the only QR reader in this
+     * build that a machine with no handset can make any accuracy claim about at all.
      */
     implementation("com.google.zxing:core:3.5.3")
+
+    /**
+     * READING A QR OFF A LIVE FRAME — ML Kit, BUNDLED, added 2026-08-28.
+     *
+     * ── WHY THIS IS HERE, WHICH IS AN OWNER'S DECISION AND NOT A NEW MEASUREMENT ───────────────
+     *
+     * The block immediately above chose ZXing, measured the alternative honestly, and wrote down the
+     * cost of the choice as an ACCEPTED REGRESSION: "ML Kit reads a bent, angled or glared code off a
+     * live frame better than ZXing does." On 2026-08-27 the owner reported that regression as a
+     * defect — "QR scan on android devices does not pick up the region of interest and scan while the
+     * camera is on" — and settled the trade: "I do not mind MLKit, use it if it guarantees the
+     * behaviour." A cost that has been paid in the field stops being a trade and becomes a bug.
+     *
+     * ── BUNDLED, AND THE SMALL ONE IS DISQUALIFIED BY THE OWNER'S OWN WORD "GUARANTEES" ────────
+     *
+     * `com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1` is **519,271 bytes**
+     * against this line's **9,898,786** — both re-measured from the Gradle cache on this machine on
+     * 2026-08-28, and both unchanged from the 2026-08-24 reading above, so the figures are a fact
+     * about the artifacts rather than a memory. THE SMALL ONE FETCHES ITS MODEL ON FIRST USE. First
+     * use is a courtyard that has had no signal for two days, and a reader that must download itself
+     * guarantees nothing at all there — it fails as "the camera does not read cards". Same reason
+     * `text-recognition` is the bundled one; same reason the sherpa engine is in the APK.
+     *
+     * ── THE MEASURED ARTIFACT COST, AND WHAT IS ALREADY PAID FOR ───────────────────────────────
+     *
+     * Read off `~/.gradle/caches/modules-2/files-2.1` after resolution on this machine, 2026-08-28.
+     * Only TWO of these rows are new: the rest arrived with `com.google.mlkit:text-recognition` and
+     * are shared, which is the one genuine saving in choosing a vendor already in the build.
+     *
+     *     com.google.mlkit:barcode-scanning:17.3.0             9,898,786 bytes   NEW
+     *     com.google.mlkit:barcode-scanning-common:17.0.0         63,153         NEW
+     *     com.google.mlkit:common:18.11.0                        434,066         already present
+     *     com.google.mlkit:vision-common:17.3.0                  269,178         already present
+     *     com.google.mlkit:vision-interfaces:16.3.0               73,882         already present
+     *
+     * AAR bytes are not APK bytes, and the difference is not small: an AAR is a zip of a jar, native
+     * libraries and resources, and R8 shrinks the Java half while touching none of the native half.
+     * So the APK cost was MEASURED rather than inferred from the row above.
+     *
+     * ── THE APK DELTA, ON TWO REAL `:app:packageRelease` RUNS DIFFERING ONLY BY THIS LINE ──────
+     *
+     * Same tree, same R8 configuration, same `abiFilters` pair; the second run additionally reverts
+     * the four source files this wave touched, so the figure covers the whole change and not only the
+     * dependency. Both APKs read with `zipfile`, on this machine, 2026-08-28.
+     *
+     *     with `barcode-scanning`      77,009,672 bytes
+     *     without it                   67,738,370
+     *     ──────────────────────────────────────
+     *     DELTA                        +9,271,302
+     *
+     * AND IT RECONCILES, WHICH IS WHY IT IS TRUSTWORTHY. Comparing the two APKs' central directories
+     * entry by entry accounts for every byte of it:
+     *
+     *     lib/arm64-v8a/libbarhopper_v3.so                     4,946,720   stored, not compressed
+     *     lib/armeabi-v7a/libbarhopper_v3.so                   3,244,440   stored, not compressed
+     *     the three tflite models under assets/mlkit_barcode_models    880,888   stored, not compressed
+     *     the three `classes*.dex`, net, AFTER R8                169,955
+     *     zip central directory and alignment padding             29,299
+     *
+     * TWO THINGS TO TAKE FROM THAT TABLE.
+     *
+     *  * **R8 CANNOT TOUCH 96% OF THIS.** The native library and the models are `STORED` entries — no
+     *    deflate, no shrinking, no `minifyEnabled` that will ever help. Only the 169,955 dex bytes
+     *    passed through R8 at all, and that figure already includes this wave's own new Kotlin.
+     *  * **THE QR-ONLY NARROWING SAVES NO SPACE, AND IT WAS NEVER CLAIMED TO.** Two of the three
+     *    packaged models are `oned_*` — one-dimensional barcode models, 490,432 bytes of the 880,888 —
+     *    and they ship whatever `setBarcodeFormats` says, because assets are not stripped by format.
+     *    The narrowing buys inference time and refusal honesty, not bytes. Anybody hoping to recover
+     *    half a megabyte by restricting formats harder should stop here.
+     *
+     * ── WHAT IT DOES NOT COST: THE ONLY ACCURACY TEST THIS REPOSITORY CAN RUN ──────────────────
+     *
+     * The block above warned that "choosing ML Kit forfeits the only accuracy evidence a repository
+     * with no handset can produce", and that was the sentence worth engineering around rather than
+     * accepting. ML Kit cannot run in a JVM unit test — `IdentityCardRecognizer`'s header says the
+     * same of the text recogniser. So ZXing was NOT removed: `data/DwQrFrameReader.kt` is a seam with
+     * `MlKitQrFrameReader` on the live camera and `ReferenceQrFrameReader` beside it, and the
+     * reference reader is the fallback on a device where this library cannot start, is still the
+     * decoder behind both picture routes, and is still what `DwQrLiveFrameTest` runs on every build.
+     *
+     * ── THE FORMAT SET IS NARROWED TO QR, AND THAT IS NOT A MICRO-OPTIMISATION ─────────────────
+     *
+     * `BarcodeScannerOptions.setBarcodeFormats(FORMAT_QR_CODE)`, set in `MlKitQrFrameReader`. Left at
+     * its default the detector looks for every symbology it knows on every frame, and each one is
+     * something a designer might point a phone at BY MISTAKE — a UPC on the next table, the
+     * DataMatrix on a courier label. The honest answer for a courier label is "no QR code was found",
+     * not a payload `decodeWorkshopCode` refuses one step further from the truth.
+     *
+     * ── REVIEW TRIGGER ────────────────────────────────────────────────────────────────────────
+     *
+     * `docs/DECISION-qr-scanning-on-android.md` names "any barcode or QR dependency appearing in
+     * `android/app/build.gradle.kts`" as a review trigger. This line fired it, and that document has
+     * been updated in the same change rather than left to rot for a third time.
+     */
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     /**
      * THE LENS — a live preview, bound to the BACK camera by this application rather than by
@@ -717,6 +844,65 @@ dependencies {
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+    /**
+     * THE VENDORED TRACE ENGINE — the only way this app turns a photograph into vectors.
+     *
+     * `DwTraceRuntime` in `ui/designworkshop/DwSketchTraceEngine.kt` is the seam: six suspend
+     * members, and the whole sketch-trace panel written against the interface rather than against
+     * any engine. `DwTraceKotlinRuntime` is the one implementation, and these four modules are what
+     * it calls.
+     *
+     * ── WHAT WAS HERE BEFORE, AND WHY IT IS NOT ANY MORE ──────────────────────────────────────
+     *
+     * There used to be a second route and a dependency above this one for it. The handset ran the
+     * SAME upstream engine as JavaScript — `src/main/assets/dw-trace-engine.js`, 128,026 bytes built
+     * from `frontend/lib/trace/` by a script in that tree, evaluated inside an
+     * `androidx.javascriptengine` isolate. **The owner replaced it with this one; there is no
+     * JavaScript fallback.** The asset, the script, the CI step that rebuilt and byte-compared it,
+     * the `androidx.javascriptengine:1.0.0` dependency and the Kotlin that drove it are all gone.
+     *
+     * The measured reason it went, rather than a preference: that route needed an Android System
+     * WebView at Chromium M97 (January 2022) or newer for `JavaScriptSandbox.isSupported()` to
+     * answer true, WebView updates arrive through Play, and this product's premise is a handset that
+     * has been in a village for a fortnight — so on a real phone in the field the tracer could
+     * simply not exist. These modules are compiled into the APK by this build, so if the app runs,
+     * it traces.
+     *
+     * WHAT THE SWAP COSTS THE APK, WITH BOTH HALVES NAMED AND NEITHER MEASURED ON THIS APK. Going
+     * out: `androidx.javascriptengine:1.0.0` and the 128,026-byte asset, which an isolated
+     * `assembleRelease` probe (R8 off, so an upper bound — `docs/R8-MEASUREMENT.md` on why only a
+     * packaged read counts) differenced at +321,584 and +43,147 bytes, so **-364,731**. Coming in:
+     * 20,998 lines of Kotlin across these four modules, which is dex this build has never packaged
+     * and nobody has weighed. The net is genuinely unknown and this comment will not guess at it.
+     * The command that settles it is the one the release block already names:
+     *
+     *     ./gradlew :app:assembleRelease
+     *     stat -c %s app/build/outputs/apk/release/app-release.apk
+     *
+     * WHY ALL FOUR ARE NAMED WHEN ONE WOULD COMPILE. `:core-pipeline` declares `api(...)` on the
+     * other three, so `implementation(project(":core-pipeline"))` alone would already put every
+     * engine type on this module's compile classpath. They are listed anyway because these are
+     * VENDORED build files: the day someone re-vendors from upstream and finds `api` has become
+     * `implementation`, the failure should be a resolved dependency graph that still compiles, not
+     * a wall of unresolved references in code that never changed.
+     *
+     * VERSION ALIGNMENT, CHECKED RATHER THAN ASSUMED. `:core-pipeline` asks for
+     * `kotlinx-serialization-json:1.7.3` and the line directly above asks for the same 1.7.3, so
+     * there is no conflict for Gradle to resolve and no chance of the engine being handed a
+     * different serialization runtime from the one the app's DTOs use. The serialization COMPILER
+     * PLUGIN `:core-pipeline` applies is declared in the root `build.gradle.kts` at 2.0.21 —
+     * the version this module already applies.
+     *
+     * JVM TARGET. Upstream builds these with `jvmToolchain(17)`; this module compiles at
+     * `jvmTarget = "17"` with `sourceCompatibility`/`targetCompatibility` 17. See the note in each
+     * vendored `build.gradle.kts` for how the two were reconciled — the bytecode level is the same
+     * 17 either way, but the toolchain form demands a JDK 17 that does not exist on this machine.
+     */
+    implementation(project(":core-imaging"))
+    implementation(project(":core-vector"))
+    implementation(project(":core-pipeline"))
+    implementation(project(":core-export"))
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

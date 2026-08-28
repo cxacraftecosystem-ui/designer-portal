@@ -233,6 +233,35 @@ this document's own maintenance table forbids, so it no longer states one.**
   deliberately **not** part of `registry_version()`, since the values already stored are still valid,
   which means a client that has not refetched is enforcing the previous cap and the server remains
   the authority either way.
+- **`minItems`.** How many entries a multi-valued field must hold before its stage counts as
+  **complete** — declared today by stage 4's two motif galleries, at 25 each, because the owner
+  asked for 25 of each and all of them. It is the mirror image of `maxItems` in every respect that
+  matters, and reading the two as symmetrical is the mistake to avoid:
+  - **A ceiling refuses a save; a floor never does.** `minItems` is scored in `stage_completeness`
+    and enforced **nowhere else** — not in `coerce_value`, not in `validate_entry`, therefore not on
+    any write path. A designer can always comply with a ceiling (they hold 26 and post 25), but a
+    designer with 20 photographs and 5 still to shoot has *no* body that satisfies a floor, so a
+    floor on the write path is not validation, it is an instruction to lose the 20. It would be lost
+    twice over: Android's `saveOrQueue` does not queue a 4xx, so a refused body is a record dropped
+    rather than retried; and on the `submit=true` path `save_stage` restores a rejected key from
+    `previous`, so the gallery would silently **revert** and the 422 would arrive after the
+    transaction had already committed. Stage 4 is the fourth of twenty-two, so either outcome blocks
+    the whole workshop from ever being saved. "Required" therefore means the stage is not complete,
+    the field is listed in `missing` **with its count** — `Traditional motif photographs (20 of 25)`
+    — and the workshop is not ready to submit. Work in progress is never at risk.
+  - **It IS part of `registry_version()`, and `maxItems` is not.** A cap has a server-side backstop
+    (`coerce_value` refuses the over-long array whatever the client believes), so a stale client
+    still posts a legal body. A floor has none: it is scored and never validated, so a handset that
+    has never fetched since the floor was declared scores the stage complete at 20 photographs and
+    tells the designer they may leave the cluster. Same reasoning as `storeMasked` and `format`.
+  - **It makes the field required at whatever tier it sits.** A narrow, deliberate exception to the
+    rule that only `BASIC` fields may be required: both galleries are `STANDARD` and stay `STANDARD`,
+    because promoting them would move the digest *and* splice fifty photographs into
+    `COMPACT_SUMMARY`, whose whole description is "Basic-tier fields only". `validate_registry`
+    refuses a floor on a scalar field or above the field's effective ceiling, either of which would
+    make a stage permanently uncompletable with no error anywhere.
+  - Emitted only where declared, exactly as `maxItems` is, so both clients read the number instead of
+    hard-coding it — for their ports of the scorer, and for the "20 of 25" progress bar.
 
 ### Coercion is forgiving; typing is not
 
@@ -769,6 +798,16 @@ deletion by `assert_can_delete`; restore is admin-only. Report generation is all
 can read the workshop**, because a report is a view of data the caller can already see and refusing
 it would only push people to photograph the screen.
 
+**One tier reads a design workshop without appearing anywhere in this section, and that is by
+construction.** `INSPECTOR` (rank 37, added 2026-08-27) holds **no** design-workshop authority from
+its rank — every gate here is set membership, so outranking a designer buys nothing — and reads a
+workshop only through a `DesignWorkshopInspector` row and its own loader
+(`backend/app/services/design_workshop_inspectors.py`), which is separate from the one every route
+below uses precisely so that no route below can start honouring it. Read-only: no stage write, no
+report generation, no dictation consent, no AI verbs, no media and no questionnaire responses. It is
+the fifth access system; [PERMISSIONS.md](PERMISSIONS.md) §4.5 is the whole of it, including which
+parts are asserted and which are not yet.
+
 | Method | Path | Returns |
 |---|---|---|
 | `GET` | `/design-workshops/schema` | the registry — `{version, enums, stages[]}` |
@@ -811,7 +850,10 @@ stage and keys per row — and for a long time nothing bounded the CONTENTS**, s
 multi-valued field could still carry an arbitrarily long array into the jsonb column and be
 re-serialised in full on every later read of the stage. `DEFAULT_MAX_ITEMS` and
 `DEFAULT_MAX_ITEM_CHARS` in `stage_schema.py` close that half, applied by `coerce_value` on every
-save; a field may narrow the first for itself with `max_items` (see `maxItems` in §4).
+save; a field may narrow the first for itself with `max_items` (see `maxItems` in §4). A field's
+`min_items` floor is deliberately **not** applied here — `enforce_required` does not reach it and
+neither does `coerce_value`, so a gallery below its floor still saves. See `minItems` in §4 for why
+a floor on this path would drop the record on Android and revert the gallery on a `submit=true`.
 
 Operation counts for the whole API are generated into [REPO_FACTS.md](REPO_FACTS.md).
 

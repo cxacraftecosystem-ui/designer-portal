@@ -12,8 +12,7 @@ import retrofit2.Response
 import java.io.IOException
 
 /**
- * The two decisions behind the create dialog's designer picker — the field that decides WHOSE name a
- * ministry report prints.
+ * The decision behind the create dialog's designer picker: what it says when there is no list.
  *
  * ── WHY THERE IS ANYTHING TO TEST HERE AT ALL ────────────────────────────────────────────────────
  *
@@ -26,9 +25,15 @@ import java.io.IOException
  * one. The picker is how this handset answers instead, and these two functions are the parts of it
  * that are decisions rather than layout.
  *
- * Both are written as free functions and take their one dependency as a parameter for the reason
+ * It is written as a free function taking its one dependency as a parameter for the reason
  * `CreateWorkshopOutcomeTest` gives about `classifyCreate`: the alternative is a `when` inside a
  * composable, which is only ever exercised by somebody looking at a phone.
+ *
+ * THE OTHER HALF OF THIS PICKER MOVED. `dwNamedDesignerId` used to live beside
+ * `dwDesignerPickerStandDown` and was tested here; it now sits in `data/DwWorkshopCreation.kt` with
+ * `dwNamedDesignerTeam` and `dwDesignerCreateFields`, because the picker became a MULTI-SELECT and
+ * every id in the list has to be folded the same single way — by a rule the data layer can reach.
+ * Its assertions moved with it, to `data/DwDesignerTeamTest.kt`, rather than being copied.
  */
 class DwDesignerPickerTest {
 
@@ -41,36 +46,6 @@ class DwDesignerPickerTest {
 
     /** Stands in for `WorkshopRepository.isConnectionFailure` without an HTTP stack. */
     private val unreachable: (Throwable) -> Boolean = { it is IOException }
-
-    // ── dwNamedDesignerId ────────────────────────────────────────────────────────────────────────
-
-    @Test
-    fun `not decided yet is nobody named, and it is null rather than an empty string`() {
-        // The picker's "Not decided yet" row hands back "". Null is what must reach both the body and
-        // the draft: `ApiClient.json` leaves a null off the wire entirely, so a workshop with nobody
-        // named posts the same bytes it posted before this field existed — which is what keeps the
-        // field additive for a server that has never heard of it (`APIModel` is `extra="forbid"`).
-        assertNull(dwNamedDesignerId(""))
-        assertNull(dwNamedDesignerId(null))
-        assertNull(dwNamedDesignerId("   "))
-    }
-
-    @Test
-    fun `emptiness is Python's, so the phone and the server cannot disagree about who was named`() {
-        // The server folds with `(payload.designerUserId or "").strip() or None`, and Python calls
-        // the no-break space U+00A0 and the narrow no-break space U+202F whitespace while
-        // `Char.isWhitespace` deliberately does not. A value that means "nobody" up there and
-        // "somebody" down here is exactly the disagreement this field exists to end — and the same
-        // choice `dwViewerSearchTerm` makes one layer down.
-        assertNull("U+00A0 alone is not somebody", dwNamedDesignerId("\u00A0"))
-        assertNull("U+202F alone is not somebody", dwNamedDesignerId("\u202F"))
-    }
-
-    @Test
-    fun `a real pick travels, trimmed exactly once`() {
-        assertEquals("ckq9designer0001", dwNamedDesignerId("ckq9designer0001"))
-        assertEquals("ckq9designer0001", dwNamedDesignerId("  ckq9designer0001  "))
-    }
 
     // ── dwDesignerPickerStandDown ────────────────────────────────────────────────────────────────
 

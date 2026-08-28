@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { dwDictationAllowance, forgetDictationAllowanceInFlight } from "@/lib/designWorkshops";
 
 /**
- * FOUR THINGS THE SERVER OR THE HANDSET COULD DO AND THE BROWSER COULD NOT.
+ * FIVE THINGS THE SERVER OR THE HANDSET COULD DO AND THE BROWSER COULD NOT.
  *
  * Each one is the same shape of defect — a feature complete everywhere except its call site — and
  * each was found by grepping the client trees for a route that has no caller:
@@ -27,6 +27,14 @@ import { dwDictationAllowance, forgetDictationAllowanceInFlight } from "@/lib/de
  *     rendered inside the `incomplete.length ?` branch, so it named stages with a MISSING answer —
  *     and the case a designer reads the preview to catch is the opposite one, a participant village
  *     that is filled in and wrong.
+ *
+ *  5. **Tracing a sketch from the stage form.** `SketchTraceField` — the tracing panel, its four
+ *     comparison views, the magnifier, the difference plate and the export formats — was mounted
+ *     from `UploadTabPanel` and from nowhere else, so `grep -rln SketchTraceField frontend/components`
+ *     answered with that panel's own directory and no host. A designer filling in stage 11 in the
+ *     record form could not reach any of it, while the handset has mounted its own trace panel from
+ *     `FieldRenderer.kt` on that same field all along. Everything below the mount was finished and
+ *     tested; the fifth defect, like the other four, was the call site.
  *
  * The arithmetic half of (1) is proved equal to the backend, case for case, in
  * `cost-integrity-port-unit.spec.ts`. What is asserted here is that each feature is WIRED — which is
@@ -300,4 +308,73 @@ test("STANDING TRIPWIRE: nothing on the report screen is directly editable", () 
   // `ReportSheets` is handed presentation and nothing that could write: no callback of any kind.
   const mount = page.slice(page.indexOf("<ReportSheets"), page.indexOf("<ReportSheets") + 400);
   expect(mount).not.toMatch(/on[A-Z]/);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 5. The tracing panel is reachable from the record form
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const FIELD_INPUT = "components/designworkshop/FieldInput.tsx";
+
+test("the record form mounts the tracing panel, not only the Sketches workspace", () => {
+  /*
+    THE WHOLE DEFECT WAS ONE ABSENT LINE, which is what makes it worth a test rather than a comment:
+    nothing about the panel was broken, it simply had one host, and the host it lacked is the screen
+    a designer actually fills in. `grep -rln SketchTraceField frontend/components` named only
+    `components/sketches/upload/` before this.
+  */
+  const form = read(FIELD_INPUT);
+  expect(form).toContain('import { SketchTraceField } from "@/components/sketches/upload/SketchTraceField";');
+  expect(form).toContain("<SketchTraceField targetLabel={field.label} disabled={disabled} onAttach={attach} />");
+});
+
+test("both derived-drawing panels are gated by ONE predicate, as they are on the handset", () => {
+  /*
+    `dwOffersSketchTrace` IS `dwOffersSketchRectify` on the handset, and its own KDoc gives the
+    reason: both panels write a derived artefact into the same destination, so a second rule here
+    would be a second copy of the decision that this may never be offered on `sketch.image` — where
+    attaching would DETACH the photograph the drawing was made from.
+  */
+  const form = read(FIELD_INPUT);
+  expect(form).toContain("const offersDerivedDrawing = offersSketchRectify(entity, field);");
+  expect(form).toContain("const sketchSources: SketchSource[] = offersDerivedDrawing");
+  // And there is exactly one line-art rule in the client, in the role helper, not two.
+  expect(form).not.toContain("offersSketchTrace");
+});
+
+test("the tracing panel is NOT gated on there being a sibling photograph, and rectify still is", () => {
+  /*
+    THE ONE PLACE THE TWO PANELS GENUINELY DIFFER, and the reason the predicate above had to be
+    hoisted rather than reused as `sketchSources.length`. Rectifying straightens a photograph that
+    is already attached to a sibling field, so with none there is nothing for it to do. Tracing
+    brings its own photograph through its own picker — gating it on the source count would leave a
+    working control invisible until an unrelated field was filled, which is this repository's
+    "unreachable is not shipped" rule producing the very state it exists to prevent.
+  */
+  const form = read(FIELD_INPUT);
+  const rectify = form.indexOf("<SketchRectifyField");
+  const trace = form.indexOf("<SketchTraceField targetLabel");
+  expect(rectify).toBeGreaterThan(-1);
+  expect(trace).toBeGreaterThan(rectify);
+  // The rectify mount is inside the `sketchSources.length ?` branch; the trace mount is not.
+  expect(form.slice(0, rectify)).toContain("{sketchSources.length ? (");
+  expect(form.slice(rectify, trace)).toContain("{offersDerivedDrawing ? (");
+});
+
+test("the record form does NOT hand the panel the photograph as well", () => {
+  /*
+    `onAttachSource` exists for a host with no other picker for the photograph — the Upload tab. A
+    record form has an image field and its capture card has already filed the bytes there, so
+    passing it here would file the same photograph under two names. The panel's own prop
+    documentation says exactly this, and the absence is the thing that has to stay true.
+  */
+  const form = read(FIELD_INPUT);
+  // SCOPED TO THE ELEMENT, not to the file: the mount's own comment names the prop in order to say
+  // why it is absent, and a bare file-wide search would be satisfied by deleting that explanation.
+  const start = form.indexOf("<SketchTraceField");
+  const mount = form.slice(start, form.indexOf("/>", start) + 2);
+  expect(mount).not.toContain("onAttachSource");
+  expect(mount).toContain("onAttach={attach}");
+  // The Upload tab, which genuinely is the only picker on its screen, still passes it.
+  expect(read("components/sketches/upload/UploadTabPanel.tsx")).toContain("onAttachSource");
 });

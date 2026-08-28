@@ -79,34 +79,35 @@ import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
+import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
+import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import {
-  createDesignWorkshop,
   deleteDesignWorkshop,
   listDesignWorkshops,
   listReportTemplates,
+  namedDesignerTeam,
   type DwSummary,
   type DwTemplate
 } from "@/lib/designWorkshops";
 import {
   adoptServerSummaries,
-  createLocalDraft,
   draftSummary,
   getDraftsSnapshot,
   getServerDraftsSnapshot,
   localDraftNeedsAWorkshop,
   refreshDrafts,
   subscribeDrafts,
-  type DwDraft,
-  type DwDraftHeader
+  type DwDraft
 } from "@/lib/designWorkshopStore";
+import { createWorkshopOrKeepItHere } from "@/lib/designWorkshopCreate";
 import { AdoptLocalDraftDialog } from "@/components/designworkshop/AdoptLocalDraftDialog";
 import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { DesignWorkshopViewersPanel } from "@/components/settings/DesignWorkshopViewersPanel";
-import { isTransient, isUnreachable } from "@/lib/offline";
+import { isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
 import {
   DESIGN_WORKSHOP_CREATE_REFUSAL,
@@ -228,11 +229,39 @@ function DesignWorkshopsPageBody() {
   const [formOpen, setFormOpen] = useState(false);
   const [templateId, setTemplateId] = useState("DCH_STANDARD");
   /**
-   * The designer this workshop is being opened FOR — "" until an admin picks one, which is a real
-   * and common answer rather than an unfilled field. See {@link WorkshopDesignerPicker} for why the
-   * choice belongs to the create and not to a later edit.
+   * THE DESIGNERS THIS WORKSHOP IS BEING OPENED FOR, in the order they were ticked — empty until an
+   * admin picks somebody, which is a real and common answer rather than an unfilled field.
+   *
+   * A LIST RATHER THAN ONE ID, BECAUSE THIS IS THE ACCESS BOUNDARY. A design workshop is visible
+   * only to its creator, to admins, and to whoever holds a `DesignWorkshopViewer` row — the list
+   * route AND the single read both enforce it, and a designer cannot create a workshop at all, so
+   * for them the row IS the access. A real workshop runs with two designers in the room, so naming
+   * one at the create left the second locked out of a workshop whose stage 1 already carried their
+   * colleague's name. The create writes one access row per name here, in the same call.
    */
-  const [designerUserId, setDesignerUserId] = useState("");
+  const [designerUserIds, setDesignerUserIds] = useState<string[]>([]);
+  /**
+   * Which of them is the LEAD — the one whose `DesignerProfile` is seeded into stage 1 and stage 3
+   * and whose name the report cover carries. "" means "derive it", which is the first ticked.
+   *
+   * Several people may open a workshop; exactly one name is on it, because that block is a
+   * singleton and `ReportMeta.author` becomes the .docx's `dc:creator`, a single-author field. See
+   * {@link WorkshopDesignerPicker} for why the answer is printed on screen rather than left to a
+   * tick order nobody can see.
+   */
+  const [leadDesignerId, setLeadDesignerId] = useState("");
+  /**
+   * Has anybody typed into, or ticked in, the create form?
+   *
+   * ARMED BY HAND FROM EVERY THEMED CONTROL. `onInput` on the form below catches the real inputs;
+   * the template dropdown, the workshop picker, the date range and the designer multi-select are all
+   * `<button>`s that fire no native input event, so each one calls `markDirty` itself. A guard that
+   * only sees the text boxes is a guard an admin learns to trust and then loses four ticked
+   * designers to.
+   */
+  const [dirty, setDirty] = useState(false);
+  /** The navigation parked behind the unsaved-changes prompt, or null. */
+  const [confirmAction, setConfirmAction] = useState<(() => void) | null>(null);
   /*
     The workshops a 22-stage record may be started FROM: only those filed as a Design & Prototype
     Development Workshop. See the picker's own note for why the whole workshop list is the wrong
@@ -258,6 +287,40 @@ function DesignWorkshopsPageBody() {
    * older rows, and the screen ends up showing results for a query nobody can see any more.
    */
   const generation = useRef(0);
+
+  /** Run `action` now, or park it behind the unsaved-changes prompt while the form holds work. */
+  function guard(action: () => void) {
+    if (dirty) setConfirmAction(() => action);
+    else action();
+  }
+
+  const markDirty = () => setDirty(true);
+
+  /*
+    THE CREATE FORM IS A PANEL ON A LIST PAGE, AND THAT IS EXACTLY WHY IT NEEDED THIS.
+
+    It is not a route of its own, so nothing about leaving it looks like leaving a form: the round
+    back control in `PageHeader` and a browser reload both take it away without a word. What is in
+    it by then is not a stray keystroke — it is a title, a linked workshop, a fortnight's dates and,
+    since the picker became a multi-select, a set of designers an admin assembled by searching the
+    repository one name at a time.
+
+    BOTH HALVES, because either alone is half a guard: `useLeaveGuard` covers the app's own back
+    control (the page's only one — never add a second), and `beforeunload` covers the reload and the
+    closed tab. The listener is attached only while the form actually holds something, so an admin
+    reading the list is never asked anything.
+  */
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+
+  useLeaveGuard(dirty, () => guard(() => router.back()));
 
   const load = useCallback(async () => {
     const mine = ++generation.current;
@@ -418,6 +481,9 @@ function DesignWorkshopsPageBody() {
    * reference hydration follows, and it was a real bug there before it was a rule.
    */
   function applySourceWorkshop(id: string) {
+    // A themed dropdown is a `<button>` and fires no native input event, so the form's `onInput`
+    // never sees it — and this one does not merely record a choice, it FILLS four boxes below.
+    setDirty(true);
     setSourceWorkshopId(id);
     const form = formRef.current;
     const picked = sourceWorkshops.find((w) => w.id === id);
@@ -459,13 +525,26 @@ function DesignWorkshopsPageBody() {
         const value = String(form.get(key) ?? "").trim();
         return value || undefined;
       };
+      /*
+        WHO MAY OPEN IT AND WHOSE NAME IS ON IT, RESOLVED BY THE SHARED RULE.
+
+        `namedDesignerTeam` is the same function the picker prints its lead line from, so the
+        sentence the admin just read and the body about to be sent cannot disagree about which
+        designer's profile gets copied into stage 1. It also settles the case the screen can produce
+        and the wire must not: a lead who has since been unticked is not silently re-added, the
+        first ticked is promoted instead.
+
+        NOTHING TICKED SENDS NOTHING. The team is empty, `designerUserId` goes as `undefined` and
+        `designerUserIds` as `[]` — and `createDesignWorkshop` omits both keys, which is the only
+        shape an API predating either of them can answer. The offline draft then holds null and an
+        empty list, which is the honest state rather than "" for a decision nobody has taken.
+      */
+      const designers = namedDesignerTeam({ chosen: designerUserIds, lead: leadDesignerId });
       const header = {
         title,
         templateId,
-        // "" MEANS "NOBODY NAMED" AND IS SENT AS NOTHING. The server would fold an empty string to
-        // None itself, but a body that carries the key with nothing in it reads on the wire as an
-        // answer given, and the offline draft would then hold "" where null is the honest state.
-        designerUserId: designerUserId || undefined,
+        designerUserId: designers.lead || undefined,
+        designerUserIds: designers.team,
         craftName: text("craftName"),
         clusterName: text("clusterName"),
         state: text("state"),
@@ -477,33 +556,40 @@ function DesignWorkshopsPageBody() {
         // than two records that happen to share a title.
         workshopId: sourceWorkshopId || undefined
       };
-      // Offline, the workshop is created HERE, with a local id, and becomes a real record on the
-      // next connection. The alternative — refusing — makes the very first act of a fortnight in the
-      // field the one act that needs signal, and a designer standing in a room with the participants
-      // in front of them would open a paper notebook instead.
-      const created =
-        typeof navigator !== "undefined" && navigator.onLine === false
-          ? await createLocalOffline(header)
-          : await createDesignWorkshop(header).catch(async (err) => {
-              // `isTransient` and NOT `isUnreachable`, and the two lines above are why the same
-              // file uses both. This is not a message: it is the decision whether to KEEP the
-              // workshop on this device and retry it, and "is it worth trying again" is exactly
-              // that question — a 5xx on a create is worth carrying rather than losing the room.
-              // The failed-load handler above is a message, and there the same test would lie.
-              if (!isTransient(err)) throw err;
-              return createLocalOffline(header);
-            });
+      /*
+        THE WORKSHOP IS CREATED ON THE SERVER, OR IT IS KEPT HERE — AND WHICH OF THOSE HAPPENED IS
+        RECORDED ON THE DRAFT, because a create whose answer was lost must not be filed twice.
+
+        Offline, the workshop is created HERE, with a local id, and becomes a real record on the
+        next connection. The alternative — refusing — makes the very first act of a fortnight in the
+        field the one act that needs signal, and a designer standing in a room with the participants
+        in front of them would open a paper notebook instead.
+
+        The two arms are deliberately asymmetric — a transient failure stamps the draft because the
+        POST had already gone out, and being offline does not because nothing was sent. That
+        argument, and the duplicate government record it prevents, live in
+        `lib/designWorkshopCreate.ts` and are pinned by
+        `e2e/design-workshop-create-idempotence-unit.spec.ts`. Do not re-inline the decision here:
+        there is no React renderer in this project's devDependencies, so a decision written in this
+        file is a decision no test can reach.
+      */
+      const created = await createWorkshopOrKeepItHere(header);
       formElement.reset();
       // `reset()` only clears what the DOM owns, and the range lives in React state — without this
       // the next "New design workshop" opens pre-filled with the dates of the one just created, and
       // a designer starting their second workshop of the week inherits the first one's fortnight.
       setDuration({});
       setSourceWorkshopId("");
-      // Cleared for the same reason as the range above: it lives in React state, so `reset()` does
-      // not reach it, and the next "New design workshop" would otherwise open with the last
-      // workshop's designer already named — the one field here whose stale value silently puts
-      // somebody's profile on a document they had nothing to do with.
-      setDesignerUserId("");
+      // Cleared for the same reason as the range above: they live in React state, so `reset()` does
+      // not reach them, and the next "New design workshop" would otherwise open with the last
+      // workshop's designers already ticked — the one field here whose stale value silently puts
+      // somebody's profile on a document they had nothing to do with, and hands four accounts
+      // access to a workshop nobody meant to give them.
+      setDesignerUserIds([]);
+      setLeadDesignerId("");
+      // The work is saved, so nothing is owed and the prompt must not fire on the navigation this
+      // function is about to perform.
+      setDirty(false);
       setFormOpen(false);
       await refreshDrafts();
       // A brand-new workshop is 22 empty stages, so the only useful next step is opening it. Going
@@ -512,6 +598,16 @@ function DesignWorkshopsPageBody() {
       // restoration and the token in memory instead of reloading the whole bundle.
       router.push(`/design-workshops/${created.id}`);
     } catch (err) {
+      /*
+        THE PROMPT COMES DOWN ON A FAILURE, and the form stays dirty.
+
+        A create can be refused for a reason only this banner can carry — an ineligible designer
+        somewhere in the list refuses the WHOLE create and the 422 names every account it objected
+        to. Leaving the unsaved-changes dialog up would put that sentence behind a modal, and the
+        admin would be answering "save or discard" about a save that has just told them why it
+        cannot happen.
+      */
+      setConfirmAction(null);
       setError(err instanceof Error ? err.message : "Unable to create the design workshop");
     } finally {
       setCreating(false);
@@ -526,7 +622,12 @@ function DesignWorkshopsPageBody() {
         // Stated because it is TRUE and because it is unlike everything else in this app: nothing
         // else here has a soft delete, so a reader who has met the artisan and product dialogs will
         // assume this one is permanent and will hesitate over something an admin can undo.
-        "Nothing is erased — this is a soft delete kept for the research record, and an admin can restore it."
+        //
+        // AND IT NAMES THE SCREEN, which it could not until the trash card landed. "An admin can
+        // restore it" was true of the API and unreachable in the product — nothing listed deleted
+        // workshops, so the only admin who could act on this sentence was one who had written the id
+        // down first. A promise a reader cannot follow is worse than no promise.
+        "Nothing is erased — this is a soft delete kept for the research record, and an admin can restore it from Settings → Deleted workshops."
       )
     );
     if (!ok) return;
@@ -667,7 +768,13 @@ function DesignWorkshopsPageBody() {
           // says "no" and names neither who can nor what to do instead. A designer who arrives here
           // wanting to start a workshop is told, in words, by the panel below.
           allowCreate ? (
-            <button type="button" className="field-button" onClick={() => setFormOpen((open) => !open)}>
+            <button
+              type="button"
+              className="field-button"
+              // CLOSING GOES THROUGH THE GUARD, OPENING DOES NOT. This button is the same control
+              // for both, and only one of the two directions can throw work away.
+              onClick={() => (formOpen ? guard(() => setFormOpen(false)) : setFormOpen(true))}
+            >
               <Plus className="h-4 w-4" aria-hidden />
               {formOpen ? "Close" : "New design workshop"}
             </button>
@@ -729,7 +836,10 @@ function DesignWorkshopsPageBody() {
       ) : null}
 
       {allowCreate && formOpen ? (
-        <form ref={formRef} onSubmit={submit} className="panel mb-5 grid gap-4 p-4">
+        // `onInput` catches every real text box in one place. It CANNOT catch the themed controls —
+        // a dropdown, a date picker and a multi-select are all `<button>`s and fire no input event —
+        // so each of those calls `markDirty` itself; see the `dirty` state above.
+        <form ref={formRef} onSubmit={submit} onInput={markDirty} className="panel mb-5 grid gap-4 p-4">
           <div>
             <h2 className="font-display text-lg font-bold text-ink-900">Start a design workshop</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
@@ -782,7 +892,11 @@ function DesignWorkshopsPageBody() {
             <FieldBlock label="Report template">
               <Dropdown
                 value={templateId}
-                onChange={setTemplateId}
+                onChange={(next) => {
+                  // Themed control: no native input event, so the form's `onInput` never sees it.
+                  markDirty();
+                  setTemplateId(next);
+                }}
                 options={
                   templates.length
                     ? templates.map((template) => ({ value: template.id, label: template.name }))
@@ -836,7 +950,15 @@ function DesignWorkshopsPageBody() {
                   nothing at all, not a date nobody chose. */}
               <input type="hidden" name="startDate" value={duration.from ? toIsoDate(duration.from) : ""} />
               <input type="hidden" name="endDate" value={duration.to ? toIsoDate(duration.to) : ""} />
-              <DateRangePicker from={duration.from} to={duration.to} onChange={setDuration} />
+              <DateRangePicker
+                from={duration.from}
+                to={duration.to}
+                onChange={(next) => {
+                  // Themed control: no native input event, so the form's `onInput` never sees it.
+                  markDirty();
+                  setDuration(next);
+                }}
+              />
             </div>
           </div>
           {/*
@@ -850,8 +972,18 @@ function DesignWorkshopsPageBody() {
             reason: a themed dropdown is a `<button>` and submits nothing of its own.
           */}
           <WorkshopDesignerPicker
-            value={designerUserId}
-            onChange={setDesignerUserId}
+            values={designerUserIds}
+            onChange={(next) => {
+              // The multi-select is a `<button>` too, and it is the control on this form whose loss
+              // costs the most: a set assembled by searching the repository one name at a time.
+              markDirty();
+              setDesignerUserIds(next);
+            }}
+            lead={leadDesignerId}
+            onLeadChange={(next) => {
+              markDirty();
+              setLeadDesignerId(next);
+            }}
             disabled={creating}
             offline={offline}
           />
@@ -862,7 +994,11 @@ function DesignWorkshopsPageBody() {
             <button className="field-button" disabled={creating}>
               {creating ? "Creating…" : "Create design workshop"}
             </button>
-            <button type="button" className="field-button-secondary" onClick={() => setFormOpen(false)}>
+            <button
+              type="button"
+              className="field-button-secondary"
+              onClick={() => guard(() => setFormOpen(false))}
+            >
               Cancel
             </button>
           </div>
@@ -1011,7 +1147,7 @@ function DesignWorkshopsPageBody() {
                     ? // An empty list is the worst moment to be vague at a designer: there is nothing
                       // on screen to explain itself, so this is the whole answer — why there is no
                       // "New workshop" button, who to ask, and what happens once they have asked.
-                      "Design workshops you have access to will appear here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and give you access, and it will show up here ready for all 22 stages."
+                      "Design workshops you have access to will appear here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and name you as one of its designers, and it will show up here ready for all 22 stages."
                     : "Design workshops you have access to will appear here."
               }
             />
@@ -1057,8 +1193,8 @@ function DesignWorkshopsPageBody() {
                         // a sync that is never coming.
                         <div className="mt-1 text-xs leading-5 text-amber-800">
                           This workshop was started on this device and has no record in the repository yet. Starting one is
-                          now done by an admin — ask them to create it, then use “Move into a workshop” to send everything
-                          here into it. Nothing has been lost.
+                          now done by an admin — ask them to create it and name you as one of its designers, then use
+                          “Move into a workshop” to send everything here into it. Nothing has been lost.
                         </div>
                       ) : null}
                     </td>
@@ -1192,6 +1328,32 @@ function DesignWorkshopsPageBody() {
           router.push(`/design-workshops/${remoteId}`);
         }}
       />
+
+      {/*
+        THE UNSAVED-CHANGES PROMPT for the create form above.
+
+        "Save" REQUESTS THE FORM'S OWN SUBMIT AND PARKS NOTHING, which is the one way this mount
+        differs from the record editors. A successful create navigates INTO the new workshop —
+        22 empty stages are the only useful next step — so a parked "and then go back" would
+        immediately undo the thing the admin just asked for. The save is the leaving.
+
+        A refused create takes the dialog down from `submit`'s catch, because the refusal is a
+        sentence in the banner underneath: an ineligible designer anywhere in the list refuses the
+        WHOLE create and the 422 names every account it objected to, and that cannot be read from
+        behind a modal.
+      */}
+      <UnsavedChangesDialog
+        open={confirmAction !== null}
+        saving={creating}
+        onKeepEditing={() => setConfirmAction(null)}
+        onDiscard={() => {
+          const action = confirmAction;
+          setConfirmAction(null);
+          setDirty(false);
+          action?.();
+        }}
+        onSave={() => formRef.current?.requestSubmit()}
+      />
     </>
   );
 }
@@ -1202,31 +1364,3 @@ function draftIsUnsent(draft: DwDraft): boolean {
   return Object.values(draft.stages).some((stage) => stage.dirtyAt !== null || stage.removedFrom.length > 0);
 }
 
-/**
- * Start a workshop that lives only here, and answer in the shape the create handler expects.
- *
- * The id it returns is the LOCAL one, and every design-workshop route resolves either id, so the
- * navigation that follows works immediately and keeps working after the record is created on the
- * server — the URL simply goes on naming the draft.
- */
-async function createLocalOffline(header: Partial<DwDraftHeader> & { title: string }): Promise<{ id: string }> {
-  /*
-    THE WHOLE HEADER, SPREAD — NEVER A HAND-COPIED FIELD LIST.
-
-    This function used to declare its own nine-key parameter type and re-enumerate those nine keys
-    into `createLocalDraft`. `workshopId` was in neither list, so a design workshop created without
-    a connection — or created online when the POST merely 500'd once, which takes the same fallback
-    — silently dropped the workshop record the designer had just chosen from the picker. Nothing
-    caught it: TypeScript does not apply excess-property checking to a variable, so the caller's
-    extra key was legal and invisible, and every OTHER field survived, which made the loss look
-    like a correctly pre-filled row. The consequence surfaces a fortnight later, on the stages that
-    scope their reference pickers to the linked workshop: `refScope: "WORKSHOP"` falls back to the
-    whole table and the designer picks participants out of the entire repository.
-
-    Taking `Partial<DwDraftHeader>` means this function cannot drift from the header shape again —
-    a field added to `DwDraftHeader` arrives here for free. `createLocalDraft` prunes the keys that
-    are present-but-undefined, which is what an unfilled box on this form produces.
-  */
-  const draft = await createLocalDraft(header);
-  return { id: draft.localId };
-}

@@ -23,6 +23,7 @@ from app.services.access import (
     effective_tier_for_record,
     tier_at_least,
 )
+from app.services.concurrency import gather_reads
 from app.services.records import public_encode
 
 router = APIRouter(prefix="/data-access", tags=["data-access"])
@@ -76,11 +77,16 @@ async def my_grants(current_user: Any = Depends(get_current_user)) -> dict[str, 
     - outgoing: requests/grants where I am the GRANTEE (my access to others' data)
     """
     uid = get_value(current_user, "id")
-    incoming = await db.dataaccessgrant.find_many(
-        where={"ownerId": uid}, include=GRANT_INCLUDE, order={"updatedAt": "desc"}
-    )
-    outgoing = await db.dataaccessgrant.find_many(
-        where={"granteeId": uid}, include=GRANT_INCLUDE, order={"updatedAt": "desc"}
+    # The two perspectives are two different WHEREs over the same table and neither reads the
+    # other, so they go out together: this route was two cross-region round trips to answer one
+    # screen, and it is now one.
+    incoming, outgoing = await gather_reads(
+        db.dataaccessgrant.find_many(
+            where={"ownerId": uid}, include=GRANT_INCLUDE, order={"updatedAt": "desc"}
+        ),
+        db.dataaccessgrant.find_many(
+            where={"granteeId": uid}, include=GRANT_INCLUDE, order={"updatedAt": "desc"}
+        ),
     )
     return public_encode({"incoming": incoming, "outgoing": outgoing})
 

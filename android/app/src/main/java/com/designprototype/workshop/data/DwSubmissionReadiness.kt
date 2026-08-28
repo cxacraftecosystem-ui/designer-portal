@@ -2,6 +2,7 @@ package com.designprototype.workshop.data
 
 import com.designprototype.workshop.report.summary as richSummary
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.net.URLEncoder
 
@@ -72,7 +73,18 @@ data class DwReadinessAddress(
     val rowCount: Int,
 )
 
-/** One thing that will 422 a submit, with somewhere to go. */
+/**
+ * One thing standing between this workshop and a clean submission, with somewhere to go.
+ *
+ * THIS SAID "one thing that will 422 a submit" UNTIL 2026-08-28, AND THAT IS NOT TRUE OF EVERY ITEM
+ * IN THE LIST ANY MORE. A field short of its declared [FieldDto.minItems] is now a blocking item —
+ * both motif galleries at twenty-five each — and a minimum is SCORED and never validated: no save
+ * path refuses it, and `PATCH /design-workshops/{id}` writes `status: "SUBMITTED"` behind an enum
+ * check with no completeness test anywhere. What such an item really costs is what this screen, the
+ * report's `X-Report-Warnings` line and the completeness annexure all say about it, which is what
+ * the wording now claims and no more. The ordinary `required` items are unchanged: they are what
+ * `validate_entry` refuses, and that refusal is real.
+ */
 data class DwReadinessItem(
     val stageKey: String,
     val stageNumber: Int,
@@ -252,8 +264,19 @@ object DwSubmissionReadiness {
      * ---------------------------------------------------------------------------------- */
 
     /** The label the scorer would file this field's absence under. Must match it exactly. */
-    private fun missingLabel(entity: EntityDto, field: FieldDto): String =
-        if (entity.cardinality == "SINGLETON") field.label else "${entity.title}: ${field.label}"
+    /**
+     * The label the SCORER files this field's shortfall under, reproduced exactly.
+     *
+     * IT TAKES THE VALUE, and that is not decoration: [dwShortfallLabel] decorates a floored gallery
+     * with its own count ("Traditional motif photographs (20 of 25)"), so a lookup built from the
+     * bare label would miss every one of them and every motif item would degrade from "open the
+     * gallery" to "open the stage". The two must be one function's output or they are two functions'
+     * opinions.
+     */
+    private fun missingLabel(entity: EntityDto, field: FieldDto, value: JsonElement?): String {
+        val own = dwShortfallLabel(field, value)
+        return if (entity.cardinality == "SINGLETON") own else "${entity.title}: $own"
+    }
 
     /**
      * A row's stable identity, in the order the stage screen will recognise it.
@@ -340,10 +363,15 @@ object DwSubmissionReadiness {
         for (entity in spec.entities) {
             if (entity.cardinality == "SINGLETON") {
                 for (field in entity.liveFields) {
-                    if (!field.required) continue
-                    if (DwValues.isFilled(singleton[field.key])) continue
+                    // A DECLARED FLOOR IS A REQUIREMENT HERE TOO, or the walk and the scorer disagree
+                    // about which items exist. `dwCountsAsRequired` is the single predicate both ask,
+                    // so a gallery short of its `minItems` gets an address instead of being skipped
+                    // for not carrying the `required` flag.
+                    if (!dwCountsAsRequired(field)) continue
+                    val value = singleton[field.key]
+                    if (DwValues.isFilled(value) && dwMeetsMinimum(field, value)) continue
                     note(
-                        missingLabel(entity, field),
+                        missingLabel(entity, field, value),
                         DwReadinessAddress(
                             entityKey = entity.key,
                             entityTitle = entity.title,
@@ -363,10 +391,11 @@ object DwSubmissionReadiness {
             val rows = stored?.rowsFor(entity.key).orEmpty()
             rows.forEachIndexed { index, row ->
                 for (field in entity.liveFields) {
-                    if (!field.required) continue
-                    if (DwValues.isFilled(row.values[field.key])) continue
+                    if (!dwCountsAsRequired(field)) continue
+                    val value = row.values[field.key]
+                    if (DwValues.isFilled(value) && dwMeetsMinimum(field, value)) continue
                     note(
-                        missingLabel(entity, field),
+                        missingLabel(entity, field, value),
                         DwReadinessAddress(
                             entityKey = entity.key,
                             entityTitle = entity.title,

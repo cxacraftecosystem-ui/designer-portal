@@ -22,6 +22,7 @@ flowchart TD
   R1["<b>RESEARCHER_GUIDE.md</b><br/>accounts, install, offline, exports"] --> R2["<b>WALKTHROUGH.md</b><br/>the capture screens, field by field"]
 
   W1["<b>DESIGN_WORKSHOP.md</b><br/>the stages, the field registry,<br/>the hybrid store, the report pipeline"] --> W2["<b>COMPUTED_FINDINGS.md</b><br/>the arithmetic beside stages 9 and 17,<br/>and the three-language port parity"]
+  W2 --> W3["<b>SKETCHES-PROTOTYPES-PARITY.md</b><br/>one feature, client by client:<br/>what each client can actually do"]
 
   D1["<b>ARCHITECTURE.md</b><br/>the map"] --> D2["<b>DATA_MODEL.md</b><br/>the models, and the four surprises"]
   D2 --> D3["<b>PERMISSIONS.md</b><br/>who may do what"]
@@ -53,10 +54,12 @@ flowchart TD
 |---|---|
 | [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) | The product itself: the numbered workshop stages, the three capture tiers and the completeness gate, why the fields are data rather than columns, the promoted-column index over the stage JSON, the report pipeline and its templates, how a child collection prints under its parent, offline generation on the phone, and what the server-side PDF cannot do |
 | [COMPUTED_FINDINGS.md](COMPUTED_FINDINGS.md) | The arithmetic that checks a designer's stage-9 and stage-17 conclusions against the rows underneath them: the sample floors, the verdict vocabularies, why nothing is ever auto-corrected, and the port-parity rules that keep three implementations equal to the rupee |
+| [SKETCHES-PROTOTYPES-PARITY.md](SKETCHES-PROTOTYPES-PARITY.md) | One feature, client by client: what a designer can actually do with a sketch or a prototype on the web and on the handset, every row cited to a symbol, every gap marked deliberate or not — so that the comparison stops being re-derived by hand, and stops being wrong |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | What are the pieces, how does a request travel, where is the latency, how does transcription fail over, how does the offline outbox replay? |
 | [DATA_MODEL.md](DATA_MODEL.md) | What is stored, how does it relate, and which four parts of the schema are not what they look like? |
-| [PERMISSIONS.md](PERMISSIONS.md) | The role ladder, the full capability matrix, the review state machine, the late-submission gate, and the four access systems layered on top — including the design-workshop viewer grant and the questionnaire visibility that follows it |
+| [PERMISSIONS.md](PERMISSIONS.md) | The **eight**-tier role ladder, the full capability matrix, the review state machine, the late-submission gate, and the **five** access systems layered on top — including the design-workshop viewer grant, the questionnaire visibility that follows it, and the read-only inspector scope the `INSPECTOR` tier reaches a workshop through (§4.5, added 2026-08-27; this row said “four” until that day) |
 | [MEDIA_PIPELINE.md](MEDIA_PIPELINE.md) | Every tactic both clients use to get a photograph off a phone on a bad network without losing it, and the on-device quality checks that run before it leaves |
+| [EDGE-COMPUTE-SPLIT.md](EDGE-COMPUTE-SPLIT.md) | Which work runs on the machine a designer is holding and which needs the server, feature by feature — the measurement paths, sketch rectification, the vendored tracer — and what is still doable with no signal |
 | [SECURITY.md](SECURITY.md) | Transport, secrets, PII and Aadhaar handling, the authorisation model's security properties, and the open risk register |
 | [SECURITY-REVIEW-2026-08-22.md](SECURITY-REVIEW-2026-08-22.md) | A point-in-time adversarial review of the 2026-08-22/23 change set: five ranked findings, the categories checked and found clean, and what the review could not verify |
 
@@ -108,6 +111,7 @@ kept in full, because a decision record that deletes the case it lost is worse t
 | [DECISION-identity-card-ocr-on-android.md](DECISION-identity-card-ocr-on-android.md) | Whether to bundle an on-device text recogniser to read an Aadhaar card on the handset. Argued no, on APK cost; **reversed by the user, and the recogniser ships** |
 | [DECISION-identity-card-ocr-on-web.md](DECISION-identity-card-ocr-on-web.md) | The same capability in the browser: no recogniser is bundled, lazily imported or fetched. The browser reads the card where it already can, through the Shape Detection API; everywhere else the server route does it |
 | [DECISION-qr-scanning-on-android.md](DECISION-qr-scanning-on-android.md) | Which QR decoder the handset uses, and the history of changing that answer twice. **Built:** ZXing, on both read surfaces, with the typed box never hidden |
+| [DECISION-photo-geometry-over-vision-measurement.md](DECISION-photo-geometry-over-vision-measurement.md) | Which of the two ways to measure a record's dimensions off a photograph is offered first. The deterministic on-device geometry becomes primary — free, offline, re-derivable, with an error bar — and the vision model is kept as a labelled fallback. **Built:** the Android adapter, deliberately unwired, with the two mounts written out |
 | [SALVAGED-BRANCHES-SUPERSEDED.md](SALVAGED-BRANCHES-SUPERSEDED.md) | Four `worktree-*` branches that look like unmerged feature work. Merging any of them regresses `main`; the table says why, branch by branch |
 | [PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md) | The three-tier AI plan and designer-defined sections. **Agreed in principle, not started** — and half of it is "stop building what already exists" |
 

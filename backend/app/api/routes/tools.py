@@ -7,6 +7,7 @@ from app.core.db import db
 from app.core.deps import assert_can_delete, get_current_user, is_admin, require_record_creator
 from app.schemas.records import ToolArtisanAssign, ToolCreate, ToolUpdate
 from app.services.access import effective_tier_for_record, guard_record_edit
+from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     RECORD_STATUSES,
@@ -60,7 +61,24 @@ INCLUDE = include_of(RELATIONS)
 # set cannot know which table a payload is bound for. Derived from ``model ToolDocumentation`` in
 # prisma/schema.prisma, intersected with what ``ToolUpdate`` actually accepts. It OVERLAPS the
 # product list without being it — a tool has ``height``/``width``/``thickness``/``weight``/``radius``
-# and no ``heightInches``, and it has no ``size`` or ``costOfMaking`` — so the two must not be shared.
+# beside the documented trio, and it has no ``size`` or ``costOfMaking`` — so the two must not be
+# shared.
+#
+# THIS PARAGRAPH SAID "AND NO ``heightInches``" UNTIL 2026-08-27, AND THAT SENTENCE IS RECORDED
+# RATHER THAN QUIETLY DELETED BECAUSE OF WHAT IT WAS USED TO ARGUE. The column landed that day
+# (schema, an additive migration, this tuple, ``ToolCreate``/``ToolUpdate``, and both Android DTOs),
+# so ``ToolDocumentation`` now carries the same ``lengthInches``/``breadthInches``/``heightInches``
+# triple ``ProductDocumentation`` does. While it was absent it was cited across the repository as the
+# reason a tool's height could be measured off a photograph, accepted by a designer, and then
+# recorded as nothing — ``measurement_provenance.DIMENSION_FIELDS`` names all three columns, so a
+# marker for a tool height had nowhere to land. It lands now. Re-check with::
+#
+#     grep -n "heightInches" backend/prisma/schema.prisma
+#
+# ``height`` and ``width`` beside it are still ORDINARY typed inputs and are still outside
+# ``DIMENSION_FIELDS``: a method marker naming one of them is refused by
+# ``schemas/records.validate_measurement_methods`` rather than dropped, so a client aiming a grid
+# reading at the wrong column is told which three it may name.
 #
 # Only valid because ``update_tool`` dumps with ``exclude_unset=True``; see the note at that call.
 #
@@ -71,6 +89,8 @@ INCLUDE = include_of(RELATIONS)
 # which ``services/media_queue`` owns and ``records.PROVENANCE_SKIP_FIELDS`` already classes as
 # system-managed. ``extraMetadata`` is left out because naming it would be inert:
 # ``merge_field_provenance`` rebuilds and reassigns that column further down this route.
+# ``measurementMethods`` is out for a stronger reason than either: it is not a column at all, so
+# there is no null for it to write — see the note under this tuple.
 _CLEARABLE_COLUMNS = (
     "localName",
     "englishName",
@@ -81,6 +101,7 @@ _CLEARABLE_COLUMNS = (
     "width",
     "lengthInches",
     "breadthInches",
+    "heightInches",
     "thickness",
     "weight",
     "radius",
@@ -88,6 +109,28 @@ _CLEARABLE_COLUMNS = (
     "suggestionsForToolImprovement",
     "remarks",
 )
+
+# ── ``measurementMethods`` RIDES THIS BODY AND IS NOT A COLUMN ───────────────────────────────────
+#
+# The one key on ``ToolCreate`` / ``ToolUpdate`` that names no column on ``ToolDocumentation``. It is a per-dimension hint
+# about HOW ``lengthInches`` / ``breadthInches`` / ``heightInches`` came to be known — typed off a
+# tape, computed from marks on a photograph, or estimated by a vision model — and
+# ``merge_field_provenance`` POPS it a few lines into each write path below and merges it into the
+# ``{by, byName, at}`` stamp beside each dimension. ``services/measurement_provenance`` holds the
+# argument; ``schemas/records.validate_measurement_methods`` holds what a client may send.
+#
+# THE PRECONDITION THAT IS EASY TO BREAK FROM HERE, which is why this note is in the route and not
+# only in the service. ``clean_data`` drops only ``None``, so the marker survives every step between
+# the parse and that pop. Anything inserted in between that REBUILDS ``data`` from a column list
+# instead of mutating it in place would drop the marker silently — the dimension would then store an
+# explicit UNRECORDED and the designer who pressed Accept on a machine reading would never be told.
+# And anything that moved the pop EARLIER, in front of ``guard_record_edit``, would hand
+# ``merge_field_provenance`` a payload with nothing left to merge.
+#
+# It is in ``access.REVISION_SKIP_FIELDS`` and in ``records.PROVENANCE_SKIP_FIELDS``, so it is
+# neither audited as an edit somebody made nor attributed as a field somebody filled in. True as of
+# 2026-08-27; re-check with ``grep -n "MARKER_BODY_KEY" backend/app/services/access.py
+# backend/app/services/records.py``.
 
 # WHY EVERY ENCODE BELOW NAMES THE CALLER. ``public_encode(obj)`` with no viewer is not "the default";
 # it is the CHEAPEST SAFE answer — mask every identity number and withhold every media URL — and it is
@@ -99,6 +142,69 @@ _CLEARABLE_COLUMNS = (
 # designer who had uploaded it seconds earlier, because the viewer-less branch is taken before any
 # rank test. Naming the caller also lifts the Aadhaar/Pehchan mask for the ranks entitled to it, which
 # is the same policy artisans.py, media.py and search.py already apply on their own reads.
+
+# WHY THIS MODULE STAYS ON THE UPLOADER HALF. The three encodes below that resolve a media set at all —
+# the list, the detail and the PATCH — ask ``media_url_owners`` for the uploader set alone and leave
+# ``public_encode``'s ``media_workshops`` at its empty default. That is a
+# DECISION, recorded here once and pointed at from each call, not an omission — the banner in
+# ``records.py`` exists because a transcript leak was achieved by exactly this shape of silence.
+#
+# ``records.media_url_scope`` answers "whose media bytes may travel" in two halves, because a
+# design-workshop attachment is entitled to by TAG — ``linkedRecordType="designWorkshop"`` plus the
+# workshop id (``dictation_consent.MEDIA_TAG``) — rather than by who uploaded it. The tag half exists
+# for surfaces that can actually be handed such a file. This one cannot, and here is the argument.
+#
+# A TOOL'S MEDIA IS REACHED BY FOREIGN KEY, AND THAT FOREIGN KEY IS WRITTEN FROM THE TAG. ``RELATIONS``
+# above pulls ``media`` through ``MediaFile.toolId``, and the only writer of that column in this
+# repository is ``records.media_relation_data``, which DERIVES it from the link type: ``{"toolId": …}``
+# for the tag ``tool``, and nothing at all for ``designWorkshop`` — that tag has no column on MediaFile,
+# which is the whole reason the workshop half has to be a tag test in the first place. Its two
+# callers (``POST /media/complete`` and ``POST /media/{id}/relink`` — true as of 2026-08-27; check
+# ``grep -rn media_relation_data backend/app``) write the tag and the key from the SAME pair, and
+# ``MediaCompleteRequest`` carries no ``toolId`` of its own for a client to send past them
+# (``APIModel`` forbids extra keys). So a row in a tool's ``media`` list is tagged ``tool``; passing
+# ``media_workshops`` here would ship a set that nothing on this payload could ever be tested against,
+# at the price of a second round trip on the widest read in the module. Compare ``search.py``, which
+# reads the ``MediaFile`` table itself and therefore does need it.
+#
+# THE NEAR-MISS THAT IS NOT ONE, AND THE FALSE VERSION OF IT THAT STOOD HERE UNTIL 2026-08-27.
+# An earlier draft of this paragraph offered a worked example: a file first attached to a tool and
+# later RECOVERED onto a design workshop, keeping its ``toolId`` and gaining the lower-cased tag
+# ``designworkshop``, invisible to a workshop arm that compares camelCase. No route in this
+# repository can write that row. The wrong version is recorded here rather than quietly deleted,
+# because a comment that invents a hazard is worse than no comment at all: it is written as a
+# concrete scenario, which is the form a future editor acts on, and while they are defending the
+# fiction they are not looking at the real thing. The premise came from the banner over
+# ``media.ORPHAN_TAG_TYPES``, which says the relink route lower-cases whatever it is given before
+# storing it — true of the types that route ACCEPTS, and over-general for this one.
+#
+# EVERY WRITER OF ``MediaFile.linkedRecordType``, one at a time (true as of 2026-08-27; check
+# ``grep -rn mediafile.create backend/app`` and the same for ``mediafile.update``):
+#
+#   * ``POST /media/{id}/relink`` refuses the tag outright. It lower-cases the requested type and
+#     looks it up in ``media._relink_delegate``, which has no ``designworkshop`` entry — a design
+#     workshop has no typed FK to re-point — so the route raises 400 "Unsupported record type for
+#     re-linking" before it writes anything. A relink genuinely does NOT clear the previous foreign
+#     key, which is what made the invented row sound plausible; it never reaches the write.
+#   * ``POST /media/complete`` stores the tag VERBATIM (lower-cased only to look the parent delegate
+#     up) and takes the foreign key from ``media_relation_data``, which has no entry for either
+#     spelling. So a workshop-tagged row — camelCase from both clients, lower-case if some caller
+#     ever sends one that way — carries no ``toolId``, and never enters a tool's ``media`` list to
+#     be redacted in the first place.
+#   * There is no PATCH or PUT on media at all; the remaining writes touch transcript columns only.
+#
+# The two spellings cannot part company HERE, then, because nothing here carries the tag in either of
+# them. Where they could is ``records.py``, and both gates read it from one constant:
+# ``_redact_sensitive`` and ``_design_workshop_media_branches`` compare against the same camelCase
+# ``MEDIA_TAG``. Agreement is the property this change exists to restore, and the fix the day one of
+# them starts folding case is to settle the spelling in ``records.py``, not to widen this route.
+#
+# The day a tool genuinely can carry a design-workshop-tagged file, move all three calls to
+# ``media_url_scope`` and pass ``media_workshops`` at every one of them — not at whichever single one a
+# bug report happened to name. The measurement-grid frames are the shape to check first: they are
+# ordinary ``tool``-tagged uploads marked in ``extraMetadata``, and a design workshop only ever READS
+# them through ``design_workshops._reference_photos``, which copies the picture into a report and
+# creates no row here.
 
 
 async def _assigned_artisans(tool_id: str, viewer: Any) -> list[dict[str, Any]]:
@@ -174,20 +280,35 @@ async def list_tools(
     if createdBy:
         where["createdById"] = createdBy
     add_date_range(where, "createdAt", dateFrom, dateTo)
-    total, items = await count_and_page(
-        db.tooldocumentation,
-        where=where,
-        skip=skip,
-        take=page_size,
-        order={"createdAt": "desc"},
-        relations=RELATIONS,
-    )
     # ONE grant lookup for the whole page — ``media_url_owners`` costs a single query, and only below
     # professor, which is exactly the rank whose colleagues' photographs would otherwise be listed and
     # withheld. The cheap ``viewer``-derived default would hand back only the caller's OWN uploads,
     # which on a shared workshop's tool list is most of a page of dead tiles.
+    #
+    # IT RIDES THE PAGE'S OWN WAVE RATHER THAN FOLLOWING IT. It depends only on the VIEWER, not on
+    # which rows came back, so awaiting it after ``count_and_page`` returned added a whole
+    # cross-region round trip to this route for every account below professor — invisible in the
+    # measured table, which was taken as an admin, where the lookup short-circuits without querying.
+    # Width: the count, the page and this make 3, and the relation hydration inside
+    # ``count_and_page`` is a second wave of at most ``len(RELATIONS)``, so nothing here approaches
+    # ``pool_width()`` (10).
+    #
+    # THE UPLOADER HALF ALONE, DELIBERATELY: no design-workshop-tagged row can reach a tool's ``media``
+    # list, so ``media_workshops`` stays empty here by decision, not by nobody asking. The argument is
+    # under "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above.
+    (total, items), media_urls = await gather_reads(
+        count_and_page(
+            db.tooldocumentation,
+            where=where,
+            skip=skip,
+            take=page_size,
+            order={"createdAt": "desc"},
+            relations=RELATIONS,
+        ),
+        media_url_owners(current_user),
+    )
     return page_payload(
-        public_encode(items, current_user, media_urls=await media_url_owners(current_user)),
+        public_encode(items, current_user, media_urls=media_urls),
         total,
         page,
         page_size,
@@ -219,6 +340,9 @@ async def create_tool(
 async def get_tool(tool_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     tool = await require_record(db.tooldocumentation, tool_id)
     await hydrate_relations([tool], RELATIONS)
+    # The uploader half alone, and for this detail read as much as for the list: the ``media`` this
+    # hydrates comes through ``MediaFile.toolId``, so it cannot be a design-workshop attachment. See
+    # "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above; ``media_workshops`` is left empty on purpose.
     return public_encode(tool, current_user, media_urls=await media_url_owners(current_user))
 
 
@@ -255,6 +379,10 @@ async def update_tool(
     # photographed. Resolved rather than left to the cheap default so a photograph that was openable
     # before the save is still openable in the response that comes back from it; a URL that vanishes on
     # save reads as the save having destroyed the file.
+    #
+    # ``INCLUDE`` is derived from ``RELATIONS``, so the rows it returns are the same ``toolId``-keyed
+    # rows the list returns and the same reasoning settles the second half: the uploader set alone,
+    # ``media_workshops`` empty by decision. See "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above.
     return public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
 
 

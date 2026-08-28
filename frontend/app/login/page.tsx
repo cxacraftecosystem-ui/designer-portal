@@ -94,7 +94,15 @@ function ComingSoonBadge() {
 const BRAND_POINTS = [
   "Artisans, crafts, workshops, products, tools and interviews — one connected archive.",
   "Recordings transcribed and translated to English automatically.",
-  "Seven-tier access control; every edit audited."
+  // EIGHT SINCE 2026-08-27, when INSPECTOR (37) landed. This line said "Seven-tier" and is the
+  // second copy of the sentence the landing hero speaks — `HeroLanding.tsx` renders the same
+  // "<n>-tier access control" badge but DERIVES its number from `AccessLadder.tsx`'s
+  // `TIER_COUNT_WORD`, i.e. from `ROLES_BY_RANK.length`, so the hero re-counted itself on the day
+  // the tier shipped and this page did not. It is left hand-written rather than imported because
+  // `AccessLadder.tsx` is a framer-motion component and the login page pulls in no animation
+  // library at all; the cost of importing one for a single word is worse than the count. If you
+  // add a tier, this is one of the lines that will not tell you.
+  "Eight-tier access control; every edit audited."
 ];
 
 /** Shared chrome for the four sign-in actions, so they are one height and one radius. */

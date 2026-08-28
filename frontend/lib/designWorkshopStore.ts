@@ -157,7 +157,7 @@ const STORE_REGISTRY = "registry";
 const MEDIA_BY_DRAFT = "byDraft";
 
 /** The document version. Bump it and add a rung to {@link migrateDraft} in the same commit. */
-export const DW_DRAFT_SCHEMA_VERSION = 3;
+export const DW_DRAFT_SCHEMA_VERSION = 4;
 
 /**
  * The `skewRun` stamped on a refusal recorded BEFORE this store could tell the two kinds apart.
@@ -210,11 +210,12 @@ export function isLocalMediaRef(value: string): boolean {
  * down from the server so the list can draw a row offline, and it is never sent back — writing a
  * promoted column by hand is how the JSON and the column come to disagree about the same fact.
  *
- * THERE IS NOW A THIRD BLOCK OF EXACTLY ONE KEY, and it belongs to neither of the other two.
- * `designerUserId` is a CREATE-ONLY INPUT: it is carried here so a workshop started with no signal
- * still remembers who it was opened for, and it is sent by the create arm of the sync and by
- * nothing else. It is not editable through PATCH (`DwUpdateBody` omits it by name and says why),
- * and it is not promoted from anything — it is what DRIVES the promotion, one step earlier.
+ * THERE IS NOW A THIRD BLOCK, of two keys that belong to neither of the other two.
+ * `designerUserId` and `designerUserIds` are CREATE-ONLY INPUTS: they are carried here so a
+ * workshop started with no signal still remembers who it was opened for, and they are sent by the
+ * create arm of the sync and by nothing else. Neither is editable through PATCH (`DwUpdateBody`
+ * omits both by name and says why), and neither is promoted from anything — they are what DRIVES
+ * the promotion, one step earlier.
  */
 export type DwDraftHeader = {
   title: string;
@@ -239,6 +240,23 @@ export type DwDraftHeader = {
    * fact with two writers — the exact shape the promoted block exists to forbid.
    */
   designerUserId: string | null;
+  /**
+   * Create-only — EVERY designer this workshop was opened for, the lead included.
+   *
+   * A design workshop is a fortnight of work by more than one designer, and each of them has to be
+   * able to open the same 22 stages; naming them at the create is what writes their access rows in
+   * the same call that makes the workshop. `designerUserId` above stays exactly what it was — the
+   * LEAD, the one whose `DesignerProfile` is seeded into stage 1 and stage 3 and whose name reaches
+   * the report cover — because that block is a singleton and the .docx's `dc:creator` is a
+   * single-author field. Several people may open it; one name is on it.
+   *
+   * An EMPTY ARRAY is the ordinary state and means "nobody was named", exactly as `null` does
+   * above. It is never sent as `[]`: {@link createDesignWorkshop} decides which of the two keys go
+   * on the wire, and sends this one only when there is genuinely more than one designer — so a
+   * single-designer create is byte-for-byte the body this client sent before the multi-select
+   * existed, and an API that predates the key is not handed a body it would refuse whole.
+   */
+  designerUserIds: string[];
   /** Display only — promoted from stage 1 by the server. */
   workshopCode: string | null;
   venue: string | null;
@@ -489,6 +507,15 @@ export type DwDraft = {
    * The stamp is written BEFORE the POST and cleared only when the workshop's id is safely on disk,
    * so it is only ever set while the answer is genuinely unaccounted for. See
    * {@link resolveInterruptedCreate} for what the next pass does with it.
+   *
+   * TWO PATHS WRITE IT, AND THE SECOND IS NOT IN THIS FILE. {@link runSync} stamps its own attempt
+   * immediately before it posts. The create form's fallback — `createWorkshopOrKeepItHere` in
+   * `lib/designWorkshopCreate.ts` — stamps the draft it mints when `POST /design-workshops` failed
+   * TRANSIENTLY, because that request had already gone out and may have committed; it deliberately
+   * does not stamp the draft it mints when the browser was OFFLINE, where nothing was ever sent and
+   * a stamp would arm the resolver — and its adopting arm — for every workshop started in a
+   * courtyard. Both halves of that asymmetry are pinned by
+   * `e2e/design-workshop-create-idempotence-unit.spec.ts`.
    *
    * Optional for the reason {@link DwDraft.headerDirtyKeys} is: no schema rung is spent, and a draft
    * written by an older build simply carries no memory of an interrupted create — which is the
@@ -820,6 +847,33 @@ function migrateDraft(raw: Record<string, unknown>): DwDraft {
               ([key, stage]) => [key, { ...stage, failure: reTriagedFailure(stage.failure) }]
             )
           )
+        };
+        break;
+      case 3:
+        /*
+          v4 GIVES EVERY HEADER A `designerUserIds` ARRAY, because the designer a workshop is opened
+          for became several designers and a v3 document has no such key at all.
+
+          THE DEFAULT IS `[]` AND NOT `[designerUserId]`, and the difference is not cosmetic. The
+          two keys are read together by `designerCreateFields`, whose rule for an empty list with a
+          lead standing in it is "the lead alone IS the team" — precisely so that a draft written
+          under the singular picker still names its designer when it finally syncs. Seeding the
+          array from the lead here would say the same thing twice, and the day somebody unticks the
+          lead in the picker the two copies would disagree about who is on the workshop, with the
+          stale one being the one the create actually sends.
+
+          A header that is somehow absent or not an object is left to `emptyHeader`'s merge rather
+          than repaired here: this rung's job is one key, and a rung that quietly reconstructs a
+          document it does not understand is how a corrupt draft comes back looking healthy.
+        */
+        document = {
+          ...document,
+          header: {
+            ...((document.header ?? {}) as Record<string, unknown>),
+            designerUserIds: Array.isArray((document.header as Record<string, unknown> | undefined)?.designerUserIds)
+              ? (document.header as Record<string, unknown>).designerUserIds
+              : []
+          }
         };
         break;
       default:
@@ -1172,9 +1226,10 @@ function emptyHeader(title: string, templateId: string): DwDraftHeader {
     title,
     templateId,
     status: "DRAFT",
-    // Null, and the create form overwrites it through `definedOnly` above when an admin named
-    // somebody. A blank header has nobody named, which is a legal and common state.
+    // Null and empty, and the create form overwrites both through `definedOnly` above when an
+    // admin named somebody. A blank header has nobody named, which is a legal and common state.
     designerUserId: null,
+    designerUserIds: [],
     craftName: null,
     clusterName: null,
     state: null,
@@ -1361,11 +1416,53 @@ async function mutate<P = undefined>(
  */
 export async function createLocalDraft(
   header: Partial<DwDraftHeader> & { title: string },
-  options?: { ownerUserId?: string | null; registryVersion?: string }
+  options?: DwLocalDraftOptions
 ): Promise<DwDraft> {
   if (!draftSessionMayCreate()) throw new DwCreateNotPermittedError();
+  const draft = newLocalDraft(header, options);
+  await transact([STORE_DRAFTS], "readwrite", async (stores) => req(stores[STORE_DRAFTS].put(draft)));
+  await refreshDrafts();
+  return draft;
+}
+
+/** What a caller may set on a draft this device is minting — see {@link newLocalDraft}. */
+export type DwLocalDraftOptions = {
+  ownerUserId?: string | null;
+  registryVersion?: string;
+  /**
+   * "A create for this workshop has already gone out and this device never saw the answer" — see
+   * {@link DwDraft.createSentAt} for what the next sync pass does with it.
+   *
+   * OPTIONAL, AND ALMOST EVERY CALLER MUST LEAVE IT UNSET. Exactly one arm of one caller passes it:
+   * `createWorkshopOrKeepItHere` (`lib/designWorkshopCreate.ts`) sets it when `POST
+   * /design-workshops` failed transiently — the request went out and may have committed — and
+   * passes nothing when the browser was offline and no request was ever issued. Stamping that
+   * offline arm as well would arm `resolveInterruptedCreate` for every workshop ever started in a
+   * courtyard, and its single-candidate arm ADOPTS: a same-titled workshop the same account already
+   * has on the server would swallow a fortnight of stages under a 200.
+   */
+  createSentAt?: number | null;
+};
+
+/**
+ * The record a workshop that exists only on this device starts life as.
+ *
+ * PURE AND EXPORTED FOR THE REASON {@link stagesUnreadAfterCreate} IS: the decision is the defect
+ * and the transaction is not. Which fields a brand-new draft carries — and above all whether it
+ * carries a `createSentAt` — can then be asserted with no IndexedDB, no API and no Postgres row,
+ * which is how `e2e/design-workshop-create-idempotence-unit.spec.ts` pins the asymmetry that keeps
+ * one submit from becoming two government records.
+ *
+ * IT DOES NOT ASK WHETHER THIS SESSION MAY CREATE ANYTHING, and that is not a hole: it puts nothing
+ * on the disk. {@link createLocalDraft} is the only way a draft reaches storage and it asks there,
+ * before it touches it.
+ */
+export function newLocalDraft(
+  header: Partial<DwDraftHeader> & { title: string },
+  options?: DwLocalDraftOptions
+): DwDraft {
   const now = Date.now();
-  const draft: DwDraft = {
+  return {
     schemaVersion: DW_DRAFT_SCHEMA_VERSION,
     localId: localId(),
     remoteId: null,
@@ -1389,11 +1486,12 @@ export async function createLocalDraft(
     // designer's workshop be drained under the next designer to sign in on the same laptop.
     ownerUserId: options?.ownerUserId ?? sessionUserId,
     lastSyncedAt: null,
+    // NULL UNLESS THE CALLER WATCHED A CREATE GO OUT FOR THIS WORKSHOP. Null is the ordinary state
+    // and means "no create is unaccounted for", which is the truth for a workshop minted with no
+    // connection: nothing was sent, so nothing can have landed.
+    createSentAt: options?.createSentAt ?? null,
     failure: null
   };
-  await transact([STORE_DRAFTS], "readwrite", async (stores) => req(stores[STORE_DRAFTS].put(draft)));
-  await refreshDrafts();
-  return draft;
 }
 
 /**
@@ -3163,6 +3261,10 @@ function headerOf(summary: DwSummary): DwDraftHeader {
       display string masquerading as an account id. Its only honest value here is "nothing to send".
     */
     designerUserId: null,
+    // Empty for the same reason, and it is the same fact one key wider: the server serialises
+    // neither create input back on any read, and a workshop adopted from the server has already
+    // been created, so there is no create left for either of them to feed.
+    designerUserIds: [],
     title: summary.title,
     templateId: summary.templateId,
     status: String(summary.status),
@@ -4445,24 +4547,28 @@ async function runSync(): Promise<DwSyncResult> {
             (await createDesignWorkshop({
               title: draft.header.title || "Untitled design workshop",
               templateId: draft.header.templateId,
-              // The ONE key of the header's third block, and the create is the only request that
-              // may carry it. A workshop started in a room with no signal keeps the designer the
-              // admin picked before the connection went, and names them the moment it lands — so
-              // the seed copies the right profile rather than the creator's. If their empanelment
-              // lapsed in between, the server refuses the whole create with a 422 naming the
-              // account, which `saveOrQueue` surfaces rather than retrying for ever.
-              //
-              // `?? undefined` AND NOT THE BARE HEADER VALUE, because `emptyHeader` seeds this key
-              // to `null` and `createDesignWorkshop` is a bare `JSON.stringify` that prunes nothing.
-              // A workshop with nobody named would otherwise POST a literal `"designerUserId": null`
-              // — the one arm of either client that puts the key on the wire uninvited. The create
-              // form omits it (`designerUserId || undefined`) and Android omits it (`explicitNulls =
-              // false`), and an API that predates the field is `extra="forbid"`: it answers 422
-              // `extra_forbidden` to a body that merely CARRIES the key. This repository ships the
-              // browser bundle and the API separately, so that skew is a live state rather than a
-              // hypothetical — and here it would strand a whole offline workshop, its 22 stages and
-              // its photographs behind a refusal the sync reads as permanent.
-              designerUserId: draft.header.designerUserId ?? undefined,
+              /*
+                THE HEADER'S THIRD BLOCK, BOTH KEYS, AND THE CREATE IS THE ONLY REQUEST THAT MAY
+                CARRY EITHER. A workshop started in a room with no signal keeps the designers the
+                admin picked before the connection went, and names them the moment it lands — so
+                their access rows are written and the seed copies the LEAD's profile rather than the
+                creator's. If somebody's empanelment lapsed in between, the server refuses the whole
+                create with a 422 naming every account it objected to, which `saveOrQueue` surfaces
+                rather than retrying for ever.
+
+                HANDED OVER RAW, DELIBERATELY. This used to spell `?? undefined` here, because
+                `emptyHeader` seeds `designerUserId` to `null` and `createDesignWorkshop` was a bare
+                `JSON.stringify` that pruned nothing — so a workshop with nobody named would POST a
+                literal `"designerUserId": null`, the one arm of either client that put the key on
+                the wire uninvited, and an API that predates the field is `extra="forbid"` and
+                answers 422 `extra_forbidden` to a body that merely CARRIES it. That protection has
+                not been dropped, it has MOVED: `createDesignWorkshop` now runs both keys through
+                `designerCreateFields` and omits what it does not need, which is what keeps this arm
+                and the create form sending the same body for the same choice. Doing it here as well
+                would be the second copy of a rule the pair is fragile enough to need only one of.
+              */
+              designerUserId: draft.header.designerUserId,
+              designerUserIds: draft.header.designerUserIds,
               craftName: draft.header.craftName,
               clusterName: draft.header.clusterName,
               state: draft.header.state,

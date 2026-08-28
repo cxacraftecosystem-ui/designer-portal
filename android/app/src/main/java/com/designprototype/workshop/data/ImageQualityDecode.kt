@@ -1,9 +1,13 @@
 package com.designprototype.workshop.data
 
+import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
+import android.net.Uri
+import java.io.InputStream
+import java.security.MessageDigest
 import kotlin.math.max
 
 /**
@@ -321,5 +325,155 @@ object DwImageDecode {
             perceptualHash = DwImageQuality.differenceHash(work),
             elapsedMs = (System.nanoTime() - startedAt) / 1_000_000,
         )
+    }
+
+    // ── Screening: measuring a file that has NOT been imported yet ────────────────────────────────
+
+    /**
+     * Everything [DwPhotoGate] needs about one candidate photograph, read from bytes this app does
+     * not own yet.
+     *
+     * [sha256] is null when the stream could not be read to the end. Absent is "unknown", NEVER
+     * "unique": the gate refuses an exact duplicate and a hash it could not compute must not be
+     * allowed to produce a claim in either direction.
+     */
+    class DwScreenedImage(val measurement: ImageMeasurement, val sha256: String?)
+
+    /**
+     * Measure and hash the image behind [uri] WITHOUT importing it, or null if this device cannot.
+     *
+     * ── WHY THIS EXISTS BESIDE [measure], WHICH TAKES A PATH ──────────────────────────────────
+     *
+     * [measure] reads a file the workshop already owns — a descriptor's copy under `filesDir`. This
+     * one reads a candidate: a `content://` handle from the gallery picker, or the FileProvider Uri
+     * the camera just wrote into `captures/`. The distinction is the entire point of the gate.
+     * [WorkshopDraftStore.importMedia] copies every byte into the workshop's media directory before
+     * it hands back an id, so a check that ran on the imported copy would be judging a photograph
+     * that is already in the draft, already counted, already in the set the sync pass walks — and
+     * removing it afterwards would mean writing a descriptor and deleting it, on a phone, for every
+     * photograph a designer chooses. Measuring the candidate costs three reads of a file that is
+     * already on this device and writes nothing at all.
+     *
+     * ── IT READS, THREE TIMES, AND NEVER WRITES ───────────────────────────────────────────────
+     *
+     * A content stream is not rewindable, so the passes cannot share one open: the digest drains the
+     * whole file, `inJustDecodeBounds` parses the header, and the third decodes the subsampled
+     * frame. Three sequential reads of a 3-6 MB JPEG off flash is a few tens of milliseconds against
+     * the hundreds the convolution costs — see this file's header for the measured budget, which is
+     * why every caller runs this off the main thread.
+     *
+     * THE HEADER READ COMES FIRST, AND THAT ORDERING IS ABOUT FILES THAT ARE NOT PHOTOGRAPHS AT ALL.
+     * `inJustDecodeBounds` allocates no pixels and stops at the first few hundred bytes, so a video,
+     * a PDF or an audio recording is refused a reading almost instantly. With the digest first, a 300
+     * MB loom video handed to this function would be read end to end — SHA-256 over every byte — only
+     * to fail the decode on the next line and produce nothing. That is minutes of flash reads on a
+     * field handset to answer a question about a file that was never an image.
+     *
+     * Nothing downstream loses by it: a file with no bounds has no measurement, and a null
+     * [DwScreenedImage] is admitted rather than refused, so the checksum would have had nobody to
+     * report to.
+     *
+     * ── IT RE-USES THE PURE CORE AND RE-IMPLEMENTS NOTHING ────────────────────────────────────
+     *
+     * Same sample-size rule, same ARGB_8888 pin, same [DwImageQuality.workingSizeFor], same box
+     * average. A second decode path with its own arithmetic would be a second opinion about whether
+     * a photograph is sharp, and the two would be consulted on the same file — the advisory card
+     * measures the imported copy through [measure] moments later. They must agree.
+     *
+     * ── AND SHA-256, TO MATCH THE ONE THE IMPORT WILL COMPUTE ─────────────────────────────────
+     *
+     * [WorkshopDraftStore.importMedia] hashes the bytes as it copies them and stores the result on
+     * the descriptor. This computes the same digest over the same bytes before the copy, so the
+     * value the gate compares against a field's existing attachments is the value that WOULD have
+     * been stored — not a different hash of a different thing.
+     *
+     * FAILURE IS SILENT AND ALWAYS null, exactly as [measure]'s is: a HEIC the platform will not
+     * open, a truncated file, a permission that expired between the pick and the read, an
+     * OutOfMemoryError. None of those is a bad photograph, and the caller admits what it cannot
+     * measure — see [DwPhotoGate]'s header on failing open by construction.
+     */
+    fun screen(resolver: ContentResolver, uri: Uri): DwScreenedImage? =
+        runCatching { screenOrNull(resolver, uri) }.getOrNull()
+
+    private fun screenOrNull(resolver: ContentResolver, uri: Uri): DwScreenedImage? {
+        val startedAt = System.nanoTime()
+
+        // Header only, and first: this is what tells a photograph from a video, a PDF or a sound
+        // recording, and it does it without allocating a pixel or reading past the first block.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        openOrNull(resolver, uri)?.use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        if (width < 1 || height < 1) return null
+
+        val sha256 = runCatching { digestOf(resolver, uri) }.getOrNull()
+
+        val longEdge = max(width, height)
+        var sample = 1
+        while (longEdge / (sample * 2) >= DwImageQuality.WORK_EDGE_PX) sample *= 2
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            // ARGB_8888 explicitly, for the reason [measure] pins it: RGB_565 quantises every
+            // channel, which changes the luma plane and therefore the blur score, and a REFUSAL that
+            // depends on the handset rather than on the photograph is the worst version of this
+            // feature there is.
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val bitmap = openOrNull(resolver, uri)?.use { stream ->
+            BitmapFactory.decodeStream(stream, null, options)
+        } ?: return null
+
+        val decoded = try {
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            DwImageQuality.greyPlaneFromArgb(pixels, bitmap.width, bitmap.height)
+        } finally {
+            bitmap.recycle()
+        }
+
+        val (workWidth, workHeight) = DwImageQuality.workingSizeFor(width, height)
+        val work = if (decoded.width == workWidth && decoded.height == workHeight) {
+            decoded
+        } else {
+            DwImageQuality.resampleGrey(decoded, workWidth, workHeight)
+        }
+
+        return DwScreenedImage(
+            measurement = ImageMeasurement(
+                width = width,
+                height = height,
+                blurScore = DwImageQuality.laplacianVariance(work),
+                contrast = DwImageQuality.contrastStdDev(work),
+                perceptualHash = DwImageQuality.differenceHash(work),
+                elapsedMs = (System.nanoTime() - startedAt) / 1_000_000,
+            ),
+            sha256 = sha256,
+        )
+    }
+
+    private fun openOrNull(resolver: ContentResolver, uri: Uri): InputStream? =
+        runCatching { resolver.openInputStream(uri) }.getOrNull()
+
+    /**
+     * SHA-256 of everything behind [uri], lower-case hex — the same shape [DraftMedia.sha256] holds.
+     *
+     * Null rather than an exception when the stream cannot be opened or read, because a hash is an
+     * input to a duplicate CLAIM: the honest answer to "could not read it" is "unknown", and the
+     * gate treats unknown as no claim rather than as a refusal.
+     */
+    private fun digestOf(resolver: ContentResolver, uri: Uri): String? {
+        val stream = openOrNull(resolver, uri) ?: return null
+        val digest = MessageDigest.getInstance("SHA-256")
+        stream.use { source ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = source.read(buffer)
+                if (read < 0) break
+                if (read == 0) continue
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
     }
 }

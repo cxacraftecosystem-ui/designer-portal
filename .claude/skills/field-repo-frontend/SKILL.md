@@ -1129,10 +1129,25 @@ subtlety below is a bug already paid for once.
 - **The neighbours' shift is a CSS `transition-transform` applied by the consumer**, deliberately not
   framer — the global reduced-motion rules reach CSS and cannot reach framer's inline styles, and a
   framer transform would be fighting this hook for the same property (§17).
-- Android's port is `ui/designworkshop/DwRankableList.kt`, which carries the same five rules and
-  says in a comment why it uses `detectDragGestures` on a dedicated grip rather than
-  `detectDragGesturesAfterLongPress` on the row: the row there is a whole review card with a
-  five-way control and two text boxes in it.
+- **Android has TWO renderers of this gesture, not one** — true as of 2026-08-27; re-check with
+  `grep -rln detectDragGestures android/app/src/main/java`. `ui/designworkshop/DwRankableList.kt` is
+  the design-review cards, and the collection rows inside `ui/designworkshop/StageScreen.kt` are the
+  handset's counterpart of `EntityForm`. Both carry the same five rules. `DwRankableList` says in a
+  comment why it uses `detectDragGestures` on a dedicated grip rather than
+  `detectDragGesturesAfterLongPress` on the row — the row there is a whole review card with a
+  five-way control and two text boxes in it — and `StageScreen` PORTS the arithmetic rather than
+  calling it, because `DwRankableList` renders a ~162dp leading rail that would multiply the scroll
+  length of a nine-row costing table. (Before that date this bullet named only the first, and a
+  reader comparing the stage forms would have concluded the handset had no grip on the screen that
+  matters most here.)
+- **The clamp-versus-refuse split has an Android counterpart, and it falls the other way round.**
+  `StageScreen`'s `dwMovedTo` **clamps** an out-of-range `to`, where `moveIndex` — which `EntityForm`,
+  the same screen one client over, calls — **refuses** it. Neither is reachable from a gesture on
+  either client: both choose the target from rows that exist, and the handset abandons outright a
+  drag whose arrangement moved underneath it. So it is a difference in what an impossible call does,
+  not in what a designer can see, and it is pinned on both sides (`e2e/drag-reorder-unit.spec.ts`,
+  `DwCollectionDragTest`). Do not unify either one for tidiness without reading the argument at
+  `dwMovedTo`'s declaration, which sets out the conditions under which the clamp has nothing to hide.
 
 ---
 
@@ -1546,10 +1561,23 @@ The single HTTP entry point. `buildQuery` + `listResource` + `PageResult` on top
   unsendable — which is why "not linked to a workshop" is the reserved word `"none"`. Its parameter type
   is `Record<string, string | number | undefined | null>`: **no arrays, no booleans** — comma-join
   yourself (`ids.join(",")`); the backend's `resolve_workshop_ids` accepts that and repeated parameters.
-- The 401 redirect uses `window.location.assign("/login")` and fires **only when a token was sent**, so
-  the landing page's anonymous `/me` probe does not navigate a visitor off a public page. `apiFetch`
-  never clears the token on 403; `AuthProvider.refreshMe` clears on 401 **and** 403 but deliberately
-  keeps it on a network failure or 5xx.
+- The 401 redirect uses `window.location.replace("/login")` — **`replace`, not `assign`** — and fires **only when the caller opted
+  in** (`ApiFetchOptions.redirectOn401`, default true). This line said `assign` and "only when a token
+  was sent" until 2026-08-28 and both halves were wrong: `AuthProvider` sits in the ROOT layout and
+  probes `/me` on public pages too, so a six-week-old token threw a visitor off the landing page, and
+  `assign` pushed a history entry so Back bounced her onto it again. `AuthProvider.refreshMe` passes
+  `redirectOn401: false` and handles its own 401. `apiFetch` never clears the token on 403;
+  `AuthProvider.refreshMe` clears on 401 **and** 403 but deliberately keeps it on a network failure
+  or 5xx. `frontend/e2e/public-page-401-unit.spec.ts` drives the real function and pins both.
+- ⚠ **`cache: "no-store"` on every request is deliberate and there is exactly ONE opt-out.**
+  `ApiFetchOptions.revalidateFromHttpCache` switches that call to `cache: "no-cache"` so the browser
+  stores the response and revalidates it with `If-None-Match`; `fetchStageRegistry` in
+  `lib/designWorkshops.ts` sets it for `GET /design-workshops/schema` and **nothing else in the
+  client does** — `e2e/registry-conditional-get-unit.spec.ts` counts the opt-ins and fails at two.
+  That endpoint qualifies because it is a pure server-side constant with an `ETag`, byte-identical
+  for every caller; a record LIST does not, and one served from a stale store is the silent-emptiness
+  bug (§17). The `cache` key is set **after** the `init` spread, so a caller cannot reach the browser
+  cache through its own `RequestInit`. Sizes and the server half: `docs/SCALABILITY.md` §9.1.
 - A 204 returns `undefined as T`; a non-JSON response returns the raw **text** cast to `T` — a typed
   call against a `text/plain` endpoint compiles and lies.
 - ⚠ **There is no server-side data fetching anywhere** (the token lives in localStorage), so every page
@@ -1558,14 +1586,37 @@ The single HTTP entry point. `buildQuery` + `listResource` + `PageResult` on top
 
 ### 14.2 Permissions, as the frontend sees them
 
-**Seven**-tier ladder: CROWDSOURCE(10) · FIELD_CONTRIBUTOR(20) · RESEARCHER(30) · **DESIGNER(35)** ·
-PROFESSOR(40) · ADMIN(50) · MASTER_ADMIN(60). Source of truth is `ROLE_RANK` in
+**Eight**-tier ladder: CROWDSOURCE(10) · FIELD_CONTRIBUTOR(20) · RESEARCHER(30) · **DESIGNER(35)** ·
+**INSPECTOR(37)** · PROFESSOR(40) · ADMIN(50) · MASTER_ADMIN(60). Source of truth is `ROLE_RANK` in
 `backend/app/core/deps.py`, mirrored in `frontend/lib/permissions.ts`; `docs/tools/check-docs.mjs`
-now checks the two against each other. **This line said "Six-tier" and omitted DESIGNER until
-2026-08-23**, and because every agent is told to load this document before any frontend work, it was
-the upstream source of the same miscount in fourteen other files — `permissions.ts`'s own header, the
-landing hero, the login page, and six documents. If you are counting tiers, count them from
-`ROLE_RANK` and not from prose. `ROUTE_GUARDS` is enforced by `AppShell` **above every page** because hiding a nav
+now checks the two against each other, and `backend/tests/test_role_ladder_parity.py` (2026-08-27)
+holds the other twenty-three hand-kept copies — `lib/types.ts`, `AccessLadder.tsx`, six role tuples
+across five files in `frontend/e2e/`, seven Kotlin literals across four Android files, seven tuples
+in the Android tests and README.md's Tier/Rank/Powers table — to the same `ROLE_RANK`. Those counts
+moved on 2026-08-27 when the Inspector wave registered its own two tuples, one per client
+(`e2e/design-workshop-inspections-unit.spec.ts` and `InspectionGateTest.kt`), both found by that
+file's own sweep rather than by hand — do not take a number here on trust; `MIRRORS` is the register. **This line said "Six-tier" and omitted
+DESIGNER until 2026-08-23**, and because every agent is told to load this document before any
+frontend work, it was the upstream source of the same miscount in fourteen other files —
+`permissions.ts`'s own header, the landing hero, the login page, and six documents. It went to
+**Eight** on 2026-08-27 in the same wave as the enum, deliberately, because nothing here would have
+gone red if it had not. If you are counting tiers, count them from `ROLE_RANK` and not from prose.
+
+`INSPECTOR` is labelled **"Inspector / Reviewer"** in the UI and is `INSPECTOR` in the enum, never
+`REVIEWER` — `canReview` already means the *relation* "may review anyone strictly below me", and one
+word cannot be both a rank and a relation here. Two frontend consequences: (1) it is **not** in
+`canRunDesignWorkshops`' set, so every `/design-workshops`-family route guard refuses it exactly as
+it refuses a professor — this sentence continued **"and no new `ROUTE_GUARDS` row is needed"**, which
+was true of the *existing* routes and was read as a claim about the tier, and it is now wrong: the
+tier's own surface landed on 2026-08-27 at `/design-workshop-inspections`, and it has a row, gated on
+`canInspectDesignWorkshops`. **That predicate is a set with ONE member and it REFUSES AN ADMIN** —
+`assert_inspection_surface` 403s an ADMIN and a MASTER ADMIN by name — so it is the only route rule
+in this client whose refusal is not monotonic in rank, and §2's ladder gives the wrong answer for it
+every time. `docs/PERMISSIONS.md` §5 carries the row; (2) `AccessLadder.tsx`'s
+`TIER_COPY` and `lib/permissions.ts`' `ROLE_RANK`/`ROLE_LABELS` are `Record<UserRole, …>`, so `tsc`
+fails until the tier has a label and a line of copy — that is deliberate, and `lib/types.ts` is the
+one place the compiler cannot help you, because `UserRole` is the hand-typed union everything else is
+exhaustive *against*. Full reasoning: `docs/PERMISSIONS.md` §1, §2 and §4.5. `ROUTE_GUARDS` is enforced by `AppShell` **above every page** because hiding a nav
 entry only removes the link — `/users`, `/review`, `/data` and the create forms are one typed URL away.
 
 - `canManageCrafts` / `canManageWorkshops` are **rank-only** even though the `User` still carries the
@@ -1866,6 +1917,8 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
   this is a trap and not a bug.
 
 **Data**
+- `cache: "no-store"` on every `apiFetch` is deliberate; `revalidateFromHttpCache` is the one opt-out
+  and `GET /design-workshops/schema` is its one caller. Do not generalise it to a list endpoint.
 - Blank `NEXT_PUBLIC_API_URL` silently falls back to localhost.
 - 503 / `ApiUnconfiguredError` must not be queued.
 - 409 in the drain is never "already landed".

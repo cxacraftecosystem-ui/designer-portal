@@ -27,10 +27,11 @@ import kotlin.math.min
  * not here is a place the two clients are free to disagree, and every expectation below is the web's
  * own rather than whatever this port printed the day it was written.
  *
- * THE CASES THAT ARE DELIBERATELY ABSENT are the four under `sketchRectify — automatic corner guess`.
- * The guess is not ported — [DwSketchRectify]'s header sets out why, and the short version is that
- * the web module itself calls it a convenience on top of the manual path, which IS what the handset
- * panel builds. Nothing here tests a capability this app does not have.
+ * THE CASES THAT ARE ABSENT HERE are the four under `sketchRectify — automatic corner guess`, and
+ * they are absent because they live somewhere else rather than because nothing answers them. The
+ * guess IS ported: `ui/designworkshop/DwSketchRectifyGuess.kt`, with the web spec's four cases as
+ * `DwSketchRectifyGuessTest`. This file is the geometry and the statistics of the PLATE; splitting
+ * the two keeps each test file beside the module it is the specification for.
  *
  * WHY SYNTHETIC IMAGES AND NOT PHOTOGRAPHS, the same argument as DwPhotoMeasureTest: every case below
  * is CONSTRUCTED from its answer. The rectification cases warp a plane whose value at every point is
@@ -517,52 +518,19 @@ class DwSketchRectifyTest {
     }
 
     /**
-     * Otsu's global threshold, and the plate it produces — THE COUNTEREXAMPLE, WHICH LIVES HERE AND
-     * NOT IN THE MODULE.
+     * The plate a GLOBAL threshold produces — THE COUNTEREXAMPLE, and the one thing in this file that
+     * is not a capability the app offers.
      *
-     * The web keeps `otsuThreshold` and `globalThreshold` in `sketchRectify.ts` because its automatic
-     * corner guess genuinely uses Otsu (telling bright sheet from dark table IS a two-population
-     * question about a whole frame). That guess is not ported, so on this client a global threshold
-     * has no caller at all — and R8 is enabled on the release build, so an exported function nothing
-     * calls is not merely useless, it is deleted from the shipped APK. Shipping it to satisfy a test
-     * would be shipping a definition that is not a use.
+     * It renders the decision [dwOtsuThreshold] made, so that "a global threshold cannot do this" is
+     * a statement about the strongest global method there is and not about a strawman. The threshold
+     * ITSELF is no longer duplicated here: it moved to `data/DwSketchRectify.kt` when the corner
+     * guess was ported and gave it a real caller, and a counterexample computed by a second copy of
+     * the arithmetic is a counterexample that can silently stop measuring the shipped function.
      *
-     * It belongs here anyway: it is not a capability this app offers, it is the thing the app's actual
-     * method is being measured AGAINST. Otsu rather than a hand-picked level or a plain mean, so that
-     * "a global threshold cannot do this" is a statement about the strongest global method there is
-     * and not about a strawman.
+     * Only the rendering stays private, because nothing in the app renders one: the plate pipeline
+     * thresholds locally, and R8 would delete an exported function with no call site from the release
+     * APK. Shipping it to satisfy a test would be shipping a definition that is not a use.
      */
-    private fun otsuThreshold(plane: GreyPlane): Int {
-        val histogram = DoubleArray(256)
-        for (index in 0 until plane.data.size) histogram[plane.at(index)] += 1
-        val total = plane.data.size
-        if (total == 0) return 128
-
-        var sumAll = 0.0
-        for (level in 0 until 256) sumAll += level * histogram[level]
-
-        var backgroundWeight = 0.0
-        var backgroundSum = 0.0
-        var best = 0
-        var bestVariance = -1.0
-        for (level in 0 until 256) {
-            backgroundWeight += histogram[level]
-            if (backgroundWeight == 0.0) continue
-            val foregroundWeight = total - backgroundWeight
-            if (foregroundWeight == 0.0) break
-            backgroundSum += level * histogram[level]
-            val backgroundMean = backgroundSum / backgroundWeight
-            val foregroundMean = (sumAll - backgroundSum) / foregroundWeight
-            val between = backgroundWeight * foregroundWeight *
-                (backgroundMean - foregroundMean) * (backgroundMean - foregroundMean)
-            if (between > bestVariance) {
-                bestVariance = between
-                best = level
-            }
-        }
-        return best
-    }
-
     private fun globalThreshold(plane: GreyPlane, level: Int): GreyPlane {
         val data = ByteArray(plane.data.size)
         for (index in data.indices) {
@@ -589,7 +557,7 @@ class DwSketchRectifyTest {
     fun `the best global threshold turns the dark half of the page black`() {
         val fixture = lampLitPage()
         val half = fixture.page.width / 2
-        val global = globalThreshold(fixture.page, otsuThreshold(fixture.page))
+        val global = globalThreshold(fixture.page, dwOtsuThreshold(fixture.page))
 
         // The blank paper of the dark half comes out as ink. This is the failure in one line.
         assertTrue(blackFraction(global, fixture.strokes, 0, 0, half) > 0.5)
@@ -605,7 +573,7 @@ class DwSketchRectifyTest {
         val fixture = lampLitPage()
         val half = fixture.page.width / 2
         val local = sauvolaThreshold(fixture.page)
-        val global = globalThreshold(fixture.page, otsuThreshold(fixture.page))
+        val global = globalThreshold(fixture.page, dwOtsuThreshold(fixture.page))
 
         val localFlood = blackFraction(local, fixture.strokes, 0, 0, half)
         val globalFlood = blackFraction(global, fixture.strokes, 0, 0, half)

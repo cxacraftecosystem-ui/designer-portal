@@ -262,7 +262,7 @@ The Android app keeps the web OAuth client ID in `android/app/build.gradle.kts` 
 
 ## Roles And Permissions
 
-Seven-tier role ladder, strictly ordered by privilege. Each tier inherits everything below it;
+Eight-tier role ladder, strictly ordered by privilege. Each tier inherits everything below it;
 per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProvenance`,
 `canDownloadDataset`) can additionally lift a single capability for a lower tier.
 
@@ -271,6 +271,7 @@ per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProv
 | `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus the three nobody else has: provider key values, repository settings, OTA releases. The only account that may act on a peer. |
 | `ADMIN` | 50 | Create/delete accounts; **delete records**; grant workshop access; assign tasks; approve **late** submissions. |
 | `PROFESSOR` | 40 | Everything a researcher can do, plus craft/workshop/questionnaire management, dataset download, viewing and promoting users, and editing records created by anyone below them. No account creation, no deletes. |
+| `INSPECTOR` | 37 | Labelled **Inspector / Reviewer**. Inspects and reviews a designer's work: may approve, reject and send back records created by anyone at Designer and below. **Does not run workshops and does not sign reports** — outranking a designer is not the same as being one. May not *rewrite* another person's record either; that floor is Professor. |
 | `DESIGNER` | 35 | Run design & prototype workshops and sign the report: the 22 stages, the custom sections, the AI layers, the report exports. Everything a researcher can do. **NOT a rank threshold** — see the third rule below. |
 | `RESEARCHER` | 30 | **Create** and edit their own records, contribute to others' (fill-empty), run questionnaire interviews. |
 | `FIELD_CONTRIBUTOR` | 20 | Populate existing records — media, answers, comments — and review volunteers. **Cannot create records.** |
@@ -293,7 +294,13 @@ Three rules people get wrong:
   saying what somebody may do and the roster saying whether the institution still recognises them.
 
   Rank 35 sits in the gap the original tens deliberately left, so inserting the tier renumbered
-  nothing and every stored role kept its meaning.
+  nothing and every stored role kept its meaning. `INSPECTOR` was inserted at **37** on
+  2026-08-27 the same way, in the middle of the free 36-39 band so a later tier can still go on
+  either side of it, and it inherits the same non-inheritance: **an inspector is not in that set
+  either**, so rank 37 buys no workshop authority at all. An inspector reaches a design workshop
+  only through a read-only, per-workshop assignment an **admin** makes — the inspected does not
+  choose the inspector — and never through the ladder. See
+  [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1 and §4.5.
 
 Live grantable capability booleans are `canManageQuestionnaire`, `canReview`, `canViewProvenance` and
 `canDownloadDataset`. `canManageCrafts` and `canManageWorkshops` still exist as columns but are

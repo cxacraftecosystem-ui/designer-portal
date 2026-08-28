@@ -663,6 +663,61 @@ internal fun WorkshopRepository.isConnectionFailure(error: Throwable): Boolean {
 }
 
 /**
+ * Is this the register saying SOMEBODY ELSE'S RECORD IS ALREADY THERE?
+ *
+ * ── THE THIRD QUESTION IN THIS SECTION, AND THE ONE THE HANDSET NEVER ASKED ───────────────────────
+ *
+ * [isConnectionFailure] asks "did the server answer at all", [WorkshopRepository.isTransient] asks "is
+ * it worth trying again", and both answer NO for a 409 — correctly. What neither can say is that this
+ * particular no is not like the others. A queued create refused for a field that is too long, refused
+ * for a permission this account does not hold, and refused because the register already holds the
+ * artisan whose Aadhaar was typed all came out of `replayEntry` as the same `ReplayOutcome.Rejected`,
+ * carrying the same shape of sentence, under the same Try again button. Only the third of those has a
+ * way forward, and it is the one that had no words for it. The web has had a dedicated branch since
+ * the incident (`frontend/lib/offline.ts`, the `error.status === 409` arm); this is its port, split
+ * out as a question rather than written inline so the classification can be pinned by a JVM test —
+ * `OutboxConflictTest` — and so a second reading of it can never grow somewhere else in this module.
+ *
+ * ── WHY IT IS THE STATUS AND NOT THE BODY ────────────────────────────────────────────────────────
+ *
+ * A 409 body carries no discriminator worth branching on. Some routes send a plain string ("Craft
+ * name already exists"), some an object with a `code` and a `message`
+ * (`artisans.py::_identity_conflict`, which also names the existing artisan and their place), some a
+ * sentence written for the reader (`questionnaire.py::_DUPLICATE_SET_DETAIL`). `DwAiVerbRefused`
+ * spends a page on the same problem for the verb routes and reaches the same conclusion: read the
+ * status, print the body verbatim, invent nothing. What this function needs is exactly the fact the
+ * status carries — the request was refused because something already occupies what it asked for.
+ *
+ * TRUE AS OF 2026-08-27, re-check with:
+ *
+ *     grep -rn "HTTP_409_CONFLICT" backend/app/api/routes/
+ *
+ * — on every create and update route this outbox replays, a 409 is a collision with a row the
+ * repository already holds: `artisans.py::_identity_conflict` (a clashing identity number),
+ * `crafts.py` (a craft of that name, and the detail is kept byte-identical on both routes so one
+ * client sentence covers both), `questionnaire.py::_DUPLICATE_SET_DETAIL` (that exact set of artisans
+ * already interviewed). Not one of them means "your earlier create landed".
+ *
+ * ── THE THREE THINGS A CONFLICT MUST NOT BE MISTAKEN FOR ─────────────────────────────────────────
+ *
+ *  1. NOT "OUR CREATE ALREADY LANDED". This is the misreading `frontend/lib/offline.ts` opens by
+ *     describing, and it destroyed the queued record AND its photographs while reporting success. The
+ *     lost-response case belongs to `PendingEntry.createdId`, which knows instead of guessing.
+ *     Nothing that consults this function may delete an entry or a staged file.
+ *  2. NOT A SCHEMA SKEW. `schemaSkew` is only ever a 422 carrying `extra_forbidden` (see [ApiRefusal])
+ *     and clears when either build is updated. A clash clears when a PERSON resolves it, so stamping
+ *     [APP_RUN] on it would re-POST the same losing create once per app open for ever, on a prepaid
+ *     connection, and every one of those answers would be the identical 409.
+ *  3. NOT TRANSIENT. [blocksRetry] parks it for a person exactly as it parks any other answered
+ *     refusal — which is right, and is why the escape has to be a sentence rather than a retry.
+ *
+ * TAKES THE THROWABLE AND READS ONLY `code()`, so it is safe to ask BEFORE `apiRefusal` — that one
+ * consumes Retrofit's buffered error body and may be called only once per failure. Same ordering
+ * rule, same reason, as the `isTransient` call that already precedes it in `replayEntry`.
+ */
+internal fun isConflictRefusal(error: Throwable): Boolean = (error as? HttpException)?.code() == 409
+
+/**
  * THIS RUN OF THE APP. One value for the life of the process, and its only job is to be different
  * next time. See [blocksRetry].
  *
@@ -1837,12 +1892,22 @@ object WorkshopSyncEngine {
                     // the only request on this handset that may carry it: naming the designer is a
                     // create-time act, and PATCH is closed to the field.
                     //
-                    // Sent straight off the draft, unfolded, because the dialog already folded it —
-                    // `dwNamedDesignerId` writes null rather than "" for the "Not decided yet" row,
-                    // and the server folds a blank to None regardless
-                    // (`(payload.designerUserId or "").strip() or None`). A null is left off the
-                    // wire entirely by `ApiClient.json`, so a workshop with nobody named posts the
-                    // same bytes it posted before this field existed.
+                    // AND IT IS A TEAM, NOT A PERSON. A workshop is visible only to the designers
+                    // named on it, so the second and third designer get in by being on this create
+                    // and nowhere else; the server writes one viewer row per id. `designerUserId`
+                    // keeps its exact meaning within that — the LEAD, whose profile is seeded and
+                    // whose name reaches the report — and the two are resolved together by
+                    // `dwNamedDesignerTeam`.
+                    //
+                    // Sent straight off the draft, unfolded, because `WorkshopRepository
+                    // .createDesignWorkshop` is the ONE place that decides what reaches the wire.
+                    // That fold is load-bearing rather than tidy: the plural key must be OMITTED
+                    // unless there is genuinely a second designer, because `APIModel` is
+                    // `extra="forbid"` and an API that predates it answers 422 to a body that
+                    // merely carries it — which lands in the `refusal(...)` arm below and strands
+                    // the fortnight this pass exists to save. A null is left off the wire entirely
+                    // by `ApiClient.json`, so a workshop with one designer, or none, posts the same
+                    // bytes it posted before either field existed.
                     //
                     // A 422 HERE IS THE EXPECTED, HANDLED CASE, not an edge: naming somebody also
                     // grants them a viewer row, so an empanelment that lapsed between the pick in
@@ -1854,6 +1919,7 @@ object WorkshopSyncEngine {
                         title = draft.title.ifBlank { "Untitled design workshop" },
                         templateId = draft.templateId.ifBlank { "DCH_STANDARD" },
                         designerUserId = draft.designerUserId,
+                        designerUserIds = draft.designerUserIds,
                     )
                 )
             } catch (e: CancellationException) {

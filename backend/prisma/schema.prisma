@@ -10,10 +10,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Seven-tier role ladder, strictly ordered by privilege:
-/// MASTER_ADMIN > ADMIN > PROFESSOR > DESIGNER > RESEARCHER > FIELD_CONTRIBUTOR >
+/// Eight-tier role ladder, strictly ordered by privilege:
+/// MASTER_ADMIN > ADMIN > PROFESSOR > INSPECTOR > DESIGNER > RESEARCHER > FIELD_CONTRIBUTOR >
 /// CROWDSOURCE_VOLUNTEER. Each tier inherits everything below it; grantable can* booleans lift
-/// single capabilities.
+/// single capabilities. "Ordered by privilege" means the RANK numbers in
+/// app/core/deps.py::ROLE_RANK — 60/50/40/37/35/30/20/10, eight of them, counted off that dict —
+/// and not the declaration order below; see the paragraph immediately above `enum UserRole`.
 ///
 /// DESIGNER sits between PROFESSOR and RESEARCHER because a designer runs a workshop and signs the
 /// report that comes out of it — strictly more than a researcher who documents what they find, and
@@ -21,12 +23,26 @@ datasource db {
 /// rank numbers in app/core/deps.py leave gaps of ten precisely so a tier can be inserted without
 /// renumbering the ones around it; DESIGNER is 35.
 ///
+/// INSPECTOR is 37, added 2026-08-27, and is what those gaps were for: it landed in the middle of
+/// the free 36-39 band without changing a single other number. It outranks a designer for review
+/// (`can_review_record`) and is deliberately OUTSIDE `deps.DESIGN_WORKSHOP_ROLES`, so it can never
+/// run a workshop or sign a report — that set is membership, not a threshold.
+///
 /// A DESIGNER must also appear on the DesignerRoster to sign in — see that model. The role says
 /// what somebody may do; the roster says whether the institution still recognises them.
+///
+/// The role ladder, highest tier first. The ORDER HERE IS COSMETIC — Postgres orders an enum by the
+/// sequence its values were created in, and `INSPECTOR` was added by `ALTER TYPE ... ADD VALUE` long
+/// after the rest, so it sorts LAST in the database whatever this block says. The authority on rank
+/// is `backend/app/core/deps.py::ROLE_RANK`, never this declaration and never `ORDER BY role`.
 enum UserRole {
   MASTER_ADMIN
   ADMIN
   PROFESSOR
+  /// Rank 37 — inspects and reviews a designer's work without running workshops. NOT in
+  /// `deps.DESIGN_WORKSHOP_ROLES`: an inspector never signs a report. See
+  /// `migrations/20260827140000_inspector_role/migration.sql` and `deps.ROLE_RANK`.
+  INSPECTOR
   DESIGNER
   RESEARCHER
   FIELD_CONTRIBUTOR
@@ -203,6 +219,11 @@ model User {
   // Design workshops this account has been let into by an admin, and the grants it made as one.
   designWorkshopsVisible DesignWorkshopViewer[] @relation("DesignWorkshopViewerUser")
   designWorkshopViewersGranted DesignWorkshopViewer[] @relation("DesignWorkshopViewerGrantedBy")
+  /// Design workshops this account INSPECTS, and the inspections it has ordered as an admin. The
+  /// same Cascade/SetNull pairing as the two viewer relations above and for the same two reasons.
+  /// A READ-ONLY scope — see `DesignWorkshopInspector`, which enumerates what it does not carry.
+  designWorkshopsInspected      DesignWorkshopInspector[] @relation("DesignWorkshopInspectorUser")
+  designWorkshopInspectionsSet  DesignWorkshopInspector[] @relation("DesignWorkshopInspectorAssignedBy")
   /// Design workshops this account has ASKED to be let into, and the requests it has answered as an
   /// admin. Cascade on the first (a request is not authorship and must not hold up an account
   /// deletion) and SetNull on the second (the decision outlives the admin who made it) — the same
@@ -828,6 +849,13 @@ model ToolDocumentation {
   width                         Decimal?      @db.Decimal(10, 2)
   lengthInches                  Decimal?      @db.Decimal(10, 2)
   breadthInches                 Decimal?      @db.Decimal(10, 2)
+  /// The THIRD of the triple, added 2026-08-27. `ProductDocumentation` has carried all three since
+  /// it was written; this table stopped at two, and the omission was invisible because
+  /// `measurement_provenance`'s own header already says BOTH tables carry
+  /// `lengthInches`/`breadthInches`/`heightInches`, and its `DIMENSION_FIELDS` already names all
+  /// three. So an accepted height reading for a tool landed in the plain `height` column above,
+  /// which declares no unit — losing the one fact the column name is there to carry.
+  heightInches                  Decimal?      @db.Decimal(10, 2)
   measurementImageId            String?
   measurementAnalysis           Json?
   measurementAnalysisStatus     String?
@@ -1834,6 +1862,12 @@ model DesignWorkshop {
   /// The colleagues an admin has let into this workshop besides `createdBy`. See
   /// `DesignWorkshopViewer` for why the creator is not the whole team.
   viewers   DesignWorkshopViewer[] @relation("DesignWorkshopViewers")
+  /// THE FIFTH SCOPE, and it is not a variant of `viewers` above however alike the two rows look.
+  /// An inspector may READ this workshop and may do nothing else to it; a viewer may read it AND
+  /// write its 22 stages, because `load_workshop_or_404(for_edit=True)` performs no role check.
+  /// The two must never be merged, and no read that decides a WRITE may consult this relation.
+  /// See `DesignWorkshopInspector`.
+  inspectors DesignWorkshopInspector[] @relation("DesignWorkshopInspectors")
   /// The people who have ASKED to be let in and have not been, plus the settled history of every
   /// ask ever answered. A separate table from `viewers` on purpose — a grant is current fact and is
   /// deleted when it ends, an ask and its refusal are history and are kept. See
@@ -1990,6 +2024,96 @@ model DesignWorkshopViewer {
   /// The token pointer, for the same onDelete reason and for one read: "who did this batch of cards
   /// let in", which is the only screen that can undo a leaked print run.
   @@index([tokenId])
+}
+
+/// **THE FIFTH SCOPE: WHICH DESIGN WORKSHOPS ONE INSPECTOR MAY READ, AND READ ONLY.**
+///
+/// An INSPECTOR inspects and reviews a designer's work without running workshops themselves. They
+/// are NOT in `deps.DESIGN_WORKSHOP_ROLES` — that frozenset stays "the people who sign the report"
+/// — so every one of the eighteen routes behind `_require_designer` refuses them by construction,
+/// and `load_workshop_or_404` 404s them. This table is the only thing that gives them anything at
+/// all, and what it gives is a READ.
+///
+/// -- WHY A FIFTH TABLE, WHEN FOUR SCOPES ALREADY EXIST -----------------------------------------
+///
+/// Each of the four was considered and each fails in a DIFFERENT direction. Written out because a
+/// later reader will look at this and see a duplicate of `DesignWorkshopViewer`:
+///
+///  * `WorkshopAssignment` is over `Workshop`, a different model entirely, and its `accessLevel`
+///    is an ORDERED ladder (VIEW < CONTRIBUTE < EDIT) whose lowest rung would be the right shape.
+///    Wrong table, and a ladder invites a sixth rung.
+///  * `DataAccessGrant` is owner→grantee over that owner's RECORDS, with a PENDING/GRANTED
+///    lifecycle. An inspection is not a favour one researcher does another and is not scoped to a
+///    person's records; it is scoped to a workshop, and nobody asks the designer's permission to
+///    inspect them.
+///  * `DesignWorkshopViewer` is the near miss and the dangerous one. **A viewer row confers STAGE
+///    WRITES**, because `load_workshop_or_404(for_edit=True)` performs no role check whatsoever —
+///    creator, admin, or ANY viewer grantee passes. Putting an inspector there would hand them the
+///    22 stages, the AI-layer accept/withdraw, the dictation consent and the export ledger in one
+///    row. See `services/design_workshop_inspectors.py`, which spells this out at length.
+///  * `DesignWorkshopAccessRequest` is an ASK an admin adjudicates, and it is history rather than
+///    access — its own header forbids it ever conferring anything.
+///
+/// (`DesignWorkshopProvisionalMember` is a fifth membership table already, and it is the closest
+/// PRECEDENT rather than a competitor: a separate table that nothing existing consults, so its
+/// holder is a stranger to every read gate. This one is built the same way in the other direction
+/// — a stranger to every WRITE gate.)
+///
+/// -- THE ROW IS THE GRANT, AND THERE IS NO COLUMN DECIDING ACCESS ------------------------------
+///
+/// `DesignWorkshopViewer`'s schema comment forbids "a second column deciding access", and that rule
+/// is inherited here rather than re-argued: `has_inspection_scope` reads the EXISTENCE of a row and
+/// nothing on it. No `status`, no `level`, no `revokedAt`. Removing an inspector DELETES the row.
+/// There is no lifecycle to audit because nobody ever asked for this and nobody was ever refused —
+/// an admin assigns an inspection the way a registrar assigns an examiner.
+///
+/// -- WHAT THIS ROW DOES **NOT** CARRY, ENUMERATED ---------------------------------------------
+///
+/// No stage writes. No report generation. No dictation consent. No AI-layer registration,
+/// acceptance, withdrawal or decline. No delete and no restore. No re-granting — an inspector
+/// cannot put another inspector on anything. No media: the "recordings of a workshop I may open"
+/// arm of `records._design_workshop_media_branches` is keyed on `DesignWorkshopViewer` and
+/// `createdById`, and an inspector holds neither, so the artisan's recorded voice is not in this
+/// grant's gift. No questionnaire responses, for the same structural reason —
+/// `questionnaire_forms._visible_questionnaire_where` writes `viewers: {some: ...}` by hand.
+///
+/// None of that is enforced by a check anybody could forget. It is enforced by this table not being
+/// consulted from any of those paths, which is a property `tests/test_dw_inspector_scope_gate.py`
+/// asserts against the source rather than trusting.
+model DesignWorkshopInspector {
+  designWorkshopId String
+  userId           String
+
+  /// WHO ASSIGNED THIS INSPECTION. Always an admin — see `services/design_workshop_inspectors.py`
+  /// for why the workshop's own creator deliberately may not choose the person who inspects them.
+  ///
+  /// Nullable so the relation below can be SetNull, and NOT `grantedById` on purpose: nothing was
+  /// granted to anybody here. An admin assigned an examiner to a piece of work.
+  assignedById String?
+
+  createdAt DateTime @default(now())
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopInspectors", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  /// Cascade, for the reason `DesignWorkshopViewer.user` gives in full: an access row is not
+  /// authorship, and Restrict would invent a brand-new, unclearable reason an account cannot be
+  /// deleted (`_undeletable_detail` in api/routes/users.py).
+  user User @relation("DesignWorkshopInspectorUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SetNull, matching `DesignWorkshopViewer.grantedBy` and `WorkshopAssignment.assignedBy`: losing
+  /// the admin who ordered the inspection must not end the inspection halfway through it.
+  assignedBy User? @relation("DesignWorkshopInspectorAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  /// The pair IS the identity — one inspection per person per workshop — so a re-assignment collides
+  /// rather than stacking a second row, and the key serves the "may this inspector open this
+  /// workshop" lookup `load_inspectable_workshop_or_404` makes on every read.
+  @@id([designWorkshopId, userId])
+  /// The other direction: "which workshops may this inspector see", which is the inspection list's
+  /// scope clause. Not covered by the primary key above — userId is its SECOND column.
+  @@index([userId])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([assignedById])
 }
 
 /// WHAT A REQUEST CAN BE — the three states one can be in, and there is no fourth.

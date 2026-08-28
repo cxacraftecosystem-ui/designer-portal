@@ -45,7 +45,13 @@ function numberInputs(text: string): string[] {
  *
  * Spelled out rather than derived from the file: a loop over "whatever inputs happen to be there"
  * would stay green if one were deleted, and this list is also the count the fix was measured
- * against — five on ProductForm, nine on ToolForm, of which `yearsInUse` was already bounded.
+ * against — five on ProductForm and nine on ToolForm, of which `yearsInUse` was already bounded.
+ *
+ * ToolForm is TEN since 2026-08-27. `ToolDocumentation` gained a `heightInches` column that day and
+ * the form draws a box for it beside `lengthInches` / `breadthInches`; `ToolCreate` / `ToolUpdate`
+ * declare it with the same `ge=0` the other measurements carry, so it owes both halves of the bound
+ * like every one of its neighbours. The plain `height` box is still here and still bounded — it was
+ * not replaced, it holds what was typed into it in a unit the column cannot name.
  */
 const BOUNDED: Record<string, string[]> = {
   "ProductForm.tsx": ["lengthInches", "breadthInches", "heightInches", "costOfMaking", "sellingPrice"],
@@ -55,6 +61,7 @@ const BOUNDED: Record<string, string[]> = {
     "width",
     "lengthInches",
     "breadthInches",
+    "heightInches",
     "thickness",
     "weight",
     "radius",

@@ -33,7 +33,15 @@ server stamps it on the workshop row, and Android merely rewrites a cache file.
 
 **Nothing here hard-deletes.** ``DELETE`` sets ``deletedAt``. This is a research data set, the
 requirement is explicit that data is retained, and a designer's two weeks of fieldwork is not
-something a mis-tap should end. Every read filters ``deletedAt: null``; an admin can restore.
+something a mis-tap should end. Every read filters ``deletedAt: null`` — **with one exception, and
+it is the exception that makes the safety net usable**: ``GET /design-workshops`` takes
+``deletedOnly`` (the trash) and ``includeDeleted``, both ADMIN ONLY and both refused with a 403
+rather than quietly ignored. Without them nothing on any surface would name a deleted workshop, so
+an admin could restore only one whose id they had written down before deleting it — while the web's
+delete confirmation promised otherwise in so many words. (Android does not enter into it: its
+``WorkshopRepository.deleteDesignWorkshop`` has no caller in any screen, so the handset has neither a
+delete control for a workshop nor a restore — checked 2026-08-27 with a search for that identifier
+across ``android/app/src``, which finds it only in the repository and its API twin.)
 
 **Permissions**, as this file actually enforces them — read the four clauses, not the ladder,
 because one of them is not a rank threshold:
@@ -59,9 +67,19 @@ because one of them is not a rank threshold:
   change that quietly cost a designer their stage edits would be far worse than this rule is worth.
 * OPENING someone else's is decided entirely by ``load_workshop_or_404``: the creator, an admin, or
   an account an admin has given a ``DesignWorkshopViewer`` row. A grant carries read AND the stage
-  writes that go through that helper — see ``services/design_workshop_viewers.py`` for what it
-  deliberately does not carry.
-* DELETING is ``assert_can_delete``; restoring is ``require_admin``.
+  writes that go through that helper — see ``services/design_workshop_viewers.py`` for the two it
+  deliberately does not carry, DELETE and RE-GRANTING. IT ALSO CARRIES THIS WORKSHOP'S OWN MEDIA,
+  which that file's "what a grant confers" banner does not mention at all (true as of 2026-08-27;
+  check ``grep -n media backend/app/services/design_workshop_viewers.py``, which finds nothing):
+  ``records.owned_or_granted_where`` has a third arm keyed on the media TAG, so every ``MediaFile``
+  tagged ``linkedRecordType="designWorkshop"`` with THIS workshop's id is readable by a grantee —
+  its bytes, its transcript, and since 2026-08-27 its ``url`` on ``GET /media`` too. The full
+  statement of that half is ``docs/PERMISSIONS.md`` §4.4.1.
+* DELETING is ``assert_can_delete``; restoring is ``require_admin``; and LISTING THE DELETED ones is
+  the same admin test as the restore, stated inline in ``list_design_workshops`` because it gates two
+  query parameters rather than a route. The three have to agree: a trash a designer could read would
+  show them rows ``load_workshop_or_404`` then 404s, and a restore looser than the trash would let
+  somebody act on a list they were shown.
 * AI LAYERS follow the stage-write rule and not the delete one: LISTING them needs whatever
   ``load_workshop_or_404`` needs, and registering, accepting, withdrawing or declining one needs
   ``_require_designer`` plus ``for_edit=True``. ``assert_can_delete`` is deliberately NOT on the
@@ -71,8 +89,12 @@ because one of them is not a rank threshold:
   READING A LAYER'S TEXT IS THE FOURTH CLAUSE, not the first: the text is a stored copy of a
   transcript, so it is gated per recording by ``owned_or_granted_where`` like every other transcript
   surface, and a layer standing on a recording the caller may not read is listed with its provenance
-  and ``textWithheld``. Opening a workshop has never conferred the right to read the media inside
-  it, and a copy of a transcript is still the transcript.
+  and ``textWithheld``. This bullet used to end "Opening a workshop has never conferred the right to
+  read the media inside it" — CORRECTED 2026-08-27, because it had stopped being true the day that
+  predicate grew its tag-keyed third arm. Opening a workshop DOES confer the media tagged TO it.
+  What it does not confer is a recording tagged to a different workshop or to none — including one
+  whose id somebody typed onto THIS workshop's stage, which is the case ``textWithheld`` is actually
+  guarding. A copy of a transcript is still the transcript.
 * GENERATING A REPORT is open to anyone who can READ the workshop — a report is a view of data the
   caller can already see, and refusing it would only push people to screenshot the screen. The
   photographs and recordings it EMBEDS are a different question, gated per file by
@@ -166,17 +188,18 @@ from app.services.design_workshops import (
     REFERENCE_LIMIT_DEFAULT,
     REFERENCE_LIMIT_MAX,
     assemble_workshop_data,
-    assert_designer_may_be_named,
+    assert_every_designer_may_be_named,
     attach_district_anchors,
     attach_report_ai_layers,
     attach_report_custom_sections,
     attach_report_questionnaires,
     attach_report_references,
     attach_report_transcripts,
-    attach_the_named_designer,
+    attach_the_named_designers,
     entry_rows,
     load_workshop_or_404,
     media_resolver,
+    named_designer_team,
     reference_options,
     render_report,
     resolve_template_id,
@@ -208,7 +231,15 @@ from app.services.report_templates import (
     template as get_template,
     template_choices,
 )
-from app.services.s3 import delete_object, get_object_bytes
+from app.services.memory_budget import budget_bytes
+from app.services.s3 import (
+    ObjectTooLarge,
+    delete_object,
+    discard_temp,
+    download_to_temp,
+    get_object_bytes,
+    head_object,
+)
 from app.services.stage_schema import (
     REF_SCOPE_ALL,
     registry_to_dict,
@@ -328,10 +359,23 @@ async def get_stage_schema(
 
     A pure constant — no database read — and the largest body this API serves TO A COLD CLIENT (the
     qualifier matters: ``SelectiveGZipMiddleware``'s own docstring records an 839 KB report preview,
-    which is larger and is not something every client fetches once per start): **149,465 bytes of
-    JSON, 22,875 after the gzip middleware, 23,618 on the wire with headers** (MEASURED 2026-08-22;
+    which is larger and is not something every client fetches once per start): **162,717 bytes of
+    JSON, 25,112 after the gzip middleware, 25,855 on the wire with headers** (MEASURED 2026-08-28;
     ``docs/SCALABILITY.md`` §9.1 has the command). Every cold start of every client pays for it, so
-    it answers a conditional GET, which brings a revalidation down to a 664-byte 304.
+    it answers a conditional GET, which brings a revalidation down to a 664-byte 304 — **38.9x**.
+
+    **READ THOSE AS A DATED FLOOR AND NOT AS THE SIZE OF THIS PAYLOAD.** The line above said
+    149,465 / 22,875 / 23,618 and cited 2026-08-22, and six days later it was 8.9% short, because
+    the registry gains fields continuously and never loses them. The drift is not even monthly: the
+    same command run twice during the session that re-measured it returned 162,178 and then 162,717,
+    with ``services/stage_definitions.py`` and ``services/stage_schema.py`` both carrying
+    modification times inside that session — another workstream was writing the registry while it
+    was being measured. Nothing in the
+    argument depends on the exact figure — what the endpoint rests on is the RATIO, which has moved
+    from 35.6x to 38.9x in the direction that makes it more worth having, and the only number this
+    repository actually enforces is the order-of-magnitude band in
+    ``tests/test_schema_conditional_get.py::test_the_measured_sizes_are_still_in_the_range_the_docs_claim``.
+    Re-run §9.1's command before you quote a byte count, and date what you write.
 
     **THE VALIDATOR IS A DIGEST OF THE RESPONSE BODY, NOT ``registry_version()``, AND THAT IS THE
     WHOLE CORRECTNESS ARGUMENT.** Binding the ETag to the version digest is the obvious move — it
@@ -1151,6 +1195,33 @@ async def record_dictation_consent(
 # --------------------------------------------------------------------------------------
 
 
+async def _attach_deleted_by(rows: list[Any], items: list[dict[str, Any]]) -> None:
+    """Put ``deletedById`` and ``deletedByName`` on rows that carry a deletion, in ONE query.
+
+    HERE AND NOT IN ``workshop_summary``, which serves every list and every single read: the pointer
+    is null on every live workshop, so carrying it there would add a key that is null on all but the
+    one listing that can show a deleted row, and resolving the NAME there would be an account lookup
+    per row on the paged list every designer loads. This is the same rule ``consent_keys`` follows in
+    the other direction — see ``dictationConsentByName``, which the single read adds for exactly this
+    reason. One ``find_many`` covers the whole page.
+
+    A NAME CAN BE ABSENT WITH THE ID PRESENT and that is not an error: ``deletedById`` is
+    ``onDelete: SetNull`` against ``User``, so an account closed since the deletion leaves the
+    pointer behind — but the row it pointed at may also simply have been renamed away. Clients must
+    render "an account no longer on record" rather than guessing at the workshop's creator; the same
+    decision, argued at length, is in ``entry_provenance.resolve_display_names``.
+    """
+    wanted = {actor for r in rows if (actor := getattr(r, "deletedById", None))}
+    names: dict[str, Any] = {}
+    if wanted:
+        accounts = await db.user.find_many(where={"id": {"in": sorted(wanted)}})
+        names = {account.id: getattr(account, "name", None) for account in accounts}
+    for row, item in zip(rows, items, strict=True):
+        actor = getattr(row, "deletedById", None)
+        item["deletedById"] = actor
+        item["deletedByName"] = names.get(actor) if actor else None
+
+
 @router.get("")
 async def list_design_workshops(
     page: int = Query(1, ge=1),
@@ -1160,14 +1231,44 @@ async def list_design_workshops(
     craftName: str | None = None,
     state: str | None = None,
     mineOnly: bool = False,
+    includeDeleted: bool = False,
+    deletedOnly: bool = False,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """List workshops, newest first.
+    """List workshops, newest first — newest DELETED first under ``deletedOnly``.
 
     The filters read the promoted columns rather than the JSON, which is the entire reason
     those columns exist — see the note above ``DesignWorkshop`` in schema.prisma.
+
+    ``deletedOnly`` IS THE TRASH, AND IT IS THE HALF THAT MAKES THE SOFT DELETE REAL. ``DELETE``
+    sets ``deletedAt`` and ``POST /{id}/restore`` clears it, and between the two there was no
+    endpoint on this API that would name a deleted row: every read filtered ``deletedAt: null``, so
+    an admin could only restore a workshop whose id they already had written down. A safety net
+    nobody can find is not a safety net, and the web's delete confirmation promises one.
+
+    ADMIN ONLY, AND THE SAME GATE AS THE RESTORE IT EXISTS TO FEED — ``is_admin``, refused with the
+    sentence ``require_admin`` uses. Anything looser would widen a read: a deleted workshop is
+    invisible to its own creator today (``load_workshop_or_404`` answers 404 to a non-admin READING a
+    deleted row, and 409 "Restore it before editing" to anyone at all who asked to EDIT one), so
+    letting a designer list the trash would show them rows the single read then denies. The two
+    flags are refused rather than ignored, because a client that asked for the trash and silently
+    got the live list would render an ordinary workshop under a "Deleted" heading with a Restore
+    button beside it.
+
+    ``deletedOnly`` WINS OVER ``includeDeleted`` when both are sent — it is the narrower of the two
+    and a caller that asked for both meant the specific one.
     """
-    where: dict[str, Any] = {"deletedAt": None}
+    if (includeDeleted or deletedOnly) and not is_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    # THREE STATES, NOT A BOOLEAN. The default filters deleted rows out, `deletedOnly` filters
+    # everything else out, and `includeDeleted` drops the key entirely so the two sets arrive
+    # interleaved by `createdAt` — which is the only one of the three that a client must be able to
+    # tell apart per row, and it can: `deletedAt` is on every summary.
+    where: dict[str, Any] = {}
+    if deletedOnly:
+        where["deletedAt"] = {"not": None}
+    elif not includeDeleted:
+        where["deletedAt"] = None
     if statusFilter:
         # THROUGH THE ENUM CHECK, because the raw string went into a Postgres enum column and
         # anything not in it — a lowercase "draft", an "ALL" from a client whose dropdown labels
@@ -1210,13 +1311,19 @@ async def list_design_workshops(
         where.setdefault("AND", []).append(visible_to_clause(current_user.id))
 
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
+    # NEWEST DELETED FIRST IN THE TRASH, newest created everywhere else. The row an admin is looking
+    # for in a trash view is almost always the one they just deleted by mistake, and a workshop
+    # opened in March and deleted this morning sorts to the bottom of a `createdAt` ordering — under
+    # rows nobody is looking for, on a page they may never reach.
+    order = {"deletedAt": "desc"} if deletedOnly else {"createdAt": "desc"}
     total, rows = await asyncio.gather(
         db.designworkshop.count(where=where),
-        db.designworkshop.find_many(
-            where=where, skip=skip, take=clean_size, order={"createdAt": "desc"}
-        ),
+        db.designworkshop.find_many(where=where, skip=skip, take=clean_size, order=order),
     )
-    return page_payload([workshop_summary(r) for r in rows], total, clean_page, clean_size)
+    items = [workshop_summary(r) for r in rows]
+    if includeDeleted or deletedOnly:
+        await _attach_deleted_by(rows, items)
+    return page_payload(items, total, clean_page, clean_size)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -1229,13 +1336,23 @@ async def create_design_workshop(
     order number is to hand; the Basic-tier fields of stage 1 are enforced when a report is
     generated, not here.
 
-    ``designerUserId`` NAMES THE DESIGNER THE WORKSHOP IS FOR, and it is the one field here that
-    changes what the finished report SAYS rather than what it is filed under. Their
-    ``DesignerProfile`` is what gets copied into stage 1 and stage 3, and they are put on the
-    workshop in the same call. Omitting it is legal and leaves the old behaviour exactly as it was —
-    the CREATOR's profile is copied, which for an admin opening a workshop on somebody else's behalf
-    is the wrong person's name on a ministry document. See ``seed_designer_prefill`` for the whole
-    argument and for why there is no fallback between the two.
+    ``designerUserIds`` NAMES EVERY DESIGNER THE WORKSHOP IS FOR, and each of them gets a
+    ``DesignWorkshopViewer`` row in this same call. That row is what makes the workshop visible to
+    them and — because the list query and the single read both consult that one table — what keeps
+    it invisible to every other designer. Admins and the master admin see all of them; a designer
+    who is not on this list is answered 404 "Record not found", byte-identical to an id that does
+    not exist, on both the list and the read.
+
+    ``designerUserId`` NAMES THE LEAD and is UNCHANGED in meaning. It is the one field here that
+    changes what the finished report SAYS rather than what it is filed under: their
+    ``DesignerProfile`` is what gets copied into stage 1 and stage 3, their name reaches the cover,
+    the certification signature and the .docx's own ``dc:creator``. A body that sends only
+    ``designerUserIds`` makes the first of them the lead; a body that sends only ``designerUserId``
+    behaves exactly as it did before the plural field existed, which is what an APK a fortnight
+    behind sends. Omitting both is legal and leaves the behaviour older still — the CREATOR's
+    profile is copied, which for an admin opening a workshop on somebody else's behalf is the wrong
+    person's name on a ministry document. See ``seed_designer_prefill`` for the whole argument and
+    for why there is no fallback between the two.
     """
     # ONE GATE, AND IT IS NARROWER THAN THE REST OF THIS FILE. Read this before widening it back.
     #
@@ -1268,11 +1385,15 @@ async def create_design_workshop(
     assert_can_create_design_workshops(current_user)
     # ── WHO THIS WORKSHOP IS FOR, DECIDED BEFORE A SINGLE ROW EXISTS ────────────────────────────
     #
-    # BLANK IS ABSENT. A client that sends `designerUserId: ""` — an empty picker, a cleared field,
-    # an offline draft that carried the key but never got an answer — means "nobody named", not "an
-    # account whose id is the empty string". Without the `or None` that empty string would reach
-    # `assert_designer_may_be_named` and 422 the create with "No account exists with this id: ",
-    # which names nothing and is unactionable, on a form where the field is optional.
+    # TWO FIELDS, TWO QUESTIONS, ONE HELPER. `named_designer_team` reads the body's `designerUserId`
+    # (the LEAD, whose profile is seeded and whose name reaches the report) and `designerUserIds`
+    # (everybody who gets a viewer row) into exactly those two answers, and it is a PURE function so
+    # that every branch of it — only the singular field, only the plural one, both, neither, blanks,
+    # duplicates, a lead who is not in the list — is pinned without a database. Blanks are treated
+    # as absent there: a client that sends `""` — an empty picker, a cleared field, an offline draft
+    # that carried the key but never got an answer — means "nobody named", not "an account whose id
+    # is the empty string", which would 422 the create with "No account exists with this id: " and
+    # name nothing, on a form where the field is optional.
     #
     # AND THE ELIGIBILITY QUESTION IS ASKED HERE, ABOVE THE CREATE, NOT AFTER IT. Naming somebody
     # who may not hold a viewer row (a PROFESSOR, a designer whose empanelment has lapsed, an
@@ -1281,9 +1402,27 @@ async def create_design_workshop(
     # orphan draft behind on every retry — the failure the seed's blanket `except` exists to prevent,
     # reached from the other end, and this route has no equivalent guard because a create that
     # cannot honour the body it was given must not half-succeed.
-    designer_id = (payload.designerUserId or "").strip() or None
-    if designer_id:
-        await assert_designer_may_be_named(designer_id)
+    #
+    # ONE CALL FOR THE WHOLE SET, NEVER ONE PER ID. The rule refuses the whole set and names every
+    # account it objected to; asked in a loop it would raise on the first and say nothing about the
+    # second, so an admin who ticked four designers and is told about one has been sent on the first
+    # of two trips — the exact round trip those refusals are worded to save.
+    #
+    # AND THE CREATOR IS SUBTRACTED FROM THAT SET, exactly as `_deduplicate` subtracts them on the
+    # viewers PUT and for the reason stated there: "their standing is simply not this list's
+    # business". No viewer row is ever written for them — their access comes from `createdById`, and
+    # `attach_the_named_designer` refuses to mint a second, redundant source of truth for it — so
+    # validating them can only produce a refusal about a row that was never going to exist. It is a
+    # reachable refusal, not a theoretical one: the ordinary door does NOT re-read the platform
+    # allow-list (only the dataset door does), so an admin suspended after their token was minted
+    # still reaches this route, and ticking their own name in the picker would 422 their own create.
+    # The two writes land in one table and must not disagree about who is in the set.
+    designer_id, designer_ids = named_designer_team(
+        payload.designerUserId, payload.designerUserIds
+    )
+    wanted = set(designer_ids) - {current_user.id}
+    if wanted:
+        await assert_every_designer_may_be_named(wanted)
     data: dict[str, Any] = {
         "title": payload.title.strip(),
         "templateId": payload.templateId,
@@ -1303,22 +1442,35 @@ async def create_design_workshop(
     record = await db.designworkshop.create(data=data)
     # NAMING A DESIGNER PUTS THEM ON THE WORKSHOP, AND THAT IS ONE ACT RATHER THAN TWO. Without it
     # an admin creates the workshop and then has to remember to open the viewers panel and tick the
-    # same person they have just named; forgetting leaves a designer who cannot open the workshop
+    # same people they have just named; forgetting leaves a designer who cannot open the workshop
     # whose stage 1 already carries their name, and the only symptom is a 404 indistinguishable from
     # a workshop that does not exist. Eligibility was settled above the create, so this cannot be
     # the call that refuses. The creator naming THEMSELVES writes no row — their access comes from
-    # `createdById` — and `attach_the_named_designer` carries that rule and the reason for it.
-    if designer_id:
-        await attach_the_named_designer(
-            record.id, designer_id, granted_by_id=current_user.id, creator_id=record.createdById
+    # `createdById` — and `attach_the_named_designers` carries that rule and the reason for it.
+    #
+    # THIS IS THE WHOLE OF THE VISIBILITY CHANGE. The list query and the single read already scope
+    # on `DesignWorkshopViewer` (`visible_to_clause` and `load_workshop_or_404`), so writing N rows
+    # here instead of one widens every scoped surface at once — the list, the read, the media URLs,
+    # the questionnaire scope, the ratings — and narrows none of them, because none of them were
+    # ever reading anything else.
+    if designer_ids:
+        await attach_the_named_designers(
+            record.id,
+            designer_ids,
+            granted_by_id=current_user.id,
+            creator_id=record.createdById,
         )
     # The designer's own details, copied out of their profile into stage 1 and stage 3 before the
     # form is ever opened, so nobody retypes their institution and biography twenty-two stages
-    # into their fifth workshop of the year. WHOSE profile that is, is `designerUserId` when the
-    # body named somebody and the CREATOR's when it did not — the whole of that argument, including
-    # why there is no fallback from one to the other, is in ``seed_designer_prefill``. Written as
-    # ordinary stage entries — the report reads them with no special case at all — and copied rather
-    # than referenced, because a report is a historical document.
+    # into their fifth workshop of the year. WHOSE profile that is, is the LEAD's — `designerUserId`
+    # when the body named one, the first ticked name when it named only a team, and the CREATOR's
+    # when it named nobody at all. `named_designer_team` above settles which of the three, and the
+    # whole of the argument — including why there is no fallback from a named designer with no
+    # profile to the actor's — is in ``seed_designer_prefill``. ONE profile whatever the team's size:
+    # stage 1 declares one designer block and `report_meta` feeds `designerName` into the .docx's
+    # `dc:creator`, which is not a list. Written as ordinary stage entries — the report reads them
+    # with no special case at all — and copied rather than referenced, because a report is a
+    # historical document.
     #
     # AND THIS FORM'S OWN ANSWERS GO WITH THEM, WHICH IS NOT A CONVENIENCE. Every key below is
     # declared in `PROMOTED_COLUMNS` under `workshopSetup.*`, so the loop above wrote COLUMNS
@@ -1442,7 +1594,31 @@ async def delete_design_workshop(
 async def restore_design_workshop(
     workshop_id: str, _: Any = Depends(require_admin)
 ) -> dict[str, Any]:
-    """Undo a soft delete. Admin only — the point of the safety net is that it is not per-user."""
+    """Undo a soft delete. Admin only — the point of the safety net is that it is not per-user.
+
+    THE PAIR IS CLEARED TOGETHER, AND THAT IS DELIBERATE. ``deletedAt`` and ``deletedById`` are one
+    fact in two columns — *deleted, by whom* — and a restored workshop is not deleted, so leaving
+    the pointer behind would put "deleted by Priya" on a live row that Priya restored ten seconds
+    later. Nothing reads ``deletedById`` except the trash listing (``deletedOnly`` above), which by
+    construction only sees rows whose ``deletedAt`` is set, so the surviving half would be legible
+    to nobody and would answer ``deletedById IS NOT NULL`` — the obvious way to count deletions —
+    with every row ever restored.
+
+    IT DOES COST THE HISTORY, and the honest statement of that is that the history was never here to
+    keep: clearing ``deletedAt`` is what a restore IS, so a scheme that kept "who" would keep it
+    without the "when" it belongs to. This table has no revision log (``RecordRevision`` covers the
+    other record families, not this one), so who deleted a workshop and who restored it is
+    unanswerable after a restore either way. That gap is worth closing with an audit row, not with a
+    stale pointer.
+
+    NOTHING CASCADES, EITHER WAY. ``delete_design_workshop`` writes to this row and no other — stage
+    entries, custom sections, AI layers, exports and viewer grants are all left exactly as they were,
+    so there is nothing for a restore to un-cascade and a restored workshop comes back whole. (Of
+    those five only ``DwStageEntry`` and ``DwAiLayer`` carry a ``deletedAt`` of their own at all, and
+    both are set by their own routes, never by this one.) It is also idempotent on a live workshop:
+    restoring one that was never deleted writes the two nulls it already holds and answers 200, which
+    is the right answer to a double-clicked Restore button.
+    """
     record = await db.designworkshop.find_unique(where={"id": workshop_id})
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
@@ -2062,13 +2238,38 @@ async def list_ai_layers(
     layer's TEXT is a different thing: it is a stored COPY of a transcript, and a transcript is the
     content of a media file, gated per file by ``owned_or_granted_where(user,
     owner_field="uploadedById")`` on every other surface in this repository — the stage read, the
-    transcripts endpoint, the annexure. A ``DesignWorkshopViewer`` grant carries read and stage
-    writes and nothing about media (see ``services/design_workshop_viewers.py``), so those two sets
-    genuinely differ, and serving the copy on the workshop gate alone would have handed a granted
-    colleague the full text of a recording ``GET /design-workshops/{id}/transcripts`` refuses them —
-    out of a table that exists precisely to keep a copy of it. Every row is therefore listed with its
-    provenance, and the ones standing on a recording this caller may not read come back with
-    ``textWithheld`` true and no text, preview, payload or character count.
+    transcripts endpoint, the annexure.
+
+    WHAT THAT PER-FILE GATE ACTUALLY ADMITS WAS RESTATED HERE ON 2026-08-27, BECAUSE THIS PARAGRAPH
+    HAD GONE STALE IN THE DIRECTION THAT MAKES A REAL WITHHOLDING LOOK ARBITRARY. It used to say: "A
+    ``DesignWorkshopViewer`` grant carries read and stage writes and nothing about media (see
+    ``services/design_workshop_viewers.py``), so those two sets genuinely differ, and serving the
+    copy on the workshop gate alone would have handed a granted colleague the full text of a
+    recording ``GET /design-workshops/{id}/transcripts`` refuses them." The first clause is
+    false, and the example resting on it names the one case that does NOT happen.
+    ``owned_or_granted_where`` carries a THIRD arm, keyed on the media TAG rather than on the
+    uploader — ``services/records._design_workshop_media_branches``, which admits every
+    ``MediaFile`` whose ``linkedRecordType`` is ``designWorkshop`` and whose ``linkedRecordId`` is a
+    workshop this account may open. So ``GET /design-workshops/{id}/transcripts`` does NOT refuse
+    a granted colleague their own workshop's recordings, and has not since that arm was added;
+    ``backend/tests/test_media_entitlement.py`` pins it in both directions, in
+    ``test_a_granted_co_designer_is_shown_the_workshops_own_recordings`` and
+    ``test_a_designer_with_no_grant_is_still_refused_the_same_recording``. On the same date
+    ``GET /media``'s ``url`` was brought into line through ``records.media_url_scope``, so the
+    question "may this account have these bytes" no longer has two answers in this repository
+    depending on which route is asked.
+
+    THE TWO SETS STILL DIFFER, IN THE OTHER DIRECTION, AND THAT IS WHAT ``textWithheld`` GUARDS. A
+    grant admits THIS WORKSHOP'S TAGGED FILES AND NOTHING ELSE. A stage field stores a media id, and
+    nothing obliges that id to name a file tagged to this workshop — so a layer registered here can
+    stand on a recording an uploader filed under another workshop, or under none, named on a stage
+    by anybody who may edit one. Those are gated on uploader identity exactly as they were, and the
+    only key to them is a ``DataAccessGrant`` from that uploader — the grant that means "may take
+    that account's data at large", which the 2026-08-27 change did not touch and which a workshop
+    grant is not and never becomes. Serving the stored copy on the workshop gate alone would hand
+    one of those over out of a table that exists precisely to keep a copy of it. Every row is
+    therefore listed with its provenance, and the ones standing on a recording this caller may not
+    read come back with ``textWithheld`` true and no text, preview, payload or character count.
 
     ``accepted`` in the response is the count a client needs to answer "is anything here going into
     the report", without walking the list itself. It counts what ``ai_layers.accepted_layers``
@@ -2519,6 +2720,50 @@ _VERB_MEDIA_TYPES: dict[str, tuple[tuple[str, ...], str]] = {
     "SUBTITLES": (("AUDIO", "VIDEO"), "a recording or a video"),
 }
 
+# ── HOW BIG A FILE EACH MEDIA VERB WILL ACCEPT ─────────────────────────────────────────────────
+#
+# `_verb_source_media` below checks entitlement and media TYPE and has never checked SIZE, so both
+# verbs read whatever the row points at straight into the heap of the single-worker web process.
+# Nothing caps what may be uploaded as workshop media, and the largest live object in this
+# deployment is 668.44 MiB against a 1 GiB box (MEASURED, docs/SCALABILITY.md §5.1).
+#
+# CAPTION is memory-derived and small, because it genuinely needs every byte at once: a vision model
+# is sent base64 of the whole image inside a JSON body, so there is nothing to stream into. A
+# photograph is a phone photograph — p90 across this repository's media is 14.28 MiB.
+#
+# SUBTITLES is a disk bound rather than a memory one, because it now streams the object to a temp
+# file and hands the provider that path (see `s3.download_to_temp`). It is the larger of the two
+# ceilings on purpose: SUBTITLES accepts VIDEO, so this is the verb most likely to be pointed at
+# the biggest object in the archive.
+MAX_CAPTION_BYTES = 32 * 1024 * 1024
+MAX_SUBTITLE_FETCH_BYTES = 1024 * 1024 * 1024
+
+
+async def _refuse_oversize_verb_source(media: Any, ceiling: int, *, what: str) -> None:
+    """Refuse with a 413 naming both numbers when this file is too big for *what*. Never truncates.
+
+    The declared column first because it costs nothing, then ``s3.head_object`` for the real
+    ``ContentLength`` — ``MediaFile.sizeBytes`` is a client's claim that nothing reconciles, so it
+    can only ever be the cheap half of this check. ``head_object`` answering ``None`` means storage
+    would not say, and that is not read as "small": the SUBTITLES path passes the same ceiling to
+    ``download_to_temp``, which counts what actually lands.
+    """
+    declared = int(getattr(media, "sizeBytes", 0) or 0)
+    real = None
+    if declared <= ceiling:
+        head = await asyncio.to_thread(head_object, media.objectKey)
+        real = head.size_bytes if head is not None else None
+        if real is None or real <= ceiling:
+            return
+    size = real if real is not None else declared
+    raise HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail=(
+            f"That file is {size} bytes, over the {ceiling}-byte limit this server will {what}. "
+            f"Nothing was sent anywhere and nothing was spent."
+        ),
+    )
+
 
 async def _verb_source_media(
     workshop_id: str, media_id: str, current_user: Any, *, verb: ai_verbs.Verb
@@ -2896,6 +3141,12 @@ async def caption_ai_layer(
     media = await _verb_source_media(
         workshop_id, payload.sourceMediaId, current_user, verb=ai_verbs.Verb.CAPTION
     )
+    # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_CAPTION_BYTES`. Before the try, so
+    # a refusal never reaches `_count_refused_run`: nothing was sent, so nothing was spent, and
+    # counting it against the workshop's allowance would charge for a request that never left.
+    await _refuse_oversize_verb_source(
+        media, budget_bytes(MAX_CAPTION_BYTES), what="caption in one piece"
+    )
     answer: Mapping[str, Any] | None = None
     try:
         language = ai_verbs.clean_language(payload.language, what="the caption")
@@ -2971,14 +3222,26 @@ async def subtitle_ai_layer(
     media = await _verb_source_media(
         workshop_id, payload.sourceMediaId, current_user, verb=ai_verbs.Verb.SUBTITLES
     )
+    # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_SUBTITLE_FETCH_BYTES`. This verb
+    # takes VIDEO as well as AUDIO, so it is the one most likely to be pointed at the 668 MiB object.
+    await _refuse_oversize_verb_source(
+        media, MAX_SUBTITLE_FETCH_BYTES, what="spool for subtitling"
+    )
     answer: Mapping[str, Any] | None = None
+    source_path: str | None = None
     try:
-        content = await asyncio.to_thread(get_object_bytes, media.objectKey)
+        # STREAMED TO DISK, NOT READ INTO THE HEAP — this is the single-worker web process, and a
+        # whole-object read here competes with every request in flight. `transcribe_timed_bytes`
+        # takes the path and hands it to the provider rung that answers.
+        source_path = await asyncio.to_thread(
+            download_to_temp, media.objectKey, max_bytes=MAX_SUBTITLE_FETCH_BYTES
+        )
         answer = await ai.transcribe_timed_bytes(
-            content,
+            None,
             str(getattr(media, "originalFilename", "") or "recording.webm"),
             str(getattr(media, "mimeType", "") or "audio/webm"),
             get_settings(),
+            source_path=source_path,
         )
         plan = ai_verbs.subtitle(
             workshop_id=workshop_id,
@@ -2987,11 +3250,25 @@ async def subtitle_ai_layer(
             run=ai_verbs.VerbRun.of_answer(answer, tier=_SERVER_TIER, at=datetime.now(UTC)),
             created_by_id=current_user.id,
         )
+    except ObjectTooLarge as exc:
+        # `head_object` could not size it and the transfer hit the bound. Not a `VerbError`, so it
+        # deliberately does not reach `_count_refused_run`: nothing was sent to a provider.
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"That file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
+                f"server will spool for subtitling. Nothing was sent anywhere and nothing was spent."
+            ),
+        ) from exc
     except (ai_verbs.VerbError, ai_layers.LayerRuleViolation) as exc:
         await _count_refused_run(
             answer, allowance=allowance, verb=ai_verbs.Verb.SUBTITLES, current_user=current_user
         )
         raise _verb_http(exc) from exc
+    finally:
+        # Every exit, refusal and success alike. A verb that left a copy of every video it subtitled
+        # on the web box's disk would fill it long before anybody noticed why.
+        discard_temp(source_path)
     return await _finish_verb(
         plan=plan,
         allowance=allowance,
@@ -3127,8 +3404,15 @@ async def accept_ai_layer(
 
     AND IT IS REFUSED WHEN THIS ACCOUNT MAY NOT READ THE RECORDING THE LAYER STANDS ON. Being able
     to edit a workshop and being able to read the CONTENT of a recording inside it are two different
-    permissions in this repository — a ``DesignWorkshopViewer`` grant carries the first and says
-    nothing about the second — so without this check a colleague could put their name to a
+    permissions in this repository, and this paragraph was CORRECTED 2026-08-27 because it had the
+    difference the wrong way round. It used to read "a ``DesignWorkshopViewer`` grant carries the
+    first and says nothing about the second"; the grant DOES carry the second for this workshop's own
+    tagged files, through ``records.owned_or_granted_where``'s tag-keyed third arm, so the colleague
+    that sentence pictured is shown those recordings and is refused nothing. The gap this check
+    actually guards is the other one: a layer can stand on a recording tagged to a DIFFERENT workshop
+    or to none at all — a stage field stores a media id and nothing obliges that id to be this
+    workshop's — and those stay gated on uploader identity, openable only with a ``DataAccessGrant``
+    from the uploader. Without this check a colleague could put their name to one of THOSE, a
     transcript that ``GET /design-workshops/{id}/transcripts`` and the list beside this route both
     refuse to show them. An acceptance is somebody stating that they read this text and it is right;
     a signature on a page the signer is not allowed to open is worth less than no signature, because
@@ -3380,13 +3664,7 @@ async def preview_report(
     )
     warnings = list(warnings) + load_warnings
     return {
-        "meta": {
-            "title": document.meta.title,
-            "subtitle": document.meta.subtitle,
-            "templateId": document.meta.template_id,
-            "templateName": document.meta.template_name,
-            "pageSize": document.meta.page_size.value,
-        },
+        "meta": _preview_meta(document),
         "blocks": [_block_payload(b) for b in document.blocks],
         "warnings": list(warnings),
     }
@@ -3588,18 +3866,23 @@ async def report_history(
     """
     record = await load_workshop_or_404(workshop_id, current_user)
 
-    exports = await db.dwreportexport.find_many(
-        where={"designWorkshopId": workshop_id},
-        order={"generatedAt": "desc"},
-        take=_HISTORY_EXPORT_LIMIT + 1,
-        include={"generatedBy": True},
-    )
-    # Deliberately unfiltered on `deletedAt`: a removed row IS a change between two files, and it
-    # is the only kind of change that leaves nothing behind to notice.
-    entries = await db.dwstageentry.find_many(
-        where={"designWorkshopId": workshop_id},
-        order={"updatedAt": "desc"},
-        take=_HISTORY_ENTRY_LIMIT + 1,
+    # The export record and the stage-row timestamps are two independent tables — the diff is built
+    # from both on the device, not from one against the other — so they go out together rather than
+    # one after the other.
+    exports, entries = await gather_reads(
+        db.dwreportexport.find_many(
+            where={"designWorkshopId": workshop_id},
+            order={"generatedAt": "desc"},
+            take=_HISTORY_EXPORT_LIMIT + 1,
+            include={"generatedBy": True},
+        ),
+        # Deliberately unfiltered on `deletedAt`: a removed row IS a change between two files, and
+        # it is the only kind of change that leaves nothing behind to notice.
+        db.dwstageentry.find_many(
+            where={"designWorkshopId": workshop_id},
+            order={"updatedAt": "desc"},
+            take=_HISTORY_ENTRY_LIMIT + 1,
+        ),
     )
     entries_truncated = len(entries) > _HISTORY_ENTRY_LIMIT
     window = exports[:_HISTORY_EXPORT_LIMIT]
@@ -4297,6 +4580,44 @@ def _dropped_note(count: int) -> str:
         f"{count} further warning(s) did not fit in this header. The report preview lists all of "
         "them."
     )
+
+
+def _preview_meta(document: Any) -> dict[str, Any]:
+    """The preview's ``meta``: what the document IS, and the geometry it is laid out on.
+
+    A module-level function rather than a dict literal inside the route for one reason — the route
+    cannot be called without a database, and this is the half of the payload that has been wrong.
+
+    ── THE PAPER IS ONLY HALF THE GEOMETRY, AND THE OTHER HALF WAS MISSING ──────────────────────
+
+    ``report_pdf.PdfRenderer`` sizes its text column as ``page_w - 2 * margin`` and
+    ``report_docx`` writes the same number into the section properties, so the MARGIN is what
+    decides where every line wraps and therefore where every page breaks. This payload used to
+    carry ``pageSize`` and nothing else about the geometry, which left the one surface a designer
+    approves the document on guessing at the other half: ``previewModel.pageGeometry`` fell back to
+    25 and ``ReportSheet`` printed "25 mm margins assumed (the preview payload does not carry the
+    margin)" on every sheet — an apology, on screen, for a number the server had in its hand.
+
+    ``margin_mm`` IS 25.0 ON EVERY DOCUMENT THIS DEPLOYMENT PRODUCES, and sending it is still the
+    point. Checked rather than assumed: no ``ReportTemplate`` field sets it (``report_templates``
+    declares ``page_size`` and no margin), ``design_workshops.report_meta`` reads no stage-20
+    answer for it, and ``render_report`` overrides only ``page_size``, ``header_text`` and
+    ``footer_text``. So today this reports the dataclass default — but it reports it as the
+    DOCUMENT'S OWN value rather than as the preview's assumption, which is the difference between
+    a screen that is right by coincidence and one that stays right: the first template or setting
+    to move the margin moves the preview with it, with no second change here and no client edit.
+
+    A new key on a JSON payload both clients ignore-unknown, so nothing older breaks; the web's
+    ``PreviewMeta`` was already widened for it and keeps its fallback for a cached response.
+    """
+    return {
+        "title": document.meta.title,
+        "subtitle": document.meta.subtitle,
+        "templateId": document.meta.template_id,
+        "templateName": document.meta.template_name,
+        "pageSize": document.meta.page_size.value,
+        "marginMm": document.meta.margin_mm,
+    }
 
 
 def _block_payload(block: Any) -> dict[str, Any]:

@@ -10,8 +10,15 @@ reviews a volunteer's work without getting to rewrite it.
 ``tests/test_permission_matrix.py`` asserts that distinction against the two PREDICATES and has
 since the day they were written. It never asserted it against this route, which is how the route
 kept the wrong one. So the matrix here is driven over HTTP: for every (editor, author) pair on the
-six-tier ladder, the route must admit exactly the pairs the predicate admits — and must keep
-admitting approve / reject / revise for the reviewers it now turns away from editing.
+WHOLE ladder — every tier ``deps.ROLE_RANK`` has, read from it rather than copied — the route must
+admit exactly the pairs the predicate admits, and must keep admitting approve / reject / revise for
+the reviewers it now turns away from editing.
+
+THE PAIR THIS FILE NOW ANSWERS THAT IT COULD NOT BEFORE: an INSPECTOR (37) editing a DESIGNER's
+(35) record. The inspector tier exists to review a designer's work, so ``can_review_record`` admits
+it — and ``can_edit_others_record`` does not, because 37 is below the Professor floor at 40. Review
+it, send it back, do not silently rewrite it. That is one cell of this matrix and it is asserted
+against the route here rather than only against the predicate.
 
 NOTHING HERE TOUCHES A DATABASE. ``db`` is replaced by delegates that answer with one canned record
 and record what they were asked to write, so "allowed" means the row was actually updated rather
@@ -31,14 +38,20 @@ import app.core.db as core_db
 from app.api.router import api_router
 from app.core import deps
 
-ALL_ROLES = (
-    "CROWDSOURCE_VOLUNTEER",
-    "FIELD_CONTRIBUTOR",
-    "RESEARCHER",
-    "PROFESSOR",
-    "ADMIN",
-    "MASTER_ADMIN",
-)
+#: Every tier, lowest first — DERIVED from the server's ladder rather than typed out.
+#:
+#: IT WAS TYPED OUT, AND IT HAD ALREADY LOST A TIER. Until 2026-08-27 this was a six-name literal
+#: with no DESIGNER in it, in a product whose primary user is a designer, under a docstring that
+#: still called the ladder "six-tier". Nothing was red: the parametrisation simply ran 36 pairs
+#: instead of 49 and never once asked whether a designer's record could be rewritten from the review
+#: queue, or whether a designer could rewrite someone else's. That is the exact defect this file
+#: exists to catch, one level up — a matrix that is complete against the wrong ladder.
+#:
+#: So it is no longer a copy. `deps.ROLE_RANK` is the ladder; sorting by rank keeps a parametrised
+#: failure readable in tier order, and INSPECTOR (37) — the tier that outranks a designer precisely
+#: SO THAT it may review them — is now in the matrix on the day it was added rather than on the day
+#: an audit notices. A hand-kept tuple beside a ladder it does not derive from cannot notice anything.
+ALL_ROLES = tuple(sorted(deps.ROLE_RANK, key=lambda role: deps.ROLE_RANK[role]))
 
 EDIT_BODY = {"fields": {"notes": "Corrected the village spelling."}, "note": "Typo."}
 
@@ -165,7 +178,10 @@ def test_the_edit_route_admits_exactly_who_may_edit_others_work(
     queue: _Queue, editor_role: str, creator_role: str
 ) -> None:
     """The whole matrix, over HTTP. ``can_edit_others_record`` is the contract; the route has to BE
-    it, for all thirty-six pairs, rather than resemble it."""
+    it, for every (editor, author) pair the ladder can make, rather than resemble it. The count is
+    ``len(ALL_ROLES) ** 2`` and is deliberately not written down here: it said "thirty-six" while
+    ``ALL_ROLES`` was a stale six-name literal, and a hand-written count is how a shrinking matrix
+    goes unnoticed."""
     allowed = deps.can_edit_others_record(_user(editor_role), creator_role)
 
     response = queue.holding(creator_role).as_(editor_role).post("/artisan/a1/edit", EDIT_BODY)

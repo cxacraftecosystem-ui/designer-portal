@@ -54,13 +54,14 @@
  * 4. **Every move is announced in words**, through a polite live region the consumer renders. A rank
  *    that exists only as a place in a visual list is a rank a screen-reader user cannot read back.
  *
- * 5. **The drag cannot outlive the list, and the one cross-window listener is released with it.**
+ * 5. **The drag cannot outlive the list, and the cross-window listeners are released with it.**
  *    `drag` is this hook's own `useState`, so a route change mid-gesture discards it with the
  *    consumer and the next mount starts from `null` — there is no path by which a lifted row
  *    nobody is touching survives to be drawn, and React's handlers leave with the node they were
- *    on. What DOES need a cleanup is the `keydown` listener rule 3's Escape half puts on
- *    `window`: the effect below adds it only while a gesture is in flight and removes it on
- *    release and on unmount alike.
+ *    on. What DOES need a cleanup is anything SCHEDULED rather than remembered: the `keydown`
+ *    listener rule 3's Escape half puts on `window`, and the animation frame the auto-scroll below
+ *    books. Both effects add theirs only while a gesture is in flight and drop them on release and
+ *    on unmount alike.
  *
  *    THIS RULE USED TO READ "the drag is torn down on unmount as well as on release", naming a
  *    teardown of captured-pointer listeners that no line in this file performs. It was corrected
@@ -68,7 +69,53 @@
  *    5, where a `DisposableEffect` was found to be writing to state discarded in the same
  *    breath). Do not make the old sentence true by adding a `releasePointerCapture` or an
  *    unmount `setDrag(null)`: the browser releases capture when the node goes, and state dying
- *    with the component is the mechanism, not a gap in one.
+ *    with the component is the mechanism, not a gap in one. A `cancelAnimationFrame` is a
+ *    different animal and belongs where it is — a booked frame is not state, nothing discards it
+ *    when the component goes, and the callback it holds would scroll the page the designer has
+ *    navigated ON to.
+ *
+ * ── EDGE AUTO-SCROLL, AND THE RECONCILIATION THAT MAKES IT LEGAL ────────────────────────────────
+ *
+ * Added 2026-08-27. Until then the gesture could only reach a destination ALREADY ON SCREEN, and on
+ * a 360×640 handset — where one review card or one custom-section panel is most of the viewport —
+ * that is exactly one position, which is what the arrow button beside the grip already does with a
+ * bigger target. The grip carries `touch-action: none` (that is what stops the browser claiming the
+ * movement as a page scroll before the first `pointermove` arrives), so the page cannot scroll
+ * itself out from under the drag either. The gesture therefore has to do the scrolling.
+ *
+ * **THE HARD PART IS RULE 1, AND THE ANSWER IS ONE TERM.** Every rectangle in `boxes` is in
+ * VIEWPORT coordinates as they stood at pointerdown, and a scroll moves every row on screen. The
+ * instinct is that the snapshot is now stale and must be re-measured — which is precisely what rule
+ * 1 forbids, and re-measuring here would be worse than usual because the auto-scroll is itself
+ * driven by the target index, so the oscillation would have a motor attached.
+ *
+ * It does not need re-measuring, because **a scroll translates EVERY row by the SAME amount, and
+ * the index calculation only ever compares rows with each other.** `dragTargetIndex` asks whether
+ * the dragged row's centre has passed another row's centre; adding a constant to both sides of that
+ * comparison changes nothing. The only thing a scroll genuinely changes is where the FINGER is
+ * relative to the list — and that is one number. So the snapshot stays exactly as taken, and the
+ * gesture's travel becomes:
+ *
+ *     travel = (how far the finger has moved) + (how far the scroller has moved)
+ *
+ * both measured against values captured at pointerdown (`startY`, `Scroller.start`). `offset` keeps
+ * its old meaning — finger travel alone — and `scrolled` is the second term, named so a reader can
+ * see there are two. The dragged card's own `translateY` is their SUM, which is what pins it under
+ * the finger: its layout position has moved up by the scroll, and the extra term puts it back.
+ *
+ * Nothing about this reads a row's geometry. `scrollTop` is the scroller's own property and is not
+ * affected by the CSS transforms this hook hands out, so there is no path from the preview back
+ * into the measurement — which is the whole of what rule 1 is protecting.
+ *
+ * **THE EXTENT IS SNAPSHOTTED TOO, AND THAT ONE IS A RUNAWAY GUARD RATHER THAN TIDINESS.** A CSS
+ * transform contributes to its scroll container's scrollable overflow region, so a row translated
+ * 400px down genuinely makes the page 400px taller while the finger is holding it there. Without a
+ * bound, auto-scrolling toward the bottom would scroll into space the drag itself had just created,
+ * which grows `scrolled`, which pushes the card further down, which extends the page again. The
+ * bound is the extent as it stood at pointerdown, and it is the RIGHT bound rather than a safe one:
+ * `boxes` is fixed at pointerdown, so the destinations this gesture can commit to are exactly the
+ * rows that existed then, and the scroll range that reveals all of them is exactly the range that
+ * existed then.
  *
  * ── MOTION ──────────────────────────────────────────────────────────────────────────────────────
  *
@@ -78,9 +125,27 @@
  * this file would then need its own JS branch for a 120ms slide — and the transform this hook
  * returns would be fighting framer for the same property, which §17 of the frontend contract names
  * as its own trap.
+ *
+ * THE AUTO-SCROLL IS THE EXCEPTION, because it is a scroll driven from JavaScript and CSS cannot
+ * reach it at all — so it takes the JS branch the contract requires, through `useAppReducedMotion()`
+ * (the OR of the OS query and the in-app toggle; framer's own `useReducedMotion()` sees only the
+ * first). **What the preference changes is HOW the list travels and never WHETHER the destination is
+ * reachable**: switching auto-scroll off under reduced motion would put the drag back to one
+ * position for exactly the readers who asked for less movement, which is a capability taken away by
+ * a motion setting. So under reduced motion the list JUMPS a fixed step at a time with a dwell
+ * between jumps, instead of gliding at a speed proportional to how deep in the edge zone the finger
+ * is. An instant change is the substitute a continuous animation is supposed to degrade to, and the
+ * average speed is deliberately in the same range, so nobody is made slower for the preference.
+ *
+ * The preference is read through a REF and never a dependency, the treatment `useEditDeepLink`
+ * argues for at length: `useAppReducedMotion()` reads false on the server and on the first client
+ * render by design and flips a tick later once `ThemeProvider` has read storage, so as a dependency
+ * it would tear the animation frame down MID-GESTURE for every account that has the toggle on.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 
 /** Move the item at `from` to `to`, closing the gap behind it. Pure. */
 export function moveIndex<T>(items: readonly T[], from: number, to: number): T[] {
@@ -91,6 +156,178 @@ export function moveIndex<T>(items: readonly T[], from: number, to: number): T[]
   return next;
 }
 
+/** One row's box in the pointerdown snapshot. Viewport coordinates, as `getBoundingClientRect` gives them. */
+export type DragBox = { top: number; height: number };
+
+/**
+ * Which index the dragged row has reached, given how far it has travelled from where it started.
+ *
+ * PURE, AND EXPORTED SO THE GEOMETRY CAN BE TESTED WITHOUT A POINTER. Nothing in this repository can
+ * compose a React tree — there is no renderer in `devDependencies` — so a judgement left inside an
+ * event handler is only ever exercised by somebody looking at a screen. This is the same split
+ * `components/ui/selectFilter.ts` and `components/data/cappedList.ts` make for the same reason.
+ *
+ * `travel` is the SUM of the finger's movement and the scroller's, and the two are interchangeable
+ * here on purpose — see the reconciliation note in the file header. Every comparison is between two
+ * rows of the same snapshot, so a scroll (which moves both by the same amount) cannot change the
+ * answer; only the finger's relation to the list can, and `travel` is that relation.
+ *
+ * Comparing CENTRES rather than edges is what stops the target flipping back and forth while a tall
+ * card is halfway past a short one. `Math.min`/`Math.max` rather than a plain assignment so that the
+ * furthest row the centre has passed wins, whatever order the rows are visited in.
+ */
+export function dragTargetIndex(boxes: readonly DragBox[], from: number, travel: number): number {
+  const box = boxes[from];
+  if (!box) return from;
+  const centre = box.top + box.height / 2 + travel;
+  let to = from;
+  boxes.forEach((other, index) => {
+    if (index === from) return;
+    const otherCentre = other.top + other.height / 2;
+    if (index < from && centre < otherCentre) to = Math.min(to, index);
+    if (index > from && centre > otherCentre) to = Math.max(to, index);
+  });
+  return to;
+}
+
+/**
+ * How deep into the scroller's top or bottom strip the pointer has to be before the list starts
+ * travelling, in CSS pixels.
+ *
+ * Deep enough that a thumb held at the bottom of a 640px handset viewport is comfortably inside it,
+ * shallow enough that the middle of even a short scroller is neutral: two 72px strips leave 496px of
+ * a 640px viewport where nothing moves at all. Halved when the scroller is shorter than 144px, so
+ * the two strips can never overlap into a scroller with no neutral middle — a control that scrolled
+ * wherever you put the finger would be unaimable.
+ */
+const EDGE_ZONE = 72;
+
+/** Pixels per second at the very edge of the zone, tapering to nothing at its inner lip. */
+const MAX_SPEED = 900;
+
+/**
+ * The reduced-motion pair: one jump of this many pixels, no more often than this many milliseconds.
+ *
+ * ~380px/s sustained, which sits inside the range the continuous branch covers, so the preference
+ * changes the character of the travel and not how long a designer waits to reach the bottom.
+ */
+const REDUCED_STEP = 96;
+const REDUCED_DWELL_MS = 250;
+
+/**
+ * How far the finger must travel before auto-scroll arms, in CSS pixels.
+ *
+ * A PRESS IS NOT A DRAG. Without this, pressing a grip that happens to sit within `EDGE_ZONE` of the
+ * viewport's bottom edge — which on a phone is where the last row's grip always sits — would start
+ * the page moving before the designer had asked for anything, and let go of it somewhere else.
+ */
+const ARM_TRAVEL = 8;
+
+/**
+ * How far the scroller should move this frame, signed: negative up, positive down, zero at rest.
+ *
+ * PURE, for the reason `dragTargetIndex` gives. Five behaviours worth pinning live in here and none
+ * of them is visible from a screenshot: the neutral middle, the taper, which edge wins, the
+ * saturation once the pointer is past the edge entirely (a pointer dragged off the top of the window
+ * scrolls at full speed rather than falling out of the zone and stopping), and the clamp.
+ *
+ * `elapsedMs` is the time since the last frame on the continuous branch and the time since the last
+ * JUMP on the reduced-motion one, which is why the caller resets its accumulator only when this
+ * returns something non-zero.
+ *
+ * THE CLAMP CAN SHORTEN A STEP TO NOTHING AND MUST NEVER TURN ONE AROUND. It is applied in the
+ * direction of travel only: a scroller that has somehow ended up past the extent snapshotted at
+ * pointerdown (browser scroll anchoring, another script) must be left where it is rather than
+ * dragged back, because a correction nobody asked for during a gesture reads as the list fighting
+ * the finger.
+ */
+export function edgeScrollDelta({
+  pointer,
+  top,
+  bottom,
+  scroll,
+  max,
+  elapsedMs,
+  reduce
+}: {
+  /** The pointer's position, in the same client coordinates as `top` and `bottom`. */
+  pointer: number;
+  /** The scroller's visible edges, in client coordinates. */
+  top: number;
+  bottom: number;
+  /** Where the scroller is now, and the furthest it was allowed to travel when the drag began. */
+  scroll: number;
+  max: number;
+  elapsedMs: number;
+  reduce: boolean;
+}): number {
+  const zone = Math.min(EDGE_ZONE, (bottom - top) / 2);
+  if (!(zone > 0)) return 0;
+  // How far past the zone's inner lip the pointer is, as a fraction of the zone. Negative in the
+  // neutral middle; capped at 1 so a pointer dragged clean off the edge does not accelerate away.
+  const above = (top + zone - pointer) / zone;
+  const below = (pointer - (bottom - zone)) / zone;
+  const depth = Math.min(1, Math.max(above, below));
+  if (depth <= 0) return 0;
+  const direction = above >= below ? -1 : 1;
+  const raw = reduce
+    ? elapsedMs >= REDUCED_DWELL_MS
+      ? direction * REDUCED_STEP
+      : 0
+    : direction * depth * MAX_SPEED * (elapsedMs / 1000);
+  if (raw > 0) return Math.max(0, Math.min(max - scroll, raw));
+  if (raw < 0) {
+    const bounded = Math.min(0, Math.max(-scroll, raw));
+    // NORMALISED, BECAUSE `Math.max(-0, …)` PRODUCES NEGATIVE ZERO. `-0 === 0` is true, so the
+    // caller's at-rest check is unaffected either way — but `Object.is(-0, 0)` is false, which is
+    // what `expect(…).toBe(0)` uses, and a clamp that correctly reduced an upward step to nothing
+    // would read as a failure in the one place that can check it.
+    return bounded === 0 ? 0 : bounded;
+  }
+  return 0;
+}
+
+/**
+ * The nearest ancestor that actually scrolls, or the document.
+ *
+ * MEASURED RATHER THAN CONFIGURED, because one hook serves three renderers with three different
+ * page shapes and a fourth will not tell us. `overflow-y` alone is not the test: a `overflow-y:auto`
+ * container whose content fits scrolls nowhere, and stopping there would leave the page — the thing
+ * that CAN move — undriven. Only the nearest one is driven, which is the same choice
+ * `useRevealRow`'s container branch makes and for the same reason: scrolling every scrollable
+ * ancestor drags the page out from under a pane somebody deliberately pinned.
+ */
+function scrollerFor(node: HTMLElement | null): HTMLElement {
+  for (let element = node?.parentElement ?? null; element; element = element.parentElement) {
+    const overflowY = getComputedStyle(element).overflowY;
+    const scrolls = overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay";
+    if (scrolls && element.scrollHeight > element.clientHeight) return element;
+  }
+  return (document.scrollingElement ?? document.documentElement) as HTMLElement;
+}
+
+/**
+ * The scroller this gesture is driving, snapshotted at pointerdown beside the rectangles.
+ *
+ * A REF AND NOT PART OF `DragState`, because none of it is drawn: putting a DOM node and a live
+ * pointer position into the state that every `pointermove` copies would re-render three consumers
+ * for values no consumer reads. The state carries `scrolled` — the one number the preview needs —
+ * and this carries the machinery that produces it.
+ */
+type Scroller = {
+  node: HTMLElement;
+  /** Its visible edges in client coordinates, and its scroll position and extent at pointerdown. */
+  top: number;
+  bottom: number;
+  start: number;
+  max: number;
+  /** Where the finger went down, and where it is now — both `clientY`. */
+  startY: number;
+  pointer: number;
+  /** False until the finger has travelled `ARM_TRAVEL`; see that constant. */
+  armed: boolean;
+};
+
 type DragState = {
   key: string;
   pointerId: number;
@@ -98,8 +335,10 @@ type DragState = {
   to: number;
   startY: number;
   offset: number;
+  /** How far the scroller has travelled since pointerdown. The second half of `travel`; see the header. */
+  scrolled: number;
   /** Snapshot of every row's box at pointerdown; see rule 1. */
-  boxes: Array<{ top: number; height: number }>;
+  boxes: DragBox[];
   /** The arrangement at pointerdown, so the release can tell whether it still holds. See rule 2. */
   snapshot: readonly string[];
 };
@@ -200,9 +439,23 @@ export function useDragReorder({
   describeMove?: (key: string, index: number) => string;
 }): DragReorder {
   const rowRefs = useRef(new Map<string, HTMLElement>());
+  const scrollerRef = useRef<Scroller | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const total = order.length;
+
+  /*
+    Reduced motion, read through a ref and never as a dependency — the header's last paragraph and
+    §17 of the frontend contract both say why. Written in an effect with no dependency array rather
+    than during render, the discipline `useEditDeepLink` and `useLeaveGuard` follow: a render can be
+    discarded under concurrent rendering, and a ref written on a discarded render would leave the
+    animation frame reading a preference that never committed.
+  */
+  const reduceMotion = useAppReducedMotion();
+  const reduceRef = useRef(reduceMotion);
+  useEffect(() => {
+    reduceRef.current = reduceMotion;
+  });
 
   const announceMove = useCallback(
     (key: string, index: number) => {
@@ -215,7 +468,7 @@ export function useDragReorder({
     [describeMove, labelFor, total]
   );
 
-  // Rule 3's Escape half — and the whole of rule 5's cleanup: the one listener this hook puts on `window`.
+  // Rule 3's Escape half — one of the two listeners this hook puts on `window`; see rule 5.
   useEffect(() => {
     if (!drag) return;
     function cancelOnEscape(event: KeyboardEvent) {
@@ -224,6 +477,66 @@ export function useDragReorder({
     window.addEventListener("keydown", cancelOnEscape);
     return () => window.removeEventListener("keydown", cancelOnEscape);
   }, [drag]);
+
+  /**
+   * The auto-scroll clock.
+   *
+   * KEYED ON WHETHER A DRAG EXISTS AND NOT ON THE DRAG, which is the whole reason this is a separate
+   * effect from the Escape one above. `drag` is a new object on every `pointermove`, so an effect
+   * depending on it is torn down and rebuilt dozens of times a second — harmless for adding a
+   * listener, fatal for a frame loop, which would be cancelled and re-booked before it ever ran and
+   * would lose its elapsed-time accumulator every time.
+   *
+   * IT RUNS EVERY FRAME AND WRITES NOTHING WHEN THERE IS NOTHING TO DO. `edgeScrollDelta` returns 0
+   * for a pointer in the neutral middle, so the common case — a drag between two visible rows — costs
+   * one arithmetic pass per frame and no re-render at all. It has to be a clock rather than a
+   * `pointermove` handler because the case that matters is a finger held STILL at the edge: no
+   * pointer event fires, and the list still has to keep coming.
+   */
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    let frame = 0;
+    let previous = performance.now();
+    // Time banked toward the next jump on the reduced-motion branch. Reset only when a jump is
+    // actually taken, so a dwell served while the pointer was in the neutral middle is not lost.
+    let sinceStep = 0;
+    const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      const scroller = scrollerRef.current;
+      if (!scroller || !scroller.armed) return;
+      const elapsed = now - previous;
+      previous = now;
+      sinceStep += elapsed;
+      const reduce = reduceRef.current;
+      const delta = edgeScrollDelta({
+        pointer: scroller.pointer,
+        top: scroller.top,
+        bottom: scroller.bottom,
+        scroll: scroller.node.scrollTop,
+        max: scroller.max,
+        elapsedMs: reduce ? sinceStep : elapsed,
+        reduce
+      });
+      if (delta === 0) return;
+      sinceStep = 0;
+      scroller.node.scrollTop += delta;
+      // Read BACK rather than assumed: the delta asked for is not always the delta granted (the end
+      // of the extent, a sub-pixel device ratio), and `scrolled` has to be what actually happened or
+      // the card stops sitting under the finger.
+      const scrolled = scroller.node.scrollTop - scroller.start;
+      setDrag((current) => {
+        if (!current) return current;
+        const box = current.boxes[current.from];
+        if (!box) return current;
+        const to = dragTargetIndex(current.boxes, current.from, current.offset + scrolled);
+        if (scrolled === current.scrolled && to === current.to) return current;
+        return { ...current, scrolled, to };
+      });
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [dragging]);
 
   const registerRow = useCallback(
     (key: string) => (node: HTMLElement | null) => {
@@ -243,6 +556,31 @@ export function useDragReorder({
           const box = rowRefs.current.get(rowKey)?.getBoundingClientRect();
           return { top: box?.top ?? 0, height: box?.height ?? 0 };
         });
+        /*
+          THE SCROLLER IS SNAPSHOTTED WITH THE RECTANGLES, and for the same reason they are: it is
+          the frame of reference the whole gesture is expressed in. Its visible edges are taken once
+          because a viewport that changed size mid-gesture would move the edge zones under a finger
+          that had not moved, and its extent is taken once because the transform this hook is about
+          to hand out will grow it — the runaway guard argued in the header.
+
+          The document scroller is the fallback and its edges are the window's, not its own box: the
+          scrolling element's rectangle is the height of the whole document, which as an "edge zone"
+          would mean the strip 72px above the end of the page rather than 72px above the fold.
+        */
+        const node = rowRefs.current.get(key) ?? null;
+        const scroller = scrollerFor(node);
+        const documentScroller = scroller === document.scrollingElement || scroller === document.documentElement;
+        const view = documentScroller ? null : scroller.getBoundingClientRect();
+        scrollerRef.current = {
+          node: scroller,
+          top: view ? view.top : 0,
+          bottom: view ? view.bottom : window.innerHeight,
+          start: scroller.scrollTop,
+          max: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+          startY: event.clientY,
+          pointer: event.clientY,
+          armed: false
+        };
         event.currentTarget.setPointerCapture(event.pointerId);
         /*
           THE GESTURE BELONGS TO THIS HANDLE FROM HERE ON. Without `preventDefault` the browser also
@@ -263,6 +601,7 @@ export function useDragReorder({
           to: from,
           startY: event.clientY,
           offset: 0,
+          scrolled: 0,
           boxes,
           snapshot: [...order]
         });
@@ -270,6 +609,17 @@ export function useDragReorder({
       onPointerMove(event: React.PointerEvent<HTMLElement>) {
         const clientY = event.clientY;
         const pointerId = event.pointerId;
+        /*
+          THE POINTER'S POSITION IS RECORDED OUTSIDE THE UPDATER, because the frame loop needs it and
+          a state updater is not a place to have side effects — React calls it twice in StrictMode,
+          which `next.config.ts` turns on for every development mount.
+        */
+        const scroller = scrollerRef.current;
+        if (scroller) {
+          scroller.pointer = clientY;
+          // A press is not a drag; see `ARM_TRAVEL`.
+          if (Math.abs(clientY - scroller.startY) >= ARM_TRAVEL) scroller.armed = true;
+        }
         setDrag((current) => {
           if (!current || current.pointerId !== pointerId) return current;
           const offset = clientY - current.startY;
@@ -280,14 +630,8 @@ export function useDragReorder({
           // properly and cancels.
           const box = current.boxes[current.from];
           if (!box) return current;
-          const centre = box.top + box.height / 2 + offset;
-          let to = current.from;
-          current.boxes.forEach((other, index) => {
-            if (index === current.from) return;
-            const otherCentre = other.top + other.height / 2;
-            if (index < current.from && centre < otherCentre) to = Math.min(to, index);
-            if (index > current.from && centre > otherCentre) to = Math.max(to, index);
-          });
+          // The finger's travel PLUS the scroller's; the header's reconciliation, in one expression.
+          const to = dragTargetIndex(current.boxes, current.from, offset + current.scrolled);
           if (offset === current.offset && to === current.to) return current;
           return { ...current, offset, to };
         });
@@ -296,20 +640,23 @@ export function useDragReorder({
         /*
           THIS READS THE RENDER CLOSURE WHILE `onPointerMove` ABOVE USES A FUNCTIONAL UPDATER, AND THE
           ASYMMETRY IS THE POINT. The move handler must compose with moves React has queued but not
-          yet rendered, so it goes through `setDrag((current) => …)` at :261. This handler takes the
-          plain `drag` from the closure instead, which means it commits the destination of the LAST
-          PAINTED FRAME rather than of the last event received. That is a real difference: react-dom
-          19 puts `pointermove` in ContinuousEventPriority — flushed by a Scheduler macrotask — and
+          yet rendered, so it goes through `setDrag((current) => …)`. This handler takes the plain
+          `drag` from the closure instead, which means it commits the destination of the LAST PAINTED
+          FRAME rather than of the last event received. That is a real difference: react-dom 19 puts
+          `pointermove` in ContinuousEventPriority — flushed by a Scheduler macrotask — and
           `pointerup` in DiscreteEventPriority, so a move dispatched in the same input batch as the
-          release genuinely has not rendered by the time we run.
+          release genuinely has not rendered by the time we run. The auto-scroll's frame loop writes
+          through the same functional updater and lands on the same side of the trade: a scroll that
+          has not been painted has not been shown to anybody either.
 
           COMMITTING WHAT WAS PAINTED IS THE CORRECT SIDE OF THAT TRADE, because everything the
           designer can see is derived from this same committed `drag`: the neighbours' displacement
-          (`shift`, below), `shiftFor`, and the dragged card's own `translateY` (which is just
-          `drag.offset`). A move that never reached this handler never reached the preview either, so
-          the screen and the write always agree — what is lost is a sub-frame flick that was never
-          shown to anybody. Worst case the swallowed move WAS the whole gesture, `current.to` is still
-          `current.from`, the equality check below returns, and the flick does nothing at all.
+          (`shift`, below), `shiftFor`, and the dragged card's own `translateY` (which is
+          `drag.offset + drag.scrolled`). A move that never reached this handler never reached the
+          preview either, so the screen and the write always agree — what is lost is a sub-frame flick
+          that was never shown to anybody. Worst case the swallowed move WAS the whole gesture,
+          `current.to` is still `current.from`, the equality check below returns, and the flick does
+          nothing at all.
 
           SO DO NOT "FIX" THIS BY GIVING THE RELEASE A PRIVATE VIEW OF `to` — a ref written by the
           move handler and read only here, or a recompute from `event.clientY`, would INVERT the
@@ -320,6 +667,7 @@ export function useDragReorder({
         */
         const current = drag;
         setDrag(null);
+        scrollerRef.current = null;
         if (!current || current.pointerId !== event.pointerId) return;
         if (current.to === current.from) return;
         // Rule 2, said out loud rather than swallowed.
@@ -340,6 +688,7 @@ export function useDragReorder({
       },
       onPointerCancel() {
         setDrag(null);
+        scrollerRef.current = null;
       }
     }),
     [announceMove, drag, labelFor, locked, onReorder, order]
@@ -372,7 +721,9 @@ export function useDragReorder({
    *
    * So the displacement is now measured as the DISTANCE BETWEEN ADJACENT ROW TOPS, which carries the
    * gap by construction and needs no knowledge of the container's CSS. Measured from the snapshot, so
-   * it is still one measurement taken at pointerdown (rule 1) and still cannot feed back into itself.
+   * it is still one measurement taken at pointerdown (rule 1) and still cannot feed back into itself
+   * — and a mid-gesture scroll cannot disturb it either, because it is a DIFFERENCE between two rows
+   * of that snapshot and a scroll moves both by the same amount.
    *
    * ── AND THE NEIGHBOUR MUST BE IN THE SAME VISUAL LIST, WHICH IS NOT THE SAME AS THE NEXT INDEX ──
    *
@@ -405,6 +756,14 @@ export function useDragReorder({
    * own height is the honest fallback. With no box at all there is nothing to displace, and 0 is the
    * only answer that is not a fabrication — the earlier `after.top - (box?.top ?? 0)` form would have
    * measured from the viewport's origin and pushed every neighbour by a few hundred pixels.
+   *
+   * ── AND THE DRAGGED ROW CARRIES BOTH HALVES OF ITS TRAVEL ───────────────────────────────────────
+   *
+   * `drag.offset + drag.scrolled`, never `drag.offset` alone. The row is laid out normally and so it
+   * MOVES WITH THE SCROLL like every other row; the extra term is what puts it back under a finger
+   * that did not move. Drop it and the card slides away upward at exactly the speed the auto-scroll
+   * is running at — which looks like the gesture having been lost, at the moment the designer is
+   * furthest from where they started.
    */
   const shift = useMemo(() => {
     const map = new Map<string, number>();
@@ -428,7 +787,7 @@ export function useDragReorder({
           : box.height;
     order.forEach((key, index) => {
       if (index === drag.from) {
-        map.set(key, drag.offset);
+        map.set(key, drag.offset + drag.scrolled);
         return;
       }
       if (index > drag.from && index <= drag.to) map.set(key, -extent);

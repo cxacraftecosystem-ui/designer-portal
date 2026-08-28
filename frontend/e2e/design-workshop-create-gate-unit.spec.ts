@@ -55,6 +55,7 @@ const ALL_ROLES: UserRole[] = [
   "MASTER_ADMIN",
   "ADMIN",
   "PROFESSOR",
+  "INSPECTOR",
   "DESIGNER",
   "RESEARCHER",
   "FIELD_CONTRIBUTOR",

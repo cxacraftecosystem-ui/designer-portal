@@ -33,6 +33,7 @@ a refusal is then unambiguously a 403/422/413 with the tripwire never touched, w
 also pass for on a route that failed later for an unrelated reason.
 """
 
+import ast
 import asyncio
 import dataclasses
 import json
@@ -50,6 +51,7 @@ from app.services.measurement_provenance import (
     MARKER_CONFIDENCE_KEY,
     UNRECORDED,
     MeasurementMethod,
+    marker_body_problems,
     method_stamps,
     provenance_of_marker,
     self_reported_confidence,
@@ -930,6 +932,19 @@ def _saver():
     return SimpleNamespace(id="usr_7", name="R. Menon")
 
 
+#: The minimum a CREATE body needs before any other validator on it is reached.
+#:
+#: ``ProductCreate`` / ``ToolCreate`` carry ``require_location`` as a ``model_validator(mode="after")``
+#: DECLARED BEFORE ``_measurement_methods``, and pydantic stops at the first after-validator that
+#: raises. So a create body with no location never reaches the marker validator at all: the refusal
+#: that comes back is "A location is required", the marker is never looked at, and a test asserting
+#: only "it was refused" passes while measuring nothing. That is exactly how
+#: ``test_all_four_bodies_refuse_and_not_only_the_update_pair`` first went green against the wrong
+#: sentence, and how ``test_the_schemas_accept_the_marker_the_endpoint_hands_out`` was red on the two
+#: create models while reading as though it covered all four.
+_LOCATION = {"latitude": 23.24, "longitude": 69.66, "state": "Gujarat", "district": "Kachchh"}
+
+
 def _machine_marker(**overrides):
     marker = {
         "method": "VISION_MODEL",
@@ -1190,62 +1205,453 @@ def test_a_marker_naming_a_column_the_save_is_not_writing_stamps_nothing():
     assert provenance["lengthInches"]["method"] == UNRECORDED
 
 
-@pytest.mark.xfail(
-    reason=(
-        "HANDOFF, NOT A KNOWN-BROKEN FEATURE: MARKER_BODY_KEY must be added to "
-        "access.REVISION_SKIP_FIELDS, and services/access.py belongs to another lane. This test is "
-        "the acceptance criterion for that edit; delete the marker in the same diff."
-    ),
-    strict=False,
-)
-def test_the_marker_is_not_logged_as_an_edit_somebody_made():
-    """``guard_record_edit`` runs ``record_revision`` on the raw ``data`` BEFORE
+def test_the_marker_is_not_logged_as_an_edit_somebody_made(monkeypatch):
+    """**THE HANDOFF THAT HAD TO LAND FIRST, NOW ASSERTED AS BEHAVIOUR AND NOT AS SET MEMBERSHIP.**
+
+    ``guard_record_edit`` runs ``record_revision`` on the raw ``data`` BEFORE
     ``merge_field_provenance`` pops the marker, and ``record_revision`` diffs every key that is not in
     ``REVISION_SKIP_FIELDS`` against the record. ``getattr(product, "measurementMethods", None)`` is
-    None and ``values_match(None, {...})`` is False, so EVERY marker-bearing PATCH records a change to
-    a key that is not a value — breaking ``record_revision``'s own contract ("No-op when nothing
-    meaningful changed") and filling the admin audit trail with an edit nobody made.
+    None and ``values_match(None, {...})`` is False — so without the skip entry EVERY marker-bearing
+    PATCH records a change to a key that is not a value, breaking ``record_revision``'s own contract
+    ("No-op when nothing meaningful changed") and filling the admin audit trail with an edit nobody
+    made. In an APPEND-ONLY table: landing the entry afterwards cannot un-write those rows, which is
+    why this had to come before the schema declaration that makes the key sendable at all.
 
-    Moving the pop earlier is not available: the merge must still see the marker. The fix is one entry
-    in the skip list, with the reason that a marker is a hint about how a value was produced rather
-    than a value.
+    Moving the pop earlier is not available: the merge must still see the marker. The marker is a hint
+    about how a value was produced, not a value.
+
+    THE LEDGER IS A STUB AND THE ASSERTIONS ARE ABOUT WHAT REACHES IT. The first case is the one a
+    membership check cannot make: a payload carrying BOTH a real edit and a marker still writes its
+    revision — so this cannot pass by the whole call being skipped for some unrelated reason — and the
+    marker is absent from the ``changes`` it writes. The second is the pure marker-bearing save, where
+    the correct number of rows is zero.
     """
-    from app.services.access import REVISION_SKIP_FIELDS
+    from app.services import access
 
-    assert MARKER_BODY_KEY in REVISION_SKIP_FIELDS
+    written: list[dict] = []
+
+    async def _create(data):
+        written.append(data)
+        return SimpleNamespace(id="rev_1")
+
+    monkeypatch.setattr(
+        access, "db", SimpleNamespace(recordrevision=SimpleNamespace(create=_create))
+    )
+
+    product = SimpleNamespace(id="prd_1", createdById="usr_7", remarks="Old", lengthInches="8.5")
+    marker_body = {MARKER_BODY_KEY: {"lengthInches": _machine_marker()}}
+
+    asyncio.run(
+        access.record_revision(product, _saver(), {"remarks": "New", **marker_body}, "product")
+    )
+
+    assert len(written) == 1, "a real field edit beside a marker must still be audited"
+    changes = getattr(written[0]["changes"], "data", written[0]["changes"])
+    assert set(changes) == {"remarks"}, f"the marker was logged as an edit: {sorted(changes)}"
+
+    written.clear()
+    asyncio.run(access.record_revision(product, _saver(), dict(marker_body), "product"))
+
+    assert written == [], "a marker on its own is not an edit and must write no revision row"
+    assert MARKER_BODY_KEY in access.REVISION_SKIP_FIELDS
 
 
-@pytest.mark.xfail(
-    reason=(
-        "HANDOFF, NOT A KNOWN-BROKEN FEATURE: measurementMethods must be declared on the four record "
-        "schemas, and app/schemas/records.py belongs to another lane. This test is the acceptance "
-        "criterion for that edit; delete the marker in the same diff. LAND THE OTHER HANDOFF FIRST: "
-        "MARKER_BODY_KEY has to be in access.REVISION_SKIP_FIELDS BEFORE this declaration, never "
-        "after, because this declaration is what makes the marker sendable and a sendable marker "
-        "with no skip entry writes a RecordRevision nobody made on every save that carries one — "
-        "into an immutable audit table that landing the skip entry afterwards cannot un-write. "
-        "Order: access.py, then these four schemas, then the clients. See "
-        "test_the_marker_is_not_logged_as_an_edit_somebody_made above."
-    ),
-    strict=False,
-)
 def test_the_schemas_accept_the_marker_the_endpoint_hands_out():
-    """**THE HARD BLOCKER ON THE CLIENT HALF, AND IT FAILS LOUDLY IN THE FIELD.** ``APIModel`` is
-    ``ConfigDict(extra="forbid")``, so an undeclared key is not ignored — it 422s the whole save,
-    naming a key the researcher has never heard of. Worse, the web's ``saveOrQueue`` refuses to queue a
-    4xx ("the server saw it and said no"), so with no signal the designer's work is thrown away rather
-    than retried.
+    """**THE HARD BLOCKER ON THE CLIENT HALF, CLEARED 2026-08-27, AND IT USED TO FAIL LOUDLY IN THE
+    FIELD.** ``APIModel`` is ``ConfigDict(extra="forbid")``, so an undeclared key is not ignored — it
+    422s the whole save, naming a key the researcher has never heard of. Worse, the web's
+    ``saveOrQueue`` refuses to queue a 4xx ("the server saw it and said no"), so with no signal the
+    designer's work is thrown away rather than retried.
 
     All four models, not just the Update pair: a client that implemented its half against
     ``ProductUpdate`` alone would find every product CREATE rejected.
+
+    THE BODIES CARRY A ``lengthInches`` AND THE FIRST VERSION OF THIS TEST DID NOT. A marker is a
+    statement about a number, so the number has to be in the same request — a marker for a dimension
+    the body does not send describes nothing that is happening and is now refused by name rather than
+    dropped after the designer pressed Accept on it. See
+    ``test_a_method_for_a_dimension_this_request_is_not_sending_is_refused`` for that rule on its own.
     """
     from app.schemas.records import ProductCreate, ProductUpdate, ToolCreate, ToolUpdate
 
-    body = {MARKER_BODY_KEY: {"lengthInches": _machine_marker()}}
-    ProductCreate(craftName="Pottery", place="Bhuj", artisanName="A", productName="Pot", **body)
+    body = {"lengthInches": "8.5", MARKER_BODY_KEY: {"lengthInches": _machine_marker()}}
+    ProductCreate(
+        craftName="Pottery", place="Bhuj", artisanName="A", productName="Pot",
+        location=_LOCATION, **body,
+    )
     ProductUpdate(**body)
-    ToolCreate(craftName="Pottery", place="Bhuj", artisanName="A", toolkitName="Wheel", **body)
+    ToolCreate(
+        craftName="Pottery", place="Bhuj", artisanName="A", toolkitName="Wheel",
+        location=_LOCATION, **body,
+    )
     ToolUpdate(**body)
+
+
+# --------------------------------------------------------------------------------------
+# THE BOUNDARY REFUSES — one test per refusal, because a silent drop here is a silent lie
+#
+# ``marker_body_problems`` (the API boundary) and ``provenance_of_marker`` (inside the save) answer
+# the SAME malformed marker differently, on purpose. The degrade is asserted above, in
+# ``test_a_marker_nobody_can_read_is_unrecorded_and_never_typed``, and it stays: a save must not fail
+# over a provenance hint. This section asserts the half that keeps the degrade from being the ONLY
+# line of defence — because at the boundary the alternative to a refusal is not a safe default but a
+# silent lie of omission. A designer presses Accept on a vision-model reading, the client sends a
+# typo in the method name, the degrade writes UNRECORDED, and the stored row is now
+# indistinguishable from one saved by a client that never implemented any of this. Nobody is told:
+# not in the client, not in the record.
+#
+# EVERY TEST HERE GOES THROUGH A REAL SCHEMA rather than calling ``marker_body_problems`` directly.
+# The refusal is worth nothing unless it is WIRED, and the wiring is one
+# ``model_validator(mode="after")`` line per model that is easy to drop when a schema is edited —
+# an unattached validator is a function with passing tests and no effect.
+#
+# Each sentence is held to ``assert_sentence`` plus the two things a client author actually needs:
+# the exact key that is wrong, and what to send instead.
+# --------------------------------------------------------------------------------------
+
+
+def _refusal(model_cls, **body) -> str:
+    """The sentence ``model_cls`` refuses ``body`` with. Fails the test if it accepts it.
+
+    Reads ``ValidationError`` rather than an HTTP status: these validators ARE the whole of what
+    makes the 422, and going through the router would need the database this section deliberately
+    does not. The ``Value error, `` prefix pydantic adds is stripped so the assertions below read
+    against the sentence as written in ``marker_body_problems``.
+    """
+    import pydantic
+
+    try:
+        model_cls(**body)
+    except pydantic.ValidationError as error:
+        return "; ".join(e["msg"].removeprefix("Value error, ") for e in error.errors())
+    raise AssertionError(f"{model_cls.__name__} accepted a marker it must refuse: {body!r}")
+
+
+def test_a_method_naming_a_column_that_is_not_a_documented_dimension_is_refused_by_name():
+    """``DIMENSION_FIELDS`` is enumerated so a marker cannot stamp a method onto an unrelated column —
+    ``{"materialCost": {"method": "TYPED"}}`` would otherwise read as though this system had an
+    opinion about how a cost was arrived at.
+
+    ``height`` IS THE CASE THAT MATTERS AND IT IS NOT HYPOTHETICAL. Until ``ToolDocumentation``
+    gained ``heightInches`` on 2026-08-27, a tool's grid height reading had nowhere documented to go
+    and the plain ``height`` box was the only column that would take it. A client written against
+    that world aims its marker at ``height``. ``method_stamps`` would drop it in silence; here it is
+    told which three columns a method may describe, which is the whole answer it needs to move the
+    value one box over.
+    """
+    from app.schemas.records import ProductUpdate, ToolUpdate
+
+    sentence = _refusal(
+        ToolUpdate,
+        height="6",
+        lengthInches="12",
+        measurementMethods={"height": {"method": "PHOTO_GEOMETRY", "technique": "SCALE"}},
+    )
+    assert_sentence(sentence)
+    assert "height" in sentence, "a refusal that does not name the offending key cannot be acted on"
+    for allowed in sorted(DIMENSION_FIELDS):
+        assert allowed in sentence, f"the refusal must say {allowed} is available instead"
+
+    sentence = _refusal(
+        ProductUpdate,
+        lengthInches="8.5",
+        measurementMethods={"materialCost": {"method": "TYPED"}},
+    )
+    assert_sentence(sentence)
+    assert "materialCost" in sentence
+
+
+def test_a_method_this_server_does_not_know_is_refused_and_a_lower_case_typed_is_not_typed():
+    """Case-sensitive, for the reason ``provenance_of_marker`` gives: accepting ``"typed"`` would turn
+    an unrecognised token into an assertion about how somebody measured something. Refused here it
+    costs the client one corrected string; degraded on the save path it costs a row that says nothing
+    where a person had said TYPED.
+
+    The refusal lists the vocabulary, so a client author fixes it from the message without opening
+    this repository.
+    """
+    from app.schemas.records import ProductUpdate
+
+    for unknown in ("typed", "PHOTO", "GUESS", ""):
+        sentence = _refusal(
+            ProductUpdate,
+            lengthInches="8.5",
+            measurementMethods={"lengthInches": {"method": unknown}},
+        )
+        assert_sentence(sentence)
+        assert f"{MARKER_BODY_KEY}.lengthInches" in sentence
+        assert repr(unknown) in sentence, "the refusal must quote back what was actually sent"
+        for known in sorted(m.value for m in MeasurementMethod):
+            assert known in sentence, f"the vocabulary must be offered: {known}"
+
+    # A method key that is not a string at all lands in the same refusal rather than a TypeError.
+    for not_a_string in (7, True, None, ["TYPED"]):
+        assert_sentence(
+            _refusal(
+                ProductUpdate,
+                lengthInches="8.5",
+                measurementMethods={"lengthInches": {"method": not_a_string}},
+            )
+        )
+
+
+def test_a_method_for_a_dimension_this_request_is_not_sending_is_refused():
+    """**A METHOD IS A STATEMENT ABOUT A NUMBER, SO THE NUMBER HAS TO BE IN THE SAME REQUEST.**
+
+    ``merge_field_provenance`` narrows its stamps to the columns the save is actually writing (see
+    ``test_a_marker_naming_a_column_the_save_is_not_writing_stamps_nothing``), so a marker for a
+    dimension this body does not carry describes nothing that is happening here and is dropped —
+    AFTER the designer pressed Accept on it. That drop is correct on the save path and wrong at the
+    boundary, which is the whole two-layer argument.
+
+    BOTH WAYS OF NOT SENDING A NUMBER ARE THE SAME REFUSAL, and the second is the one a schema could
+    easily miss. ``validate_measurement_methods`` reads non-null rather than ``model_fields_set``, so
+    a dimension sent as an explicit ``null`` — a researcher CLEARING the box, which
+    ``_CLEARABLE_COLUMNS`` exists to let through — counts as absent. A method describing a cleared
+    measurement describes nothing.
+
+    NOTE WHAT THIS DOES NOT REFUSE: a dimension whose value is UNCHANGED. That key is present, so it
+    passes here, and the changed-fields loop inside ``merge_field_provenance`` is what declines to
+    re-stamp it. That is the anti-laundering rule and it belongs there, where the stored row is in
+    scope; a schema cannot see the stored row and must not pretend to.
+    """
+    from app.schemas.records import ToolUpdate
+
+    omitted = _refusal(
+        ToolUpdate,
+        lengthInches="12",
+        measurementMethods={"heightInches": {"method": "PHOTO_GEOMETRY", "technique": "SCALE"}},
+    )
+    assert_sentence(omitted)
+    assert "heightInches" in omitted
+    assert "same request" in omitted, "the refusal must say what would make it acceptable"
+
+    cleared = _refusal(
+        ToolUpdate,
+        heightInches=None,
+        measurementMethods={"heightInches": {"method": "TYPED"}},
+    )
+    assert cleared == omitted, (
+        "clearing a dimension and never sending it are the same absence, and a client that gets two "
+        "different sentences for them will read the difference as meaningful"
+    )
+
+    # The positive control: the identical marker is accepted the moment the number rides with it.
+    ToolUpdate(
+        heightInches="7",
+        measurementMethods={"heightInches": {"method": "PHOTO_GEOMETRY", "technique": "SCALE"}},
+    )
+
+
+def test_a_photo_geometry_technique_this_server_does_not_know_is_refused():
+    """``GEOMETRY_TECHNIQUES`` mirrors ``DwPhotoMeasure`` / ``photoMeasure.ts``'s own
+    ``"SCALE" | "RECTIFIED"``. ``provenance_of_marker`` drops an unknown one to ``None``, which loses
+    the only fact that lets somebody re-derive the number; the boundary says which two exist instead.
+    """
+    from app.schemas.records import ProductCreate
+
+    sentence = _refusal(
+        ProductCreate,
+        craftName="Pottery",
+        place="Bhuj",
+        artisanName="A",
+        productName="Pot",
+        location=_LOCATION,
+        lengthInches="8.5",
+        measurementMethods={"lengthInches": {"method": "PHOTO_GEOMETRY", "technique": "CALIPER"}},
+    )
+    assert_sentence(sentence)
+    assert "'CALIPER'" in sentence
+    for technique in sorted(GEOMETRY_TECHNIQUES):
+        assert technique in sentence
+
+
+def test_a_technique_on_a_reading_that_has_no_geometry_is_refused():
+    """Stored, this puts ``methodTechnique: "SCALE"`` beside ``method: "VISION_MODEL"`` in an audit
+    trail: a geometry that did not happen, asserted next to the method that did.
+
+    Nothing in this repository composes that — ``vision_model_provenance`` never sets a technique and
+    the offline path sets one only with PHOTO_GEOMETRY — so a body carrying it is a client that has
+    copied a marker from the wrong branch, and it is worth telling it so rather than storing the
+    contradiction.
+    """
+    from app.schemas.records import ProductUpdate
+
+    for method in ("VISION_MODEL", "TYPED", "UNRECORDED"):
+        sentence = _refusal(
+            ProductUpdate,
+            lengthInches="8.5",
+            measurementMethods={"lengthInches": {"method": method, "technique": "SCALE"}},
+        )
+        assert_sentence(sentence)
+        assert method in sentence, "the refusal must name the method it is objecting to"
+        assert "PHOTO_GEOMETRY" in sentence, "and the one method a technique belongs on"
+
+    # The positive control: the same technique on the method that has a geometry is accepted.
+    ProductUpdate(
+        lengthInches="8.5",
+        measurementMethods={"lengthInches": {"method": "PHOTO_GEOMETRY", "technique": "SCALE"}},
+    )
+
+
+def test_a_confidence_the_scale_does_not_have_is_refused_but_an_absent_one_is_not():
+    """``self_reported_confidence`` DROPS an unreadable confidence on the save path — deliberately,
+    because clamping 1.5 to 1.0 would manufacture the loudest possible claim out of a malformed one.
+    At the boundary the drop is silent, so it is refused instead.
+
+    **AN EXPLICIT NULL IS AN ABSENCE, NOT A CLAIM, AND MUST NOT BE REFUSED.**
+    ``MeasurementProvenance.payload`` sends ``selfReportedConfidence: null`` whenever the model
+    reported no confidence, and the client specification says to echo the marker back VERBATIM. A
+    server that refused the null would refuse its own answer relayed back to it — breaking exactly
+    the clients that followed the instruction, and only for the readings where the model was too
+    honest to give a number.
+    """
+    from app.schemas.records import ProductUpdate
+
+    for unreadable in (7, -0.5, "high", True, float("nan"), float("inf"), [0.8]):
+        sentence = _refusal(
+            ProductUpdate,
+            lengthInches="8.5",
+            measurementMethods={
+                "lengthInches": {"method": "VISION_MODEL", MARKER_CONFIDENCE_KEY: unreadable}
+            },
+        )
+        assert_sentence(sentence)
+        assert MARKER_CONFIDENCE_KEY in sentence
+        assert "0 to 1" in sentence, "the refusal must state the scale it wanted"
+
+    ProductUpdate(
+        lengthInches="8.5",
+        measurementMethods={"lengthInches": {"method": "VISION_MODEL", MARKER_CONFIDENCE_KEY: None}},
+    )
+    # And a number the model wrote as a string is a number the model gave, here as on the save path.
+    ProductUpdate(
+        lengthInches="8.5",
+        measurementMethods={
+            "lengthInches": {"method": "VISION_MODEL", MARKER_CONFIDENCE_KEY: "0.8"}
+        },
+    )
+
+
+def test_a_marker_key_a_newer_server_added_is_ignored_rather_than_refused():
+    """**OPEN KEYS, CLOSED VALUES — the one accept-and-drop deliberately left in this design.**
+
+    A marker is echoed back verbatim as the endpoint handed it out. If a later server adds a key to
+    ``MeasurementProvenance.marker`` and a client echoes it at an OLDER instance mid-deploy, an
+    ``extra="forbid"`` sub-model would 422 the whole save for a reason no researcher can act on and
+    no client author can have anticipated. So an unknown key inside a marker is ignored.
+
+    This is also why ``measurementMethods`` is typed ``dict[str, dict[str, Any]]`` and not a pydantic
+    model per marker. Do not "tighten" it into one.
+
+    The VALUES of the keys this system does define are closed, and every test above is one of them.
+    """
+    from app.schemas.records import ProductUpdate
+
+    model = ProductUpdate(
+        lengthInches="8.5",
+        measurementMethods={
+            "lengthInches": {"method": "TYPED", "aKeyFromTheFuture": {"nested": [1, 2]}}
+        },
+    )
+    assert model.measurementMethods["lengthInches"]["aKeyFromTheFuture"] == {"nested": [1, 2]}
+
+
+def test_the_two_shape_failures_belong_to_the_annotation_and_not_to_this_validator():
+    """``marker_body_problems`` has a branch for "not an object" at both levels, and NEITHER is
+    reachable through a schema: ``dict[str, dict[str, Any]]`` refuses those two shapes before any
+    ``model_validator(mode="after")`` runs.
+
+    That is the design and not an oversight — pydantic's own error carries a ``loc`` pointing at the
+    exact offending key, which is better than a hand-written sentence can do — but it means the two
+    branches are the defence for a DIRECT caller of ``marker_body_problems``, and a reader who found
+    them and went looking for a schema test would not find one. Both halves are pinned here so
+    neither gets deleted as dead code.
+    """
+    import pydantic
+
+    from app.schemas.records import ProductUpdate
+
+    for body, expected_loc in (
+        (["lengthInches"], (MARKER_BODY_KEY,)),
+        ({"lengthInches": "TYPED"}, (MARKER_BODY_KEY, "lengthInches")),
+    ):
+        with pytest.raises(pydantic.ValidationError) as caught:
+            ProductUpdate(lengthInches="8.5", measurementMethods=body)
+        errors = caught.value.errors()
+        assert [e["loc"] for e in errors] == [expected_loc], (
+            "the annotation must name the offending key, which is the whole reason it is preferred "
+            f"to a sentence here: {errors!r}"
+        )
+        assert all(e["type"] == "dict_type" for e in errors)
+
+    # The branches themselves, exercised the only way anything can reach them.
+    assert marker_body_problems(["lengthInches"], present_fields={"lengthInches"})
+    assert marker_body_problems({"lengthInches": "TYPED"}, present_fields={"lengthInches"})
+
+
+def test_all_four_bodies_refuse_and_not_only_the_update_pair():
+    """``validate_measurement_methods`` is attached by a separate line on each of four models, and
+    three of those lines are easy to forget. A client that implemented its half against
+    ``ProductUpdate`` alone and got a silent drop on CREATE would store the defect this module exists
+    to remove on exactly the save where the record is first written.
+
+    Paired with ``test_the_schemas_accept_the_marker_the_endpoint_hands_out``, which asserts the same
+    four accept a good marker: together they say the validator is attached AND is not refusing
+    everything.
+    """
+    from app.schemas.records import ProductCreate, ProductUpdate, ToolCreate, ToolUpdate
+
+    bad = {"lengthInches": "8.5", MARKER_BODY_KEY: {"lengthInches": {"method": "typed"}}}
+    creating = {"place": "Bhuj", "artisanName": "A", "craftName": "P", "location": _LOCATION}
+    required = {
+        ProductCreate: {**creating, "productName": "Pot"},
+        ToolCreate: {**creating, "toolkitName": "Wheel"},
+        ProductUpdate: {},
+        ToolUpdate: {},
+    }
+    for model_cls, extra in required.items():
+        sentence = _refusal(model_cls, **extra, **bad)
+        assert_sentence(sentence)
+        # THE ASSERTION THAT MAKES THIS TEST MEAN ANYTHING, and it was missing at first. Asserting
+        # only "it was refused" passed on the two create models for the WRONG REASON: they were
+        # refused by ``require_location``, which is declared ahead of ``_measurement_methods`` and
+        # stops pydantic before the marker is ever read. See ``_LOCATION``.
+        assert f"{MARKER_BODY_KEY}.lengthInches" in sentence, (
+            f"{model_cls.__name__} refused this body for some other reason than the marker, so this "
+            f"says nothing about whether the validator is attached to it: {sentence!r}"
+        )
+
+
+def test_every_refusal_names_the_key_the_value_and_what_to_send_instead():
+    """The cost of a refusal is not free and this test is what buys it: a ``ValueError`` out of a
+    pydantic validator is a 422 on the WHOLE request, and the web's ``saveOrQueue`` will not queue a
+    4xx — so a client bug in the marker throws away a form a researcher filled in, and offline it is
+    not retried either.
+
+    That trade is only right while every sentence is one a client author can act on WITHOUT reading
+    this repository. Swept across every refusal in one place so a new one added later cannot be
+    terser than the ones beside it.
+    """
+    bodies = (
+        {"height": {"method": "TYPED"}},
+        {"lengthInches": {"method": "typed"}},
+        {"heightInches": {"method": "TYPED"}},
+        {"lengthInches": {"method": "PHOTO_GEOMETRY", "technique": "CALIPER"}},
+        {"lengthInches": {"method": "VISION_MODEL", "technique": "SCALE"}},
+        {"lengthInches": {"method": "VISION_MODEL", MARKER_CONFIDENCE_KEY: 7}},
+        ["lengthInches"],
+        {"lengthInches": "TYPED"},
+    )
+    seen = 0
+    for body in bodies:
+        for sentence in marker_body_problems(body, present_fields={"lengthInches"}):
+            seen += 1
+            assert_sentence(sentence)
+            assert MARKER_BODY_KEY in sentence, (
+                f"a refusal that does not name the body key leaves the client guessing: {sentence!r}"
+            )
+    assert seen == len(bodies), f"a refusal stopped firing or two now share a body: {seen}"
 
 
 # --------------------------------------------------------------------------------------
@@ -1357,22 +1763,44 @@ def test_the_csv_download_carries_the_same_claim_as_the_screen():
     assert "8.5 (vision model estimate)" in csv_text
 
 
-def test_a_tool_says_it_too_and_its_height_still_cannot():
-    """Parity between the two forms, and the one asymmetry that is a shared limitation rather than a
-    divergence. ``ToolDocumentation`` has no ``heightInches``: the grid control's height reading lands
-    in the plain ``height`` column, which is outside ``DIMENSION_FIELDS``, so it can be accepted and
-    cannot be recorded. Asserted rather than only commented, so the next reader finds the gap here
-    instead of reporting the feature as half rolled out."""
+def test_a_tool_says_it_too_and_the_read_side_has_caught_up_with_its_height():
+    """Parity between the two forms, all the way to the sheet — the last asymmetry is closed.
+
+    THIS TEST WAS CALLED ``..._and_its_height_still_cannot`` AND SAID: *"``ToolDocumentation`` has no
+    ``heightInches``: the grid control's height reading lands in the plain ``height`` column, which is
+    outside ``DIMENSION_FIELDS``, so it can be accepted and cannot be recorded."* The column landed on
+    2026-08-27 (schema, migration, ``routes/tools``, ``ToolCreate``/``ToolUpdate``, both Android
+    DTOs), ``DIMENSION_FIELDS`` already named all three, and
+    ``test_an_accepted_photo_geometry_reading_on_a_tool_height_round_trips`` below stores a method on
+    a tool's ``heightInches`` end to end. So the WRITE side was complete that day.
+
+    IT WAS THEN CALLED ``..._and_the_read_side_has_not_caught_up_with_its_height`` AND PINNED THE
+    OTHER HALF: the tool's registry cell was still ``"Dimensions (LxB in)"`` over
+    ``lengthInches``/``breadthInches`` alone, with ``heightInches`` printed nowhere, so a stored
+    tool-height method was invisible to the data browser, the workbook and ``/export/tools.csv``.
+    That gap is closed: ``record_fields.TOOL`` passes the triple to ``dims_with_method`` and the
+    column is labelled "Dimensions (LxBxH in)", exactly as the product's always was.
+
+    THE TWO HEIGHTS ARE BOTH ASSERTED HERE BECAUSE THEY ARE DIFFERENT COLUMNS. The cell prints
+    ``heightInches`` with its method; the bare ``Height`` column still prints the unit-less
+    ``height``, which rows already hold values in and which stays outside ``DIMENSION_FIELDS``. A
+    "tidy-up" that drops either one is a read-surface regression, and this is what catches it.
+    """
     record = _Row(
         toolkitName="Wheel",
         lengthInches="12",
         breadthInches="3",
+        # A real column since 2026-08-27, carrying a real method — and printed, since the same day,
+        # by the dimension cell below.
+        heightInches="7",
         height="6",
         extraMetadata={
             "fieldProvenance": {
                 "lengthInches": {"method": "VISION_MODEL"},
                 "breadthInches": {"method": "VISION_MODEL"},
-                # What a client would send for the height if anything could carry it.
+                "heightInches": {"method": "VISION_MODEL"},
+                # What a client used to have to send for a tool height, and must not send now: the
+                # plain typed column, which is outside DIMENSION_FIELDS and is refused by name.
                 "height": {"method": "VISION_MODEL"},
             }
         },
@@ -1381,9 +1809,88 @@ def test_a_tool_says_it_too_and_its_height_still_cannot():
     columns = record_fields.sheet_columns("tool")
     row = record_fields.sheet_row("tool", record)
 
-    assert _dimension_cell("tool", record) == "12 x 3 (vision model estimate)"
+    # The write side: all three documented columns may carry a method, on a tool as on a product.
+    assert "heightInches" in DIMENSION_FIELDS
+    # The read side: all three print, and the shared method collapses to the short clause.
+    assert _dimension_cell("tool", record) == "12 x 3 x 7 (vision model estimate)"
+    assert [c for c in columns if c.startswith("Dimensions")] == ["Dimensions (LxBxH in)"], (
+        "the tool's dimension cell no longer prints its height — a stored tool-height method is "
+        "then invisible to the data browser, the workbook and /export/tools.csv"
+    )
+    # The OLD unit-less column is still printed beside it, bare and with no method clause.
     assert row[columns.index("Height")] == "6"
+    # ``height`` and ``width`` stay ordinary typed inputs, and a marker naming one is refused.
     assert "height" not in DIMENSION_FIELDS
+
+
+
+def test_an_accepted_photo_geometry_reading_on_a_tool_height_round_trips():
+    """**THE TOOL HALF, END TO END — AND THIS TEST COULD NOT HAVE BEEN WRITTEN BEFORE 2026-08-27.**
+
+    Until that day ``ToolDocumentation`` had no ``heightInches``. A designer could point the grid
+    control at a tool, get a height, press the button that accepts it, and the number would land in
+    the plain ``height`` column with its method dropped — because ``height`` is outside
+    ``DIMENSION_FIELDS`` and always will be. An accepted machine reading recorded as nothing, which
+    is the exact outcome this module exists to prevent, surviving in the one table it could not
+    reach. The column landed (schema, an additive migration, ``routes/tools``'s column list,
+    ``ToolCreate``/``ToolUpdate``, both Android DTOs) and ``DIMENSION_FIELDS`` already named all
+    three, so the write path is complete and this asserts it rather than the docstrings claiming it.
+
+    THE WHOLE CHAIN IN ONE TEST, because every link was landed separately and each is inert without
+    the others:
+
+    1. ``ToolUpdate`` ACCEPTS the marker — before the declaration, ``extra="forbid"`` made this body
+       a 422 in full and ``saveOrQueue`` would not have queued the retry;
+    2. ``validate_measurement_methods`` lets it through — ``heightInches`` is a documented dimension,
+       the value rides in the same request, and ``SCALE`` is a geometry PHOTO_GEOMETRY actually has;
+    3. ``model_dump(exclude_unset=True)`` keeps BOTH keys — the marker is not a column but it has to
+       survive the dump to reach the merge, which is what ``routes/tools`` warns is easy to break
+       from the route by rebuilding ``data`` from a column list;
+    4. ``merge_field_provenance`` POPS the marker — so Prisma never sees an unknown column, which
+       would be a 500 rather than something a researcher could act on;
+    5. and the stamp says PHOTO_GEOMETRY beside the person who accepted it, not instead of them.
+
+    ``PHOTO_GEOMETRY`` rather than ``VISION_MODEL`` on purpose: it is the method with a ``technique``,
+    so this also pins the one marker key that has no equivalent anywhere else in the stamp, and it is
+    the method a courtyard with no signal can actually produce.
+    """
+    from decimal import Decimal
+
+    from app.schemas.records import ToolUpdate
+
+    body = ToolUpdate(
+        heightInches="7",
+        measurementMethods={"heightInches": {"method": "PHOTO_GEOMETRY", "technique": "SCALE"}},
+    )
+    new_data = body.model_dump(exclude_unset=True)
+    assert set(new_data) == {"heightInches", MARKER_BODY_KEY}, (
+        "the marker must survive the dump to reach the merge, and nothing else may ride along"
+    )
+
+    merge_field_provenance(new_data, _saver())
+
+    assert MARKER_BODY_KEY not in new_data, (
+        "the marker is not a column on ToolDocumentation; leaving it in hands Prisma an unknown "
+        "column and turns a provenance hint into a 500 on the save"
+    )
+    assert new_data["heightInches"] == Decimal(7), "the measurement itself must still be written"
+
+    stamp = _stored_provenance(new_data)["heightInches"]
+    assert stamp["method"] == "PHOTO_GEOMETRY"
+    assert stamp["methodTechnique"] == "SCALE", (
+        "which of the two geometries produced the number is the only fact that lets a later reader "
+        "re-derive it, and it has nowhere else to be stored"
+    )
+    # BESIDE the signature and not instead of it — read aloud, the row now says "arithmetic over
+    # marks on a photograph produced this, and R. Menon accepted it into the record at that moment".
+    assert stamp["by"] == "usr_7"
+    assert stamp["byName"] == "R. Menon"
+    assert stamp["at"], "the moment of acceptance is the whole value of the human half"
+    # Keys whose answer is not a fact are OMITTED rather than stored as UNRECORDED: there is no
+    # provider and no model behind a geometry reading, and the questions do not apply.
+    assert not {"methodProvider", "methodModelId", "methodConfidence"} & set(stamp), (
+        f"a geometry reading has no provider, model or confidence to state: {stamp!r}"
+    )
 
 
 def test_the_queue_records_the_reading_and_writes_no_dimension_with_it():
@@ -1421,11 +1928,50 @@ def test_nothing_in_this_module_can_write_read_or_wait_for_anything():
     measurement is a dictionary literal the client already has every fact for.
 
     Asserted on the source rather than by importing and hoping: an ``import`` added later would pass a
-    behavioural test that happened not to reach it.
+    behavioural test that happened not to reach it. ``ast.parse`` reads the file without executing it,
+    so that property is kept.
+
+    **THIS USED TO BE A SUBSTRING SCAN AND THE SUBSTRING WAS ``"prisma"``, WHICH MADE IT FAIL ON
+    PROSE.** The house rule that a state-of-the-world claim carries a re-check command is why
+    ``measurement_provenance`` now says ``grep -n "heightInches" backend/prisma/schema.prisma`` in
+    five places — every one of them a comment telling a reader how to disprove a paragraph. The old
+    check could not tell a re-check command from an import and went red on 2026-08-27 the moment the
+    ``heightInches`` prose landed, which is a guard punishing the documentation discipline it shares
+    a repository with.
+
+    Parsing instead is also STRICTER than the scan it replaces, not a relaxation: ``await x`` with two
+    spaces, ``async  def``, and ``from prisma import Json`` written as ``import prisma as p`` all slip
+    past a substring match and none of them survives an AST walk. What is deliberately NOT checked is
+    the word appearing in a comment, because a comment cannot reach for anything.
     """
-    source = (BACKEND / "app" / "services" / "measurement_provenance.py").read_text(encoding="utf-8")
-    for forbidden in ("from app.core.db", "import requests", "async def", "await ", "prisma"):
-        assert forbidden not in source, f"measurement_provenance reaches for {forbidden!r}"
+    path = BACKEND / "app" / "services" / "measurement_provenance.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    forbidden_roots = {"prisma", "requests", "httpx", "aiohttp"}
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+
+    for module in sorted(imported):
+        root = module.split(".")[0]
+        assert root not in forbidden_roots, f"measurement_provenance imports {module!r}"
+        assert not module.startswith("app.core.db"), f"measurement_provenance imports {module!r}"
+
+    # No coroutine can be declared and nothing can be waited on, anywhere in the file — the whole of
+    # what makes a marker composable on a handset with no signal.
+    for node in ast.walk(tree):
+        assert not isinstance(node, ast.AsyncFunctionDef), (
+            f"measurement_provenance declares a coroutine: {node.name!r}"
+        )
+        assert not isinstance(node, (ast.Await, ast.AsyncFor, ast.AsyncWith)), (
+            f"measurement_provenance waits for something on line {node.lineno}"
+        )
+
+    # The positive control: the walk above is reaching real nodes and not an empty tree.
+    assert imported, "nothing was parsed — this guard would pass on an empty file"
 
 
 def test_the_geometry_path_needs_no_server_to_state_its_method():

@@ -88,14 +88,17 @@ lambda was `{"name": r.name}` (the `Process` entry in `REFERENCE_MODELS`). So a 
 report printed "Dyeing" and nothing else, while the `Process` record it points at holds the
 documented sequence.
 
-Compare what its siblings copy:
+Compare what its siblings copied **on 2026-08-08**. All four have widened a long way since, so the
+middle column is history and not a description of the mapping today; the right-hand column is the
+count as of 2026-08-27, taken by importing `REFERENCE_HYDRATION` from
+`backend/app/services/stage_schema.py` and printing `len()` of each entry.
 
-| mapping | fields copied |
-|---|---|
-| `participant.artisanRef` | name, localName, specialisation, experienceYears, gender, phone, village, photo — **8** |
-| `tool.toolRef` | name, localName, material, usedFor, cost, photo — **6** |
-| `existingProduct.productRef` | name, category, material, price, use, photo — **6** |
-| `processStep.processRef` | name — **1** |
+| mapping | fields copied, 2026-08-08 | pairs today |
+|---|---|---|
+| `participant.artisanRef` | name, localName, specialisation, experienceYears, gender, phone, village, photo — **8** | **26** |
+| `tool.toolRef` | name, localName, material, usedFor, cost, photo — **6** | **33** |
+| `existingProduct.productRef` | name, category, material, price, use, photo — **6** | **29** |
+| `processStep.processRef` | name — **1** | **3** |
 
 The traditional-process stage is one of the report's substantive narrative sections, and it is the
 thinnest of the five by an order of magnitude.

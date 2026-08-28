@@ -193,6 +193,10 @@ class DwReferenceCarryParityTest {
             "remarks" to "remarks",
             "lengthCm" to "lengthCm",
             "breadthCm" to "breadthCm",
+            // The tool's THIRD converted figure, carried since 2026-08-27, when
+            // `ToolDocumentation.heightInches` was added. `heightAsRecorded` below is the OLD
+            // unit-less `height` and a different column, so losing either is a real loss.
+            "heightCm" to "heightCm",
             "heightAsRecorded" to "heightAsRecorded",
             "widthAsRecorded" to "widthAsRecorded",
             "thicknessAsRecorded" to "thicknessAsRecorded",

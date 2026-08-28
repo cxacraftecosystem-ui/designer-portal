@@ -84,6 +84,8 @@ const UPLOAD_DIR = join(__dirname, "..", "components", "sketches", "upload");
 const NODE_MODULES = join(__dirname, "..", "node_modules");
 const ENGINE_PARAMS = join(__dirname, "..", "lib", "trace", "engine", "params.ts");
 const REVEAL = join(__dirname, "..", "components", "ui", "reveal1.tsx");
+/** The comparator's zoom and pan arithmetic, which `reveal1.tsx` requires by that specifier. */
+const REVEAL_TRANSFORM = join(__dirname, "..", "components", "ui", "reveal1Transform.ts");
 const UTILS = join(__dirname, "..", "lib", "utils.ts");
 
 /** The runtime-load delay every case mounts with. See the header. */
@@ -260,7 +262,15 @@ window.__define("./traceRuntime", function (module, exports, require) {
       height: request.image.height,
       preview: !!request.preview
     });
-    if (request.onProgress) request.onProgress({ label: "Edges" });
+    /*
+      PROGRESS FOR A FULL RUN ONLY, AND WITH A REAL STAGE ID — which is what the worker does:
+      trace.worker.ts hands Pipeline.run a progress callback and hands Pipeline.runPreview none at
+      all. A stub that reported progress for a preview too would let a bar ship that the real engine
+      never draws, and would hide the fact that the panel keys its bar off there being any.
+    */
+    if (request.onProgress && !request.preview) {
+      request.onProgress({ stageId: "edge", label: "Edges", fraction: 6 / 12 });
+    }
     var self = this;
     return delay(window.__traceMs).then(function () {
       if (request.signal && request.signal.aborted) throw Cancelled();
@@ -430,6 +440,12 @@ async function mount(page: Page, options: { runtimeMs?: number; traceMs?: number
   // The comparator and its one dependency, both REAL — `cn` is three lines and `reveal1.tsx` is the
   // component whose `initialPosition` semantics the panel has to get the right way round.
   await page.addScriptTag({ content: define("@/lib/utils", compile(UTILS)) });
+  // Registered under BOTH specifiers it is required by: `reveal1.tsx` reaches it as a sibling and the
+  // panel reaches it through the alias, and the registry keys on the string exactly as written.
+  await page.addScriptTag({ content: define("./reveal1Transform", compile(REVEAL_TRANSFORM)) });
+  await page.addScriptTag({
+    content: define("@/components/ui/reveal1Transform", compile(REVEAL_TRANSFORM))
+  });
   await page.addScriptTag({ content: define("@/components/ui/reveal1", compile(REVEAL)) });
   await page.addScriptTag({ content: RUNTIME_STUB });
   for (const name of [
@@ -438,6 +454,7 @@ async function mount(page: Page, options: { runtimeMs?: number; traceMs?: number
     "decodeToPixels.ts",
     "traceExport.ts",
     "comparisonPlates.ts",
+    "traceStages.ts",
     // The two new pickers. `.tsx`, so the specifier has to be stripped of the whole extension rather
     // than of `.ts` — `"DropCard.tsx".replace(/\.ts$/, "")` is `"DropCard.tsx"`, which is a registry
     // key nothing requires and a `require` that throws at mount with the harness's own message.
@@ -560,6 +577,18 @@ interface TraceRecord {
 
 function traces(page: Page): Promise<TraceRecord[]> {
   return page.evaluate(() => (window as unknown as { __traces: TraceRecord[] }).__traces);
+}
+
+/**
+ * The comparator's frame.
+ *
+ * Named once because it is now addressed by two different roles: `slider` while it is showing the two
+ * layers, and `group` while one derived picture — the difference plate — fills it. A frame that
+ * advertised `role="slider"` with no seam to move would be advertising a role it does not honour,
+ * which is the exact defect `reveal1.tsx`'s own header opens with.
+ */
+function comparator(page: Page) {
+  return page.getByLabel("Traced drawing against the photograph");
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1219,7 +1248,14 @@ test("the picker's button is the tab stop, and the input is cleared so the same 
  * clipped element is still laid out, still has a box, and still passes.
  */
 async function badgeClip(page: Page, text: string): Promise<string> {
-  const clip = await page
+  /*
+    SCOPED TO THE FRAME, WHICH IT DID NOT USED TO NEED. The comparator grew a chip row above it —
+    Drawing · Wipe · Photograph · Difference — so "Photograph" is now the name of a BUTTON as well as
+    the name of a badge, and an unscoped `getByText` matches both and throws under strict mode. Scoping
+    to the slider is also the more honest assertion: what is being measured is a caption drawn over a
+    picture, and the chip is not one.
+  */
+  const clip = await comparator(page)
     .getByText(text, { exact: true })
     .evaluate((node) => getComputedStyle(node.parentElement as HTMLElement).clipPath);
   return clip.replace(/\s|px/g, "");
@@ -1392,4 +1428,313 @@ test("the frame's provenance sentence reaches the exported SVG from the editor t
   expect(svg).toContain("Cropped on the device to 32x48 at (0, 0) of 64x48.");
   // …carried inside the ordinary provenance note rather than instead of it.
   expect(svg).toContain("Traced on the device from sheet.png");
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 12. The comparator's four views, its hold, and its magnifier
+ *
+ * The whole comparison path had no covering test on either client until 2026-08-27 — a parity audit
+ * found `buildComparisonPlates`, `renderTrace` and both clients' comparators with callers and nothing
+ * asserting them. Cases 7 and 9 above pin the two layers the right way round; these pin what the
+ * portal grew in that wave, all of which is state a designer can get into and cannot get out of if it
+ * is wrong.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("the chips show each picture whole, and Wipe comes back to where the seam was left", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  const slider = page.getByRole("slider", { name: "Traced drawing against the photograph" });
+  await expect(slider).toBeVisible({ timeout: 15_000 });
+
+  /*
+    THE THREE LABELS ARE THE HANDSET'S, and this asserts them by name rather than by position: a
+    designer moves between the two apps mid-workshop, and `DwSketchTraceCompare.kt` is where these
+    words are decided. The fourth is new on both clients and is named identically on both.
+  */
+  const chip = (name: string) => page.getByRole("button", { name, exact: true });
+  for (const name of ["Drawing", "Wipe", "Photograph", "Difference"]) {
+    await expect(chip(name)).toBeVisible();
+  }
+  // Wipe is the default, exactly as it is on the handset.
+  await expect(chip("Wipe")).toHaveAttribute("aria-pressed", "true");
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+
+  // ── EACH END IS ONE PRESS, WHICH IS THE WHOLE POINT OF THE ROW ────────────
+  // Before this the two end states existed only as the two extremes of a drag, or as Home and End on a
+  // control a designer had to know was focusable.
+  await chip("Photograph").click();
+  await expect(slider).toHaveAttribute("aria-valuenow", "100");
+  await expect(slider).toHaveAttribute("aria-valuetext", "100% Photograph, 0% Traced drawing");
+  await chip("Drawing").click();
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+
+  /*
+    ── THE PROPERTY THE CONTROLLED SEAM WAS ADDED FOR, AND THE ONE A NAIVE IMPLEMENTATION LOSES ──
+
+    "Drawing" and "Photograph" write the DISPLAYED position; they must not write the stored seam. So a
+    designer who put the seam at 40%, looked at the drawing whole, and pressed Wipe again gets 40% back
+    — not 0, and not the middle. An implementation that simply set one number on every press passes
+    every assertion above and fails this one.
+  */
+  await chip("Wipe").click();
+  await slider.focus();
+  await page.keyboard.press("Home");
+  for (let i = 0; i < 20; i += 1) await page.keyboard.press("ArrowRight");
+  await expect(slider).toHaveAttribute("aria-valuenow", "40");
+  await chip("Drawing").click();
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+  await chip("Wipe").click();
+  await expect(slider).toHaveAttribute("aria-valuenow", "40");
+});
+
+test("the difference view replaces both layers with one plate, and says what it means", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  const slider = page.getByRole("slider", { name: "Traced drawing against the photograph" });
+  await expect(slider).toBeVisible({ timeout: 15_000 });
+  // Two layers while the wipe is showing — the count case 7 asserts, restated here so the change below
+  // is a change and not a coincidence.
+  expect(await page.locator("img").count()).toBe(2);
+
+  await page.getByRole("button", { name: "Difference", exact: true }).click();
+
+  /*
+    THE FRAME STOPS BEING A SLIDER, because there is no longer a seam in it. A frame that kept
+    `role="slider"` while showing one derived picture would advertise a role it does not honour, which
+    is the defect `reveal1.tsx`'s own header opens with — and it would tell a screen-reader user there
+    is a value to change when there is not.
+  */
+  const solo = page.getByRole("group", { name: "Traced drawing against the photograph" });
+  await expect(solo).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("slider", { name: "Traced drawing against the photograph" })).toHaveCount(0);
+
+  // ONE PICTURE, AND IT IS THE THIRD PLATE — not one of the two re-labelled. Asserted on the count and
+  // on the alt together: either alone could be satisfied by showing the drawing again.
+  expect(await page.locator("img").count()).toBe(1);
+  /*
+    THE DESCRIPTION IS THE HANDSET'S, CHARACTER FOR CHARACTER. `DwSketchTraceCompare.kt` puts this
+    same sentence on its own frame as the `contentDescription` for this same mode, and this is the one
+    assertion that would fail if either client reworded it. It says what the picture MEANS rather than
+    naming the operation, because a reader who cannot see the plate gets nothing from "the difference
+    between two pictures".
+  */
+  await expect(
+    page.getByAltText(
+      "The traced drawing and the photograph subtracted from each other. Dark where they agree, " +
+        "bright where they differ."
+    )
+  ).toBeVisible();
+  const source = await page.locator("img").evaluate((node) => (node as HTMLImageElement).src);
+  expect(source.startsWith("blob:")).toBe(true);
+
+  /*
+    AND THE WORD ON THE PICTURE. Scoped INSIDE the frame, because "Difference" is also the name of the
+    chip that got here — an unscoped match would pass with no badge at all. The handset draws this at
+    the same corner for a reason it states and this client had not: a difference plate of a good trace
+    is very nearly black, and a nearly black frame carrying no word is indistinguishable from a
+    picture that failed to load.
+  */
+  await expect(solo.getByText("Difference", { exact: true })).toBeVisible();
+
+  /*
+    AND THE SENTENCE, WHICH IS THE HANDSET'S VERBATIM. The plate is black where the two agree and
+    bright where they do not, which is not what anybody expects a picture of their own sketch to look
+    like — without the sentence the honest reading of a mostly-black frame is that the trace failed.
+  */
+  await expect(page.getByText("black where they agree, bright where they do not")).toBeVisible();
+
+  // BACK TO THE WIPE, with both layers and the seam where it was. The magnification and the mode are
+  // the only things the chips touch; the plates are not rebuilt.
+  await page.getByRole("button", { name: "Wipe", exact: true }).click();
+  const wipe = page.getByRole("slider", { name: "Traced drawing against the photograph" });
+  await expect(wipe).toBeVisible();
+  expect(await page.locator("img").count()).toBe(2);
+  // The solo badge is withdrawn with the plate it named, and the two LAYER badges come back in its
+  // place. Three badges at once would be the frame captioning itself twice over.
+  await expect(wipe.getByText("Difference", { exact: true })).toHaveCount(0);
+  await expect(wipe.getByText("Photograph", { exact: true })).toBeVisible();
+  await expect(wipe.getByText("Traced drawing", { exact: true })).toBeVisible();
+});
+
+test("press and hold shows the photograph, and letting go restores the seam untouched", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  const slider = page.getByRole("slider", { name: "Traced drawing against the photograph" });
+  await expect(slider).toBeVisible({ timeout: 15_000 });
+
+  // Put the seam somewhere a restore can be told apart from a reset: 20% is neither end and not the
+  // middle either.
+  await slider.focus();
+  for (let i = 0; i < 10; i += 1) await page.keyboard.press("ArrowRight");
+  await expect(slider).toHaveAttribute("aria-valuenow", "20");
+
+  /*
+    `hover()` RATHER THAN A BOUNDING BOX AND `mouse.move`. The harness mounts into a bare document with
+    no stylesheet (see the file header), so the frame is an unstyled block as tall as its aspect ratio
+    makes it and is usually below the fold — and `page.mouse` takes VIEWPORT coordinates, so a box read
+    off an unscrolled page would put the press somewhere else entirely. `hover()` scrolls it in and
+    lands on the frame's centre, which is also the more demanding place to press: a tap there would
+    write the seam to about 50, so "it came back to 20" cannot be satisfied by a press that did nothing.
+  */
+  await slider.hover();
+  await page.mouse.down();
+  /*
+    LONGER THAN `REVEAL_PEEK_HOLD_MS`, WHICH IS 220. The threshold is not zero on purpose: a peek that
+    began on contact would flash the photograph at the start of every pinch, because a two-finger
+    gesture puts one finger down first. `e2e/sketch-compare-unit.spec.ts` pins the number; this pins
+    that the panel honours it.
+  */
+  await expect(slider).toHaveAttribute("aria-valuenow", "100", { timeout: 3_000 });
+
+  /*
+    ── AND THE HALF THAT MAKES IT WORTH HAVING ───────────────────────────────
+
+    Letting go returns to 20 and not to 0, and not to wherever the pointer happened to be. The stored
+    seam is deliberately not rewritten by the hold, which is the whole reason the gesture is usable:
+    the designer keeps their place. It also means the press may not write the seam on CONTACT the way
+    this component used to — a press that moved the seam under the finger about to peek would restore a
+    position nobody chose. 30px into a frame this wide is nowhere near 20%.
+  */
+  await page.mouse.up();
+  await expect(slider).toHaveAttribute("aria-valuenow", "20");
+});
+
+test("the magnifier answers to the keyboard, reports itself, and can be put back to fit", async ({ page }) => {
+  await mount(page);
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  const slider = page.getByRole("slider", { name: "Traced drawing against the photograph" });
+  await expect(slider).toBeVisible({ timeout: 15_000 });
+
+  // AT FIT THERE IS NOTHING TO SAY AND NOTHING TO PUT BACK, so the readout is absent rather than
+  // reading "1×" — a control offering to undo something that has not happened.
+  await expect(page.getByRole("button", { name: /reset to fit/ })).toHaveCount(0);
+
+  /*
+    THE KEYBOARD ROUTE IS NOT A COURTESY. A magnifier reachable only by a trackpad pinch or a ctrl-wheel
+    is a magnifier a keyboard user and a switch device do not have — and this one exists because the
+    failure the comparator is for is invisible at fit: a pencil line on a plate capped at 1024px, drawn
+    into a card a few hundred pixels wide, is sub-pixel.
+  */
+  await slider.focus();
+  await page.keyboard.press("+");
+  const readout = page.getByRole("button", { name: /reset to fit/ });
+  await expect(readout).toBeVisible();
+  await expect(readout).toHaveText("1.3× — reset to fit");
+
+  // The transform is on ONE wrapper containing both layers, never on the two images — the invariant
+  // both clients' headers state, because independently transformed layers show a drawing that appears
+  // to have drifted off its own photograph. Asserted where it cannot be faked: no `<img>` carries one.
+  const imageTransforms = await page
+    .locator("img")
+    .evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).transform));
+  expect(imageTransforms.every((value) => value === "none")).toBe(true);
+  const wrappers = await page
+    .locator('div[style*="scale"]')
+    .evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).style.transform));
+  expect(wrappers.length).toBe(1);
+  expect(wrappers[0]).toContain("scale(1.25)");
+
+  // THE SEAM DOES NOT MOVE WHEN THE PICTURE DOES. It is drawn in the frame's own space, so magnifying
+  // cannot carry it off the frame and leave a designer with no way to bring it back.
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+
+  // A SECOND PRESS COMPOUNDS, and a press the other way undoes exactly one step — so the readout is
+  // reporting the transform rather than counting presses.
+  await page.keyboard.press("+");
+  await expect(readout).toHaveText("1.6× — reset to fit");
+  await page.keyboard.press("-");
+  await expect(readout).toHaveText("1.3× — reset to fit");
+
+  // …and 0 puts it back to fit, at which point the readout withdraws again: a control offering to undo
+  // something that has not happened is a control that has to be read before it can be ignored.
+  await page.keyboard.press("0");
+  await expect(page.getByRole("button", { name: /reset to fit/ })).toHaveCount(0);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 13. Stopping a trace, and the bar that says one is still going
+ *
+ * Cancellation was real from the first day — an `AbortController` per run, a cancel message, the
+ * worker's own token unwinding the pipeline — and fired only implicitly, when a moved slider
+ * superseded the run or the panel unmounted. `traceClient.busy`'s docblock has called itself "the
+ * enabled state of a Cancel control" throughout, and no such control was ever built: the only way to
+ * abandon a full-resolution trace was to move something and hope.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("a running trace can be stopped, and says so until it really has", async ({ page }) => {
+  // Slow enough that "running" is a state and not a race.
+  await mount(page, { traceMs: 1_500 });
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeVisible({ timeout: 15_000 });
+  await stop.click();
+
+  /*
+    "Stopping…" AND NOT A BUTTON THAT VANISHES. The engine checks its cancellation token BETWEEN stages
+    and nowhere else, so the worst case is the length of the longest single stage — seconds at full
+    resolution. A control that promised instant would be wrong, and one that disappeared on the press
+    would claim the run had stopped while it was still running.
+  */
+  await expect(page.getByRole("button", { name: "Stopping…" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+
+  // …and it is cleared by the run's own unwinding rather than by a guessed interval, so the word is on
+  // screen for exactly as long as stopping takes.
+  await expect(page.getByRole("button", { name: /Stop/ })).toHaveCount(0, { timeout: 15_000 });
+
+  // NOTHING RED. A cancellation is the ordinary consequence of changing your mind, not a failure, and
+  // the panel has always treated a superseded trace that way — the button inherits it.
+  await expect(page.getByText("That photograph could not be traced.")).toHaveCount(0);
+});
+
+test("a full-resolution run draws a bar, and says the bar counts stages until it has measured one", async ({
+  page
+}) => {
+  // Long enough that the bar and its sentence are a state and not a race against the panel closing.
+  await mount(page, { traceMs: 2_000 });
+  await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
+  await pick(page, "sheet.png", 64, 48);
+
+  /*
+    NO BAR FOR THE PREVIEW, AND NOT BECAUSE OF A FLAG IN THE PANEL. `trace.worker.ts` hands
+    `Pipeline.run` a progress callback and hands `Pipeline.runPreview` none at all, so a preview emits
+    no stage events and there is nothing to draw one from. The stub reproduces that split exactly,
+    which is what makes this assertion mean anything.
+  */
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible({ timeout: 15_000 });
+  expect(await page.getByText("The bar counts stages, not time").count()).toBe(0);
+  await expect(page.getByRole("button", { name: /Stop/ })).toHaveCount(0, { timeout: 15_000 });
+
+  // A press is a full-resolution run, so this one does report stages.
+  await page.getByRole("button", { name: `Add the line art to “${TARGET_LABEL}”` }).click();
+
+  /*
+    THE ENGINE'S OWN LABEL, WITH THIS FILE'S NUMBER AROUND IT.
+
+    The stub sends "Edges" — deliberately NOT the label `traceStages.ts` holds for the `edge` stage,
+    which is "Detecting edges". So this assertion can only pass if the panel prints the string that
+    arrived with the event and adds nothing but the position: a panel that looked the stage up in its
+    own table and printed that instead would read "Detecting edges. Stage 7 of 12." and fail here.
+    Re-typing engine wording in a client is how the two clients end up describing one operation
+    differently, and `trace.worker.ts` says so in its own comment.
+  */
+  await expect(page.getByText("Edges. Stage 7 of 12.")).toBeVisible({ timeout: 15_000 });
+
+  /*
+    AND THE SENTENCE UNDER IT, WHICH IS THE HONEST HALF. Until this browser has finished one trace the
+    boundaries are the engine's even twelfths — and the two stages that dominate a real trace are worth
+    several of the others put together, so the bar will visibly stall. One line costs less than a
+    designer deciding the panel has frozen.
+  */
+  await expect(page.getByText("The bar counts stages, not time")).toBeVisible();
 });

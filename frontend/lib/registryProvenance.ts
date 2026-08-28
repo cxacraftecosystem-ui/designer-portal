@@ -50,6 +50,15 @@ import type { RegistrySource } from "@/lib/designWorkshopStore";
  * - `"network"` — this render's registry came off the wire. Nothing to explain; saying "this is
  *   current" on every stage open is a standing notice these screens have twice been asked for less
  *   of, and a banner that is always there is a banner nobody reads on the day it matters.
+ *   **STILL TRUE SINCE THE BROWSER CACHE WAS TURNED ON FOR THIS ONE PATH (2026-08-28), AND ONLY
+ *   BECAUSE OF HOW.** `fetchStageRegistry` sends `cache: "no-cache"` and the server answers
+ *   `max-age=0, must-revalidate`, so every one of these went to the origin and came back either as
+ *   a body or as a 304 saying the stored body is current — the bytes may be reused, the CONFIRMATION
+ *   never is. A freshness lifetime above zero, or `cache: "default"` against a `Cache-Control` some
+ *   proxy widened, would let this state be produced without asking anyone, and then `"network"`
+ *   would be a lie told silently by the one state that draws no banner. That is the reason the
+ *   request mode is `"no-cache"` rather than `"default"`; `ApiFetchOptions.revalidateFromHttpCache`
+ *   carries the argument, and this bullet is the consequence to re-read before relaxing it.
  * - `"memory"` — served from the tab's module cache with no request made. It was fetched at some
  *   point in this tab's life, which may be before the last deploy, or may itself have come off disk
  *   via `adoptStageRegistry`. The honest statement is that it has not been re-checked, plus the one

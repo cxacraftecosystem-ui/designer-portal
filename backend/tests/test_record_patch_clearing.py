@@ -395,12 +395,27 @@ def test_the_record_routes_do_not_share_one_clearable_list():
     """
     from app.api.routes import artisans, crafts, products, tools
 
-    # A tool measures height/width/thickness/weight/radius; a product measures heightInches. Neither
-    # list is a subset of the other, and neither belongs on Artisan.
+    # NEITHER LIST IS A SUBSET OF THE OTHER, AND NEITHER BELONGS ON ARTISAN — which is the
+    # property, so it is now asserted AS the property and not only through one column.
+    #
+    # THIS BLOCK OPENED "a tool measures height/width/thickness/weight/radius; a product measures
+    # heightInches" AND ASSERTED `"heightInches" not in tools._CLEARABLE_COLUMNS`, UNTIL
+    # 2026-08-27. `ToolDocumentation` gained a `heightInches` column that day (additive and
+    # nullable, `20260827120000_tool_height_inches`), the tool route added it to its clearable
+    # tuple so a PATCH can empty a measured height the same way it empties a measured length,
+    # and the assertion went red. The column is now the one thing the two lists AGREE about,
+    # which is why the separation is asserted from both directions below instead.
     assert "heightInches" in products._CLEARABLE_COLUMNS
-    assert "heightInches" not in tools._CLEARABLE_COLUMNS
+    assert "heightInches" in tools._CLEARABLE_COLUMNS
+    # A tool measures thickness, weight and radius; a product has a selling price and a size.
     assert "thickness" in tools._CLEARABLE_COLUMNS
     assert "thickness" not in products._CLEARABLE_COLUMNS
+    assert "sellingPrice" in products._CLEARABLE_COLUMNS
+    assert "sellingPrice" not in tools._CLEARABLE_COLUMNS
+    # And the general form, which survives any column being added to either side: a shared
+    # constant is only possible if one tuple contains the other, so assert that neither does.
+    assert not set(tools._CLEARABLE_COLUMNS) <= set(products._CLEARABLE_COLUMNS)
+    assert not set(products._CLEARABLE_COLUMNS) <= set(tools._CLEARABLE_COLUMNS)
     assert "phone" in artisans._CLEARABLE_COLUMNS
     assert "phone" not in products._CLEARABLE_COLUMNS
 

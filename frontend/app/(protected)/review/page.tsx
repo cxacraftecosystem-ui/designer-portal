@@ -4,6 +4,8 @@ import { Fragment, useEffect, useId, useState } from "react";
 import { Check, ClipboardCheck } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { cutOf, queueCutNotice } from "@/components/data/cappedList";
+import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
@@ -37,12 +39,38 @@ type PendingItem = {
   outOfWindow?: boolean;
 };
 
+/**
+ * What the queue answer says ABOUT ITSELF, beside the rows.
+ *
+ * The API reads at most `cap` rows of each of six record types and orders each one newest first, so
+ * when a type overflows the rows that fall off are the OLDEST — the most overdue work is exactly
+ * what disappears. `truncated` is the API's own word for that (the same word `/data/tree` and
+ * `/data/report` use), `shown` is how many rows arrived and `total` is how many the same filter
+ * actually matches. They differ only when `truncated` is true.
+ *
+ * Every field is optional so a browser holding this page against an older API — or the API's
+ * empty-ladder early return, if that ever loses a key — renders the untruncated shape rather than
+ * "undefined of undefined".
+ */
+type PendingEnvelope = {
+  items: PendingItem[];
+  shown?: number;
+  total?: number;
+  cap?: number;
+  truncated?: boolean;
+};
+
 /** Identifies one queue row. Type + id, because ids are only unique within a record type. */
 function rowKey(item: PendingItem) {
   return `${item.recordType}-${item.id}`;
 }
 
-/** The queue arrives whole (no server paging), so the table pages client-side like every other list. */
+/**
+ * The queue arrives in one response (no server paging), so the table pages client-side like every
+ * other list. "In one response" is not "whole": the API caps each record type, which is what
+ * `truncated` reports and the notice above the table explains — the pages below cover only the
+ * rows that arrived.
+ */
 const PAGE_SIZE = 20;
 
 type DecisionAction = "approve" | "revise" | "reject";
@@ -59,6 +87,18 @@ export default function ReviewPage() {
   const confirm = useConfirm();
   const { user } = useAuth();
   const [items, setItems] = useState<PendingItem[]>([]);
+  /**
+   * The server's account of its own answer: how many rows it matched, the per-record-type ceiling,
+   * and whether that ceiling bit. Held separately from `items` because `items` is what this table
+   * pages over and `total` is what the count on screen must report — they are the same number until
+   * the queue outgrows the cap, and reporting the page length as the total is precisely the bug the
+   * API stopped shipping when it started sending these fields.
+   */
+  const [queue, setQueue] = useState<{ total: number; cap: number; truncated: boolean }>({
+    total: 0,
+    cap: 0,
+    truncated: false
+  });
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -99,8 +139,15 @@ export default function ReviewPage() {
 
   async function load() {
     try {
-      const result = await apiFetch<{ items: PendingItem[]; total: number }>("/review/pending");
+      const result = await apiFetch<PendingEnvelope>("/review/pending");
       setItems(result.items);
+      setQueue({
+        // `?? result.items.length` is the pre-envelope fallback, not a preference: an API that sends
+        // `total` is always telling the truth about rows this page cannot see, so it wins.
+        total: result.total ?? result.items.length,
+        cap: result.cap ?? 0,
+        truncated: Boolean(result.truncated)
+      });
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load review queue");
@@ -266,6 +313,23 @@ export default function ReviewPage() {
         <div className="mb-4 rounded-md border border-success-600/30 bg-success-100 px-3 py-2 text-sm text-success-600">{info}</div>
       ) : null}
       <section className="panel overflow-hidden">
+        {/* The cap, said out loud, through the one element every truncation line in this app draws
+            (components/data/CappedListNotice) and with the wording decided in cappedList.ts, not
+            here — five screens describing one cut in five sentences is how a reader learns that
+            none of them means much. `queueCutNotice` is the arm for a cut nothing on screen can
+            reach past; its header sets out why neither `CutReach` value would have been honest on
+            this route, and it takes the server's `truncated` so there is no `&&` to get wrong here.
+            It renders nothing when the queue is whole, which is the usual case. */}
+        {loading ? null : (
+          <CappedListNotice
+            className="border-b border-line-200 px-4 py-2.5"
+            cuts={[
+              // `items.length`, not the envelope's `shown`: the two are equal by construction,
+              // and the one this sentence is about is the list the reader is looking at.
+              queueCutNotice(queue.truncated, cutOf(items.length, queue.total, "pending records"), queue.cap)
+            ]}
+          />
+        )}
         {loading ? (
           <div className="p-4 text-sm text-ink-700">Loading...</div>
         ) : items.length === 0 ? (
@@ -494,7 +558,10 @@ export default function ReviewPage() {
           </div>
           </>
         )}
-        {!loading && items.length > 0 ? <Pagination page={page} pages={pages} total={items.length} onPage={setPage} /> : null}
+        {/* `queue.total` counts what the filter MATCHES; `items.length` is what fitted under the
+            cap. Identical until the queue overflows, and after that the honest number is the one
+            the notice at the top of this panel is explaining. */}
+        {!loading && items.length > 0 ? <Pagination page={page} pages={pages} total={queue.total} onPage={setPage} /> : null}
       </section>
     </>
   );

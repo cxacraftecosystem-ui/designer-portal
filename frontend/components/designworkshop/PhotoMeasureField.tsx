@@ -16,6 +16,19 @@
  * loses its error bar forever — the registry has a column for the dimension and none for the doubt.
  * So the doubt is spent HERE, on screen, while somebody can still act on it.
  *
+ * WHAT DOES LEAVE WITH THE NUMBER IS HOW IT WAS ARRIVED AT, AND IT USED NOT TO. The propose button
+ * called `onPropose(key, text)` and the method — which geometry, and that a geometry produced it at
+ * all — was dropped on the floor. So a `lengthCm` read back a year later was three different facts
+ * wearing one face: a number typed off a tape, this module's arithmetic over marks somebody placed,
+ * and a vision model's estimate off a grid sheet accepted through `GridMeasurement`. Nothing on the
+ * row could tell them apart, and `merge_entry_provenance` stamps whoever pressed Save with their
+ * name — so the record did not merely fail to say a machine produced the number, it asserted that a
+ * named designer measured it. `backend/app/services/measurement_provenance.py` is the long argument
+ * for why that is the defect and not a nicety. The remedy is one key beside `{by, byName, at}` in the
+ * `DwStageEntry.fieldProvenance` map that already exists, carried from this button as a third
+ * argument. `photoMeasure.methodMarker` composes it; see `onPropose` below for what still has to
+ * carry it the rest of the way.
+ *
  * THE ASSUMPTION IS ON THE SCREEN AND NOT ONLY IN A COMMENT. A ratio of pixel distances is the true
  * length only when the reference and the object lie in one flat plane square to the sensor. A scale
  * card lying on a table and a pot standing on that table are not in one plane, and the pot measured
@@ -47,9 +60,11 @@ import {
   markSigmaForDisplayScale,
   measureByRectification,
   measureBySameScale,
+  methodMarker,
   roundToUncertainty,
   type LengthUnit,
   type MeasureResult,
+  type MeasurementMarker,
   type Point
 } from "@/lib/photoMeasure";
 
@@ -175,8 +190,39 @@ export function PhotoMeasureField({
   photos: MeasurablePhoto[];
   targets: MeasureTarget[];
   row: DwEntryData;
-  /** Write one registry field. Called ONLY from a button the designer pressed. */
-  onPropose: (key: string, value: DwValue) => void;
+  /**
+   * Write one registry field. Called ONLY from a button the designer pressed.
+   *
+   * THE THIRD ARGUMENT SAYS HOW THE NUMBER WAS ARRIVED AT, and it is not optional here because this
+   * panel always knows: everything it can propose is `PHOTO_GEOMETRY`, by one of two techniques. It
+   * is separate from the value rather than folded into it because the value goes into the registry
+   * field and the method goes into `DwStageEntry.fieldProvenance` beside `{by, byName, at}` — one
+   * key, on a column that already exists. See `lib/photoMeasure.ts`'s {@link MeasurementMarker} for
+   * what it is a claim about, and `backend/app/services/measurement_provenance.py` for the failure
+   * it ends: a stored dimension that cannot be told apart from a typed guess or a model's estimate.
+   *
+   * A CALLER MAY STILL IGNORE IT — TypeScript lets a two-parameter callback satisfy this — and until
+   * the stage save carries the marker, every caller does. That is a gap in the plumbing and not a
+   * licence: the argument is passed on every call from here, so the day the save body gains its
+   * `measurementMethods` sibling, no code in this file changes.
+   *
+   * RE-CHECKED AND STILL TRUE ON 2026-08-27, with one word now worth pinning down. "The save body"
+   * here is the STAGE save body — `StageEntryIn`, which still declares `entityKey` / `entryId` /
+   * `ordinal` / `data` / `merge` and no marker — and NOT the record one, which gained its sibling
+   * that day: `ProductForm` and `ToolForm` send `measurementMethods` now, out of the record panel
+   * `components/media/RecordPhotoMeasure.tsx`, which is a different component from this one. This
+   * file's own caller, `FieldInput.tsx`, still writes `onPropose={(key, proposed) => onPatch({ [key]:
+   * proposed })}` and still drops the third argument, because there is nowhere on a stage save to put
+   * it. Both halves re-checkable::
+   *
+   *     grep -n "class StageEntryIn" -A 15 backend/app/schemas/design_workshops.py
+   *     grep -n "onPropose" components/designworkshop/FieldInput.tsx
+   *
+   * What the record half proved is that the sentence above is the right shape and not wishful: the
+   * two record forms needed no change inside their measurement panel either — only a third parameter
+   * accepted at the call site and collected into the body.
+   */
+  onPropose: (key: string, value: DwValue, method: MeasurementMarker) => void;
   disabled?: boolean;
 }) {
   const panelId = useId();
@@ -922,7 +968,8 @@ function MeasurementReadout({
   targets: MeasureTarget[];
   row: DwEntryData;
   disabled?: boolean;
-  onPropose: (key: string, value: DwValue) => void;
+  /** See the same prop on {@link PhotoMeasureField} — this is the component that actually calls it. */
+  onPropose: (key: string, value: DwValue, method: MeasurementMarker) => void;
 }) {
   if (!allPlaced) {
     const remaining = needed.filter((id) => !marks[id]?.placed);
@@ -1012,7 +1059,11 @@ function MeasurementReadout({
                   type="button"
                   className="field-button"
                   disabled={disabled}
-                  onClick={() => onPropose(field.key, text)}
+                  // THE METHOD LEAVES WITH THE VALUE, from the same press, in one call. Composed by
+                  // `photoMeasure.methodMarker` rather than assembled here so the two record forms
+                  // and the Kotlin twin cannot spell it differently — see its docstring for why the
+                  // word "method" means two different things across this boundary.
+                  onClick={() => onPropose(field.key, text, methodMarker(result))}
                 >
                   <Check className="h-4 w-4" aria-hidden />
                   {field.label}: {text} {unit}

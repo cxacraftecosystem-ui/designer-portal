@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.OutboxFailureRow
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.outboxDiscardConfirmation
 import com.designprototype.workshop.data.outboxFailureRows
 import com.designprototype.workshop.data.outboxRetryAllMessage
 import com.designprototype.workshop.data.outboxRetryMessage
@@ -71,6 +72,17 @@ import kotlinx.coroutines.launch
  * 3. DISCARD IS A SEPARATE, NAMED, CONFIRMED ACT. Nothing automatic in this app may delete a queued
  *    entry that has not been sent; see `OfflineOutbox.discard`. The confirmation says how many files
  *    go with it, because that is the number the designer is actually deciding about.
+ * 4. A CLASH IS NOT A REJECTION, AND IS DRAWN AS ITS OWN THING. An answered 409 means the register
+ *    already holds a record occupying this one's identity — a clashing Aadhaar, a craft already named
+ *    that, an artisan set already interviewed. It is the one refusal in this tray with a route out
+ *    that is neither Try again nor a shrug, and until `PendingEntry.conflict` existed it was drawn
+ *    exactly like a field the validator rejected: the server sentence, a button that could only ever
+ *    fetch the identical answer, and a red one that deletes a day of fieldwork. So it is labelled as a
+ *    clash, its sentence (`outboxConflictSentence`) spells out the order of operations, and the
+ *    discard confirmation says out loud that the OTHER record is not being touched — because the
+ *    thing a designer is most afraid of on this screen is deleting the artisan rather than their copy
+ *    of the form. Nothing here deletes anything on its own; see `PendingEntry.conflict` for the
+ *    incident that rule was written after.
  */
 @Composable
 fun OfflineOutboxTray(
@@ -91,10 +103,16 @@ fun OfflineOutboxTray(
 
     LaunchedEffect(reload) {
         loading = true
+        // ONE read and ONE projection. [OutboxFailureRow.conflict] rides on the row itself rather
+        // than arriving in a second structure beside it, so a row and its flag cannot be taken from
+        // different moments — which a second call to `outboxFailures` landing the other side of a
+        // sync that emptied the queue would otherwise allow.
+        //
         // The PROJECTION and not the entries — the tray never holds `PendingEntry.payloadJson`, which
         // is the whole record body including an artisan's identity answers. See OutboxFailureRow.
-        rows = runCatching { outboxFailureRows(repository.outboxFailures(appContext)) }
-            .getOrDefault(emptyList())
+        rows = outboxFailureRows(
+            runCatching { repository.outboxFailures(appContext) }.getOrDefault(emptyList())
+        )
         loading = false
     }
 
@@ -120,15 +138,33 @@ fun OfflineOutboxTray(
     }
 
     confirmDiscard?.let { row ->
+        val isConflict = row.conflict
         AlertDialog(
             onDismissRequest = { confirmDiscard = null },
-            title = { Text("Throw this away?", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) },
-            text = {
+            title = {
                 Text(
-                    "“${row.label}” and ${
-                        if (row.mediaCount == 1) "1 file" else "${row.mediaCount} files"
-                    } saved with it will be deleted from this device. This cannot be undone, and " +
-                        "nothing about it has reached the server.",
+                    // NAMED FOR WHAT IS BEING DELETED, on the one refusal where a designer could
+                    // reasonably fear it is the other thing. A clash is the only row in this tray that
+                    // is ABOUT a record on the server, and "Throw this away?" over it reads, to
+                    // somebody who has just been told an artisan already exists, as an offer to delete
+                    // that artisan.
+                    if (isConflict) "Throw away this copy?" else "Throw this away?",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+            text = {
+                // THE SENTENCE IS `outboxDiscardConfirmation`'S AND NOT THIS COMPOSABLE'S. It is the
+                // last thing said before the only irreversible act in this queue, and it takes the
+                // photographs with it, so it is pinned by a JVM test rather than assembled here where
+                // the only way to read it is to take a handset into a village.
+                Text(
+                    outboxDiscardConfirmation(
+                        label = row.label,
+                        files = row.mediaCount,
+                        isConflict = isConflict,
+                        savedOnServer = row.savedOnServer,
+                    ),
                     color = MaterialTheme.field.body,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
@@ -234,7 +270,17 @@ fun OfflineOutboxTray(
     )
 }
 
-/** One refused entry: what it is, why it will not go, and the two things a person can do about it. */
+/**
+ * One refused entry: what it is, why it will not go, and the two things a person can do about it.
+ *
+ * [OutboxFailureRow.conflict] — the register already holds a record occupying this one's identity, an
+ * answered 409 — is drawn differently because it ENDS differently: every other row in this tray is
+ * waiting on an edit, a permission or a newer build, and this one is waiting on a person comparing
+ * two records with their own eyes. See `PendingEntry.conflict`.
+ *
+ * IT IS READ OFF THE ROW rather than taken as a second parameter beside it. A flag passed alongside
+ * the thing it describes is a flag that can be passed with the wrong one.
+ */
 @Composable
 private fun OutboxFailureCard(
     row: OutboxFailureRow,
@@ -262,6 +308,19 @@ private fun OutboxFailureCard(
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
         )
+        if (row.conflict) {
+            // AN EYEBROW AND NOT A REPLACEMENT for the sentence below it. `outboxConflictSentence`
+            // already carries the server's own words, what is still on the phone and what to do in
+            // which order; what it cannot do is be legible from across a courtyard. This line is the
+            // one thing a designer scanning six refused rows needs in order to know that this one is
+            // not their mistake and has somewhere to go.
+            Text(
+                "CLASHES WITH A RECORD THE OFFICE ALREADY HAS",
+                color = MaterialTheme.field.warning,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         // VERBATIM, and never truncated. It is the server's sentence, written for this person.
         Text(row.reason, color = MaterialTheme.field.warning, fontSize = 12.sp, lineHeight = 17.sp)
         if (row.awaitingUpdate) {
@@ -282,7 +341,14 @@ private fun OutboxFailureCard(
                 Text("Try again", fontSize = 12.sp)
             }
             OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Throw away", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                // "this copy" on a clash, for the reason the confirmation dialog gives at length: the
+                // row a designer is reading names a record on the SERVER, and an unqualified "Throw
+                // away" beside it invites the reading that this button deletes that one.
+                Text(
+                    if (row.conflict) "Throw away this copy" else "Throw away",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }

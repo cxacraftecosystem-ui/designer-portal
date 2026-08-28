@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { useAuth } from "@/components/AuthProvider";
+import { refreshOpenTaskCount } from "@/components/hooks/useOpenTaskCount";
 import { MyTaskCard } from "@/components/tasks/MyTaskCard";
 import { STATUS_LABEL } from "@/components/tasks/scope";
 import type { FieldTask, TaskStatus } from "@/components/tasks/types";
@@ -90,7 +91,11 @@ export default function TasksPage() {
     try {
       await apiFetch(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify(body) });
       setError(null);
-      await Promise.all([load(), loadCounts()]);
+      // The nav badge counts OPEN tasks, so starting or finishing one has just changed it. Correct
+      // it from here rather than waiting for the store's staleness window: the reader is looking at
+      // the row they moved and the pill is on the same screen, and a badge that still says 3 after
+      // the third card went to In progress is the notification contradicting the page it points at.
+      await Promise.all([load(), loadCounts(), refreshOpenTaskCount()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update the task");
     } finally {

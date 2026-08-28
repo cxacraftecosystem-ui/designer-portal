@@ -32,6 +32,7 @@ from app.services.ai import (
     refine_transcript_text,
     transcribe_audio,
 )
+from app.services.concurrency import gather_reads
 from app.services.dictation_consent import SendRefused
 
 # The formats a vision model can read are a property of the PROVIDER, not of either feature that uses
@@ -56,7 +57,7 @@ from app.services.records import (
     enum_filter_or_422,
     jsonify_metadata,
     media_relation_data,
-    media_url_owners,
+    media_url_scope,
     public_encode,
     require_record,
     viewable_where,
@@ -107,8 +108,22 @@ MEDIA_PROCESSING_JOB_STATUSES = frozenset({"QUEUED", "PROCESSING", "COMPLETED", 
 
 router = APIRouter(prefix="/media", tags=["media"])
 
-# "the caller did not say which uploaders' URLs may travel". Distinct from None, which MEANS "all of
+# "the caller did not say whose media bytes may travel". Distinct from None, which MEANS "all of
 # them" — see ``records.public_encode``.
+#
+# IT NOW GOVERNS BOTH HALVES OF THAT ANSWER. ``records.media_url_scope`` returns a PAIR — the
+# uploaders whose files may travel and the design workshops the caller may open — and this sentinel
+# is what makes ``_public`` resolve the pair from the viewer. A caller that names ``media_urls``
+# itself keeps whatever ``media_workshops`` it passed (empty unless it said otherwise).
+#
+# A LONE ``media_workshops`` IS REFUSED, THEREFORE, RATHER THAN QUIETLY RE-DECIDED.
+# A ``media_workshops`` handed in with no ``media_urls`` beside it is never used as the call site
+# wrote it: with a viewer it is OVERWRITTEN by ``media_url_scope``'s answer — which may be WIDER than
+# what was passed — and with no viewer it is honoured beside an empty uploader set. Two different
+# answers to one call, neither of them the one asked for, so a non-empty one raises. A guard and not
+# a paragraph, because the sentence this replaced ("neither half can be widened by a call site that
+# only thought about the other one") was true one way round and false the other, and nothing in the
+# tree could tell a reader which.
 _UNSET_URLS = object()
 
 INCLUDE = {
@@ -141,7 +156,13 @@ async def _interview_labels(rows: list[Any]) -> dict[str, tuple[str, str]]:
     return {i.id: interview_record(i) for i in interviews}
 
 
-async def _public(rows: Any, viewer: Any = None, *, media_urls: Any = _UNSET_URLS) -> Any:
+async def _public(
+    rows: Any,
+    viewer: Any = None,
+    *,
+    media_urls: Any = _UNSET_URLS,
+    media_workshops: frozenset[str] = frozenset(),
+) -> Any:
     """``public_encode`` plus the derived display name for every media row it carries.
 
     ``originalFilename`` stays exactly as uploaded — it is the only handle a researcher has for
@@ -151,29 +172,115 @@ async def _public(rows: Any, viewer: Any = None, *, media_urls: Any = _UNSET_URL
 
     THE ``url`` IS NOT ALWAYS PRESENT, and this is the one file where that matters most. Reading the
     repository is open to every signed-in account, but a ``MediaFile.url`` is a fetchable object URL —
-    it IS the file — so it travels only to callers who may take that uploader's data. Every row still
-    travels: name, type, caption, duration, parent record, uploader. ``media_url_owners`` resolves
-    the grant set (one query, and only below professor) so a grantee who may download a researcher's
-    data can also play their recordings. Callers that pass no ``viewer`` get the cheap safe default and
-    no URLs at all, which is correct for every internal use of this helper.
+    it IS the file — so it travels only to callers entitled to those bytes. Every row still travels:
+    name, type, caption, duration, parent record, uploader. ``media_url_scope`` answers that
+    entitlement in TWO halves and both are handed to ``public_encode`` by name: the set of UPLOADERS
+    whose files may travel (the viewer's own uploads plus every uploader who has granted them data
+    access — one query, and only below professor, so a grantee who may download a researcher's data
+    can also play their recordings), and the set of DESIGN WORKSHOPS this account may open. A caller
+    that names neither a ``viewer`` nor the pair itself gets the cheap safe default — no uploaders
+    and no workshops — which is correct for every internal use of this helper.
+
+    THE WORKSHOP HALF IS NEW, AND IT EXISTS BECAUSE THIS ROUTE DISAGREED WITH FIVE OTHERS. A file
+    captured at a design workshop carries ``linkedRecordType="designWorkshop"`` and that workshop's
+    id (``dictation_consent.MEDIA_TAG``, the tag both clients send). A co-designer who may open the
+    workshop could ALREADY take those bytes on five surfaces —
+    ``GET /design-workshops/{id}/transcripts``, the AI layer's ``_readable_media_ids``, ``/export``,
+    ``/data`` and the images baked into the generated report — because
+    ``owned_or_granted_where(owner_field="uploadedById")`` carries a matching tag-keyed arm. This
+    gate was the ONE that still keyed on uploader identity, so ``GET /media`` withheld the ``url``
+    of a photograph the same account could obtain by generating the report and lifting the picture
+    out of it: a refusal that protected nothing and read to a designer as the app being broken. The
+    url now travels for a file TAGGED to a workshop the caller may open, which is what makes this
+    route agree with the download surfaces that had already admitted that account.
+
+    THE UPLOADER SET WAS DELIBERATELY NOT WIDENED, and that is the whole of the care in this change.
+    Folding a co-designer into ``media_urls`` would say "this account may take that uploader's
+    data", and the same set is applied on ``search``, ``products``, ``tools``, ``processes`` and the
+    consolidated questionnaire — surfaces with no workshop in them — so it would hand over every
+    file those uploaders have ever uploaded, everywhere. What widened is the TEST:
+    ``records._redact_sensitive`` asks the narrower question against the FILE's own tag columns, and
+    fails closed on any node that does not carry both of them.
 
     ``transcriptText`` TRAVELS UNDER THE SAME RULE, and this docstring used to promise the opposite —
     it listed "transcript" among the fields that always travel, and ``GET /media`` and
     ``GET /media/{id}`` duly served the verbatim text of every artisan interview in the repository to
     a CROWDSOURCE_VOLUNTEER, which made the per-clip transcript gate on the design-workshop surface
     decoration. The predicate now lives in exactly one place, ``records._MEDIA_TAKEABLE_KEYS``; do not
-    re-open it here. The surface a co-designer needs is
-    ``GET /design-workshops/{id}/transcripts``, which uses the wider ``owned_or_granted_where``.
+    re-open it here. Said plainly, because it is a real consequence rather than a side effect nobody
+    weighed: the workshop arm above releases the transcript ALONGSIDE the url, for a workshop-tagged
+    file only — ``_MEDIA_TAKEABLE_KEYS`` drops the two together on purpose, and the surface a
+    co-designer would otherwise use, ``GET /design-workshops/{id}/transcripts``, admits exactly the
+    same account through the same predicate. What is NOT re-opened is the rank-only behaviour that
+    handed a volunteer every interview in the repository: a file with no design-workshop tag is
+    judged by its uploader, as it has been since 2026-08-15.
 
     ``media_urls`` is for the one caller that has an uploader ID but no user object —
     ``_finish_pending_media``, which is handing somebody back the file they have just uploaded.
+    ``media_workshops`` is its workshop-half twin. The two are resolved as a PAIR or stated as a
+    pair, and that is now ENFORCED rather than merely asked for: naming ``media_urls`` keeps whatever
+    ``media_workshops`` that call site passed rather than resolving a viewer behind its back, and
+    naming a non-empty ``media_workshops`` with no ``media_urls`` beside it raises, because under the
+    sentinel that set is not used as written — see the ``ValueError`` at the top of this function. So
+    no caller can be handed the wider answer, or quietly given a different one, by thinking about one
+    half and forgetting the other. Getting an entitlement by OMISSION is how the transcript leak
+    described above happened once — see the ``THE TRANSCRIPT IS BYTES, NOT A CAPTION`` banner above
+    ``records._MEDIA_URL_KEYS``. Cited by its heading and not by a line number on purpose: the pin
+    that stood here read "``records.py`` lines 60-74", which named that paragraph exactly in ``main``
+    and then, the moment this same change edited that file five lines above the banner, opened on a
+    bare ``#`` and stopped five lines short of the paragraph's end. No replacement number is offered
+    here: a heading is re-findable by grep after the next edit, and a number is not.
     """
+    if media_urls is _UNSET_URLS and media_workshops:
+        # THE PAIR RULE, MADE ENFORCEABLE INSTEAD OF WRITTEN DOWN. Under the sentinel this function
+        # resolves BOTH halves from the viewer, so a workshop set arriving on its own is discarded
+        # (viewer given) or acted on beside an empty uploader set (no viewer) — see the banner above
+        # ``_UNSET_URLS`` for the two shapes. ``ENQUEUEABLE_PROCESSING_REQUESTS`` argues the same
+        # case for a caller-facing refusal in this file — "the refusal is a 422 rather than a silent
+        # drop" — and the argument is stronger here, because this drop is silent to a REVIEWER as
+        # well as to a caller: nothing in the response says which of the two answers was used.
+        #
+        # It cannot fire on the wire. Every call site in this module names ``media_urls`` or names
+        # neither half (true as of 2026-08-27; check
+        # `grep -n '_public(' backend/app/api/routes/media.py`), so this is an invariant held for the
+        # NEXT call site — which is why it is a ValueError and not an HTTPException. The empty set is
+        # deliberately allowed through: stating "no workshops" and being handed the viewer's real
+        # answer loses nothing, and ``_finish_pending_media`` writes it out for exactly that reason.
+        raise ValueError(
+            "_public(media_workshops=...) needs media_urls named beside it: under _UNSET_URLS both "
+            "halves are resolved from the viewer, so a lone workshop set is either overwritten by "
+            "that answer or acted on beside an empty uploader set."
+        )
     many = isinstance(rows, list)
     items = list(rows) if many else [rows]
-    labels = await _interview_labels([r for r in items if r is not None])
-    if media_urls is _UNSET_URLS:
-        media_urls = await media_url_owners(viewer) if viewer is not None else set()
-    encoded = public_encode(rows, viewer, media_urls=media_urls)
+    # THE LABEL READ AND THE ENTITLEMENT READ DO NOT DEPEND ON EACH OTHER, SO THEY GO TOGETHER.
+    # ``_interview_labels`` keys off the ROWS and ``media_url_scope`` off the VIEWER alone — neither
+    # consumes the other's answer — and awaiting them in turn put the whole of ``media_url_scope``
+    # behind the label read on all three routes that reach this helper (``GET /media``,
+    # ``GET /media/orphans``, ``GET /media/{id}``).
+    #
+    # WHAT IT IS WORTH, HONESTLY: ``media_url_scope`` is TWO sequential queries below professor (the
+    # grants, then the design-workshop tag ids) and ZERO at Professor and above, where it
+    # short-circuits to (all URLs, no workshops). So a researcher gets a round trip back and an
+    # admin gets nothing — which is why this does not move ``GET /media``'s 3.81/4.36 measured
+    # trips in docs/SCALABILITY.md §1.2, taken as an admin. Two coroutines, well inside
+    # ``pool_width()``; the pair inside ``media_url_scope`` stays sequential because the second read
+    # is skipped entirely when the first returns ALL_MEDIA_URLS.
+    labelled = [r for r in items if r is not None]
+    if media_urls is _UNSET_URLS and viewer is not None:
+        # Both halves come from one call, so the URL gate and the download gate cannot be given
+        # different answers to "which workshops may this account open" — that drift IS the defect.
+        # The second query is only paid below professor and only by a caller that named a viewer;
+        # ``media_url_scope`` short-circuits a professor to (all URLs, no workshops) as before.
+        labels, (media_urls, media_workshops) = await gather_reads(
+            _interview_labels(labelled),
+            media_url_scope(viewer),
+        )
+    else:
+        labels = await _interview_labels(labelled)
+        if media_urls is _UNSET_URLS:
+            media_urls = set()
+    encoded = public_encode(rows, viewer, media_urls=media_urls, media_workshops=media_workshops)
     for row, out in zip(items, encoded if many else [encoded]):
         if row is None or not isinstance(out, dict):
             continue
@@ -444,7 +551,16 @@ async def _finish_pending_media(existing: Any, processing_requests: list[str] | 
         existing = await db.mediafile.find_unique(where={"id": existing.id}, include=INCLUDE)
     # The uploader's own file, handed straight back to them: this function has their id rather than
     # their user row, so the entitlement is stated directly instead of resolved from a viewer.
-    return await _public(existing, media_urls={user_id})
+    #
+    # THE WORKSHOP HALF IS EMPTY, AND IT IS WRITTEN OUT RATHER THAN LEFT OFF. There is nothing to
+    # widen here — the row being returned is the caller's OWN upload, which the uploader set already
+    # covers, and a user id alone cannot answer "which workshops may this account open" without the
+    # user row ``media_url_scope`` needs. Stating the empty set keeps the pair visible at the call
+    # site, so the next person to touch this line sees a decision instead of a gap; that is the rule
+    # the ``THE TRANSCRIPT IS BYTES, NOT A CAPTION`` banner above ``records._MEDIA_URL_KEYS`` exists
+    # to enforce. Cited by its heading, because the line pin that stood here — ``records.py`` lines
+    # 60-74 — rotted inside this very change, when that banner moved five lines down the file.
+    return await _public(existing, media_urls={user_id}, media_workshops=frozenset())
 
 
 #: Processing requests ``POST /media/complete`` will enqueue. TRANSCRIPTION and nothing else.
@@ -472,6 +588,50 @@ async def _finish_pending_media(existing: Any, processing_requests: list[str] | 
 #: The refusal is a 422 rather than a silent drop. Dropping it would return 201 to a caller that
 #: believes an analysis is coming and will wait for a ``measurementAnalysisStatus`` that never moves.
 ENQUEUEABLE_PROCESSING_REQUESTS = frozenset({"TRANSCRIPTION"})
+
+
+#: THE TRANSCRIPT COLUMNS ARE THE SERVER'S TO WRITE, AND ``/complete`` IS NOT ONE OF ITS WRITERS.
+#:
+#: ``MediaCompleteRequest`` declares all four (``schemas/media.py``), and until this constant existed
+#: ``payload.model_dump()`` carried every one of them straight into ``db.mediafile.create``. That made
+#: the upload route a FOURTH writer of these columns, and the only unguarded one. The three that are
+#: guarded, counted 2026-08-28 by reading every ``await db.mediafile.update``/``update_many`` call
+#: site in ``backend/app`` — 15 of them, which is ``grep -rn 'await db\.mediafile\.update' backend/app
+#: | grep -cv '#:'`` (re-run and re-counted 2026-08-28 during verification; the ``grep -v`` is not
+#: decoration — THIS COMMENT MATCHES ITS OWN SEARCH, so the bare ``| wc -l`` the first draft of this
+#: note quoted returns 16 and names a call site that is a sentence about call sites); the three call
+#: sites outside the list below (``media.relink_media`` at :1141, the stage-8
+#: retention route in ``design_workshops``, and ``media_queue``'s measurement writer) touch only the
+#: link columns and ``extraMetadata``:
+#:
+#:   1. ``services/media_queue`` — every transcription result, and the only path a provider's text
+#:      takes. It is reached solely through ``enqueue_media_processing_jobs``, the single choke point
+#:      the artisan's consent gate sits in.
+#:   2. ``POST /media/{id}/transcript`` (``set_media_transcript``, below) — a person typing or
+#:      correcting the words, which is a person's own act rather than a send to a third party.
+#:   3. ``services/dictation_consent`` — the revocation sweep, which only ever moves rows TO
+#:      ``FAILED``.
+#:
+#: A caller who simply posted the words WITH the upload walked past all three — and since a
+#: workshop's transcript now travels to every co-designer on that workshop, a planted one travels
+#: with it.
+#:
+#: THE FOUR KEYS ARE KEPT ON THE SCHEMA AND DROPPED HERE, which is the treatment ``url`` already gets
+#: below for the same reason: ``APIModel`` sets ``extra="forbid"``, so deleting a key from the schema
+#: turns any client still sending it into a 422 — and on Android a 4xx is NOT queued by ``saveOrQueue``,
+#: so a refused body loses the recording rather than retrying it. Neither shipped client sends any of
+#: the four today (Android's ``MediaCompleteRequest`` in ``data/ApiModels.kt`` declares none of them;
+#: the web's body in ``frontend/lib/media.ts`` lists none), but ``transcribeMediaFile`` in that same
+#: web module still returns exactly ``{transcriptText, transcriptStatus, transcriptError}``, which is
+#: the shape an older build merged into this body. Ignoring costs nothing; removing bets on the field.
+#:
+#: NOTHING IS REFUSED. A 422 would tell a phone at the end of a fortnight's sync that its recording
+#: was lost, which is false — the file is stored and attached exactly as captured. What does not
+#: happen is the caller's words being recorded as the artisan's. The columns stay NULL at create and
+#: are filled only by the queue, so ``transcriptStatus`` in the response is the one the gate decided.
+SERVER_WRITTEN_TRANSCRIPT_FIELDS = frozenset(
+    {"transcriptText", "transcriptSummary", "transcriptStatus", "transcriptError"}
+)
 
 
 def _assert_enqueueable(processing_requests: list[str] | None) -> None:
@@ -522,6 +682,11 @@ async def complete_media_upload(
     stored and attached and is exactly what the designer captured. What did not happen is a send to a
     third party, and failing the request would tell a phone at the end of a fortnight's sync that its
     recording was lost — which is false, and which would make the app retry the upload for ever.
+
+    AND THE GATE CANNOT BE WALKED PAST BY POSTING THE TEXT INSTEAD. The four transcript keys on
+    ``MediaCompleteRequest`` are accepted and dropped before the create — see
+    ``SERVER_WRITTEN_TRANSCRIPT_FIELDS`` — so this route creates no transcript, and the columns it
+    leaves NULL are filled only by the writers the gate sits in front of.
     """
     settings = get_settings()
     processing_requests = payload.processingRequests
@@ -548,7 +713,12 @@ async def complete_media_upload(
     # cannot register a media row over another user's staged object.
     _assert_owns_object(payload.objectKey, current_user)
 
-    data = clean_data(payload.model_dump(exclude={"processingRequests"}))
+    # The transcript columns are dropped here rather than overwritten: there is nothing for the server
+    # to derive at create time, and the queue is their only writer. See
+    # SERVER_WRITTEN_TRANSCRIPT_FIELDS for why the keys survive on the schema instead of being deleted.
+    data = clean_data(
+        payload.model_dump(exclude={"processingRequests"} | SERVER_WRITTEN_TRANSCRIPT_FIELDS)
+    )
     data = await attach_location(data)
     data["bucket"] = data.get("bucket") or settings.aws_s3_bucket
     # THE SERVER DERIVES THE URL. IT NEVER TAKES THE CALLER'S.
@@ -658,17 +828,22 @@ async def list_media(
     if uploadedBy:
         where["uploadedById"] = uploadedBy
     add_date_range(where, "createdAt", dateFrom, dateTo)
-    total = await db.mediafile.count(where=where)
-    items = await db.mediafile.find_many(
-        where=where,
-        include=INCLUDE,
-        skip=skip,
-        take=page_size,
-        # A single upload session writes many rows in the same instant — a phone syncing a
-        # fortnight's captures, the record forms' awaited upload loops — so ``createdAt`` ties are
-        # the normal case here, not the edge one, and offset paging over them loses and repeats
-        # files. ``records.with_id_tiebreak`` makes the order total.
-        order=with_id_tiebreak({"createdAt": "desc"}),
+    # The count and the page answer different questions about the same WHERE and neither reads the
+    # other, so they go out together — the shape ``records.count_and_page`` exists for, spelled here
+    # because this route needs ``include=INCLUDE`` and that helper takes ``relations`` instead.
+    total, items = await gather_reads(
+        db.mediafile.count(where=where),
+        db.mediafile.find_many(
+            where=where,
+            include=INCLUDE,
+            skip=skip,
+            take=page_size,
+            # A single upload session writes many rows in the same instant — a phone syncing a
+            # fortnight's captures, the record forms' awaited upload loops — so ``createdAt`` ties
+            # are the normal case here, not the edge one, and offset paging over them loses and
+            # repeats files. ``records.with_id_tiebreak`` makes the order total.
+            order=with_id_tiebreak({"createdAt": "desc"}),
+        ),
     )
     return page_payload(await _public(items, current_user), total, page, page_size)
 
@@ -762,12 +937,19 @@ async def _tag_only_orphans() -> list[Any]:
         kind = ORPHAN_TAG_TYPES[(row.linkedRecordType or "")]
         by_kind.setdefault(kind, set()).add(row.linkedRecordId)
     live: dict[str, set[str]] = {}
+    planned: list[tuple[str, Any]] = []
     for kind, ids in by_kind.items():
         delegate = _orphan_tag_delegate(kind)
         if delegate is None:  # pragma: no cover - the two dicts are written together
             live[kind] = ids
             continue
-        rows = await delegate.find_many(where={"id": {"in": sorted(ids)}})
+        planned.append((kind, delegate.find_many(where={"id": {"in": sorted(ids)}})))
+    # ONE WAVE, NOT ONE ROUND TRIP PER TAGGED TYPE. There are at most four of them
+    # (``_orphan_tag_delegate``) and none of them reads another's output, so awaiting them in turn
+    # was up to four cross-region waits on an admin recovery screen that already pays several.
+    for (kind, _coro), rows in zip(
+        planned, await gather_reads(*(coro for _kind, coro in planned)), strict=True
+    ):
         live[kind] = {r.id for r in rows}
     orphan_ids = [
         row.id
@@ -1078,16 +1260,38 @@ async def list_media_processing_jobs(
         # mediaType filter in ``list_media``; the default "status" would name a key that appears
         # nowhere in the request the caller can see.
         where["status"] = enum_filter_or_422(statusFilter, MEDIA_PROCESSING_JOB_STATUSES, field="statusFilter")
-    total = await db.mediaprocessingjob.count(where=where)
-    jobs = await db.mediaprocessingjob.find_many(
-        where=where,
-        include={"mediaFile": True, "requestedBy": True, "product": True, "tool": True},
-        skip=skip,
-        take=page_size,
-        # Jobs are enqueued in batches (one ``/complete`` can raise several), so they share creation
-        # instants and a paged read of them needs the ``id`` tiebreak to stay total.
-        order=with_id_tiebreak({"createdAt": "desc"}),
+    # Count and page together, for the reason ``records.count_and_page`` exists — spelled out here
+    # rather than delegated to it because this read needs ``include=`` and that helper takes
+    # ``relations``.
+    total, jobs = await gather_reads(
+        db.mediaprocessingjob.count(where=where),
+        db.mediaprocessingjob.find_many(
+            where=where,
+            include={"mediaFile": True, "requestedBy": True, "product": True, "tool": True},
+            skip=skip,
+            take=page_size,
+            # Jobs are enqueued in batches (one ``/complete`` can raise several), so they share
+            # creation instants and a paged read of them needs the ``id`` tiebreak to stay total.
+            order=with_id_tiebreak({"createdAt": "desc"}),
+        ),
     )
+    # NO VIEWER, SO THE NESTED ``mediaFile`` TRAVELS WITHOUT ITS BYTES — for every caller, the
+    # file's own uploader and a master admin included. ``public_encode`` with no viewer and no
+    # ``media_urls`` takes the cheapest safe answer (``set()``, never ``ALL_MEDIA_URLS``) and
+    # ``media_workshops`` defaults empty, so ``records._MEDIA_TAKEABLE_KEYS`` — ``url``,
+    # ``publicUrl``, ``objectKey`` and both transcript columns — is dropped from the file hanging off
+    # every job row, a transcription job on a design-workshop recording included.
+    #
+    # PRE-EXISTING, FAIL-CLOSED, AND LEFT ALONE. Said here because a reader arriving from the
+    # design-workshop arm in ``records._redact_sensitive`` would otherwise take this for its fallout:
+    # this encode is byte-for-byte what ``main`` has (true as of 2026-08-27; check
+    # `git show main:backend/app/api/routes/media.py | grep -n "public_encode(jobs)"`). Both clients
+    # are already TYPED to the absence and say so — ``MediaProcessingJob.mediaFile`` in
+    # ``frontend/lib/media.ts`` is a ``Pick<>`` with no ``url``, warning that typing it wider "would
+    # compile and then render a dead player", and ``MediaProcessingJobDto`` in Android's
+    # ``ApiModels.kt`` says to "take the name and the type from it, never the bytes". Passing
+    # ``current_user`` here would widen a queue-status surface no client asks bytes of; the bytes are
+    # served by the media table and ``GET /media/{id}``, under the gate ``_public`` applies.
     return page_payload(public_encode(jobs), total, page, page_size)
 
 
@@ -1126,6 +1330,14 @@ async def retry_media_processing_job(
         },
         include={"mediaFile": True},
     )
+    # NO VIEWER, for the reason written out at ``list_media_processing_jobs``: the nested
+    # ``mediaFile`` comes back stripped of ``url``, ``objectKey`` and its transcript, for the admin
+    # driving the retry as much as for anyone else. Pre-existing and fail-closed — unchanged from
+    # ``main`` (true as of 2026-08-27; check
+    # `git show main:backend/app/api/routes/media.py | grep -n "public_encode(updated)"`), and
+    # untouched by the design-workshop arm in ``records._redact_sensitive``. The client type for this
+    # response is the same ``Pick<>`` without ``url`` that the list route returns, so nothing on
+    # either client is waiting for bytes that never arrive.
     return public_encode(updated)
 
 

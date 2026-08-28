@@ -176,6 +176,29 @@ const val DW_DEFAULT_MAX_ITEMS: Int = 200
  */
 fun dwEffectiveMaxItems(declared: Int): Int = declared.takeIf { it > 0 } ?: DW_DEFAULT_MAX_ITEMS
 
+/**
+ * THE FLOOR A MULTI-VALUED FIELD MUST REACH, OR NULL WHERE THE REGISTRY DECLARES NONE — and there is
+ * deliberately NO default to fall back on.
+ *
+ * The mirror image of [dwEffectiveMaxItems] and the shape of the mirroring is the point: an absent
+ * CEILING means the server's [DW_DEFAULT_MAX_ITEMS], because `coerce_value` will enforce one
+ * whatever a client believes; an absent FLOOR means no floor at all, because nothing anywhere
+ * enforces one. So this returns null and never a number, and a caller that wants to print "of 25"
+ * must have read the 25 off the wire. Two fields in the whole registry answer it today — the motif
+ * pair, at 25 each.
+ *
+ * ── THE OTHER ASYMMETRY, WHICH IS THE ONE THAT MATTERS ON A HANDSET ───────────────────────────
+ *
+ * `min_items` IS part of `registry_version()` and `max_items` is NOT, and the reason is this client.
+ * A ceiling has a server-side backstop, so a phone enforcing a stale cap is merely early. A floor
+ * has none: it is scored in `stage_completeness` and nowhere else, so a handset that has never
+ * refetched the registry scores stage 4 complete at one photograph and tells a designer they may
+ * leave the cluster. The digest moving is what makes the bundled asset and the cached copy stale
+ * together; see `StageSchemaStore` for what a moved version costs, which is a refetch and nothing
+ * more.
+ */
+fun dwDeclaredMinItems(declared: Int): Int? = declared.takeIf { it > 0 }
+
 /** One typed field of one entity — the unit [FieldRenderer] dispatches on. */
 @Serializable
 data class FieldDto(
@@ -282,6 +305,38 @@ data class FieldDto(
      * the server is the authority either way.
      */
     val maxItems: Int = 0,
+    /**
+     * HOW MANY ENTRIES THE REGISTRY SAYS THIS FIELD MUST HOLD — 0 meaning "none declared", which is
+     * NO FLOOR and never a default.
+     *
+     * `field_to_dict` emits `minItems` only for a field that declares one, exactly as it does
+     * `maxItems`, so the absence carries meaning here too — just the opposite meaning. Read it
+     * through [dwDeclaredMinItems], which is the only place that asymmetry is spelled out.
+     *
+     * ── WHAT IT DOES, AND THE THREE THINGS IT EMPHATICALLY DOES NOT ──────────────────────────
+     *
+     * It makes the field REQUIRED for scoring: [computeStageCompleteness] counts a floored field in
+     * `requiredTotal` whatever tier it sits at, and a gallery short of its floor is not "filled".
+     * That is the whole of the owner's "all 25 are required" on this client, and it is the whole of
+     * it on the server too — `stage_completeness` is the ONLY place a floor is enforced anywhere.
+     *
+     * IT REFUSES NO SAVE, AND MUST NOT BE MADE TO. Not in [DwValues.coerce], not in the stage payload
+     * builder, not on the wire. A designer in a village with twenty good photographs and no signal
+     * has no body that satisfies a floor of twenty-five, and `saveOrQueue` DROPS a 4xx rather than
+     * queueing it — so a floor on any write path would not delay that day's work, it would destroy
+     * it, on stage 4 of a twenty-two-stage flow. The server records the same reasoning above
+     * `FieldSpec.min_items` and reached it by measuring both loss paths rather than by argument.
+     *
+     * IT IS NOT [FieldDto.required]. That flag is what `validate_entry` enforces and what a submit
+     * can be refused over; this one is scored and never validated. Two concepts, kept apart on
+     * purpose, and folding them together here would put a floor onto exactly the write path the
+     * paragraph above refuses.
+     *
+     * AND IT IS NOT A CEILING. Both motif galleries declare 25 for BOTH, which makes them look
+     * interchangeable and they are not: [maxItems] is trimmed against before an import copies a byte,
+     * this is counted after.
+     */
+    val minItems: Int = 0,
     /**
      * THE SERVER WILL KEEP ONLY THE MASK OF AN IDENTITY NUMBER IN THIS FIELD, WHATEVER IS SENT.
      *
@@ -1200,11 +1255,24 @@ data class DwStageCompleteness(
     val optionalTotal: Int,
     val optionalFilled: Int,
     val collectionCounts: Map<String, Int>,
-    /** Labels of the unfilled BASIC fields — the "what is missing" list, in registry order. */
+    /**
+     * Labels of the required fields nothing was recorded in — plus any field short of its declared
+     * [FieldDto.minItems], which is filed WITH ITS COUNT.
+     *
+     * "Traditional motif photographs (20 of 25)" and not the bare label, because the bare label
+     * would be a lie by omission: every other entry in this list means "nothing was recorded", and a
+     * designer reading that about a gallery holding twenty photographs concludes the app has lost
+     * them. See [dwShortfallLabel], which is the only place the count may be said.
+     */
     val missing: List<String>,
 ) {
     /**
-     * Progress across BASIC-tier fields only, matching `StageCompleteness.percent`.
+     * Progress across the fields this stage counts as required, matching `StageCompleteness.percent`.
+     *
+     * "REQUIRED" IS NO LONGER THE SAME SET AS "BASIC-TIER", and this docstring said it was until
+     * 2026-08-28. A declared [FieldDto.minItems] makes a field required for scoring at whatever tier
+     * it sits at, and both fields that declare one today are STANDARD — so a stage can now be
+     * incomplete over a field a BASIC-only reading of this number would never have counted.
      *
      * A stage with nothing required reads as 100 rather than as 0. Dividing by zero to decide whether
      * a designer may submit is how a stage becomes permanently unsubmittable.
@@ -1215,12 +1283,73 @@ data class DwStageCompleteness(
 }
 
 /**
+ * Whether a declared [FieldDto.minItems] floor is reached. True for every field that declares none.
+ *
+ * A NON-LIST IS SHORT, NOT EXEMPT. A gallery holding a single bare media id rather than a list is a
+ * client bug, and answering true for it would report a stage of one photograph as twenty-five
+ * complete — the one wrong answer this predicate must never give. [DwValues.isFilled] is asked
+ * separately and first, so "empty" and "short" stay distinguishable to the caller.
+ *
+ * The port of `_meets_minimum` in `backend/app/services/stage_schema.py`, arm for arm.
+ */
+fun dwMeetsMinimum(field: FieldDto, value: JsonElement?): Boolean {
+    if (field.minItems <= 0) return true
+    val array = value as? JsonArray ?: return false
+    return array.size >= field.minItems
+}
+
+/**
+ * The name a field goes into [DwStageCompleteness.missing] under — with its count, when it declares
+ * a floor.
+ *
+ * The port of `_shortfall_label`, and it must stay character-for-character identical to it and to
+ * the web's `scoreStageData`, for two reasons that are both other people's screens:
+ *
+ *  * THIS EXACT STRING IS WHAT THE READINESS ADDRESS WALK MATCHES ON. [DwSubmissionReadiness] keys
+ *    its "where do I go to fix this" map by the label the scorer files, so a decoration applied here
+ *    and not there costs the item its link and drops a designer on the stage with nothing focused.
+ *  * IT IS PRINTED VERBATIM in the report's warning line, in the completeness annexure's Outstanding
+ *    column and on both readiness screens. Two clients wording one shortfall differently is two
+ *    accounts of one gallery.
+ *
+ * [DwStageCompleteness.missing] IS DE-DUPLICATED BY LABEL, so a collection field declaring a floor
+ * would file one entry per DISTINCT count rather than one per field. No collection field declares
+ * one today — both are singleton galleries — and the count is worth more than the collapsing when
+ * one does; a future floor on a repeating row should read this before assuming the old shape.
+ */
+fun dwShortfallLabel(field: FieldDto, value: JsonElement?): String {
+    if (field.minItems <= 0) return field.label
+    val held = (value as? JsonArray)?.size ?: 0
+    return "${field.label} ($held of ${field.minItems})"
+}
+
+/**
+ * Does this field count toward the stage's required total?
+ *
+ * A DECLARED FLOOR MAKES THE FIELD REQUIRED AT WHATEVER TIER IT SITS AT. Without this the whole
+ * feature scores nothing: both motif galleries are optional STANDARD fields, so a minimum would only
+ * move `optionalFilled`, and [DwStageCompleteness.isComplete] — which is `requiredFilled >=
+ * requiredTotal` and nothing else — would stay true at twenty-four of twenty-five.
+ *
+ * `||` AND NOT A SECOND COUNTER, so a field that is both `required` and floored is counted ONCE.
+ * Neither of the two is today; a future one counted twice would make its stage report 49 of 50 with
+ * one box outstanding.
+ */
+fun dwCountsAsRequired(field: FieldDto): Boolean = field.required || field.minItems > 0
+
+/**
  * Score one stage from the data held on this device, mirroring `stage_completeness`.
  *
  * A COLLECTION contributes its required fields ONCE PER EXISTING ROW and contributes nothing while it
  * is empty. An empty sketch list on day one of a workshop is a legitimate state, not a deficiency,
  * and scoring it as a deficiency would leave every stage stuck below 100% until every optional list
  * had been populated.
+ *
+ * A GALLERY BELOW ITS DECLARED [FieldDto.minItems] IS NOT FILLED, and this function is the ONLY
+ * place on this client where that sentence is true — a minimum is scored and never validated, so no
+ * save path here or on the server can refuse the twenty photographs a designer has so far. See
+ * [FieldDto.minItems] for why a floor on a write path would destroy a village day's work on this
+ * client specifically.
  */
 fun computeStageCompleteness(
     stage: StageDto,
@@ -1248,10 +1377,15 @@ fun computeStageCompleteness(
     val missing = ArrayList<String>()
 
     stage.singleton?.liveFields?.forEach { field ->
-        val filled = DwValues.isFilled(singleton[field.key])
-        if (field.required) {
+        val value = singleton[field.key]
+        // BOTH TESTS, IN THIS ORDER. `isFilled` answers "was anything recorded"; `dwMeetsMinimum`
+        // answers "is it enough". A gallery of twenty is filled and short, and only the second test
+        // can tell it from a gallery of twenty-five — while only the first can tell an EMPTY gallery
+        // from either, which is what keeps the sentence [dwShortfallLabel] writes honest.
+        val filled = DwValues.isFilled(value) && dwMeetsMinimum(field, value)
+        if (dwCountsAsRequired(field)) {
             requiredTotal++
-            if (filled) requiredFilled++ else missing.add(field.label)
+            if (filled) requiredFilled++ else missing.add(dwShortfallLabel(field, value))
         } else {
             optionalTotal++
             if (filled) optionalFilled++
@@ -1301,10 +1435,12 @@ fun computeStageCompleteness(
         counts[entity.key] = rows.size
         rows.forEach { row ->
             entity.liveFields.forEach { field ->
-                val filled = DwValues.isFilled(row[field.key])
-                if (field.required) {
+                val value = row[field.key]
+                val filled = DwValues.isFilled(value) && dwMeetsMinimum(field, value)
+                if (dwCountsAsRequired(field)) {
                     requiredTotal++
-                    if (filled) requiredFilled++ else missing.add("${entity.title}: ${field.label}")
+                    if (filled) requiredFilled++
+                    else missing.add("${entity.title}: ${dwShortfallLabel(field, value)}")
                 } else {
                     optionalTotal++
                     if (filled) optionalFilled++
@@ -1960,6 +2096,62 @@ data class DesignWorkshopCreateBody(
      * by construction: it decides whose profile is copied into stage 1 before stage 1 exists.
      */
     val designerUserId: String? = null,
+    /**
+     * EVERY DESIGNER THIS WORKSHOP IS OPENED FOR, lead first — and the whole of how they get in.
+     *
+     * ── WHY THE SINGULAR FIELD ABOVE WAS NOT ENOUGH ─────────────────────────────────────────────
+     *
+     * A design workshop is visible ONLY to its creator, to admins, and to whoever holds a
+     * `DesignWorkshopViewer` row — enforced in the QUERY on the list (`visible_to_clause`) and in
+     * the loader on the single read, which refuses with a 404 identical to a nonexistent id. A
+     * DESIGNER cannot create a workshop at all, so `createdById` never matches for them: the
+     * workshops a designer can see are exactly the ones they hold a row on. A real workshop is a
+     * fortnight worked by two designers alongside a master craftsperson and a reviewing officer,
+     * and with only [designerUserId] to send, everybody after the first had to be added afterwards
+     * from "Designers on a workshop" — so an admin who forgot left a designer who could not open
+     * the workshop their own stage 1 already named.
+     *
+     * The server writes ONE VIEWER ROW PER ID here, through the same `add_one_viewer` the viewers
+     * PUT uses, under the same eligibility rule: `assert_every_designer_may_be_named` is asked ONCE
+     * for the whole set, ABOVE the create, so an ineligible id ANYWHERE in the list refuses the
+     * WHOLE create with a 422 naming every account it objected to and leaves no orphan record.
+     * Never `replace_viewers` — a whole-set replace would delete rows a concurrent join-card
+     * redemption had just created.
+     *
+     * ── IT DECIDES ACCESS AND NOTHING ELSE. [designerUserId] STILL DECIDES THE REPORT ────────────
+     *
+     * Several people may OPEN it; exactly ONE name is ON it. Stage 1 and stage 3 declare a single
+     * designer block — one `designerName`, one `designerProfile`, one signature — and `report_meta`
+     * feeds the promoted name into the .docx's `dc:creator`, a single-author field the format
+     * cannot express as a list. So [designerUserId] keeps its exact meaning: the LEAD, whose
+     * profile `seed_designer_prefill` copies in. Co-designers named here get access and appear in
+     * "Designers on a workshop"; they do not appear on the cover.
+     *
+     * A body sending only this field and no [designerUserId] promotes the FIRST ID IN THE LIST to
+     * lead, because the only other candidate is the ADMIN who pressed create — which is precisely
+     * the wrong-name-on-a-ministry-document defect [designerUserId] exists to end.
+     *
+     * ── OPTIONAL FOREVER, AND OMITTED FROM THE WIRE UNLESS THERE IS A SECOND DESIGNER ───────────
+     *
+     * Null here is not "no designers"; it is "this create had nothing to say with this key", which
+     * is exactly what a one-designer create must say. `APIModel` is `extra="forbid"`, so an API
+     * deployed before this field answers **422 `extra_forbidden` to a body that merely CARRIES
+     * it** — and a 422 is never queued, so on the offline arm that would take a whole courtyard's
+     * fortnight down with it. `ApiClient.json` sets `explicitNulls = false` AND leaves
+     * `encodeDefaults` at kotlinx's default of false, two independent reasons a null property is
+     * left out of the body entirely; [com.designprototype.workshop.data.dwDesignerCreateFields] is
+     * the single place that decides whether it is null, and it sends the key ONLY when there is
+     * genuinely more than one designer. `designerCreateFields` in `frontend/lib/designWorkshops.ts`
+     * is the browser's copy of that same three-way answer.
+     *
+     * NEITHER MAY EVER BECOME REQUIRED, and the singular one may never be removed: a 4xx is not
+     * queued, so narrowing this shape would silently destroy an un-updated handset's fortnight.
+     *
+     * Capped at [com.designprototype.workshop.data.DW_MAX_NAMED_DESIGNERS] — the server's own
+     * `MAX_DESIGN_WORKSHOP_VIEWERS`, refused rather than trimmed at both ends. NOT ON THE UPDATE
+     * PATH, for the same reason [designerUserId] is not: `DesignWorkshopUpdate` has no such member.
+     */
+    val designerUserIds: List<String>? = null,
     val craftName: String? = null,
     val clusterName: String? = null,
     val state: String? = null,

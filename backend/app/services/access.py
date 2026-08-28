@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
 from app.core.db import db
+from app.services.measurement_provenance import MARKER_BODY_KEY
 from prisma import Json
 
 # Strictly increasing privilege. A tier includes every action of the tiers below it.
@@ -89,6 +90,44 @@ async def effective_tier_for_record(
 
 
 # Infrastructural fields whose churn should not be logged as a meaningful edit.
+#
+# ── WHY ``measurementMethods`` IS HERE, AND WHY IT HAD TO ARRIVE BEFORE THE SCHEMAS DID ──────────
+#
+# It is the ONE ENTRY IN THIS SET THAT IS NOT A COLUMN. Everything above it is a real field whose
+# churn is noise; ``measurementMethods`` is a request-body key that names no column on any table --
+# it is a per-dimension hint about HOW ``lengthInches`` / ``breadthInches`` / ``heightInches`` came
+# to be known (typed off a tape, computed from marks on a photograph, or estimated by a vision
+# model). ``services/measurement_provenance`` holds the whole argument; ``records.merge_field_
+# provenance`` pops the key off the payload and merges it into the ``{by, byName, at}`` stamp beside
+# each dimension.
+#
+# THE INCIDENT THIS ENTRY EXISTS TO PREVENT, WHICH IS WHY IT LANDED FIRST. ``guard_record_edit``
+# runs ``record_revision`` on the RAW payload, before ``merge_field_provenance`` gets a chance to
+# pop anything -- read the two calls at the bottom of this file, in that order. ``record_revision``
+# diffs every key not in this set against the stored row, ``get_value(product, "measurementMethods")``
+# is None because there is no such attribute, and ``values_match(None, {...})`` is False. So without
+# this entry EVERY marker-bearing PATCH appends a ``RecordRevision`` saying a human changed a field
+# from nothing to a dictionary they never saw -- breaking ``record_revision``'s own contract ("No-op
+# when nothing meaningful changed"), and doing it in an APPEND-ONLY table with no delete endpoint.
+# The history would positively assert an edit nobody made, which is the same class of defect
+# ``measurement_provenance`` was written to end (a machine's number wearing a named human's
+# signature), reintroduced one table over.
+#
+# That is also why the rollout order was fixed and is recorded in three places rather than one: this
+# entry, THEN the four schema declarations in ``schemas/records.py``, THEN the clients. The schema
+# declaration is what makes the key SENDABLE at all -- ``APIModel`` is ``extra="forbid"``, so before
+# it a marker-bearing body was a 422 in full. Landing the schemas first would have written revision
+# rows that no later edit of this file could retract. Landing this first was free: a skip entry can
+# skip nothing while nothing can send the key.
+#
+# MOVING THE POP EARLIER IS NOT THE ALTERNATIVE FIX, and it looks like one. The merge must still see
+# the marker, so popping it before ``record_revision`` means handing ``merge_field_provenance`` a
+# payload the marker has already been taken out of.
+#
+# True as of 2026-08-27, when the schemas began accepting the key. Re-check with::
+#
+#     grep -n "measurementMethods" backend/app/schemas/records.py
+#     grep -n "MARKER_BODY_KEY" backend/app/services/records.py
 REVISION_SKIP_FIELDS = {
     "extraMetadata",
     "location",
@@ -98,6 +137,7 @@ REVISION_SKIP_FIELDS = {
     "createdById",
     "recordedAt",
     "recordedTimezone",
+    MARKER_BODY_KEY,
 }
 
 

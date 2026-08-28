@@ -81,12 +81,24 @@ import {
 } from "@/components/designworkshop/stageFieldFormats";
 import { PhotoMeasureField } from "@/components/designworkshop/PhotoMeasureField";
 import { SketchRectifyField, type SketchSource } from "@/components/designworkshop/SketchRectifyField";
+import { SketchTraceField } from "@/components/sketches/upload/SketchTraceField";
+import { SearchInput } from "@/components/SearchInput";
 import { SignaturePad } from "@/components/SignaturePad";
 import { StageAddressField } from "@/components/designworkshop/StageAddressField";
 import { StageGeoField } from "@/components/designworkshop/StageGeoField";
 import { StageMediaNoteField } from "@/components/designworkshop/StageMediaNoteField";
 import { StageWorkshopField } from "@/components/designworkshop/StageWorkshopField";
-import { StageReferenceSelect } from "@/components/designworkshop/StageReferenceField";
+/*
+ * THE REF PICKER'S SINGLE-SELECT, AND THE THREE SENTENCES ITS LIST OWES A READER.
+ *
+ * `scopeNoticeLines` is imported rather than re-derived because it states the SERVER's three
+ * facts about a reference list — the workshop is unlinked and the net was widened, the workshop
+ * is linked and holds nothing, the answer stopped at the server's page — and a second copy of
+ * them here would be two controls describing one endpoint differently. It was lifted out of
+ * `StageReferenceField` so a test could call it; a second caller is what that shape is for. The
+ * MULTI_ENUM record arm below is the caller.
+ */
+import { StageReferenceSelect, scopeNoticeLines } from "@/components/designworkshop/StageReferenceField";
 /*
  * THREE RECORD-FORM CONTROLS, MOUNTED WHOLE RATHER THAN REIMPLEMENTED.
  *
@@ -101,20 +113,44 @@ import { DateField, TimeField } from "@/components/forms/DateTimeField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
+import { GalleryProgress } from "@/components/media/GalleryProgress";
 import { MediaCarousel, type CarouselItem } from "@/components/media/MediaCarousel";
+import { capCeilingClause, mediaPickerTypeFilter } from "@/components/media/mediaPicker";
+import { MediaRepositoryPicker } from "@/components/media/MediaRepositoryPicker";
+/*
+ * THE CAPTURE GATE AND THE FLOOR, BOTH PURE AND BOTH TESTED BY VALUE.
+ *
+ * `photoGate.ts` holds every judgement this control makes about a photograph and every sentence it
+ * says about one, for the reason `selectFilter.ts` and `cappedList.ts` exist: there is no React
+ * renderer in this repository's devDependencies, so a decision written inside JSX is exercised only
+ * by somebody looking at a browser. `e2e/photo-quality-gate-unit.spec.ts` drives the functions.
+ */
+import {
+  declaredMinItems,
+  galleryFloorSentence,
+  gatePhotograph,
+  gateRefusalSentence,
+  gateScopeSentence,
+  type CapturedFinding,
+  type GateFault
+} from "@/components/media/photoGate";
+import { recordCaptureFindings } from "@/components/media/qualityFlagLog";
 import { NumberedListField } from "@/components/forms/NumberedListInput";
 import { PhoneField } from "@/components/forms/PhoneField";
-import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
+import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { apiFetch } from "@/lib/api";
 import {
   DW_DEFAULT_MAX_ITEMS,
   fieldTypeName,
   inputValue,
+  listStageReferences,
   listValue,
   type DwEntity,
   type DwEntryData,
   type DwField,
   type DwGeoValue,
+  type DwReferenceOption,
+  type DwReferencePayload,
   type DwValue
 } from "@/lib/designWorkshops";
 import {
@@ -124,7 +160,9 @@ import {
   stageLocalMedia,
   LOCAL_MEDIA_PREFIX
 } from "@/lib/designWorkshopStore";
+import { isMeasurableImage, measureImageFile } from "@/lib/imageQuality";
 import {
+  computeChecksum,
   getServerStagingSnapshot,
   getStagingSnapshot,
   subscribeStaging,
@@ -282,10 +320,23 @@ export function StagePendingMediaProvider({ children }: { children: React.ReactN
  * Returns the hoisted store's slice when there is a provider and plain local state when there is
  * not. BOTH hooks run unconditionally on every render — the provider's presence is fixed for the
  * life of a mount, so the unused half is inert rather than conditional.
+ *
+ * ── `slot` — A SECOND LIST FOR ONE CONTROL, WITH THE SAME LIFETIME AS THE FIRST ─────────────────
+ *
+ * The quality gate holds a photograph between the chooser and the capture card while it is being
+ * measured (see `acceptFiles`), and that list needs exactly what `pending` needed: it must not die
+ * when a collection row is collapsed. A file lost there is a file that was never uploaded and never
+ * refused — it simply vanishes, which is the silent shape of loss this whole store exists to end,
+ * one door earlier. So the screening list lives in the same hoisted map under a suffixed key rather
+ * than in `useState` inside the panel.
+ *
+ * NUL-joined for `pendingKeyOf`'s reason: a registry key cannot contain one, so no slot name can
+ * collide with a field key. An empty slot is the unsuffixed key, so every existing caller — and the
+ * `stagingOwnerFor` name derived from the same triple — is untouched.
  */
-function usePendingMedia(place: StageMediaPlace): [File[], (update: PendingUpdate) => void] {
+function usePendingMedia(place: StageMediaPlace, slot = ""): [File[], (update: PendingUpdate) => void] {
   const store = useContext(StagePendingMediaContext);
-  const key = pendingKeyOf(place);
+  const key = slot ? `${pendingKeyOf(place)}\u0000${slot}` : pendingKeyOf(place);
   const [local, setLocal] = useState<File[]>(EMPTY_PENDING);
   const hoisted = store?.held[key] ?? EMPTY_PENDING;
   const write = useCallback(
@@ -1418,6 +1469,13 @@ export function FieldInput({
       own. Forcing it on would put a filter box over every three-option question in all 22 stages;
       forcing it off would take one away from the long ones. This is the case `SEARCH_THRESHOLD` was
       measured for.
+
+      ── AND THE MULTI_ENUM THAT NAMES A `refModel` IS THE EXCEPTION THAT PROVES IT ──
+      Those options are RECORDS, so the option count stops being the right judge and the rule for a
+      server-truncated list takes over instead: one search box above the picker, wired to the
+      repository, and the picker's own filter off beneath it. `MultiEnumField` routes that arm to
+      `ReferenceMultiSelect`, which is where the whole argument sits — including the two server-side
+      repairs a registry field declaring `ref_model` still needs before it can be declared at all.
     */
     case "ENUM":
       return unlabelled(
@@ -1434,7 +1492,18 @@ export function FieldInput({
 
     case "MULTI_ENUM":
       return unlabelled(
-        <MultiEnumField field={field} describedBy={describedBy} value={value} onChange={onChange} disabled={disabled} />
+        <MultiEnumField
+          field={field}
+          // The record arm needs all three: the workshop the reference list belongs to, and the
+          // entity and row its cascade reads a sibling's value off. The enum arm reads none of them.
+          entity={entity}
+          row={row}
+          workshopId={workshopId}
+          describedBy={describedBy}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+        />
       );
 
     case "TAGS":
@@ -1530,7 +1599,16 @@ export function FieldInput({
         (`lineArtFile`, "An SVG or vector export, if one was produced") means `attach` writes exactly
         where a plate belongs and the photograph is never written to at all.
       */
-      const sketchSources: SketchSource[] = offersSketchRectify(entity, field)
+      /*
+        WHICH FIELD MAY BE OFFERED A DERIVED DRAWING AT ALL — one predicate, two panels.
+
+        The handset makes exactly this delegation and says why: `dwOffersSketchTrace` IS
+        `dwOffersSketchRectify` (`DwSketchTracePanel.kt:250`), because both panels write a derived
+        artefact into the same destination for the same reason, and a second regex here would be a
+        second copy of the decision that a single-valued field must never be `sketch.image`.
+      */
+      const offersDerivedDrawing = offersSketchRectify(entity, field);
+      const sketchSources: SketchSource[] = offersDerivedDrawing
         ? sketchSourceFields(entity).flatMap((source) =>
             listValue(row[source.key]).map((ref) => ({ ref, fieldLabel: source.label }))
           )
@@ -1630,6 +1708,29 @@ export function FieldInput({
                     // apply. The sketch photograph is in a different field and is not touched.
                     onAttach={attach}
                   />
+                ) : null}
+                {/*
+                  TRACING A SHEET INTO LINE ART, ON THE SCREEN THE DESIGNER IS ALREADY FILLING IN.
+
+                  WHY THIS MOUNT IS THE FEATURE. The panel, its four comparison views, its magnifier,
+                  its difference plate and its export formats were all built and tested with no caller
+                  outside the Sketches workspace's Upload tab, so a designer working through stage 11
+                  in this form could not reach any of it. The handset has never had that split:
+                  `FieldRenderer.kt:1948` mounts its trace panel on the same field as its rectify
+                  panel, from the stage form, and this is that arrangement on this client.
+
+                  GATED ON THE FIELD, NOT ON `sketchSources` — the one place the two panels genuinely
+                  differ. Rectifying needs a photograph already attached to a sibling field to
+                  straighten; tracing brings its own through its own picker, so gating it on the
+                  source count would hide a working control until an unrelated field was filled.
+
+                  NO `onAttachSource`, and the panel is built to be mounted this way: its own prop
+                  documentation says a record form's photograph belongs in that form's image field,
+                  which the capture card above has already filed, and that handing it over here as
+                  well would file the same bytes under two names.
+                */}
+                {offersDerivedDrawing ? (
+                  <SketchTraceField targetLabel={field.label} disabled={disabled} onAttach={attach} />
                 ) : null}
               </>
             )}
@@ -2027,33 +2128,600 @@ function TagsField({
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * A closed multi-select, with the registry's item ceiling applied to what it hands back.
+ * WHAT A LIST MAY GROW TO, AND WHAT IT TURNED AWAY — the ceiling rule both MULTI_ENUM arms share.
  *
+ * Lifted out of {@link MultiEnumField} on 2026-08-27 for two reasons, in this order. The record-
+ * backed arm added beside it needs the identical rule and a second copy would drift: Android keeps
+ * ONE `dwCapListGrowth` across both of its arms for exactly that reason, and wraps the reference
+ * branch's `onChange` in it rather than writing the test twice. And there is no React renderer in
+ * this repository's devDependencies, so a rule that stays inside a component body can only ever be
+ * asserted as a SUBSTRING of this file — which pins the spelling of a sentence and not the
+ * condition that decides anything. As a function it is CALLED, by
+ * `e2e/stage-ref-multiselect-unit.spec.ts`.
+ *
+ * THE CEILING CAPS GROWTH AND NEVER SHORTENS WHAT IS ALREADY STORED. `next.length <= held.length`
+ * is the half that was missing until 2026-08-26. A cap is not part of `registry_version()`, so a
+ * field may perfectly well be holding five entries on the day its declared ceiling becomes three —
+ * those values were valid when they were written. Under a bare `next.length > cap` test a designer
+ * merely UNTICKING one of the five handed back four, which is still over, and the slice then
+ * deleted a second value they never touched, while the notice said "Not added" about something
+ * that had in fact just been removed. Data loss reported as a refusal.
+ *
+ * What is already held survives first; the ceiling is then filled from `next` in the order the
+ * panel hands it back, so the tick that did not fit is the one refused.
+ */
+export function capListGrowth(
+  held: string[],
+  next: string[],
+  cap: number
+): { kept: string[]; refused: string[] } {
+  if (next.length <= cap || next.length <= held.length) return { kept: next, refused: [] };
+  const keep = new Set(next.filter((token) => held.includes(token)));
+  for (const token of next) {
+    if (keep.size >= cap) break;
+    keep.add(token);
+  }
+  return {
+    kept: next.filter((token) => keep.has(token)),
+    refused: next.filter((token) => !keep.has(token))
+  };
+}
+
+/**
+ * A recognisable stand-in for a stored id this browser cannot name. Never a bare CUID.
+ *
+ * Android's `orphanLabel` word for word, and its hint deliberately is NOT. The handset's list is a
+ * durable on-device document, so a row missing from it means "this device has not downloaded it" —
+ * which is what its hint says. This list is ONE server answer, narrowed by whatever is in the
+ * search box above it, so the ordinary reason a held record is absent is that the current query
+ * does not match it. Different fact, different sentence; copying the handset's wording here would
+ * tell a designer their device was out of date about a record they had just filtered out.
+ *
+ * It names no CONTROL either, which is why it says "the list the repository returned" rather than
+ * "the search above": the search box is not drawn on a field that cannot be edited, and a hint
+ * pointing at a box that is not on screen is the same defect as the cap footer's default clause
+ * under `searchable={false}`.
+ */
+function orphanRow(id: string): DropdownOption {
+  return {
+    value: id,
+    label: `Linked record ${id.slice(0, 8)}`,
+    hint: "already on this field, and not in the list the repository returned"
+  };
+}
+
+/**
+ * THE ROWS THE PICKER DRAWS: the server's answer, plus every id ALREADY STORED that it lacks.
+ *
+ * ── WHY THE SECOND HALF IS NOT OPTIONAL ───────────────────────────────────────────────────────
+ * `SearchableMultiSelect` composes its trigger summary — and the sentence a screen reader is given
+ * — from `options.filter(chosen)` and from nothing else, so a stored id with no row is INVISIBLE:
+ * the control reads "8 selected" over nine stored records. The designer's next tick hands back the
+ * eight it can see and the ninth is gone, with nothing on screen having said so at any point.
+ * Android's roster picker carries the same rule and names the same consequence.
+ *
+ * `seen` is every row this mount has been shown, merged across every search it has run — the
+ * mount-life cache `WorkshopDesignerPicker` keeps for the same defect, and `seenDesigners` on
+ * Android. It is never a second source of what may be CHOSEN: nothing is offered from it that the
+ * server did not offer first, and the only rows it can add are ids already on the field.
+ *
+ * APPENDED LAST, and the server's order is never re-sorted. A held record is not part of the answer
+ * to the term currently typed, and threading it back into the server's `name`-then-`id` order would
+ * move rows the designer is looking at. This is also where the web parts company with the handset,
+ * which writes its selection back in the LIST's order: there the list is the device's whole cached
+ * document and that order is stable, here it is a fifty-row search answer that changes on every
+ * keystroke, so ordering a stored roster by it would reshuffle the array according to what was last
+ * typed. The panel's own handback — held order kept, new ticks appended — is the stable one.
+ */
+export function referenceMultiOptions({
+  payload,
+  values,
+  seen
+}: {
+  payload: DwReferencePayload | null;
+  /** The ids this field currently holds, in stored order. */
+  values: string[];
+  /** Rows this mount has already been shown, by id. */
+  seen?: ReadonlyMap<string, DwReferenceOption>;
+}): DropdownOption[] {
+  const rows: DropdownOption[] = (payload?.options ?? []).map((option) => ({
+    value: option.id,
+    label: option.label,
+    hint: option.sublabel || undefined
+  }));
+  const drawn = new Set(rows.map((option) => option.value));
+  for (const id of values) {
+    if (!id || drawn.has(id)) continue;
+    drawn.add(id);
+    const remembered = seen?.get(id);
+    rows.push(
+      remembered
+        ? { value: id, label: remembered.label, hint: remembered.sublabel || undefined }
+        : orphanRow(id)
+    );
+  }
+  return rows;
+}
+
+/**
+ * WHAT THIS LIST IS — and, when it is empty, WHY — in one line.
+ *
+ * ── THE FAILURE THIS EXISTS TO STOP ───────────────────────────────────────────────────────────
+ * A MULTI_ENUM naming a `refModel` draws a CLOSED list whose members come out of the repository, so
+ * every way that fetch can come back with nothing is a way this control becomes a question with no
+ * available answers. `FieldInput`'s REF arm already spells out the consequence for the field type
+ * beside this one: a closed list with no members cannot be answered at all, and on a BASIC/required
+ * field that makes the stage permanently unsubmittable. The empty panel says the same "No options"
+ * whichever of the six reasons produced it, which is rule 10 of the frontend contract in one
+ * sentence — a list that quietly stops is indistinguishable from a place with no records.
+ *
+ * So there is never an unexplained empty list here. Every branch below either names a box the
+ * designer can answer FIRST, or names the thing that has to exist before this field can be answered
+ * at all — and the same string is handed to the panel as its `emptyLabel`, so the page and the
+ * panel cannot offer two explanations of one empty list.
+ *
+ * LIFTED OUT OF THE COMPONENT SO A TEST CAN EXECUTE IT, for the reason `scopeNoticeLines` gives
+ * where it was lifted for the same purpose: inside a component body this could only be asserted as
+ * a substring of this file, which pins the spelling of a sentence and not the condition that
+ * decides whether a designer is ever shown it.
+ */
+export function referenceMultiNotice({
+  field,
+  parentLabel,
+  awaitingCascade,
+  payload,
+  problem,
+  loading,
+  query
+}: {
+  field: DwField;
+  /** The label of the field named by `refFilterBy`, or "" where there is no cascade. */
+  parentLabel: string;
+  awaitingCascade: boolean;
+  payload: DwReferencePayload | null;
+  /** What the request failed with, or null. */
+  problem: string | null;
+  loading: boolean;
+  query: string;
+}): string {
+  if (awaitingCascade) {
+    return `Choose ${parentLabel || "the field above"} first — this list holds only the records that belong to it.`;
+  }
+  if (problem) {
+    /*
+      NOT "no records": the repository was never successfully asked. Nothing can be added until the
+      list loads, and what is already on the field is still drawn (see referenceMultiOptions) and
+      can still be removed — so the sentence says which of the two is true, rather than leaving an
+      empty panel to imply the first.
+    */
+    return `${problem} Nothing can be added until this list loads; what is already chosen is still listed and can be removed.`;
+  }
+  if (!payload) return loading ? "Loading the records this field can link to…" : "";
+  const lines = scopeNoticeLines(field, payload);
+  if (!payload.options.length) {
+    const term = query.trim();
+    /*
+      The one empty case `scopeNoticeLines` speaks to itself — a WORKSHOP-scoped field whose LINKED
+      workshop holds nothing — guarded exactly as it guards its own line there. Where it has spoken,
+      a second explanation would be the form arguing with itself. The duplicated guard is the price
+      of not having two sentences about one empty list; if that one moves, this one moves.
+    */
+    const scopeExplainsEmpty =
+      field.refScope === "WORKSHOP" && payload.scopedToWorkshop && !payload.filtered;
+    if (term) {
+      /*
+        A TYPED TERM UNMAKES THE SCOPE'S OWN EMPTY-LIST SENTENCE, WHICH IS WHY IT IS REPLACED HERE
+        RATHER THAN ADDED TO.
+
+        `scopeNoticeLines` says "Nothing is documented under this design workshop's linked workshop
+        yet" — a claim about the WHOLE scope, and one this answer does not support once a term has
+        narrowed it: the list is empty because of the query. It cannot see the search box, so the
+        judgement has to be made here. Only that one line can be standing at this point (the
+        unlinked-workshop line and this one are mutually exclusive, and nothing is truncated when
+        nothing came back), which is what makes clearing the array safe.
+
+        BUT THE NARROWING STILL HAS TO BE SAID, and this is the state where saying it matters most:
+        a designer searching for an artisan who exists in the repository and is not on this
+        workshop's roster otherwise reads "Nothing matches" as "this person has no record" and types
+        thirty names in by hand — absence reading as non-existence, one search box further on than
+        the sentence being replaced. So it is reworded for the question actually being asked, not
+        paraphrased.
+      */
+      if (scopeExplainsEmpty) lines.length = 0;
+      lines.push(
+        loading
+          ? "Searching…"
+          : scopeExplainsEmpty
+            ? `Nothing matches “${term}” here, and this list is narrowed to this design workshop's linked workshop rather than to the whole repository — a record documented elsewhere will not appear in it.`
+            : `Nothing matches “${term}”.`
+      );
+    } else if (payload.filtered) {
+      /*
+        The cascade's own empty answer, and it is an ORDINARY one — the parent record simply has
+        nothing documented under it yet. The single picker refuses to call this "no results" for the
+        same reason: that reading invites the designer to clear a parent which is perfectly correct.
+      */
+      lines.push(
+        `Nothing is documented under the ${
+          parentLabel || "record chosen above"
+        } on this row, so there is nothing to link here yet.`
+      );
+    } else if (!scopeExplainsEmpty) {
+      lines.push(
+        `Nothing this field can link to has been documented yet, so ${field.label} cannot be answered from this list. The record has to exist in the repository first — this control links to records, it does not create them.`
+      );
+    }
+  }
+  return lines.join(" ");
+}
+
+/**
+ * How long after the last keystroke the reference search goes out.
+ *
+ * The single picker's number, to the millisecond, and for its reason: a `contains` search over the
+ * artisan table is an `ILIKE '%…%'` that no index can answer, so every keystroke that escapes the
+ * debounce is a full scan of the largest table in the database.
+ */
+const REF_SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * The search behind {@link ReferenceMultiSelect}: the debounce, the race guard and the request.
+ *
+ * ── A SECOND COPY OF `useReferenceOptions`, AND THE REASON IS OWNERSHIP, NOT DESIGN ───────────
+ * `StageReferenceField.tsx` holds the identical hook for the single picker and for the roster
+ * adder, and it is not exported. The change that added this arm (2026-08-27) could not edit that
+ * file, so the choice was between duplicating thirty lines and shipping a record-backed control
+ * with no debounce and no race guard — an unindexable scan of the artisan table on every keystroke,
+ * and a slow answer for "kam" landing under the typed word "kamla", which is exactly the moment
+ * somebody ticks the first row without reading it. The duplication is the smaller wrong, and it is
+ * the one that can be undone in a line: export `useReferenceOptions` — or lift it into
+ * `lib/designWorkshops.ts` beside `listStageReferences` — and delete this. Until then the two must
+ * not drift: same 300 ms, same generation counter, same rule about `filterBy`.
+ *
+ * A GENERATION COUNTER AND NOT AN `AbortSignal`, because `apiFetch` takes none; the house
+ * convention for this exact case is to count fetches and ignore the late answer.
+ */
+function useReferenceSearch({
+  workshopId,
+  field,
+  filterValue,
+  query,
+  active
+}: {
+  workshopId: string;
+  field: DwField;
+  filterValue: string;
+  query: string;
+  active: boolean;
+}): { payload: DwReferencePayload | null; loading: boolean; problem: string | null } {
+  const [state, setState] = useState<{
+    payload: DwReferencePayload | null;
+    loading: boolean;
+    problem: string | null;
+  }>({ payload: null, loading: false, problem: null });
+  const generation = useRef(0);
+
+  useEffect(() => {
+    if (!active || !field.refModel) {
+      /*
+        Cleared rather than left standing, and the generation bumped with it so an answer already in
+        flight cannot land afterwards. A cascade that has just been emptied would otherwise keep
+        drawing the PREVIOUS parent's records under a line telling the designer to answer the field
+        above — one artisan's work offered under another's name, which is the defect the cascade
+        exists to prevent.
+      */
+      generation.current += 1;
+      setState({ payload: null, loading: false, problem: null });
+      return;
+    }
+    const current = generation.current + 1;
+    generation.current = current;
+    setState((previous) => ({ ...previous, loading: true, problem: null }));
+    const timer = window.setTimeout(
+      () => {
+        listStageReferences(workshopId, {
+          model: field.refModel as string,
+          scope: field.refScope,
+          // Sent only when the descriptor asks for the cascade. An unasked-for `filterBy` on a model
+          // that cannot honour one is a 422 by design — the server refuses to silently serve the
+          // whole table to a picker the designer believes is narrowed.
+          filterBy: field.refFilterBy ? filterValue || null : null,
+          search: query.trim() || null
+        })
+          .then((payload) => {
+            if (generation.current !== current) return;
+            setState({ payload, loading: false, problem: null });
+          })
+          .catch((error) => {
+            if (generation.current !== current) return;
+            setState({
+              payload: null,
+              loading: false,
+              problem: error instanceof Error ? error.message : "The list could not be loaded."
+            });
+          });
+      },
+      // No debounce on the first, empty read: it is one request as the stage opens, and making a
+      // designer wait 300 ms for the list they can already see the box for buys nothing.
+      query ? REF_SEARCH_DEBOUNCE_MS : 0
+    );
+    return () => window.clearTimeout(timer);
+  }, [workshopId, field.refModel, field.refScope, field.refFilterBy, filterValue, query, active]);
+
+  return state;
+}
+
+/**
+ * The MULTI_ENUM arm that draws RECORDS: a server-searched, value-holding multi-select.
+ *
+ * ── WHY NOT `StageReferenceMultiPicker`, WHICH LOOKS LIKE EXACTLY THIS CONTROL ────────────────
+ * That one is `EntityForm`'s roster ADDER: its ticks become ROWS of a collection, it never removes
+ * (un-ticking a name would delete a row that by day two carries days attended, a photograph and
+ * notes from an interview), and it holds no value of its own — it hands a batch to `onAdd` and
+ * forgets it. This holds ONE FIELD's array of ids, so ticking and un-ticking are one act in two
+ * directions and there is nothing behind a removed id to lose. Two controls, two contracts. What
+ * they share is the ENDPOINT, which is why the fetch and the three scope sentences are what get
+ * reused here and not the component.
+ *
+ * ── THE SEARCH IS THE SERVER'S, AND THE PICKER'S OWN FILTER IS OFF ────────────────────────────
+ * The house rule for a server-truncated list (`.claude/skills/field-repo-frontend`, §11.5): the
+ * endpoint answers a page of fifty rows and says so, so a client-side filter box would search only
+ * the part of the corpus that fitted and answer "No matches" about an artisan who exists and merely
+ * sorts late — absence reading as non-existence, which is rule 10 wearing a search box. So: one
+ * box, above the control, wired to the server; `searchable={false}` beneath it; and a `capHint`,
+ * because `searchable={false}` does not switch the RENDER CAP off and its default last clause would
+ * tell a designer to type into a filter box this control deliberately does not have.
+ * `WorkshopDesignerPicker` and `DesignWorkshopViewersPanel` are the same shape for the same reason.
+ *
+ * NO `limit` IS SENT, and that is a decision rather than an omission. §11.5 says to ask for
+ * `RENDER_CAP` rows; here the server's own default page (50) is already below that cap (80), and
+ * `scopeNoticeLines` — the sentence this control borrows to say the list stopped — names that
+ * default in words. Asking for eighty would print "the first 50" over a list of eighty.
+ *
+ * ── FOUR THINGS IT DELIBERATELY DOES NOT DO ───────────────────────────────────────────────────
+ *  · IT DOES NOT CREATE. `StageReferenceSelect` and the roster adder both offer "Create a new
+ *    artisan", and so does Android's `DwReferenceMultiSelectField`. The piece that makes that safe
+ *    is `describeCreated`, which reads a new record back THROUGH the references endpoint rather
+ *    than interpreting the raw row a create returns — an argument `StageReferenceField.tsx` makes
+ *    at length — and it is private to that file. A second, looser answer to the same question is
+ *    precisely what that argument forbids, so the escape is left unbuilt and named here instead:
+ *    export `describeCreated` and add it in the same change that declares the first such field.
+ *  · IT DOES NOT SCAN A CARD, for the reason Android gives beside its own roster picker: the
+ *    scanner is mounted by `StageReferenceSelect` and nowhere else, and a control that exists on
+ *    one client and not on the other is the parity failure the shared registry exists to prevent.
+ *  · IT DOES NOT HYDRATE. `refHydration` maps ONE chosen record onto the sibling boxes of ONE row;
+ *    a field holding many ids has no such row and nowhere to put a name. That is also why the
+ *    labels here have to be fetched rather than read off the record the way the single picker's are
+ *    — see {@link referenceMultiOptions} for what this control does with an id it cannot name.
+ *  · IT DOES NOT AUTO-CLEAR ON A CASCADE CHANGE. The single picker clears its one value when the
+ *    parent it was chosen under changes; silently emptying a roster of thirty is not the same act.
+ *    So the ids stay, stay visible and stay removable, and the line under the box says which field
+ *    to answer first. The handset DISABLES its roster while the parent is unanswered; this does
+ *    not, because a disabled multi-select is a stale selection nobody can untick.
+ */
+function ReferenceMultiSelect({
+  workshopId,
+  entity,
+  field,
+  row,
+  values,
+  onCommit,
+  disabled,
+  describedBy
+}: {
+  workshopId: string;
+  /** Read for one thing only: the label of the field this picker cascades from. */
+  entity: DwEntity;
+  field: DwField;
+  /** The whole record this field sits on — the cascade reads a sibling's value off it. */
+  row: DwEntryData;
+  /** The ids this field currently holds, in stored order. */
+  values: string[];
+  /** Hand a new selection to the ceiling — see {@link MultiEnumField}'s `commit`. */
+  onCommit: (next: string[], labelOf: (token: string) => string) => void;
+  disabled?: boolean;
+  describedBy?: string;
+}) {
+  const [query, setQuery] = useState("");
+  /**
+   * Every row this mount has been shown, across every search it has run.
+   *
+   * MERGED, NEVER REPLACED — see {@link referenceMultiOptions} for the defect that closes.
+   */
+  const [seen, setSeen] = useState<Map<string, DwReferenceOption>>(() => new Map());
+  const noticeId = useId();
+
+  const filterValue = field.refFilterBy ? inputValue(row[field.refFilterBy]) : "";
+  /**
+   * A cascading picker with nothing to cascade FROM asks for nothing at all — the single picker's
+   * rule verbatim. The server reads an absent `filterBy` as "no filter" and serves the whole table,
+   * which is the correct answer to the question it was asked and the wrong list to put on a control
+   * whose descriptor says these are the records OF the one chosen above.
+   */
+  const awaitingCascade = Boolean(field.refFilterBy) && !filterValue;
+  const parentLabel = field.refFilterBy
+    ? entity.fields.find((candidate) => candidate.key === field.refFilterBy)?.label ?? ""
+    : "";
+
+  const { payload, loading, problem } = useReferenceSearch({
+    workshopId,
+    field,
+    filterValue,
+    query,
+    active: !awaitingCascade
+  });
+
+  /*
+    Merged in an effect rather than inside the fetch, because the fetch above is generic and shared
+    with nothing else here; `WorkshopDesignerPicker` does the same merge in its own `.then` and
+    closes the same defect. One extra render per answer, and it is what keeps a chosen record's NAME
+    on screen after the query that found it has been typed over.
+  */
+  useEffect(() => {
+    const fetched = payload?.options;
+    if (!fetched?.length) return;
+    setSeen((previous) => {
+      const next = new Map(previous);
+      for (const option of fetched) next.set(option.id, option);
+      return next;
+    });
+  }, [payload]);
+
+  const options = referenceMultiOptions({ payload, values, seen });
+  const notice = referenceMultiNotice({
+    field,
+    parentLabel,
+    awaitingCascade,
+    payload,
+    problem,
+    loading,
+    query
+  });
+  /** The name on the row, never the id: a CUID in a refusal sentence is not something to act on. */
+  const labelOf = (token: string) => options.find((option) => option.value === token)?.label ?? token;
+
+  return (
+    <div className="grid gap-2">
+      {/*
+        THE ONE SEARCH BOX, AND IT ASKS THE REPOSITORY. Not drawn in two states, for one reason
+        between them — a control that cannot change anything is worse than no control. While the
+        cascade is unanswered nothing is fetched, so the box would narrow nothing; on a field that
+        cannot be edited the panel beneath it will not open, so narrowing it reaches nobody. The
+        FETCH still runs in the second case: a read-only stage has to show the roster's NAMES, and
+        without the answer every stored id would draw as "Linked record ab12cd34".
+
+        The `capHint` below is therefore keyed on the cascade alone. A disabled trigger cannot open
+        its panel, so the footer that hint belongs to is unreachable in the second state.
+
+        The `onInput` firewall is `WorkshopSelect`'s, for its reason: a stage field can be rendered
+        inside a mirrored record's own form, which marks itself dirty on any native input event, and
+        this is a REAL text input — so typing to find a name would arm that page's unsaved-changes
+        prompt over a search that changed no value, and the designer could not leave. `SearchInput`
+        already stops Enter itself, so the record form's Enter-walker cannot throw the keyboard at
+        the next field mid-roster.
+      */}
+      {awaitingCascade || disabled ? null : (
+        <div onInput={(event) => event.stopPropagation()}>
+          <SearchInput value={query} onChange={setQuery} placeholder={`Search ${field.label.toLowerCase()}`} />
+        </div>
+      )}
+      {notice ? (
+        <p id={noticeId} className="text-xs leading-5 text-ink-500">
+          {notice}
+        </p>
+      ) : null}
+      <MultiSelectDropdown
+        values={values}
+        onChange={(next) => onCommit(next, labelOf)}
+        options={options}
+        placeholder="Select"
+        /*
+          THE SAME SENTENCE IN BOTH PLACES, DELIBERATELY. The panel's empty line and the line under
+          the box are two views of one fact, and two authored explanations of one empty list is a
+          form arguing with itself — the argument `scopeNoticeLines` already makes about its own
+          suppressed line. The fallback is unreachable by construction: `referenceMultiNotice`
+          answers with a sentence for every state in which this list can be empty.
+        */
+        emptyLabel={notice || "No records to choose from yet."}
+        disabled={disabled}
+        ariaLabel={field.label}
+        // Pointed at the notice only while it is on screen: an `aria-describedby` naming an id that
+        // is not in the document is worse than naming nothing at all.
+        describedBy={[describedBy, notice ? noticeId : null].filter(Boolean).join(" ") || undefined}
+        // OFF, deliberately, and the box above is why — see this component's header.
+        searchable={false}
+        // And therefore this sentence, in both of the states the box can be in.
+        capHint={
+          awaitingCascade
+            ? `Answer ${parentLabel || "the field above"} first — this list is narrowed to the record chosen there.`
+            : "Use the search box above to reach the rest — it asks the repository, so it sees every record this field can link to."
+        }
+        confirmLabel="Confirm"
+      />
+    </div>
+  );
+}
+
+/**
+ * A multi-select over a CLOSED list, with the registry's item ceiling applied to what it hands
+ * back — and, since 2026-08-27, over RECORDS as well as over an authored vocabulary.
+ *
+ * ── TWO ARMS, ONE FIELD TYPE, AND WHY THAT IS NOT A SHORTCUT ──────────────────────────────────
+ * A MULTI_ENUM that names a `refModel` instead of an `enum` is the multi-select over records — the
+ * roster picker the requirement names, "for a particular workshop, the multiselect dropdown of
+ * artisans". Reusing MULTI_ENUM rather than inventing a REF_LIST field type is Android's decision
+ * and the reason it gives is the registry: the stored value is a JSON array of tokens either way,
+ * so nothing between the descriptor and the report has to learn a new type, and only where the
+ * labels come from changes. `FieldRenderer.kt` has drawn that arm on the handset since before this
+ * file could; this is the browser half. Until it existed, a two-word registry edit would have drawn
+ * a closed dropdown with ZERO options in every browser while passing every Android test — and the
+ * REF arm of this same dispatch already spells out what that costs: a closed list with no members
+ * cannot be answered at all, and on a BASIC/required field that makes the stage permanently
+ * unsubmittable — and the registry already holds a field of exactly that description.
+ * `designBrief.targetCategories` (stage 10) is MULTI_ENUM, BASIC and required, so `ref_model=…`
+ * written beside its `enum=` is the whole of the edit.
+ *
+ * THE OBVIOUS CANDIDATES ARE NOT THE HAZARD, and it is worth naming them because the brief this
+ * arm was asked for named them. `prototype.materials` (stage 13) and `finalProduct.materials`
+ * (stage 16) are BASIC and required and they are TAGS — an open chip box, which no `ref_model`
+ * can reach without changing the field TYPE, and which would then be a different change entirely.
+ * Read on 2026-08-27; both halves are one command each:
+ * `grep -n "MENUM" backend/app/services/stage_definitions.py` lists all five MULTI_ENUM fields,
+ * and `grep -n materials backend/app/services/stage_definitions.py` shows the three TAGS ones.
+ *
+ * ── WHAT THIS FILE CANNOT MAKE SAFE, BECAUSE IT IS THE SERVER'S HALF ──────────────────────────
+ * DO NOT DECLARE `ref_model` ON A MULTI_ENUM UNTIL THESE TWO ARE FIXED WITH IT. Both read on
+ * 2026-08-27, and both are one grep away:
+ *  · `coerce_value` tests every token of a MULTI_ENUM against `ENUMS.get(spec.enum, {})`, which for
+ *    a field declaring a ref model and no enum is the EMPTY map — so every record id comes back as
+ *    "unknown option(s) …" and the field is refused on every save, with `save_stage` restoring the
+ *    previous value. Check: `grep -n "unknown option" backend/app/services/stage_schema.py`.
+ *  · `format_value` prints `enum_label(spec.enum, token)`, which falls back to the token itself, so
+ *    the report would carry raw CUIDs where a roster of names belongs. Check:
+ *    `grep -n "FieldType.MULTI_ENUM" backend/app/services/report_builder.py`.
+ * The control below is the half a browser can hold. It does not make the declaration safe on its
+ * own, and nothing here can: no client ever sees what the .docx said.
+ *
+ * ── THE CEILING ───────────────────────────────────────────────────────────────────────────────
  * A WRAPPER RATHER THAN A BARE CALL TO `MultiSelectDropdown`, for one reason: `maxItems` governs
  * MULTI_ENUM exactly as it governs a gallery (docs/DESIGN_WORKSHOP.md:223) and the dispatch's
  * `onChange={(next) => onChange(next)}` read it nowhere at all. Trimming inside that handler and
  * saying nothing would have been worse than not trimming — a tick that silently does not take is a
  * control lying about its own state — so the trim and the sentence arrived together, which needed
- * somewhere to put the sentence.
+ * somewhere to put the sentence. Both arms commit through the same {@link capListGrowth} and the
+ * same refusal line, exactly as Android's two arms both pass through `keepWhatFits`.
  *
- * WHETHER THE CEILING CAN BITE TODAY, said plainly so nobody hunts for it: only where a field
- * declares one BELOW its own option count. None of the registry's five MULTI_ENUM fields declares
- * one, and the widest list any of them draws on is 15 entries against a default of 200, so this is a
- * rule that is read rather than a limit that is felt. That is the point of reading it. The absence is
- * what both clients used to take for "no ceiling at all", and the day a field declares three, the
- * trim is here and says so instead of the designer meeting it as a refused save.
+ * WHETHER THE CEILING CAN BITE, said plainly so nobody hunts for it: only where a field declares
+ * one BELOW its own option count. As of 2026-08-27 none of the registry's five MULTI_ENUM fields
+ * declares one, and the widest list any of them draws on is 15 entries against a default of 200, so
+ * this is a rule that is read rather than a limit that is felt. That is the point of reading it.
+ * The absence is what both clients used to take for "no ceiling at all", and the day a field
+ * declares three, the trim is here and says so instead of the designer meeting it as a refused
+ * save. The record arm makes the ceiling far likelier to be felt than the enum arm ever was: a
+ * roster of thirty participants is a list somebody could plausibly set a ceiling below.
  *
- * `searchable` IS STILL LEFT ALONE, for the reason given at the dispatch: `field.options` is an
- * authored vocabulary rather than a list of records, so the option count is the right judge.
+ * `searchable` IS LEFT ALONE ON THE ENUM ARM ONLY, for the reason given at the dispatch:
+ * `field.options` is an authored vocabulary rather than a list of records, so the option count is
+ * the right judge there. On the record arm it is forced OFF and the search is the SERVER'S — see
+ * {@link ReferenceMultiSelect}, where that asymmetry is the whole design.
  */
 function MultiEnumField({
   field,
+  entity,
+  row,
+  workshopId,
   describedBy,
   value,
   onChange,
   disabled
 }: {
   field: DwField;
+  /** Read only by the record arm, and only for the cascade's parent label. */
+  entity: DwEntity;
+  /** The row this field sits on — the record arm's cascade reads a sibling's value off it. */
+  row: DwEntryData;
+  /** The workshop the reference list is fetched for. */
+  workshopId: string;
   /** The field's hint and refusal message — see `FieldHint`. */
   describedBy?: string;
   value: DwValue | undefined;
@@ -2068,6 +2736,22 @@ function MultiEnumField({
   const cap = effectiveMaxItems(field);
   /** `useId` and not a literal — see {@link TagsField}. */
   const capId = `${useId()}-cap`;
+  const describes = [describedBy, declaredCap !== null ? capId : null].filter(Boolean).join(" ") || undefined;
+
+  /**
+   * Apply the ceiling and record what it turned away, whichever arm the tick came from.
+   *
+   * `labelOf` is the arm's own, because the two resolve a token differently and neither can do the
+   * other's job: the enum arm reads the registry's inlined `options`, the record arm reads the
+   * server's answer merged with everything this mount has already been shown. Handing the raw token
+   * to the sentence would put a CUID — or a "MATERIAL_FAMILY_JUTE" — in a line a designer is
+   * supposed to act on.
+   */
+  const commit = (next: string[], labelOf: (token: string) => string) => {
+    const outcome = capListGrowth(values, next, cap);
+    setRefused(outcome.refused.map(labelOf));
+    onChange(outcome.kept);
+  };
 
   /** The word on the row, not the stored token: a designer cannot act on "MATERIAL_FAMILY_JUTE". */
   const optionLabel = (option: string) =>
@@ -2083,48 +2767,30 @@ function MultiEnumField({
 
   return (
     <div className="grid gap-2">
-      <MultiSelectDropdown
-        values={values}
-        onChange={(next) => {
-          /*
-            THE CEILING CAPS GROWTH AND NEVER SHORTENS WHAT IS ALREADY STORED, which is the Kotlin
-            twin's rule (`dwCapListGrowth`, `FieldRenderer.kt`) and was NOT this arm's until
-            2026-08-26.
-
-            `next.length <= values.length` is the half that was missing. A cap is not part of
-            `registry_version()`, so a field may perfectly well be holding five entries on the day its
-            declared ceiling becomes three — those values were valid when they were written. Under a
-            bare `next.length > cap` test, a designer merely UNTICKING one of the five handed back
-            four, which is still over, and the slice then deleted a second value they never touched —
-            while the notice below said "Not added" about something that had in fact just been
-            removed. Data loss reported as a refusal.
-
-            So: any change that does not make the list longer passes through untouched (a shrink, or a
-            same-size swap), and only genuine growth is capped.
-          */
-          if (next.length <= cap || next.length <= values.length) {
-            setRefused([]);
-            onChange(next);
-            return;
-          }
-          // What is already held survives first; the ceiling is then filled from `next` in the order
-          // the panel hands it back, so the tick that did not fit is the one refused.
-          const keep = new Set(next.filter((option) => values.includes(option)));
-          for (const option of next) {
-            if (keep.size >= cap) break;
-            keep.add(option);
-          }
-          setRefused(next.filter((option) => !keep.has(option)).map(optionLabel));
-          onChange(next.filter((option) => keep.has(option)));
-        }}
-        options={field.options ?? []}
-        placeholder="Select"
-        emptyLabel="No options in this list"
-        disabled={disabled}
-        ariaLabel={field.label}
-        describedBy={[describedBy, declaredCap !== null ? capId : null].filter(Boolean).join(" ") || undefined}
-        confirmLabel="Confirm"
-      />
+      {field.refModel ? (
+        <ReferenceMultiSelect
+          workshopId={workshopId}
+          entity={entity}
+          field={field}
+          row={row}
+          values={values}
+          onCommit={commit}
+          disabled={disabled}
+          describedBy={describes}
+        />
+      ) : (
+        <MultiSelectDropdown
+          values={values}
+          onChange={(next) => commit(next, optionLabel)}
+          options={field.options ?? []}
+          placeholder="Select"
+          emptyLabel="No options in this list"
+          disabled={disabled}
+          ariaLabel={field.label}
+          describedBy={describes}
+          confirmLabel="Confirm"
+        />
+      )}
       {/* The declared ceiling, said on screen — see the identical paragraph in TagsField. */}
       {declaredCap !== null ? (
         <p id={capId} className="text-xs leading-5 text-ink-500">
@@ -2178,6 +2844,17 @@ function forgetRefused(current: RefusedFile[], attached: File[]): RefusedFile[] 
   const done = new Set(attached.map(refusedKeyOf));
   return current.filter((entry) => !done.has(entry.key));
 }
+
+/**
+ * One photograph the QUALITY GATE turned away, and every measured reason it did — see `gateRefused`.
+ *
+ * Distinct from {@link RefusedFile} on purpose, and not merged with it: the two lists answer
+ * different questions and ask the reader for different acts. A ceiling refusal is about the FIELD
+ * ("it is full"), a gate refusal is about the PHOTOGRAPH ("it is out of focus, here is the reading"),
+ * and one paragraph reconciling both would have to say either less than each of them does or the
+ * union of two unrelated instructions.
+ */
+type GateRefusal = { key: string; name: string; faults: GateFault[] };
 
 /**
  * A media field: IMAGE / IMAGE_LIST / FILE / AUDIO / VIDEO.
@@ -2280,7 +2957,10 @@ function MediaField({
    * `useId` and not a literal: a stage draws one of these per media field, and a collection row draws
    * one per row per field — a fixed id would name every gallery on the screen at once.
    */
-  const capId = `${useId()}-cap`;
+  const mediaGroupId = useId();
+  const capId = `${mediaGroupId}-cap`;
+  /** The standing floor sentence's id, so the group is DESCRIBED by it — see `floor`. */
+  const floorId = `${mediaGroupId}-floor`;
   /**
    * THE DECLARED CEILING, OR NULL WHERE THE REGISTRY DECLARES NONE — the PRINTABLE one.
    *
@@ -2318,6 +2998,32 @@ function MediaField({
    * deliberately keeps the LAST file picked rather than refusing the second.
    */
   const cap = multiple ? effectiveMaxItems(field) : null;
+  /**
+   * THE DECLARED FLOOR — HOW MANY THIS GALLERY MUST HOLD — OR NULL WHERE THE REGISTRY DECLARES NONE.
+   *
+   * The exact mirror of `declaredCap`, and it obeys the same half of the same contract: `minItems`
+   * is emitted only for a field that states one, so an absent key is not a number and must never be
+   * drawn as one. Two fields in the registry answer it today — the motif pair, 25 each — and every
+   * other gallery draws no bar, makes no demand, and is unchanged by this whole feature.
+   *
+   * ── WHAT IT IS AND IS NOT ALLOWED TO DO, WHICH IS THE OPPOSITE OF THE CEILING'S ────────────────
+   *
+   * `cap` REFUSES: the trim in `acceptFiles` turns files away, because a designer holding 26 can
+   * always comply by posting 25. A floor can refuse NOTHING, because a designer with twenty
+   * photographs and five still to shoot has no body that would satisfy it — so this number never
+   * touches a save, never gates a control, and never blocks an attach. It is drawn, counted and
+   * described, and that is the whole of it. The server made the same split for the same reason and
+   * wrote it down above `FieldSpec.min_items`: `min_items` is scored in `stage_completeness` and in
+   * no validator, so a partial save is always accepted.
+   *
+   * ── AND IT IS DRAWN FROM FIRST PAINT, NOT WHEN THE GALLERY GETS FULL ───────────────────────────
+   *
+   * The sentence a designer needs before they photograph twenty-five motifs is worth nothing after
+   * they have photographed twenty. So the floor paragraph and the bar are unconditional on the count
+   * and are named in the group's `aria-describedby`, which is what puts the demand in front of a
+   * reader on ENTERING the field rather than on filling it.
+   */
+  const floor = multiple ? declaredMinItems(field) : null;
   /**
    * Every stored id this control has LOOKED UP, and what came back. THREE STATES, NOT TWO.
    *
@@ -2387,6 +3093,21 @@ function MediaField({
    */
   const [refused, setRefused] = useState<RefusedFile[]>([]);
   /**
+   * PHOTOGRAPHS THIS DEVICE MEASURED AND TURNED AWAY, held so the sentence can be derived at render.
+   *
+   * Exactly the shape and lifetime rules as `refused` one field up, and for the same reasons: the
+   * sentence is derived rather than frozen, an entry leaves only when that same file is later
+   * attached for real, and nothing else clears it — because nothing else makes it untrue. What
+   * differs is what the reader has to do about it. A file the CEILING turned away is a good
+   * photograph with nowhere to go, and the instruction is to make room. A file the GATE turned away
+   * is a photograph that is out of focus or too small, and the instruction is to take it again, so
+   * the message carries the reading and the floor it was measured against rather than a count.
+   *
+   * Keyed by `refusedKeyOf`'s `name:size:lastModified` triple, so re-picking the same file out of the
+   * chooser — a NEW `File` object for the same bytes — is recognised as the same fact.
+   */
+  const [gateRefused, setGateRefused] = useState<GateRefusal[]>([]);
+  /**
    * Where this control sits, as the one key both halves of the survival fix are derived from.
    *
    * `place` is optional on `FieldInputProps` — a surface outside a stage may render a field with no
@@ -2406,8 +3127,46 @@ function MediaField({
    * behaviour, so nothing outside a stage page changes.
    */
   const [pending, setPending] = usePendingMedia(mediaPlace);
+  /**
+   * PHOTOGRAPHS BEING MEASURED — chosen, not yet in the capture card, and therefore NOT UPLOADING.
+   *
+   * ── THIS LIST IS THE WHOLE MECHANISM OF THE GATE ────────────────────────────────────────────────
+   *
+   * `MediaCaptureField` starts streaming every file in its `files` prop to object storage the moment
+   * it receives it — `useEagerStaging` runs before anything else in that component, and its own
+   * quality effect says so in as many words: "nothing here can stop an upload… `useEagerStaging`
+   * above has ALREADY started streaming every one of these files". So a check that runs inside that
+   * card, or anywhere after `setPending`, is a check that reports on a photograph which is already on
+   * the server — which is the exact thing the owner asked to prevent.
+   *
+   * The only door before the upload is `acceptFiles`, and it is synchronous while the measurement is
+   * not. So a chosen photograph waits HERE, visible and counted, until it has been judged; only then
+   * does it enter `pending` and only then does a byte move.
+   *
+   * ── HOISTED, FOR `pending`'s REASON AND NOT A WEAKER ONE ────────────────────────────────────────
+   *
+   * `usePendingMedia(place, "screening")` rather than `useState`, so collapsing a collection row
+   * mid-measurement does not destroy the list. A file lost from here is worse than a file lost from
+   * `pending` was: it was never uploaded and never refused, so there is no object to clean up and no
+   * sentence anywhere — it simply is not there any more. That is the silent shape of loss the hoisted
+   * store exists to end.
+   */
+  const [screening, setScreening] = usePendingMedia(mediaPlace, "screening");
   /** Files already handed to a link or a local stage, so the drain below cannot hand one over twice. */
   const claimedRef = useRef(new Set<File>());
+  /**
+   * What this device measured about each file it admitted, keyed by `refusedKeyOf`'s triple.
+   *
+   * A REF AND NOT STATE, deliberately, and it is the one place in this component where that is the
+   * right call: nothing renders from it. Its only reader is `settle`, at the moment
+   * `uploadMediaBatch` answers and a file finally has a media id to hang a finding on — see
+   * `qualityFlagLog`. Holding it in state would re-render the whole field once per measured
+   * photograph for a value no element reads.
+   *
+   * It holds ADMITTED files only. A refused one never reaches an upload, so it can never acquire the
+   * `mediaId` a stage-21 row requires, and a finding about it has nowhere to go.
+   */
+  const admittedFindingsRef = useRef(new Map<string, GateFault[]>());
   /**
    * The `File` each linked media id came from, kept for as long as this field is mounted.
    *
@@ -2614,6 +3373,56 @@ function MediaField({
             });
             return next;
           });
+          /*
+            THE WRITE PATH: A FINDING RAISED AT CAPTURE BECOMES A STAGE-21 ROW INSTEAD OF BEING
+            RETYPED FROM MEMORY.
+
+            THIS IS THE ONLY MOMENT IT CAN HAPPEN. `mediaQualityFlag.mediaId` is a required BASIC
+            field, so a finding is not a row until the file it is about has an id — and a file has an
+            id only here, when `uploadMediaBatch` answers. Earlier there is nothing to point at;
+            later the `File` the measurement belongs to is gone.
+
+            BY POSITION, THROUGH `uploadedByIndex`, FOR THE REASON THE BLOCK ABOVE ARGUES AT LENGTH:
+            `uploaded` is the same array with its nulls filtered out, so in a batch where anything
+            failed the two do not line up — and matching back by filename would be worse still,
+            because two shots off one handset are both `IMG_0001.jpg`.
+
+            WHAT REACHES HERE IS ALMOST ALWAYS A NEAR-DUPLICATE, AND THAT IS THE GATE WORKING. Blur
+            and low resolution are REFUSED at `screen`, so they never upload, never get an id, and
+            can never be one of these rows — correctly, since there would be no file in the archive
+            for the row to be about. See `mediaQualityFlagRows`, which is where the shape of the row
+            and the rule about which flags a machine may ever fill in both live.
+
+            A STATED LIMIT: the log is keyed by `workshopId`, so findings raised against a LOCAL
+            draft are keyed by its `dwlocal-` id and do not follow it through
+            `adoptDraftIntoWorkshop`. Nothing is lost that a designer typed — the photographs and
+            their flags are unaffected — and the cost is that the convenience does not survive the
+            adoption. The fix belongs with the adoption, not here.
+          */
+          const raised: CapturedFinding[] = [];
+          const raisedAt = new Date().toISOString();
+          uploadedByIndex.forEach((media, index) => {
+            const source = chosen[index];
+            if (!media || !source) return;
+            const key = refusedKeyOf(source);
+            const faults = admittedFindingsRef.current.get(key);
+            if (!faults?.length) return;
+            for (const fault of faults) {
+              raised.push({
+                mediaId: media.id,
+                fileName: source.name,
+                flag: fault.flag,
+                severity: fault.severity,
+                note: fault.message,
+                raisedAt
+              });
+            }
+            // Forgotten once recorded, so a stage reopened and re-drained cannot bank the same
+            // finding twice. `recordCaptureFindings` de-duplicates by file and flag as well; this is
+            // the cheaper of the two doors and neither is the only one.
+            admittedFindingsRef.current.delete(key);
+          });
+          if (raised.length) recordCaptureFindings(workshopId, raised);
           const uploadedIds = uploaded.map((media) => media.id);
           // Read through `listValue(value)` rather than the `ids` computed at render: two files
           // finishing in the same tick would otherwise each append to the same snapshot and the
@@ -2719,6 +3528,43 @@ function MediaField({
   }
 
   /**
+   * Point this field at rows that ALREADY EXIST in the repository — the picker's commit.
+   *
+   * NOTHING IS UPLOADED AND NOTHING IS COPIED. What a media field stores is a media id, so choosing
+   * an existing row is one write to `value` and no bytes move: the second record referencing one
+   * photograph is the same object under two ids of its own, which is the whole reason this control
+   * exists. It follows that `detach` on either record is still only an un-reference (the header's
+   * rule), and it matters more now than it did — a shared photograph is exactly the case where
+   * deleting the bytes would empty somebody else's stage.
+   *
+   * THE ROWS ARE WRITTEN INTO `files` IN THE SAME COMMIT, and that is not an optimisation. The
+   * resolver effect above fetches every id it has no entry for, so without this the picker's own
+   * answer would be thrown away and re-fetched a moment later — and in the gap between the two, the
+   * tile would draw "Looking this file up…" for a row that is sitting in this function's argument.
+   *
+   * DE-DUPLICATED HERE AS WELL AS IN THE PICKER. The panel draws an already-attached row disabled, so
+   * this is the second door rather than the only one — but `attachedIds` is a prop and a value that
+   * changed underneath an open panel would let one through, and a repeated id is not a harmless
+   * duplicate: `ids.map` keys the tile list by it, so React would draw two rows it cannot tell apart
+   * and one Remove would clear both.
+   */
+  function attachExisting(rows: MediaFile[]) {
+    const held = new Set(listValue(value));
+    const fresh = rows.filter((row) => !held.has(row.id));
+    if (!fresh.length) return;
+    setFiles((current) => {
+      const next = { ...current };
+      for (const row of fresh) next[row.id] = row;
+      return next;
+    });
+    const chosen = fresh.map((row) => row.id);
+    // Read through `listValue(value)` rather than the `ids` computed at render, for `settle`'s
+    // reason: an upload finishing in the same tick would otherwise append to the same snapshot and
+    // one of the two writes would be lost entire.
+    onChange(multiple ? [...listValue(value), ...chosen] : chosen[chosen.length - 1]);
+  }
+
+  /**
    * How many more files this field can take, counting what is attached AND what is in flight.
    *
    * COUNTING `pending` IS THE WHOLE POINT. Every file in the capture card is a file that will become
@@ -2728,8 +3574,26 @@ function MediaField({
    * keeps the last file picked rather than refusing the second. It is never null for a gallery now —
    * an undeclared ceiling is a ceiling of {@link DW_DEFAULT_MAX_ITEMS}, not the absence of one — so
    * the only thing an undeclared gallery loses is the printed figure, not the count.
+   *
+   * `screening` IS SUBTRACTED TOO, and leaving it out is a real over-admission rather than a
+   * tidiness point: a photograph under measurement is a photograph that is about to enter `pending`,
+   * so a second pick arriving while the first batch is still being judged would compute its room
+   * against a list that does not yet contain them and let the gallery past its ceiling — where
+   * `coerce_value` refuses the whole field rather than trimming it. Every list that will become an id
+   * has to be counted here, which is the same argument that put `pending` in this line.
    */
-  const room = cap === null ? null : Math.max(0, cap - ids.length - pending.length);
+  const room = cap === null ? null : Math.max(0, cap - ids.length - pending.length - screening.length);
+
+  /**
+   * What the field is already holding or is about to — attached ids plus files still in the capture
+   * card. The figure a declared-cap refusal reconciles against, in the two places one can be raised:
+   * {@link refusalNotice} for files off the chooser, and the repository picker for existing rows.
+   *
+   * Lifted out of `refusalNotice`'s body so both readers count the same thing. It is deliberately the
+   * same expression `room` subtracts, so "N are accounted for" and "M more can be attached" cannot
+   * disagree by one on the same screen. `screening` is in both for that reason and for `room`'s.
+   */
+  const accounted = ids.length + pending.length + screening.length;
 
   /**
    * The capture card's list, with the declared ceiling applied and anything dropped SAID OUT LOUD.
@@ -2770,7 +3634,7 @@ function MediaField({
     }
     const added = next.slice(pending.length);
     if (added.length <= room) {
-      setPending(next);
+      admit(next.slice(0, pending.length), added);
       // Only what actually went in. `setNotice(null)` used to stand here, on the reasoning that "a
       // previous refusal is stale the moment the reader makes room and adds successfully" — which is
       // true of the file they just re-attached and false of the other four still waiting to be.
@@ -2779,7 +3643,7 @@ function MediaField({
     }
     const kept = added.slice(0, room);
     const dropped = added.slice(room);
-    setPending([...next.slice(0, pending.length), ...kept]);
+    admit(next.slice(0, pending.length), kept);
     setRefused((current) => {
       // The re-attached ones leave first, so a designer who re-picks five and gets one in sees four
       // named rather than five; then the newly turned-away ones join, de-duplicated, because picking
@@ -2794,6 +3658,129 @@ function MediaField({
         grown.push({ key, name: file.name });
       }
       return grown;
+    });
+  }
+
+  /**
+   * Put the files the ceiling allowed through on their way — a photograph via the gate, anything
+   * else straight into the capture card.
+   *
+   * ── THE CEILING FIRST, THEN THE GATE, AND THE ORDER IS NOT ARBITRARY ───────────────────────────
+   *
+   * A file over the ceiling has nowhere to go whatever its sharpness, so measuring it would be a
+   * decode a designer waits for to reach a conclusion that changes nothing — on a handset, twelve
+   * megapixels at a time. The two refusals also mean different things and must not be merged: over
+   * the ceiling is "this field is full", failed the gate is "this photograph is not good enough",
+   * and a designer needs to be told which.
+   *
+   * ── ONLY PHOTOGRAPHS ARE GATED ────────────────────────────────────────────────────────────────
+   *
+   * `isMeasurableImage` is the whole test, and everything it declines — an audio recording, a video,
+   * a PDF in a FILE field, an SVG — goes straight into `pending` on exactly the path it took before
+   * this gate existed. There is no measurement for those and therefore no judgement, which is the
+   * first half of failing open. Sending them through the async pass anyway would put a tick of
+   * latency on a signature capture and a voice note for nothing.
+   *
+   * ── AND A FILE ALREADY IN HAND IS NOT TAKEN TWICE ─────────────────────────────────────────────
+   *
+   * `MediaCaptureField.mergeFiles` de-duplicates the incoming pick against the files IT holds, which
+   * during a measurement does not include the ones being screened — so re-picking a photograph while
+   * it is being judged would screen and admit it twice, and the field would show two tiles for one
+   * file. The triple is the same identity that card de-duplicates on. Nothing is said about it and
+   * nothing needs to be: the file is not being turned away, it is already on its way in, and it is
+   * counted once in `accounted` and once in `room`.
+   */
+  function admit(prefix: File[], added: File[]) {
+    // Written straight through rather than merged: a retry replaces an entry in the card's own list,
+    // so the prefix is the card's view of what it holds and this control's is downstream of it.
+    setPending(prefix);
+    const held = new Set([...prefix, ...screening].map(refusedKeyOf));
+    const fresh = added.filter((file) => !held.has(refusedKeyOf(file)));
+    const photographs = fresh.filter(isMeasurableImage);
+    const rest = fresh.filter((file) => !isMeasurableImage(file));
+    if (rest.length) setPending((current) => [...current, ...rest]);
+    if (!photographs.length) return;
+    setScreening((current) => [...current, ...photographs]);
+    void screen(photographs);
+  }
+
+  /**
+   * Measure each photograph and either let it into the capture card or refuse it by name.
+   *
+   * ── ONE AT A TIME, AND PUBLISHED AS EACH FINISHES ─────────────────────────────────────────────
+   *
+   * Same shape as `MediaCaptureField`'s own measuring effect and for the same two reasons: the first
+   * photograph starts uploading while the tenth is still decoding, and two 48 MB bitmaps never
+   * coexist on a cheap handset. A `Promise.all` over twenty-five 12 MP files is how a tab gets
+   * killed in a courtyard.
+   *
+   * ── IT FAILS OPEN AT EVERY STEP, AND NONE OF THEM IS A DEFENSIVE BRANCH ───────────────────────
+   *
+   * `measureImageFile` answers null for a corrupt file, a codec this browser lacks (HEIC is the real
+   * case), a GPU that refused the bitmap, or a browser with no `createImageBitmap` at all — and null
+   * ADMITS. An image the detector cannot read is not a bad photograph, and refusing it would make
+   * both motif galleries unfillable on a handset whose decoder differs from the one this was written
+   * against. `computeChecksum` answers null above a size ceiling and without WebCrypto, which
+   * `gatePhotograph` reads as "unknown" and never as "unique". There is no arm anywhere below that
+   * turns an absence of evidence into a refusal.
+   *
+   * ── WHAT THE DUPLICATE CHECK IS COMPARED AGAINST ──────────────────────────────────────────────
+   *
+   * The rows already attached to THIS field that have resolved and carry a checksum, plus the
+   * photographs admitted earlier in this same pass. Not `pending`: those files' checksums were never
+   * computed, and hashing the whole capture card on every pick to catch a case the exact-match arm
+   * would find one second later at the server is arithmetic nobody asked for. The consequence is
+   * stated rather than hidden — picking one file twice in two separate picks is caught, picking it
+   * twice inside one pick is caught, and picking it while an earlier copy is still uploading is not.
+   */
+  async function screen(photographs: File[]) {
+    const attached = ids
+      .map((id) => files[id])
+      .filter((file): file is MediaFile => Boolean(file))
+      .map((file) => ({ label: file.originalFilename, checksum: file.checksum ?? null }));
+    for (const file of photographs) {
+      const measurement = await measureImageFile(file);
+      if (!measurement) {
+        release(file, null);
+        continue;
+      }
+      const checksum = await computeChecksum(file);
+      const verdict = gatePhotograph({ measurement, checksum, attached });
+      if (verdict.admitted && checksum) attached.push({ label: file.name, checksum });
+      release(file, verdict);
+    }
+  }
+
+  /**
+   * Move one judged photograph out of the screening list — into the capture card, or into the
+   * refusal.
+   *
+   * `null` IS AN ADMISSION and it is the commonest path on an unusual device: it is what a file
+   * nothing could measure arrives as. See `screen`.
+   *
+   * On an admission the gate's own findings are written to `admittedFindingsRef` rather than shown.
+   * Nothing that survives this door is a fault a designer must act on before uploading — by
+   * construction, since everything that is has just been refused — so the finding's job is to become
+   * a stage-21 row once the file has a media id, which is `settle`'s to do. `MediaCaptureField` will
+   * separately draw its own near-duplicate warning on the tile, which is the sentence for the moment.
+   */
+  function release(file: File, verdict: ReturnType<typeof gatePhotograph> | null) {
+    const key = refusedKeyOf(file);
+    setScreening((current) => current.filter((entry) => entry !== file));
+    if (!verdict || verdict.admitted) {
+      if (verdict?.faults.length) admittedFindingsRef.current.set(key, verdict.faults);
+      setPending((current) => [...current, file]);
+      // The one thing that takes an entry off the refusal list: this very file getting in. A later
+      // photograph succeeding does not make an earlier refusal untrue, which is the mistake the
+      // ceiling's own list was written to stop making.
+      setGateRefused((current) => (current.some((entry) => entry.key === key) ? current.filter((entry) => entry.key !== key) : current));
+      return;
+    }
+    setGateRefused((current) => {
+      const without = current.filter((entry) => entry.key !== key);
+      // Replaced rather than appended: re-picking a photograph that is still out of focus is one
+      // fact stated twice, and the newer reading is the one that describes the file in hand.
+      return [...without, { key, name: file.name, faults: verdict.faults }];
     });
   }
 
@@ -2821,18 +3808,74 @@ function MediaField({
    */
   const refusalNotice = (() => {
     if (!refused.length) return null;
-    const accounted = ids.length + pending.length;
-    const ceiling =
-      declaredCap === null
-        ? `${field.label} is full`
-        : `${field.label} holds at most ${declaredCap} file${declaredCap === 1 ? "" : "s"}, and ` +
-          `${accounted} ${accounted === 1 ? "is" : "are"} accounted for`;
+    /*
+      THE CEILING IS RE-DERIVED HERE RATHER THAN READ OFF `declaredCap`, AND IT IS NOT A STYLE.
+
+      `capCeilingClause` is imported, so the React Compiler cannot see inside it and must assume the
+      object handed to it may be mutated — which taints everything reachable from that object,
+      `declaredCap` included. `declaredCap` is also a dependency of the `carousel` memo below, so the
+      taint makes that memo unpreservable and `react-hooks/preserve-manual-memoization` fails the
+      lint with "this dependency may be modified later", pointing at a line that has nothing to do
+      with the cause. A FRESH BINDING breaks the chain: the same expression, computed again, is a
+      different value as far as that analysis is concerned, and the memo keeps its stable dependency.
+
+      IT IS THE SAME EXPRESSION CHARACTER FOR CHARACTER, deliberately, so the two cannot drift — the
+      sentence must state the ceiling this field actually enforces and there is only one of those.
+      Anything cleverer (reading `cap`, or dropping the `multiple` arm because a single-valued field
+      never refuses anything) would be a second definition of the printable ceiling, which is what
+      docs/DESIGN_WORKSHOP.md:229-232 is written against.
+    */
+    const printableCeiling = multiple ? declaredMaxItems(field) : null;
+    /*
+      THE CEILING CLAUSE IS SHARED WITH THE REPOSITORY PICKER (`media/mediaPicker.ts`), and only the
+      clause. The declared-versus-undeclared branch inside it is the half docs/DESIGN_WORKSHOP.md
+      governs — enforcement unconditional, printing conditional — so two copies of it in one media
+      field is how the two controls would come to state the contract differently. What is NOT shared
+      is the last sentence: a file the chooser turned away is gone from the browser and has to be
+      found again, so this one says "pick them again"; a refused repository pick is still ticked in a
+      panel on screen, so that one says "press Attach again".
+    */
     return (
-      `${ceiling}. Not attached: ${refused.map((entry) => entry.name).join(", ")}. ` +
+      `${capCeilingClause({ label: field.label, declaredCap: printableCeiling, accounted })}. ` +
+      `Not attached: ${refused.map((entry) => entry.name).join(", ")}. ` +
       `Remove something already attached, then pick ${refused.length === 1 ? "it" : "them"} again — ` +
       `this list stays until you do.`
     );
   })();
+
+  /**
+   * The gate's refusal, in words — or null when this device has turned nothing away.
+   *
+   * A SEPARATE SENTENCE FROM THE CEILING'S, IN A SEPARATE REGION, and merging the two would cost the
+   * reader the instruction. "Motif photographs holds at most 25 and 25 are accounted for" and "the
+   * sharpness reading was 42 against a floor of 60" are answers to different questions and are fixed
+   * by different acts — one by removing a photograph, the other by taking one again. `role="status"`
+   * implies `aria-atomic`, so putting them in one region would also re-read whichever had not
+   * changed every time the other did.
+   *
+   * `role="status"` and not `alert`, matching its sibling: nothing is broken, nothing was lost, and
+   * the photographs are still on the designer's camera. It is the same severity as the ceiling's
+   * refusal one line down and is worded to be acted on rather than to interrupt.
+   */
+  const gateNotice = gateRefusalSentence(gateRefused);
+
+  /**
+   * "Checking these before they upload", while they are being checked.
+   *
+   * RULE 10, IN ITS QUIETEST FORM. Between the chooser closing and the tiles appearing there is a
+   * gap — a decode plus a convolution per photograph — and on twenty-five files off a real camera
+   * that gap is seconds. With nothing on screen it reads exactly like the app having dropped the
+   * pick, which is the failure mode a designer answers by picking them all again. So the work is
+   * named while it is happening, with its count.
+   *
+   * It is the one thing here that is genuinely transient, and it says what the wait BUYS ("before
+   * they upload") rather than only that there is one, because a wait whose purpose is invisible is
+   * a wait nobody forgives.
+   */
+  const screeningNotice = screening.length
+    ? `Checking ${screening.length} photograph${screening.length === 1 ? "" : "s"} on this device ` +
+      `before ${screening.length === 1 ? "it uploads" : "they upload"}…`
+    : null;
 
   /**
    * The attached images, as the carousel reads them.
@@ -3007,7 +4050,23 @@ function MediaField({
         not `cap`: the effective ceiling is never null for a gallery, and pointing at an element that
         is not drawn is the same defect wearing the new constant.
       */
-      aria-describedby={[describedBy, declaredCap !== null ? capId : null].filter(Boolean).join(" ") || undefined}
+      /*
+        AND THEN ITS FLOOR, LAST, WHICH IS THE ORDER ON SCREEN. The demand ("all 25 are required")
+        is the longest of the three and the one a reader needs least often after the first visit, so
+        it reads after the instruction and the ceiling rather than in front of them. Conditional on
+        `floor` for `capId`'s reason: a describedby pointing at an element that is not drawn is
+        announced as a blank by some readers, which is worse than the attribute being absent.
+
+        THE BAR IS DELIBERATELY NOT IN THIS LIST. It is a `progressbar` with its own accessible name
+        and its own `aria-valuetext`, so a reader queries it when they want the count; folding it in
+        would read the running total out on every arrival at the field, which is the noise the
+        ceiling paragraph was moved out of a live region to avoid.
+      */
+      aria-describedby={
+        [describedBy, declaredCap !== null ? capId : null, floor !== null ? floorId : null]
+          .filter(Boolean)
+          .join(" ") || undefined
+      }
     >
       {ids.length ? (
         <ul className="grid gap-2">
@@ -3054,6 +4113,30 @@ function MediaField({
                   // position never carry this on their own.
                   <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
                     On this device only
+                  </span>
+                ) : null}
+                {/*
+                  THE ROW ARRIVED WITH NO `url`, WHICH IS AN ANSWER AND NOT A FAILURE — and until the
+                  repository picker landed it was a state a designer could barely reach, because
+                  everything in a field was something they had just uploaded themselves. Now a stage
+                  can legitimately point at a colleague's photograph, so it is the ordinary case:
+                  `MediaFile.url` travels only to a caller entitled to those bytes, so the row is
+                  complete — name, type, uploader — and the file itself is not readable from here.
+
+                  WITHOUT THIS CHIP THE TILE SAID NOTHING. An IMAGE with no url falls through to the
+                  paperclip placeholder, which is the same drawing a PDF gets, so a withheld
+                  photograph read as "this is not a picture"; a withheld document read as nothing at
+                  all. `StoredMediaImage`, `MediaCarousel` and `DocumentPreview` each draw this state
+                  as a worded panel rather than a broken frame, and the whole list of them refuses to
+                  clear the stored id over it — dropping the id would silently rewrite research data
+                  because of who is looking at it.
+
+                  Only for a row that RESOLVED: `undefined` is still in flight and `null` already has
+                  its own sentence in the span above, and neither is an entitlement answer.
+                */}
+                {file && !file.url ? (
+                  <span className="shrink-0 rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">
+                    Not openable by this account
                   </span>
                 ) : null}
                 <button
@@ -3145,6 +4228,21 @@ function MediaField({
             originals,
             // Appended rather than replacing the list: a designer may sign, then attach a
             // photograph of the paper sheet as well, and neither may evict the other.
+            //
+            // THIS PATH DELIBERATELY DOES NOT GO THROUGH THE QUALITY GATE, AND MUST NOT.
+            //
+            // `acceptFiles` gates what a human CHOSE — the chooser, the camera button, a drop. What
+            // arrives here is what a panel on this same screen DERIVED: a signature drawn on a
+            // canvas, a rectified sketch, a traced line-art export. None of those is a photograph
+            // of anything, and every one of them would be refused by a measure calibrated on
+            // photographs: a signature canvas is a few hundred pixels on its long edge, which is a
+            // LOW_RESOLUTION refusal, and it would arrive as "this photograph is too small to
+            // print" over a control whose whole job is to capture a signature. The designer would
+            // have no way to comply and no second way to sign.
+            //
+            // So the rule is the source and not the pixels: a file this app MADE is already exactly
+            // what it is meant to be, and the gate has no opinion worth having about it. Nothing is
+            // silently skipped — there is no measurement here to be silent about.
             attach: (file) => setPending((current) => [...current, file]),
             detach,
             // Only the entries that produced an object URL, which is exactly the image ones: the
@@ -3193,6 +4291,50 @@ function MediaField({
         </p>
       ) : null}
 
+      {/* THE FLOOR AND THE COUNT AGAINST IT — drawn only where the registry DECLARES a floor, and
+          then drawn from first paint whatever the count is.
+
+          THE DEMAND COMES BEFORE THE WORK. A gallery that asks for twenty-five and says so at
+          twenty-four has told the designer nothing they can use: they are back at the cluster, or
+          they are not. So this pair sits above the picker, is on screen at zero photographs, and is
+          named in the group's `aria-describedby` — so a reader arriving at the field hears the whole
+          demand before they open a chooser.
+
+          TWO ELEMENTS AND NOT ONE. The paragraph is the STANDING sentence: how many are wanted, that
+          a short gallery still saves, and what falling short actually costs. It does not change as
+          photographs arrive, so it never announces. The bar is the LEVEL: it changes on every attach
+          and is a `progressbar` for exactly that reason — a reader can query it and it interrupts
+          nobody. Both of them carry the number in words, because a length is a signal a reader in
+          greyscale or on a screen reader never receives.
+
+          EVERY NUMBER IN BOTH COMES FROM `floor`, which is `minItems` off the published registry.
+          Nothing here may hard-code 25: the figure is the registry's to change, and this client has
+          already learned once what printing a number it did not read costs. */}
+      {floor !== null ? (
+        <>
+          <p id={floorId} className="text-xs leading-5 text-ink-500">
+            {galleryFloorSentence({ floor, label: field.label })} {gateScopeSentence()}
+          </p>
+          <GalleryProgress
+            floor={floor}
+            label={field.label}
+            labelledBy={labelId}
+            counts={{
+              // `ids` and NOT `ids + pending`: a photograph that is uploading is not in the gallery,
+              // and a bar that counted it would read "25 of 25" over a save that would post
+              // twenty-four. The in-flight files are named in the sentence instead.
+              held: ids.length,
+              // The ones that exist only in this browser. Counted in `held` — the designer took
+              // them and they are real — and named separately, because "25 of 25" in a courtyard
+              // with no signal must not hide that eleven of them are one cleared cache from gone.
+              onDevice: ids.filter(isLocalMediaRef).length,
+              uploading: pending.length,
+              screening: screening.length
+            }}
+          />
+        </>
+      ) : null}
+
       <MediaCaptureField
         files={pending}
         /* Capped and narrated — see `acceptFiles`. `setPending` directly would upload files the
@@ -3215,6 +4357,42 @@ function MediaField({
         }
         allowedTypes={ALLOWED_TYPES[field.type]}
         allowDocuments={field.type === "FILE"}
+      />
+
+      {/* THE OTHER WAY TO ANSWER A MEDIA FIELD: a file that is ALREADY IN THE REPOSITORY.
+          Until this landed the web had exactly one — attach a new upload — so one loom photographed
+          once could not be pointed at from a second record, and the way a designer got it there was
+          to upload it again: two objects, two sets of bytes, and nothing anywhere saying they are the
+          same picture. What this field stores is a media id, so pointing at an existing row was
+          always the natural act; there was simply no control that did it.
+
+          BESIDE THE CAPTURE CARD AND UNDER IT, not instead of it and not above it. Taking the
+          photograph is still the common case and stays the first thing on the way down; reusing one
+          is the alternative, and it is a disclosure that fetches nothing until it is opened — a stage
+          carries several media fields, and mounting this open would be one repository query per field
+          per stage open, on a village connection, for a list most designers will not use.
+
+          `mediaPickerTypeFilter` IS HANDED THE CAPTURE CARD'S OWN `allowedTypes`, deliberately, so
+          the two halves of one field cannot come to disagree about what it accepts. It answers null —
+          "ask for everything" — both where there is no list (a FILE field, whose chooser offers every
+          kind of attachment) and where there is more than one, because `list_media` takes ONE
+          `mediaType` and narrowing to half a field's kinds would hide the rest inside a list that
+          looks complete.
+
+          THE CEILING IS ENFORCED HERE TOO, off `room` — the same figure the chooser's trim uses, and
+          for the same reason: `coerce_value` refuses an over-long array rather than trimming it, so a
+          cap only the server knows about is a cap a designer meets after the save. `declaredCap` is
+          passed separately because it is the only number that may be PRINTED. */}
+      <MediaRepositoryPicker
+        label={field.label}
+        typeFilter={mediaPickerTypeFilter(ALLOWED_TYPES[field.type])}
+        multiple={multiple}
+        attachedIds={ids}
+        room={room}
+        declaredCap={declaredCap}
+        accounted={accounted}
+        disabled={disabled}
+        onAttach={attachExisting}
       />
 
       {/* Every one of these reports something that has ALREADY happened to the designer's files — a
@@ -3244,6 +4422,26 @@ function MediaField({
           THREE ELEMENTS AND NOT ONE, because they are three different facts and `role="status"`
           implies `aria-atomic`: sharing a region would re-read the offline notice every time the
           refusal changed, and let one interrupt the other mid-sentence. */}
+      {/* THE GATE'S OWN TWO REGIONS, mounted from first paint for the reason the block above sets
+          out: assistive technology announces mutations only inside a region that already existed
+          when the page settled, so a paragraph that appears with its first sentence is a paragraph
+          that is never heard. The screening notice is `text-ink-500` rather than amber — nothing is
+          wrong, work is simply in progress — while the refusal is amber, the same weight as the
+          ceiling's, because a photograph was not sent. */}
+      <p
+        role="status"
+        aria-live="polite"
+        className={screeningNotice ? "text-xs leading-5 text-ink-500" : "sr-only"}
+      >
+        {screeningNotice}
+      </p>
+      <p
+        role="status"
+        aria-live="polite"
+        className={gateNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}
+      >
+        {gateNotice}
+      </p>
       <p
         role="status"
         aria-live="polite"

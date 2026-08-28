@@ -610,3 +610,64 @@ def test_a_semicolon_inside_a_warning_does_not_split_it_on_the_designers_screen(
     assert pieces[0].endswith("(Loom survey, round two).")
     # The pause the designer wrote survives as a comma rather than being deleted outright.
     assert "round two" in pieces[0]
+
+
+# --------------------------------------------------------------------------------------
+# GET /report/preview's `meta`: the geometry the web draws its sheets on
+# --------------------------------------------------------------------------------------
+
+
+def _preview_meta_of(**meta_kwargs):
+    """Imported inside the helper, for the reason ``_header`` gives: the route module is heavy.
+
+    A ``ReportDocument`` with no blocks, because nothing here is about blocks: ``_preview_meta``
+    reads ``document.meta`` and nothing else, and building a document with content would put the
+    builder between this test and the thing it is pinning.
+    """
+    from app.api.routes.design_workshops import _preview_meta
+    from app.services.report_model import ReportDocument, ReportMeta, ReportTheme
+
+    document = ReportDocument(
+        meta=ReportMeta(title="A workshop", **meta_kwargs), theme=ReportTheme(), blocks=()
+    )
+    return _preview_meta(document)
+
+
+def test_the_preview_carries_both_halves_of_the_page_geometry():
+    """THE DEFECT: the payload carried the PAPER and not the MARGIN.
+
+    A page is not sized by its sheet alone. ``report_pdf.PdfRenderer`` computes its text column as
+    ``page_w - 2 * margin`` and ``report_docx`` writes the same number into the section properties,
+    so the margin decides where every line wraps and therefore where every page breaks. With only
+    ``pageSize`` on the wire the web preview had to assume the other half: ``previewModel
+    .pageGeometry`` fell back to 25 and ``ReportSheet`` printed "25 mm margins assumed (the preview
+    payload does not carry the margin)" above every sheet — an apology, on the one screen a
+    designer approves the document from, for a number the server was holding.
+
+    The expected margin is READ OFF the dataclass rather than typed as ``25.0``, so this test
+    cannot be the thing that disagrees with the default it is describing.
+    """
+    from app.services.report_model import ReportMeta
+
+    payload = _preview_meta_of()
+
+    assert payload["pageSize"] == "A4"
+    assert payload["marginMm"] == ReportMeta(title="x").margin_mm
+
+
+def test_the_preview_reports_the_documents_own_margin_and_not_a_constant():
+    """The half of the fix a default-only assertion cannot see.
+
+    ``margin_mm`` is 25.0 on every document this deployment produces — no ``ReportTemplate`` field
+    sets it, ``report_meta`` reads no stage-20 answer for it, and ``render_report`` overrides only
+    the page size and the two running lines — so a hardcoded ``"marginMm": 25.0`` would pass the
+    test above for ever and be silently wrong on the first document that moves it. The margin has
+    to travel FROM the document, which is what makes the preview correct by construction rather
+    than by coincidence.
+    """
+    from app.services.report_model import PageSize
+
+    payload = _preview_meta_of(page_size=PageSize.LETTER, margin_mm=18.0)
+
+    assert payload["marginMm"] == 18.0
+    assert payload["pageSize"] == "LETTER"

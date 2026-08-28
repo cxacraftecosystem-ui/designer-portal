@@ -31,15 +31,16 @@ def role_value(user: Any) -> str:
     return str(getattr(role, "value", role))
 
 
-# The seven-tier role ladder, strictly ordered. Higher rank inherits every power of the ranks below
+# The EIGHT-tier role ladder, strictly ordered. Higher rank inherits every power of the ranks below
 # it; grantable capability booleans can additionally lift a specific power for a lower tier.
 #
-# SEVEN, AND THIS COMMENT SAID SIX FOR AS LONG AS DESIGNER HAS EXISTED. The tier is right there four
-# lines down, with its own explanation of why 35. Miscounting it here is not a typo with no
-# consequence: this is the file every permission question in the repository is answered from, and the
-# same off-by-one had already propagated into README.md's role table (six rows, no DESIGNER row, in a
-# product whose primary user is a designer) and into docs/PERMISSIONS.md, which records having been
-# corrected for exactly this once already. Nothing mechanical counts these.
+# EIGHT, AND THIS COMMENT SAID SIX FOR AS LONG AS DESIGNER HAS EXISTED, then seven until INSPECTOR
+# landed. The tiers are right there below, each with its own explanation of its number. Miscounting
+# here is not a typo with no consequence: this is the file every permission question in the
+# repository is answered from, and the same off-by-one had already propagated into README.md's role
+# table (six rows, no DESIGNER row, in a product whose primary user is a designer) and into
+# docs/PERMISSIONS.md, which records having been corrected for exactly this once already. Nothing
+# mechanical counts prose — ``tests/test_role_ladder_parity.py`` counts the MAPS.
 ROLE_RANK: dict[str, int] = {
     "CROWDSOURCE_VOLUNTEER": 10,
     "FIELD_CONTRIBUTOR": 20,
@@ -48,6 +49,39 @@ ROLE_RANK: dict[str, int] = {
     # report; a researcher documents what they find. Inserting the tier here rather than renumbering
     # keeps every stored role and every comparison in this file meaning what it meant before.
     "DESIGNER": 35,
+    # 37 — inspects and reviews a designer's work without running workshops. Added 2026-08-27.
+    #
+    # WHY 37 AND NOT 36 OR 39. The tier had to land strictly between DESIGNER (35) and PROFESSOR
+    # (40), and 36-39 were all free. 37 is the MIDDLE of that free band, which leaves a gap on BOTH
+    # sides: a future tier can be inserted between designer and inspector (36) or between inspector
+    # and professor (38-39) without renumbering anything. That is the same argument that put DESIGNER
+    # at 35 rather than at 36 — a rank is a stored comparison, and renumbering one silently changes
+    # the meaning of every other comparison in this file at once.
+    #
+    # WHY THE TOKEN IS `INSPECTOR` WHEN THE LABEL SAYS "Inspector / Reviewer". "Review" ALREADY names
+    # a different, RELATIONAL concept here: ``can_review_record`` is held from FIELD_CONTRIBUTOR
+    # upwards and means "may act on anyone ranked strictly below me". A tier named REVIEWER would
+    # make one word mean two things in one codebase — and the sentence "only a reviewer may review
+    # this" would become unreadable. The label carries both words so nobody has to learn our
+    # vocabulary to find themselves in a picker; the stored token stays unambiguous.
+    #
+    # WHAT THE RANK BUYS, STATED HERE BECAUSE IT IS THE WHOLE POINT OF THE TIER AND BECAUSE IT IS
+    # ALSO THE TRAP. 37 > 35 means ``can_review_record`` admits an inspector over every DESIGNER's
+    # repository records — approve, reject, send back for revision. THAT IS WANTED AND IT IS WHY THE
+    # RANK IS ABOVE 35 RATHER THAN BELOW IT. It is written down rather than left to be discovered
+    # because a rank insert grants review authority SILENTLY, and an audit of this ladder warned that
+    # a new tier would pick it up with no test going red. ``tests/test_inspector_tier.py`` pins both
+    # halves: an inspector MAY review a designer's record, and MAY NOT rewrite it —
+    # ``can_edit_others_record`` narrows the same comparison to PROFESSOR and above, and 37 < 40.
+    #
+    # WHAT THE RANK DELIBERATELY DOES NOT BUY. Every design-workshop gate in this product is SET
+    # MEMBERSHIP and not a rank floor (see ``DESIGN_WORKSHOP_ROLES`` below and its docstring), so an
+    # inspector gets NO workshop authority from this number — exactly PROFESSOR's position, and
+    # exactly as intended: an inspector does not run workshops and does not sign a report. Workshop
+    # visibility for an inspector is a scope question, answered by the read-only workshop-scoped
+    # grant beside ``WorkshopAssignment`` / ``DataAccessGrant`` / ``DesignWorkshopViewer`` /
+    # ``DwAccessRequest``, NOT by this dict. Do not "fix" that by adding INSPECTOR to the set.
+    "INSPECTOR": 37,
     "PROFESSOR": 40,
     "ADMIN": 50,
     "MASTER_ADMIN": 60,
@@ -58,6 +92,11 @@ ROLE_LABELS: dict[str, str] = {
     "FIELD_CONTRIBUTOR": "Field Contributor",
     "RESEARCHER": "Researcher",
     "DESIGNER": "Designer",
+    # BOTH WORDS, ON PURPOSE — see the rank comment above. Users looking for themselves in a picker
+    # search for "reviewer"; the codebase reserves that word for the relational sense. This label is
+    # copied BYTE FOR BYTE into frontend/lib/permissions.ts and three Kotlin tables, and
+    # tests/test_role_ladder_parity.py holds all five to this one.
+    "INSPECTOR": "Inspector / Reviewer",
     "PROFESSOR": "Professor",
     "ADMIN": "Admin",
     "MASTER_ADMIN": "Master Admin",
@@ -132,6 +171,12 @@ def can_manage_crafts(user: Any) -> bool:
 
 #: Who may run a design & prototype workshop. Named explicitly rather than derived from the rank
 #: ladder, and that is the whole point — see :func:`can_run_design_workshops`.
+#:
+#: INSPECTOR (rank 37) IS DELIBERATELY NOT IN HERE, and neither is PROFESSOR (40). This set is "the
+#: people who sign the report", and an inspector inspects a report rather than signing one. Because
+#: this is a SET and not a rank floor, adding the tier to :data:`ROLE_RANK` gave it nothing here —
+#: which is the correct outcome and not an oversight to be tidied up later. What an inspector needs
+#: instead is READ scope on a specific workshop, which is a grant and not a role.
 DESIGN_WORKSHOP_ROLES = frozenset({"DESIGNER", "ADMIN", "MASTER_ADMIN"})
 
 
@@ -270,9 +315,25 @@ def can_manage_workshops(user: Any) -> bool:
 def can_review_record(reviewer: Any, creator_role: Any) -> bool:
     """The peer-review hierarchy: the master admin reviews EVERYONE's work; everyone else may only
     review records whose creator ranks STRICTLY below them (admin reviews everyone beneath,
-    professor reviews researchers and below, researcher reviews field contributors and volunteers,
-    field contributor reviews volunteers). A record with no creator role on file is treated as a
-    researcher's work."""
+    professor reviews inspectors and below, INSPECTOR REVIEWS DESIGNERS AND BELOW, researcher
+    reviews field contributors and volunteers, field contributor reviews volunteers). A record with
+    no creator role on file is treated as a researcher's work.
+
+    THE INSPECTOR CLAUSE IS A DECISION, NOT AN INHERITANCE, and it is spelled out because the
+    mechanism that produces it is invisible. "Strictly below me" is a rank comparison, so INSERTING
+    a tier above DESIGNER hands it authority over every designer's records with no line of code
+    naming either tier and no test going red. An audit of this ladder flagged exactly that shape
+    before INSPECTOR was added.
+
+    Here the answer is YES ON PURPOSE: inspecting and reviewing a designer's work is what the tier
+    exists for, which is precisely why its rank is 37 and not, say, 34. What an inspector does NOT
+    get is the right to REWRITE that record — ``can_edit_others_record`` narrows this same comparison
+    to Professor and above, and 37 < 40. Review it, send it back, do not silently correct it.
+
+    ``tests/test_inspector_tier.py`` pins both halves and the direction (a professor reviews an
+    inspector; an inspector does not review a peer). Anyone moving INSPECTOR's rank, or adding
+    another tier near it, is changing who may reject a designer's fortnight of fieldwork.
+    """
     if is_master_admin(reviewer):
         return True
     role = getattr(creator_role, "value", creator_role)

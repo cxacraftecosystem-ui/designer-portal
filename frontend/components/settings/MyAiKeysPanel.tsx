@@ -68,7 +68,10 @@ type KeyState = {
 };
 
 /** The designer-facing name of each job. The server sends the enum; this is the only place it is
- *  turned into words, so the six names read the same on every row. */
+ *  turned into words, so the names read the same on every row. Deliberately a COMPLETE mirror of
+ *  `ai_providers.AiTask` — what a row is allowed to SAY is decided by `TASKS_NOTHING_CAN_ASK_FOR`
+ *  below, not by leaving a name out of this dictionary, which would print a raw "SUMMARISE" at a
+ *  designer instead of hiding it. */
 const TASK_LABELS: Record<string, string> = {
   PROOFREAD: "Proofread",
   EXPAND: "Expand",
@@ -78,8 +81,52 @@ const TASK_LABELS: Record<string, string> = {
   CAPTION: "Describe photos"
 };
 
+/**
+ * JOBS THE SERVER'S CATALOGUE LISTS THAT NOTHING IN THIS PRODUCT CAN ACTUALLY ASK FOR.
+ *
+ * **`SUMMARISE` IS ADVERTISED AND UNREACHABLE, AND THIS PANEL WAS THE PLACE THE CLAIM WAS MADE.**
+ * `AiTask.SUMMARISE` is in the enum and in `TEXT_TASKS`, so every chat model in every family carries
+ * it and every "Used for:" line printed it. But there is no way to run one: `ai_verbs.Verb` has five
+ * members — PROOFREAD, EXPAND, TRANSLATE, CAPTION, SUBTITLES — matched one-for-one by five routes
+ * (`POST /{workshop_id}/ai-layers/{proofread,expand,translate,caption,subtitles}`), and SUMMARISE is
+ * in neither list. `ai.summarise_text` does exist, with its own system prompt and a
+ * `LayerKind.SUMMARY` that has a placement law — and NOTHING CALLS IT: its only reference anywhere
+ * in the repository is the `summarize_text` alias on the line beneath its own definition.
+ *
+ * So the line "Used for: … Summarise …" told a designer their own key and their own money would be
+ * spent on a job they cannot ask this product to do. That is a small lie in exactly the place a
+ * person is deciding whether to hand over a credential, which is the worst place in the app to keep
+ * one.
+ *
+ * **WHY HIDDEN RATHER THAN WIRED, WHICH IS THE DECISION AND NOT AN OMISSION.** Wiring it is not the
+ * missing route: a verb in this system is a `Verb` member, a `LayerKind`, a rung in
+ * `ALLOWED_PARENTS`, an acceptance step, an annexure section in the report, cap accounting, and the
+ * same surface on the handset — where a release ships to a fleet that may be offline for a
+ * fortnight. Whether a designer should be able to summarise a transcript, and what a SUMMARY layer
+ * means sitting under a report somebody signs, is a product decision with an owner; it is not
+ * something to conclude as a side effect of correcting a caption. Hiding is reversible in one line
+ * and cannot mislead anybody; shipping a half-wired fifth verb is neither.
+ *
+ * **AND IT IS FILTERED HERE RATHER THAN CUT FROM THE CATALOGUE** because `AiModel.tasks` is an honest
+ * statement about the MODEL — GPT-4o really can summarise — while this line is a statement about
+ * what THIS DEPLOYMENT WILL SPEND YOUR KEY ON. They are different claims and only the second one was
+ * wrong. `ai_providers.py` belongs to another lane besides.
+ *
+ * WHEN A SUMMARISE VERB IS WIRED, DELETE THE ENTRY AND NOTHING ELSE — the label above is already
+ * there, and the same one-line deletion is waiting in the handset's `MyAiKeysScreen.kt`.
+ *
+ * True as of «2026-08-27»; re-check with
+ * «grep -rn "summarise_text\|summarize_text" backend/app» (only the definition and its alias, both
+ * in `services/ai.py`) and «grep -n "class Verb" -A 8 backend/app/services/ai_verbs.py» (five
+ * members, no SUMMARISE among them).
+ */
+const TASKS_NOTHING_CAN_ASK_FOR = new Set(["SUMMARISE"]);
+
 function taskList(tasks: string[]): string {
-  return tasks.map((task) => TASK_LABELS[task] ?? task).join(" · ");
+  return tasks
+    .filter((task) => !TASKS_NOTHING_CAN_ASK_FOR.has(task))
+    .map((task) => TASK_LABELS[task] ?? task)
+    .join(" · ");
 }
 
 function priceLine(model: AiModel, checkedOn: string): string | null {
@@ -367,11 +414,15 @@ export function MyAiKeysPanel() {
         </span>
         <h2 className="font-display font-bold text-ink-900">My AI keys</h2>
       </div>
+      {/* "summarising" was in the list below and is not any more: nothing in this product can ask
+          for a summary — see TASKS_NOTHING_CAN_ASK_FOR. Naming a job here that a designer will then
+          go hunting for and not find is the same lie as printing it on a model's row, told earlier
+          and to somebody who has not yet decided whether to hand over a credential. */}
       <p className="mt-1.5 text-sm leading-6 text-ink-500">
-        Bring your own key and the AI work you ask for — proofreading, expanding, summarising,
-        translating, transcribing and photo descriptions — runs on your account with your provider,
-        at your choice of model, and is billed to you. Leave this empty and everything works exactly
-        as it does now, on the key this server is set up with.
+        Bring your own key and the AI work you ask for — proofreading, expanding, translating,
+        transcribing and photo descriptions — runs on your account with your provider, at your
+        choice of model, and is billed to you. Leave this empty and everything works exactly as it
+        does now, on the key this server is set up with.
       </p>
       <p className="mt-1.5 text-xs leading-5 text-ink-500">
         Your key is stored encrypted, is used only for work you personally ask for, and is never

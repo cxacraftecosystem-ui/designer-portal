@@ -189,6 +189,60 @@ export type ApiFetchOptions = {
    * `/me` probe — see the note in the 401 branch below.
    */
   redirectOn401?: boolean;
+  /**
+   * Let the BROWSER'S OWN HTTP CACHE answer this one request, revalidating the stored copy against
+   * the server's `ETag` instead of re-downloading the body.
+   *
+   * **OFF FOR EVERY CALL BY DEFAULT, AND THAT DEFAULT IS THE POINT.** `cache: "no-store"` on every
+   * other request in this app is deliberate, not an oversight nobody got round to: this client
+   * writes and lists records people travelled to a village to collect, and a list served from a
+   * stale store is the silent-emptiness bug this repository keeps re-filing — a screen that looks
+   * exactly like a place with no records. So this is opt-in **per call**, and there is exactly ONE
+   * caller: `fetchStageRegistry` in `lib/designWorkshops.ts`, for `GET /design-workshops/schema`.
+   * If you are reaching for it for a second endpoint, the question to answer first is not "is this
+   * response big" but "does the server send this one a validator, and is a stale copy of it
+   * harmless" — and for everything that lists records the answer to the second half is no.
+   *
+   * **WHY THAT ONE ENDPOINT QUALIFIES AND ESSENTIALLY NOTHING ELSE DOES.** The field registry is
+   * the largest body this API serves to a cold client, it is a pure constant on the server (no
+   * database read at all, byte-identical for every caller and every role), it changes only on
+   * deployment, and every cold tab must download the whole of it before it can draw a single form.
+   * It is also the only route in this API whose handler reads `If-None-Match` and answers 304 —
+   * `backend/app/api/routes/design_workshops.py::get_stage_schema` sends
+   * `ETag: W/"<sha256 of the emitted bytes>"` with `Cache-Control: private, max-age=0,
+   * must-revalidate`, and a `grep -ri if-none-match backend/app` on 2026-08-28 returns that file and
+   * no other. So turning this option on anywhere else would buy nothing today even where it was
+   * harmless. Sizes and the reasoning behind that validator: `docs/SCALABILITY.md` §9.1.
+   *
+   * **`"no-cache"`, NOT `"default"`, AND THE DIFFERENCE IS A GUARANTEE RATHER THAN A PREFERENCE.**
+   * Under today's headers the two are identical, because `max-age=0, must-revalidate` already
+   * forces a revalidation on every use. `"no-cache"` puts that requirement in the REQUEST, so it
+   * survives anything that widens the response's freshness without this file being reopened — a
+   * CDN or corporate proxy rewriting `Cache-Control`, or an edit to `_SCHEMA_CACHE_CONTROL` made
+   * for some other reason. What it buys is the assurance that this client never renders a registry
+   * the server has not just confirmed, and it costs nothing at all: `"no-cache"` still stores the
+   * response and still sends `If-None-Match`, which is where the entire saving comes from. A stale
+   * registry is the one failure worse than having no cache — a tab holding a field list the server
+   * has moved past renders a form whose keys the server drops at save time, and a field that
+   * silently stops being recorded is indistinguishable, on screen, from one the designer forgot.
+   *
+   * **AND IT IS NOT A SECOND OFFLINE STORE.** `must-revalidate` also forbids serving the stored
+   * copy when revalidation fails, so an unreachable backend produces the same network error it
+   * always did and `lib/designWorkshopStore.ts`'s IndexedDB copy — versioned, and reported to the
+   * screen as `source: "cache"` — stays the one thing that answers offline. An HTTP cache quietly
+   * standing in for it would be an unversioned offline store that no banner knows how to warn about.
+   *
+   * **A CONDITIONAL GET IS INVISIBLE TO EVERY CALLER.** The browser performs the revalidation
+   * itself and materialises the stored response as an ordinary 200 with its body; `fetch` never
+   * surfaces a 304 to JavaScript. So the parsing, the 401 branch and every caller below see exactly
+   * the 200-and-a-body they saw before, and nothing in this client needs to learn what a 304 is.
+   * (A 401 answering the revalidation is NOT a 304, so it reaches the 401 branch normally — the
+   * stored body cannot be served past an expired session. And the server resolves
+   * `get_current_user` before it looks at `If-None-Match`, so the tag is not a way past the
+   * identity dependency either; `backend/tests/test_schema_conditional_get.py::
+   * test_the_tag_is_not_a_way_past_the_identity_dependency` pins that.)
+   */
+  revalidateFromHttpCache?: boolean;
 };
 
 export async function apiFetch<T>(
@@ -208,7 +262,11 @@ export async function apiFetch<T>(
   const response = await fetch(`${API_BASE}/api${path}`, {
     ...init,
     headers,
-    cache: "no-store"
+    // AFTER the spread, so a caller cannot reach the browser cache by putting `cache` in its own
+    // `RequestInit` — the opt-in is the named option and nothing else, which is what keeps
+    // "which requests may be cached" a list of one that a grep can produce. See
+    // `ApiFetchOptions.revalidateFromHttpCache` for what the one is and why.
+    cache: options.revalidateFromHttpCache ? "no-cache" : "no-store"
   });
 
   if (response.status === 204) return undefined as T;

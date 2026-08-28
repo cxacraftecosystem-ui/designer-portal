@@ -83,12 +83,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Observer
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.designprototype.workshop.data.DwQrCrop
 import com.designprototype.workshop.data.DwQrFraction
+import com.designprototype.workshop.data.DwQrFrameRead
+import com.designprototype.workshop.data.DwQrFrameReader
+import com.designprototype.workshop.data.MlKitQrFrameReader
+import com.designprototype.workshop.data.ReferenceQrFrameReader
 import com.designprototype.workshop.data.dwQrReticleFraction
-import com.designprototype.workshop.data.DwQrLiveDecoder
-import com.designprototype.workshop.data.dwQrCompactLuminance
-import com.designprototype.workshop.data.dwQrCropInBuffer
 import com.designprototype.workshop.ui.designworkshop.hasPermission
 import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
@@ -127,6 +127,24 @@ import java.util.concurrent.atomic.AtomicReference
  *    there is no rear lens — and [dwQrCameraUnavailable] says why it is in this file rather than in
  *    that one, and builds it out of that file's own `DwCameraUse.alternatives` so that the clause
  *    which would actually drift cannot.
+ *
+ * ── WHAT READS THE FRAME CHANGED ON 2026-08-28, AND THIS FILE NO LONGER DECIDES IT ────────────
+ *
+ * Until then this file cropped each frame to the reticle and ran ZXing on it directly. The owner
+ * reported on 2026-08-27 that a code held inside the box was not being read, and
+ * `app/build.gradle.kts` had already recorded — dated and measured — that ML Kit reads a bent,
+ * angled or glared live frame better than ZXing, as an ACCEPTED REGRESSION. The regression became
+ * the defect, so the decoding moved behind a seam: `data/DwQrFrameReader.kt` holds
+ * `MlKitQrFrameReader` (the live camera's reader, bundled model, QR only) and
+ * `ReferenceQrFrameReader` (the ZXing arrangement that used to live here, kept because it is the
+ * only reader a build on a machine with no handset can make an accuracy claim about, and because it
+ * is what a device where ML Kit cannot start falls back to).
+ *
+ * TWO CONSEQUENCES LAND IN THIS FILE AND NOWHERE ELSE. ML Kit has no crop parameter, so the reticle
+ * is honoured by REFUSING a sighting whose centre falls outside the box rather than by never showing
+ * the reader anything else — and a refusal is therefore something a designer must be told about, so
+ * [DW_QR_LIVE_OUTSIDE_BOX] exists. And a device that could not start ML Kit is running the behaviour
+ * that was complained about, so [DW_QR_LIVE_REFERENCE_READER] says which of the two it has.
  *
  * ── IT IS A DIALOG AND NOT A NAVIGATION DESTINATION ───────────────────────────────────────────
  *
@@ -211,6 +229,47 @@ const val DW_QR_LIVE_STILL_TRYING =
 const val DW_QR_LIVE_STALLED =
     "The camera has stopped sending pictures. Close this and open it again."
 
+/**
+ * Said when a code WAS read and was then refused for sitting outside the box.
+ *
+ * ── THIS SENTENCE IS THE PRICE OF READING THE WHOLE FRAME, AND IT IS WORTH PAYING ─────────────
+ *
+ * The reader is given the whole picture and a sighting is judged afterwards, because the defect
+ * reported on 2026-08-27 was codes INSIDE the box not reading, and cropping is what manufactures
+ * that. The cost of reading everything is that a code the designer did not aim at can be seen, and
+ * refusing it silently would produce the identical symptom from the opposite direction: a designer
+ * looking at a code, and an app that says nothing. So the refusal is said, and it says the one thing
+ * that fixes it.
+ *
+ * IT NAMES THE BOX AND NOT A DIRECTION. Which way to move depends on where the code is, which this
+ * sentence does not know and a designer holding the phone can see.
+ */
+const val DW_QR_LIVE_OUTSIDE_BOX =
+    "A code was seen, but outside the box — line it up inside the brackets to read it."
+
+/**
+ * Said when this device could not start the better reader and the simpler one is carrying the scan.
+ *
+ * ── SAID, RATHER THAN DEGRADED IN SILENCE, WHICH IS THIS FEATURE'S WHOLE DISCIPLINE ───────────
+ *
+ * `MlKitQrFrameReader` is the live path; `ReferenceQrFrameReader` is ZXing and is measurably worse on
+ * a bent, angled or glared frame — `app/build.gradle.kts` records that as the trade this change
+ * reversed. A device where ML Kit cannot start therefore has the OLD behaviour, which is the
+ * behaviour that was complained about, and a designer meeting it deserves to be told which of the
+ * two things is happening rather than concluding the fix never landed.
+ *
+ * IT SENDS THEM TO THE PHOTOGRAPH, on [DW_QR_LIVE_STILL_TRYING]'s reasoning and not on a hunch: the
+ * still path decodes at full resolution and walks `DW_QR_SAMPLE_LADDER`, which is a genuinely
+ * different tool rather than a retry.
+ */
+const val DW_QR_LIVE_REFERENCE_READER =
+    "This device could not start the better code reader, so a simpler one is being used — it needs " +
+        "the code flatter, steadier and better lit. If it will not read, close this and press " +
+        "“Scan a code” to take a photograph instead."
+
+/** How long a refused sighting stays on screen after the last one, so it does not flicker. */
+private const val DW_QR_LIVE_OUTSIDE_BOX_MS = 1_500L
+
 /** How long a fruitless look lasts before [DW_QR_LIVE_STILL_TRYING] is offered. */
 private const val DW_QR_LIVE_PATIENCE_MS = 20_000L
 
@@ -237,6 +296,14 @@ private const val DW_QR_REBIND_SLOP_PX = 24
  * ~518 pixels, and the largest symbol this app prints (version 6, 41 modules) is then 12 pixels per
  * module — six times `DwQrDecodeTest`'s measured two-pixel floor. Asking for more would cost the
  * compaction loop and the binarizer real milliseconds per frame for headroom nothing uses.
+ *
+ * THAT ARITHMETIC IS THE REFERENCE READER'S AND IS UNCHANGED; ML KIT'S IS NOT DERIVED HERE, AND THAT
+ * IS AN HONEST GAP RATHER THAN AN OVERSIGHT (2026-08-28). Nothing on this machine can measure how
+ * many pixels per module ML Kit needs — it cannot run in a JVM test — so no number is invented for
+ * it. What can be said is that 1280×720 is the resolution the shipping fallback was sized for and is
+ * comfortably above the floor of the only reader anybody here can measure. If a handset ever reads
+ * worse than the reference reader on the same card, this constant is the first thing to raise, and
+ * the cost of raising it is now ML Kit's inference time rather than a compaction loop.
  *
  * A FUNCTION AND NOT A TOP-LEVEL `val`, WHICH IS ABOUT TESTABILITY AND NOT STYLE. A top-level
  * property runs in this file's facade-class initialiser, so merely calling
@@ -378,11 +445,19 @@ fun DwQrLiveScanControl(
  *     view-port ratio equal to the box's, Crop and Fit coincide — which is the point: it is stated
  *     rather than left to a default that could move in a version bump.
  *
- * The arithmetic between (1) and (2) is `dwQrCropInBuffer`, which is pure and asserted by
- * `DwQrLiveFrameTest` on this machine. What is NOT asserted anywhere is whether CameraX fills
- * `cropRect` on a real handset the way its documentation says; that is a hardware claim this
- * repository cannot make, and it is exactly why a whole-frame decode is the fallback rather than a
- * guessed rectangle.
+ * The arithmetic between (1) and (2) is `dwQrCropInBuffer` for the reference reader and
+ * `dwQrReticleInUprightFrame` for ML Kit — two functions because they answer in two different
+ * spaces, both pure, both asserted by `DwQrLiveFrameTest` on this machine. What is NOT asserted
+ * anywhere is whether CameraX fills `cropRect` on a real handset the way its documentation says;
+ * that is a hardware claim this repository cannot make.
+ *
+ * THAT UNVERIFIABLE CLAIM IS WHY THE TWO READERS TREAT IT DIFFERENTLY, AND IT IS THE HEART OF THE
+ * 2026-08-28 FIX. A cropping reader that is handed a wrong `cropRect` looks at the wrong part of the
+ * picture and reports nothing, silently — the invisible failure, and the reported defect. A reader
+ * given the WHOLE frame reads the code regardless, and a wrong `cropRect` can then only misplace the
+ * acceptance box, which produces [DW_QR_LIVE_OUTSIDE_BOX] on screen instead of silence. The same
+ * unknown fact fails loudly on one path and quietly on the other, and the live camera is now on the
+ * loud one.
  */
 @Composable
 fun DwQrLiveScannerDialog(
@@ -423,12 +498,47 @@ fun DwQrLiveScannerDialog(
     /** `System.currentTimeMillis` of the last frame, and how many have arrived. */
     val lastFrameAt = remember { AtomicLong(0L) }
     val framesSeen = remember { AtomicLong(0L) }
+    /** When a code was last seen and refused for sitting outside the box. Zero means never. */
+    val outsideBoxAt = remember { AtomicLong(0L) }
 
     /**
-     * ONE thread for the analyser, and it is what makes [DwQrLiveDecoder]'s shared reader safe.
-     * `newSingleThreadExecutor` and not a pool: two frames decoded at once would share one
-     * `MultiFormatReader`, which the still path's own comment explains is a bug that shows up as a
-     * code decoding to the wrong text under load.
+     * THE TWO READERS, BOTH BUILT ONCE PER SCANNER AND NEITHER SHARED ACROSS TWO.
+     *
+     * `remember` and not a top-level singleton, for the reason `DwQrLiveDecoder`'s own header gives
+     * about being a class rather than an object: one reader belongs to one analyser, which is what
+     * makes its single-threaded use a fact rather than a hope the day a second scanner is mounted.
+     *
+     * BOTH ARE BUILT EVEN THOUGH ONLY ONE USUALLY READS. `ReferenceQrFrameReader` costs one
+     * `MultiFormatReader` and a zero-length byte array, and building it lazily inside the analyser
+     * would put an allocation on the frame that has just discovered ML Kit is unusable — the one
+     * frame least able to afford it.
+     */
+    val mlKitReader = remember { MlKitQrFrameReader() }
+    val referenceReader = remember { ReferenceQrFrameReader() }
+    /**
+     * Whether the reference reader is carrying the scan, so the screen can say so.
+     *
+     * Compose state written by the main-thread poll loop from `DwQrFrameReader.unavailable`, rather
+     * than by the analyser: the flag is a fact about the device that settles on the first frame or
+     * two, and reading it once every 200 ms costs nothing against a volatile boolean.
+     */
+    var referenceReaderInUse by remember { mutableStateOf(false) }
+    var sawOutsideBox by remember { mutableStateOf(false) }
+
+    /**
+     * ONE thread for the analyser, and it now carries THREE loads rather than one.
+     *
+     * `newSingleThreadExecutor` and not a pool, because:
+     *
+     *  1. `DwQrLiveDecoder`'s shared `MultiFormatReader` is not thread-safe, and two frames decoded
+     *     at once through one reader is a bug that shows up as a code decoding to the WRONG text
+     *     under load — the still path's own comment says so at length.
+     *  2. `MlKitQrFrameReader.read` BLOCKS this thread while an inference runs. On a pool that would
+     *     be several inferences in flight over several frames, which is throughput nobody asked for
+     *     and memory a mid-range handset does not have; here it simply means the next frames are
+     *     dropped by `STRATEGY_KEEP_ONLY_LATEST`, which is that strategy's entire purpose.
+     *  3. It is what makes the dispose ordering below EXACT rather than probable: the readers' close
+     *     is queued as a task and cannot start until the frame in flight has finished.
      */
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
 
@@ -505,11 +615,14 @@ fun DwQrLiveScannerDialog(
                 setAnalyzer(
                     analysisExecutor,
                     DwQrFrameAnalyzer(
+                        primary = mlKitReader,
+                        reference = referenceReader,
                         reticle = { reticleSink.get() },
                         onFrame = { at ->
                             lastFrameAt.set(at)
                             framesSeen.incrementAndGet()
                         },
+                        onOutsideTheBox = { at -> outsideBoxAt.set(at) },
                         onDecoded = { text -> hitSink.compareAndSet(null, text) },
                     ),
                 )
@@ -553,13 +666,32 @@ fun DwQrLiveScannerDialog(
             //  1. `clearAnalyzer()` — stop frames reaching the executor at all.
             //  2. `unbindAll()` — release the camera. ALWAYS, and not left to the lifecycle, because
             //     "eventually" here means a torch left burning and a camera the next app cannot open.
-            //  3. `shutdown()` — only now, and `shutdown` rather than `shutdownNow`, so a task
-            //     already accepted is allowed to finish rather than interrupted mid-decode.
+            //  3. QUEUE THE READERS' `close()` on the analyser's own thread — see below.
+            //  4. `shutdown()` — only now, and `shutdown` rather than `shutdownNow`, so a task
+            //     already accepted is allowed to finish rather than interrupted mid-decode. That is
+            //     also what lets step 3's queued task run at all.
             //
-            // Reversed, step 3 leaves CameraX submitting frames to a dead executor for the moment in
+            // Reversed, step 4 leaves CameraX submitting frames to a dead executor for the moment in
             // between, which surfaces as a RejectedExecutionException on one of its own threads.
             runCatching { analysisSink.get()?.clearAnalyzer() }
             runCatching { providerSink.get()?.unbindAll() }
+            // 3b. THE READERS ARE CLOSED **ON THE ANALYSER'S OWN THREAD**, AS ITS LAST TASK.
+            //
+            //
+            //     `close()` releases ML Kit's native detector, and releasing it while a frame is
+            //     still inside `read` is a crash in code this app does not own. `shutdown()` does not
+            //     wait for the running task, and waiting for it here would block the MAIN thread on
+            //     an inference at the moment the dialog is being dismissed. Submitting the close as a
+            //     task instead uses the one property this executor was chosen for: it is SINGLE
+            //     THREADED, so a queued task cannot start until the frame in flight has finished.
+            //
+            //     Closing inline is the fallback for a submit that is rejected, which would mean the
+            //     executor was already down and no frame can be in flight either.
+            val closeReaders = Runnable {
+                runCatching { mlKitReader.close() }
+                runCatching { referenceReader.close() }
+            }
+            runCatching { analysisExecutor.execute(closeReaders) }.onFailure { closeReaders.run() }
             runCatching { analysisExecutor.shutdown() }
         }
     }
@@ -601,6 +733,13 @@ fun DwQrLiveScannerDialog(
             // second one a failure is how a slow handset comes to look broken.
             stalled = framesSeen.get() > 0L && now - lastFrameAt.get() > DW_QR_LIVE_STALL_MS
             patienceSpent = now - startedAt > DW_QR_LIVE_PATIENCE_MS
+            // Both read here rather than pushed from the analyser thread, on the same reasoning the
+            // hit is: the analyser writes atomics and this loop is the only thing that turns them
+            // into Compose state. `unavailable` cannot be claimed before a frame has arrived, or a
+            // device whose ML Kit is perfectly fine would announce a fallback while the camera opens.
+            referenceReaderInUse = framesSeen.get() > 0L && mlKitReader.unavailable
+            val refusedAt = outsideBoxAt.get()
+            sawOutsideBox = refusedAt > 0L && now - refusedAt < DW_QR_LIVE_OUTSIDE_BOX_MS
             delay(DW_QR_LIVE_POLL_MS)
         }
     }
@@ -825,11 +964,24 @@ fun DwQrLiveScannerDialog(
                 if (frontLensFallback) {
                     DwQrLiveNote(DW_QR_LIVE_FRONT_LENS)
                 }
-                // A STALL AND A FRUITLESS LOOK ARE DIFFERENT SENTENCES, and the stall wins: telling
-                // somebody to take a photograph instead when the pipeline has died would send them
-                // to a second camera path for a problem that is not about the card at all.
+                // THE READER THIS DEVICE ENDED UP WITH, said whenever it is the worse one. It is not
+                // in the ladder below because it is not a diagnosis of the current attempt — it is a
+                // standing fact about the handset, true from the first frame to the last, and it
+                // changes what every other sentence here means.
+                if (referenceReaderInUse && hit == null) {
+                    DwQrLiveNote(DW_QR_LIVE_REFERENCE_READER)
+                }
+                // A STALL, A REFUSED SIGHTING AND A FRUITLESS LOOK ARE THREE SENTENCES AND ONLY ONE
+                // IS SHOWN, in this order and for this reason. The stall wins outright: telling
+                // somebody to take a photograph instead when the pipeline has died would send them to
+                // a second camera path for a problem that is not about the card at all. A refused
+                // sighting beats the patience timer because it is the more specific answer — the app
+                // is reading fine and the code is in the wrong place, which "take a photograph"
+                // would talk them out of doing anything about.
                 if (stalled) {
                     DwQrLiveNote(DW_QR_LIVE_STALLED)
+                } else if (sawOutsideBox && hit == null) {
+                    DwQrLiveNote(DW_QR_LIVE_OUTSIDE_BOX)
                 } else if (patienceSpent && hit == null) {
                     DwQrLiveNote(DW_QR_LIVE_STILL_TRYING)
                 }
@@ -856,72 +1008,72 @@ private fun DwQrLiveNote(message: String) {
 }
 
 /**
- * One live frame, cropped to the reticle and handed to ZXing.
+ * One live frame, handed to whichever reader is working on this device.
  *
- * ── EVERY LINE IN `analyze` IS THERE FOR A FAILURE THAT REALLY HAPPENS ────────────────────────
+ * ── WHAT THIS CLASS STOPPED DOING ON 2026-08-28, AND WHY THAT IS THE FIX ──────────────────────
  *
- *  * `image.close()` IN A `finally`, ON EVERY PATH. An unclosed `ImageProxy` stalls the CameraX
- *    pipeline dead after `imageQueueDepth` frames, and it presents to a designer as "the preview
- *    froze" — which is why this class also reports every frame it sees, so a stall can be SAID.
- *  * THE LATCH. [done] is set inside the analyser, so a code that is still in front of the lens
- *    cannot produce a second callback while the unbind is in flight. Five to ten repeats is the
+ * It used to crop the frame to the reticle and run ZXing on the copied-out luminance itself. Every
+ * line of that still exists and still ships — it is `ReferenceQrFrameReader` — but it is no longer
+ * where the decoding decision lives. The owner reported on 2026-08-27 that a code held inside the box
+ * was not being read, `app/build.gradle.kts` had already recorded that ML Kit reads a bent, angled or
+ * glared live frame better than ZXing as an ACCEPTED REGRESSION, and the regression became the defect.
+ * `data/DwQrFrameReader.kt` holds the seam, both readers and the whole argument.
+ *
+ * ── EVERY LINE IN `analyze` IS STILL THERE FOR A FAILURE THAT REALLY HAPPENS ──────────────────
+ *
+ *  * `image.close()` IN A `finally`, ON EVERY PATH, UNCHANGED. An unclosed `ImageProxy` stalls the
+ *    CameraX pipeline dead after `imageQueueDepth` frames, and it presents to a designer as "the
+ *    preview froze" — which is why this class also reports every frame it sees, so a stall can be
+ *    SAID. It survives a reader that BLOCKS this thread only because [DwQrFrameReader]'s contract
+ *    requires a reader to be finished with the image before `read` returns; ML Kit's own sample
+ *    closes the proxy in a task callback instead, and that shape was rejected for this reason.
+ *  * THE LATCH, UNCHANGED. [done] is set inside the analyser, so a code that is still in front of the
+ *    lens cannot produce a second callback while the unbind is in flight. Five to ten repeats is the
  *    ordinary case without it, and on `RecordCodeLookup` each one is a network lookup.
- *  * NO ROTATION OF THE BUFFER. ZXing's finder-pattern search is rotation-invariant for QR, and
- *    rotating a 1280×720 luminance plane per frame is the single most expensive line a naive
- *    implementation has. `rotationDegrees` enters the coordinate map and nothing else.
- *  * A NULL RETICLE MEANS THE WHOLE DISPLAYED RECTANGLE, never a guessed one. Slower, never wrong.
+ *  * NO ROTATION OF THE BUFFER, STILL — BY EITHER READER. ZXing's finder-pattern search is
+ *    rotation-invariant for QR and takes the rotation through the coordinate map. ML Kit is HANDED
+ *    the rotation as a fact and turns the picture inside its own native code. Neither costs this
+ *    thread a rotation of a 1280x720 plane, which is what that rule was ever about.
+ *  * A NULL RETICLE MEANS THE WHOLE FRAME, never a guessed rectangle. Slower, never wrong.
+ *  * A REFUSED SIGHTING IS REPORTED, WHICH IS NEW. A code read and then rejected for sitting outside
+ *    the box is the one failure this change introduces, and an unreported one would look exactly like
+ *    the defect being fixed. [onOutsideTheBox] is what puts [DW_QR_LIVE_OUTSIDE_BOX] on screen.
  *
- * [onFrame] and [onDecoded] are called ON THE ANALYSER THREAD and must not touch Compose state.
- * Both write atomics that the dialog's own main-thread loop reads; that indirection is the point.
+ * [onFrame], [onOutsideTheBox] and [onDecoded] are called ON THE ANALYSER THREAD and must not touch
+ * Compose state. All three write atomics that the dialog's own main-thread loop reads; that
+ * indirection is the point.
  */
 private class DwQrFrameAnalyzer(
+    private val primary: DwQrFrameReader,
+    private val reference: DwQrFrameReader,
     private val reticle: () -> DwQrFraction?,
     private val onFrame: (Long) -> Unit,
+    private val onOutsideTheBox: (Long) -> Unit,
     private val onDecoded: (String) -> Unit,
 ) : ImageAnalysis.Analyzer {
 
-    private val decoder = DwQrLiveDecoder()
     private val done = AtomicBoolean(false)
 
     override fun analyze(image: ImageProxy) {
         try {
             if (done.get()) return
-            val plane = image.planes.firstOrNull() ?: return
-            val cropRect = image.cropRect
-            // `cropRect` defaults to the whole image when no ViewPort was bound, which is exactly the
-            // right fallback: the reticle fraction is then taken against the whole frame, and the
-            // preview is showing the whole frame too.
-            val displayed = DwQrCrop(
-                left = cropRect.left,
-                top = cropRect.top,
-                width = cropRect.width(),
-                height = cropRect.height(),
-            )
-            val target = reticle()?.let { fraction ->
-                dwQrCropInBuffer(
-                    reticle = fraction,
-                    displayed = displayed,
-                    rotationDegrees = image.imageInfo.rotationDegrees,
-                    bufferWidth = image.width,
-                    bufferHeight = image.height,
-                )
-            } ?: displayed
-            if (target.width <= 0 || target.height <= 0) return
-
-            val luminance = decoder.luminanceBuffer(target.width * target.height)
-            val compacted = dwQrCompactLuminance(
-                source = plane.buffer,
-                rowStride = plane.rowStride,
-                pixelStride = plane.pixelStride,
-                crop = target,
-                into = luminance,
-            )
-            // FALSE IS NOT AN ERROR. It means this frame's strides did not describe a readable
-            // region — a buffer shorter than it claims — and the next frame arrives in 33 ms.
-            if (!compacted) return
-
-            val text = decoder.decode(luminance, target.width, target.height)
-            if (text != null && done.compareAndSet(false, true)) onDecoded(text)
+            val box = reticle()
+            val first = if (primary.unavailable) reference.read(image, box) else primary.read(image, box)
+            // THE SAME FRAME IS OFFERED TO THE REFERENCE READER when the primary declined it AND has
+            // just declared itself unusable on this device. That is one frame rather than a wasted
+            // one, and it is the only place the two readers ever both see a picture: after the
+            // primary is down, the branch above sends every later frame straight to the reference.
+            val read = if (first is DwQrFrameRead.None && primary.unavailable) {
+                reference.read(image, box)
+            } else {
+                first
+            }
+            when (read) {
+                is DwQrFrameRead.Read ->
+                    if (done.compareAndSet(false, true)) onDecoded(read.sighting.text)
+                is DwQrFrameRead.OutsideTheBox -> onOutsideTheBox(System.currentTimeMillis())
+                DwQrFrameRead.None -> Unit
+            }
         } catch (_: Throwable) {
             // A frame is never worth a crash. CameraX invokes this on its own executor, so anything
             // escaping here takes the analyser thread with it and the preview freezes — the same

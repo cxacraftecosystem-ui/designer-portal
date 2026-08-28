@@ -8,7 +8,7 @@ from app.core.deps import get_current_user
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination
 from app.services.record_filters import RECORD_TYPES, build_record_wheres, resolve_types
-from app.services.records import media_url_owners, public_encode, with_id_tiebreak
+from app.services.records import media_url_owners, media_url_scope, public_encode, with_id_tiebreak
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -106,6 +106,74 @@ async def global_search(
     # An unselected bucket contributes NO coroutine — it must not cost a round trip to return 0 —
     # so the reads are collected with their bucket names and zipped back up after the gather.
     planned: list[tuple[str, Any]] = []
+
+    # WHOSE MEDIA BYTES MAY TRAVEL, PLANNED FIRST SO IT RIDES THE SAME WAVE AS THE BUCKETS. This is
+    # not a bucket and it reports no total: all five buckets are encoded by the single
+    # ``public_encode`` at the bottom of this route, and it is that ONE call that decides which
+    # ``url`` values survive, so SOME answer is needed whatever `types` selected.
+    #
+    # THE TWO HALVES ARE NOT NEEDED ON THE SAME SELECTIONS, WHICH IS WHY THERE ARE TWO CALLS HERE.
+    # ``media_urls`` is tested against the ``uploadedById`` of every file in the payload, and the
+    # products and tools buckets embed their own media by ``include``, so it is needed even when
+    # nobody asked for the media bucket. ``media_workshops`` is tested against a FILE'S OWN
+    # ``linkedRecordType``/``linkedRecordId``, and only the ``media`` bucket can put such a node in
+    # this payload: products and tools reach media through ``productId``/``toolId``, which
+    # ``records.media_relation_data`` writes only from the ``product``/``tool`` link types — that map
+    # has no ``designWorkshop`` key, and no column on ``MediaFile`` points at a DesignWorkshop at all
+    # (true as of 2026-08-27; check
+    # `grep -n "def media_relation_data" -A 15 backend/app/services/records.py`). The only other
+    # writer of those two columns is ``POST /media/{id}/relink``, and its ``_relink_delegate`` has no
+    # design-workshop entry either, so that type is a 400 before anything is written (true as of
+    # 2026-08-27; check `grep -n "def _relink_delegate" -A 30 backend/app/api/routes/media.py`). No
+    # row can therefore hold a product or tool foreign key AND the design-workshop tag. The rest of
+    # the derivation is written out at the encode below, because that is where the halves are spent.
+    #
+    # So without the media bucket the workshop read is a round trip that cannot alter one byte of the
+    # response, and this route already refuses to pay those — the paragraph above says an unselected
+    # bucket must not cost a round trip to return 0, and this is that same rule, one line further on.
+    # The narrow shape is not hypothetical: the dashboard totals link straight to
+    # ``/search?type=tools``, and the web filter panel sends a canonical comma-joined ``types`` for
+    # whatever the researcher ticked.
+    #
+    # THE UPLOADER HALF STAYS UNCONDITIONAL, INCLUDING ON ``?types=artisans`` WHERE NOTHING IN THE
+    # PAYLOAD CAN CARRY A MEDIA NODE. Skipping it there would need a SECOND derivation — "artisan and
+    # workshop rows embed no media" — which holds only until someone adds an ``include``, and it would
+    # buy that shape nothing anyway: the encode still has to be handed a set, and ``public_encode``'s
+    # own default is NARROWER than this answer (the viewer's own uploads, no grants), so the saved
+    # read would have to be replaced by a wrong answer rather than by nothing. One conditional, on the
+    # one fact this file already had to write down.
+    #
+    # Free for professor and above either way: both calls short-circuit to "every URL" with no query.
+    if "media" in selected:
+        planned.append(("media_scope", media_url_scope(current_user)))
+    else:
+        planned.append(("media_uploaders", media_url_owners(current_user)))
+
+    # THE ARITHMETIC, AND THE GATHER COMES OUT LEVEL RATHER THAN AHEAD. A Prisma hop here is ~750ms
+    # and the only number that moves this page is how many run IN SERIES. Before this change the route
+    # gathered the buckets (one hop) and then awaited ``media_url_owners`` at the encode (one more):
+    # two hops. ``media_url_scope`` is TWO reads run one after the other — the grant table, then the
+    # workshops this account may open — so awaiting it at the encode would now cost three, a hop the
+    # widest read in the app did not previously pay. Gathered, its FIRST read overlaps the bucket
+    # queries and the wave is two hops deep instead of one, which leaves the route exactly where it
+    # started. An earlier draft of this comment claimed it came out AHEAD; the arithmetic does not
+    # support that, because the two reads are sequential inside ``media_url_scope`` and only the first
+    # of them can hide behind the buckets. Where the route DOES come out ahead is the other branch:
+    # without the media bucket the lone uploader read overlaps the buckets outright and the whole wave
+    # is one hop, against two before. That is the conditional above paying for itself, and it is worth
+    # keeping the two claims apart — the gather buys level, dropping a read nobody can observe buys
+    # the hop.
+    #
+    # PLANNED FIRST, AND THAT ORDERING IS LOAD-BEARING RATHER THAN TIDY. ``gather_reads`` bounds
+    # itself with a semaphore of ``pool_width()`` — ``DATABASE_CONNECTION_LIMIT``, ten by default
+    # (true as of 2026-08-27; check `grep -n database_connection_limit backend/app/core/config.py`) —
+    # and admits coroutines in the order it is handed them. An omitted ``types`` means all five
+    # buckets, which is ten reads, exactly filling the pool; this one is then the eleventh and there
+    # is no slot for it. LAST in the list it would wait for a bucket to return before starting its own
+    # two serial reads — three hops, WORSE than the sequential version it replaced, and worst on the
+    # default search. FIRST it takes a slot immediately, and the bucket read that queues in its place
+    # is a single hop that lands alongside this pair's second one, off the critical path. Keep this
+    # plan above the bucket block.
     if "artisans" in selected:
         planned.append(("artisans", db.artisan.count(where=artisan_where)))
         planned.append(
@@ -141,6 +209,19 @@ async def global_search(
     results = dict(zip([name for name, _ in planned], await gather_reads(*(coro for _, coro in planned))))
 
     totals = {name: results.get(name, 0) for name in SEARCH_TYPES}
+    # Unpacked into two named locals rather than passed inline, so both halves are visibly SPENT at
+    # the encode below. A pair that arrives as one expression is a pair whose second half a later
+    # edit can drop without the diff looking wrong, and that is precisely the shape of omission the
+    # ``THE FIELDS THAT HAND OVER BYTES`` banner above ``records._MEDIA_URL_KEYS`` warns about.
+    #
+    # The two plans carry DIFFERENT KEYS so the branch is legible in the results rather than hidden in
+    # a shape test on one value, and the empty workshop half is WRITTEN OUT instead of left to
+    # ``public_encode``'s default: the half this request deliberately did not pay for should be
+    # visible at the place it is spent, not inferred from an argument that is missing.
+    if "media_scope" in results:
+        media_urls, media_workshops = results["media_scope"]
+    else:
+        media_urls, media_workshops = results["media_uploaders"], frozenset()
     artisans = results.get("artisans_rows", [])
     workshops = results.get("workshops_rows", [])
     products = results.get("products_rows", [])
@@ -152,11 +233,40 @@ async def global_search(
     # the RESOLVED set, in bucket order, so a client can show "searching artisans and media" without
     # re-deriving what an omitted parameter meant.
     #
-    # ``media_urls`` is resolved rather than left to the cheap default. Search is the widest read in the
-    # app and the media bucket is one of its five, so this is exactly the surface where "everyone may
-    # look, taking data out stays earned" has to hold: every media ROW comes back, and the fetchable
-    # ``url`` on it comes back only for uploaders the caller may download from. One query, and only
-    # below professor — see ``records.media_url_owners``.
+    # BOTH HALVES OF THE MEDIA ANSWER ARE NAMED HERE. Search is the widest read in the app and the
+    # media bucket is one of its five, so this is exactly the surface where "everyone may look, taking
+    # data out stays earned" has to hold: every media ROW comes back, and the fetchable ``url`` on it
+    # comes back only to a caller entitled to those bytes. ``media_workshops`` is empty on a selection
+    # that omitted the media bucket, and empty BY DECISION rather than by omission — see the plan
+    # above for why nothing in the other four buckets can be tested against it.
+    #
+    # THIS ROUTE READS THE ``MediaFile`` TABLE ITSELF, WHICH IS WHY IT NEEDS THE SECOND HALF AND THE
+    # RECORD ROUTES DO NOT — and, one step further, why the second read is planned only when the media
+    # bucket was selected. ``products``, ``tools`` and ``processes`` reach media through a parent
+    # foreign key that ``records.media_relation_data`` writes FROM the link type, so the tag on
+    # anything they return is the parent's own. Nothing narrows this bucket that way:
+    # ``record_filters`` builds ``wheres["media"]`` from ``viewable_where(…, "uploadedById")``, which
+    # is empty by design (reading the repository is open to every signed-in account), plus free text,
+    # media type, date range and workshop scope. A design-workshop attachment carries
+    # ``linkedRecordType="designWorkshop"`` and the workshop id and NO parent foreign key at all
+    # (``dictation_consent.MEDIA_TAG`` — there is no column on MediaFile pointing at a
+    # DesignWorkshop), so it is an ordinary row of that table and it comes back to anybody who
+    # searches.
+    #
+    # THE DEFECT THAT CLOSES HERE. With the uploader set as the only test, a co-designer searching
+    # their own workshop was shown the row and refused the ``url`` for a recording the same account
+    # can already play through ``GET /design-workshops/{id}/transcripts``, take through ``/export``
+    # and ``/data``, read as text off stage 8, and see printed into the report they generate
+    # themselves. Five surfaces handed the bytes over and this one said no, which does not protect
+    # the file — it just makes search look broken to the one person the workshop grant exists for.
+    #
+    # WHICH HALF DOES THE WIDENING MATTERS MORE ON THIS ROUTE THAN ANYWHERE ELSE. ``media_workshops``
+    # is a set of WORKSHOP ids tested against the FILE's own tag columns; it is not extra uploaders
+    # folded into ``media_urls`` (see ``records.media_url_scope`` for why the two cannot be one set).
+    # The same ``media_urls`` is applied to the artisan, workshop, product and tool buckets in this
+    # very payload, none of which has a workshop in it, so widening the uploader set for one
+    # workshop's sake would hand over every file that uploader has ever attached to anything, in four
+    # other buckets, to anyone who typed a query.
     return public_encode(
         {
             "query": q,
@@ -175,5 +285,6 @@ async def global_search(
             "pageCount": max(1, (max(totals.values()) + page_size - 1) // page_size),
         },
         current_user,
-        media_urls=await media_url_owners(current_user),
+        media_urls=media_urls,
+        media_workshops=media_workshops,
     )

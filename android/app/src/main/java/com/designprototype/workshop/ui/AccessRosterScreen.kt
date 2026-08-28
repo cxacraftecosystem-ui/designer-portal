@@ -917,5 +917,11 @@ private val ACCESS_GRANTABLE_ROLES = listOf(
     "FIELD_CONTRIBUTOR",
     "RESEARCHER",
     "DESIGNER",
+    // OFFERED, and it was a decision rather than a default. An inspector is someone brought in to
+    // look at a designer's work, which is exactly the kind of person an admin admits from this
+    // dialog rather than promoting afterwards from Manage users. It is also the safe side of the
+    // line this list draws: the tiers held back are the two that can lock the institution out, and
+    // an inspector can do neither — no account creation, no roster edit, no workshop authority.
+    "INSPECTOR",
     "PROFESSOR",
 )

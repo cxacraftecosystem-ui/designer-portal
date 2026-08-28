@@ -137,7 +137,53 @@ data class PendingEntry(
      * Defaulted, so an entry queued by an earlier build decodes with null and behaves exactly as it
      * did — sticking until a person deals with it. See [blocksRetry] for the whole policy.
      */
-    val skewRun: String? = null
+    val skewRun: String? = null,
+    /**
+     * THE SERVER SAYS SOMEBODY ELSE'S RECORD ALREADY OCCUPIES THIS — an answered 409, and an
+     * outcome of its own rather than one more anonymous [failure].
+     *
+     * ── WHY A SIXTH KIND OF "NOT SYNCED", WHEN FIVE ALREADY SEEMS LIKE PLENTY ──────────────────
+     *
+     * This queue tells five apart today, and each earns its own sentence because each ends
+     * differently for the designer holding the phone:
+     *
+     *   1. WAITING              — [failure] null. A connection moves it. Cloud-off icon, no action.
+     *   2. TRANSIENT            — nothing is written down at all: `replayEntry` answers `Retry`, the
+     *                             pass stops, the queue keeps its order. `WorkshopRepository.isTransient`.
+     *   3. REFUSED, ON A PERSON — [failure] set, [skewRun] null. A bad field, a permission, a record
+     *                             the office deleted. [blocksRetry] parks it until somebody taps Try again.
+     *   4. REFUSED, ON A BUILD  — [skewRun] set. The two builds disagree about the SHAPE of the
+     *                             request; nobody typed anything wrong, and the next app run re-attempts it.
+     *   5. SAVED, FILES REFUSED — [createdId] set with files still outstanding. The record IS on the
+     *                             server, so the entry may never be replayed and may never be deleted.
+     *
+     * A 409 is none of those. Nothing on the record is wrong, no update to either build will clear
+     * it, and it is not waiting on a permission: the register simply already holds a record that
+     * occupies the same identity — a clashing Aadhaar (`backend/app/api/routes/artisans.py`, whose
+     * detail NAMES the existing artisan and their place), a craft already called that
+     * (`backend/app/api/routes/crafts.py`), an interview that already exists for this exact set of
+     * artisans (`backend/app/api/routes/questionnaire.py::_DUPLICATE_SET_DETAIL`). The only person
+     * who can say whether that existing record is this same fieldwork or somebody else's is the
+     * designer, and the only way through it is a comparison they make with their own eyes. Folded
+     * into kind 3 it read as "the server rejected this record" beside a Try again button that could
+     * only ever fetch the identical answer — a dead end wearing the costume of a remedy.
+     *
+     * ── AND WHY THE ANSWER IS *NEVER* "OUR CREATE MUST HAVE LANDED" ────────────────────────────
+     *
+     * `frontend/lib/offline.ts` opens with the incident, in these words: the web outbox "used to read
+     * a 409 as 'the create already landed and we simply lost the response', and drop the entry and
+     * its files as sent. No endpoint in this API means that" — so the one answer that means somebody
+     * else's record collides with yours "was destroying the record AND the photographs and reporting
+     * success". The lost-response case it was reaching for is [createdId]'s job, which KNOWS rather
+     * than guesses. Nothing on this path may delete: not the entry, not the staged bytes under
+     * `outbox/media/`. [OfflineOutbox.discard] stays the only door, and only a person opens it.
+     *
+     * DEFAULTED, like every field in this class and for the identical reason: the queue on a handset
+     * that has been out of coverage for a fortnight was written by the build installed a fortnight
+     * ago, and an entry from it must decode into the behaviour it was queued under — an ordinary
+     * refusal that waits for a person — rather than into a claim this build invented for it.
+     */
+    val conflict: Boolean = false,
 )
 
 /** One captured media item to stage for an offline entry (input form for staging). */
@@ -220,6 +266,156 @@ fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean): Stri
     return "$head " +
         "${result.unreadableFiles.size} file(s) could NOT be read and are not in it ($names) — " +
         "the record is safe, those captures are not. Take them again if you still can."
+}
+
+/**
+ * "1 file" / "3 files" — what the designer is actually deciding about when they read a refusal.
+ *
+ * Counted rather than named here, unlike [OfflineQueueResult.unreadableFiles]: that list is about
+ * captures that FAILED and the next act is to go and retake a particular one, whereas these are
+ * intact and the only question is how much is riding on the entry.
+ */
+private fun stagedFiles(n: Int): String = if (n == 1) "1 file" else "$n files"
+
+/** The server-written half of a refusal, made to end in a full stop so two sentences do not run on. */
+private fun endStopped(said: String): String {
+    val text = said.trim()
+    if (text.isEmpty()) return ""
+    return if (text.endsWith(".") || text.endsWith("!") || text.endsWith("?")) text else "$text."
+}
+
+/**
+ * WHAT A DESIGNER READS WHEN THE REGISTER ALREADY HOLDS A RECORD THAT CLASHES WITH THIS ONE.
+ *
+ * ── THE GAP THIS CLOSES ───────────────────────────────────────────────────────────────────────
+ *
+ * The web has had a dedicated branch for an answered 409 since the incident quoted on
+ * [PendingEntry.conflict] (`frontend/lib/offline.ts`, the `error.status === 409` arm of `runSync`),
+ * and its closing clause is the whole value of it: *"Open the record it clashes with, carry across
+ * anything it is missing, then discard this entry."* This handset had no such branch. A clashing
+ * Aadhaar, a craft already named that and an artisan set already interviewed all came out of
+ * `replayEntry` as `Rejected(refusal.message)` — the same shape as a field that is too long and a
+ * permission this account does not hold — so the tray printed the server sentence under a Try again
+ * button that could only ever fetch the identical 409, and offered no third thing to do. The
+ * designer's two visible options were to keep pressing a button that cannot work, or to delete a
+ * day of fieldwork to make the row go away.
+ *
+ * ── WHAT THE SENTENCE HAS TO CARRY, AND WHY EACH CLAUSE IS IN IT ──────────────────────────────
+ *
+ *  1. THAT NOTHING WAS SAVED. A refusal a designer half-reads is a refusal they assume went through
+ *     eventually. This says it did not, first, in the first clause.
+ *  2. THE SERVER'S OWN WORDS, VERBATIM. `artisans.py::_identity_conflict` NAMES the artisan and
+ *     their place ("Giriraj Prasad (Bhuj) is already recorded with this Aadhaar number") precisely so
+ *     the designer can go and find them; summarising that into "duplicate" throws away the only
+ *     thing on the screen they can act on. `questionnaire.py::_DUPLICATE_SET_DETAIL` and
+ *     `crafts.py` are written the same way. Only the punctuation is touched — see [endStopped].
+ *  3. THAT NOTHING HAS BEEN DELETED, and how much is still here. The count is the number the person
+ *     is really deciding about when they consider the Throw away button.
+ *  4. THAT RETRYING ALONE CANNOT WORK, and why — the clash is not on this phone. Without this the
+ *     designer walks up the hill for a signal, and then does it again tomorrow; the records banner
+ *     already spends a paragraph on that exact walk (`outboxDeviceBanner`).
+ *  5. AN ORDER OF OPERATIONS THAT ENDS SOMEWHERE. Open the other record, carry the missing details
+ *     across, and only THEN throw this one away. 'Only then' is load-bearing: the entry is the last
+ *     copy of both the record and its photographs, and this is the one screen in the app that can
+ *     say so before the delete rather than after it.
+ *
+ * PURE, and here rather than in the tray, for [offlineSavedMessage]'s reason: it is read by somebody
+ * standing in a courtyard with no connection, so a JVM test is the only place it can be checked.
+ * Pinned by `OutboxConflictTest`.
+ *
+ * @param said the server's own `detail`, already unwrapped by `apiRefusal`.
+ * @param files how many staged captures are still on this device with the entry. 0 omits the clause
+ *   rather than printing "0 files", which reads as an accusation that something went missing.
+ * @param isCorrection this entry is an edit to a record the server already holds ([PendingEntry.targetId]).
+ *   A different remedy and a different standing fact: there is nothing to "carry across" — the
+ *   record exists — and the office is meanwhile still reading the version before this correction.
+ */
+fun outboxConflictSentence(said: String, files: Int, isCorrection: Boolean): String {
+    val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
+    // Agreement, because the subject grows a second half whenever there are files. "This entry and
+    // the 3 files saved with it IS still on this phone" is the kind of sentence a person stops
+    // reading, and everything that matters is in the clause after it.
+    val isAre = if (files > 0) "are" else "is"
+    val server = endStopped(said).let { if (it.isEmpty()) "" else " $it" }
+    // The clause every arm shares, written once: a designer moving between a clashing artisan and a
+    // clashing craft must not be told two different stories about what a clash costs them.
+    val standing = "Sending it again by itself will get the same answer, because what is in the way " +
+        "is not on this phone."
+    return if (isCorrection) {
+        "This correction was not applied: it clashes with a record the register already holds.$server " +
+            "Nothing has been deleted — the correction$carrying $isAre still on this phone, and the " +
+            "office is still reading the version from before it. $standing Open the record it clashes " +
+            "with, make the change where it belongs, and only then throw this one away."
+    } else {
+        "This was not saved: the register already holds a record that clashes with it.$server " +
+            "Nothing has been sent and nothing has been deleted — this entry$carrying $isAre still on " +
+            "this phone. $standing Open the record it clashes with, copy across anything that record " +
+            "is missing, and only then throw this one away."
+    }
+}
+
+/**
+ * WHAT A PERSON IS ASKED BEFORE ANYTHING IN THIS APP DELETES UNSENT FIELDWORK.
+ *
+ * `OfflineOutbox.discard` is the only door out of the queue that is not a successful send, and this
+ * is the sentence in front of it. It is here rather than inside the tray's `AlertDialog` for
+ * [offlineSavedMessage]'s reason and one sharper one: the act it introduces is irreversible and
+ * takes the photographs with it, so the words have to be checkable without a handset.
+ *
+ * THE CONFLICT ARM IS NOT DECORATION. On every other refused row the thing being deleted is the only
+ * thing the row is about. On a clash the row NAMES A RECORD ON THE SERVER — "Giriraj Prasad (Bhuj)
+ * is already recorded with this Aadhaar number" — and an unqualified "this cannot be undone" over
+ * that reads, to somebody who has just been told an artisan already exists, as an offer to delete
+ * that artisan. So the clash arm says which of the two goes and which stays, in that order, and then
+ * says the thing the designer cannot see for themselves: what is in this copy and not in the other
+ * one goes with it.
+ *
+ * AND THE SAVED ARM EXISTS BECAUSE THE REASSURANCE WAS NOT ALWAYS TRUE. "Nothing about it has
+ * reached the server" was said on EVERY refused row, and one of the six kinds this queue tells apart
+ * is kind 5 on [PendingEntry.createdId] — SAVED, FILES REFUSED. On that row the tray prints the
+ * server's own "It was saved, but 2 file(s) were refused… Re-attach them on the record."
+ * (`WorkshopRepository.replayEntry`), so the row and the dialog over it stated opposite facts on one
+ * screen. The reading a designer acts on is the dialog's: they conclude the save failed outright,
+ * throw the entry away, re-enter the record — and the register now holds it twice while the staged
+ * captures, whose only copy the entry was, are gone. So the arm leads with the record surviving and
+ * ends with the one thing that does not.
+ *
+ * @param files how many staged captures go with the entry. ZERO OMITS THE CLAUSE ALTOGETHER rather
+ *   than printing "and 0 files saved with it", which is what the tray said before this moved out of
+ *   the composable — a record queued with no attachments is the common case for a craft or a
+ *   correction, and being told a number of files that is zero invites a second look for the ones
+ *   that must have gone missing. See [stagedFiles].
+ * @param savedOnServer [PendingEntry.createdId] is set: the create or the correction LANDED, and
+ *   only the media is outstanding. MUTUALLY EXCLUSIVE WITH [isConflict] by construction and checked
+ *   first: `WorkshopRepository.replayEntry` wraps its whole create leg, the 409 arm included, in
+ *   `if (entry.createdId == null)`, so a clash means no record of ours was written.
+ */
+fun outboxDiscardConfirmation(
+    label: String,
+    files: Int,
+    isConflict: Boolean,
+    savedOnServer: Boolean = false,
+): String {
+    val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
+    val opening = "“$label”$carrying will be deleted from this device. This cannot be undone"
+    if (savedOnServer) {
+        // The files are named again, after the record's fate rather than before it, because on this
+        // one row they are the whole of what is actually lost — and the remedy for them is on a
+        // different screen, so it has to be said before the delete rather than after it.
+        val orphaned = if (files > 0) {
+            " The ${stagedFiles(files)} are the part the server never got, and this phone holds the " +
+                "only copy — attach them to the record there instead, if you still can."
+        } else {
+            ""
+        }
+        return "$opening. The record itself is already on the server and this does not take it back " +
+            "out: it stays in the register, so entering it again would leave two of it.$orphaned"
+    }
+    val head = "$opening, and nothing about it has reached the server."
+    if (!isConflict) return head
+    return "$head The record it clashes with is not touched — it stays exactly where it is, on the " +
+        "server. What goes is this phone's copy: anything in it that the other record does not " +
+        "already have goes with it, files included. Check that first."
 }
 
 /** Live connectivity check (validated internet, not just an attached interface). */
@@ -401,12 +597,18 @@ object OfflineOutbox {
      *   request. Written on EVERY call rather than only when set, so an entry refused for a dialect
      *   mismatch on one pass and for a genuinely bad field on the next stops being retried: a stale
      *   run stamp would go on describing a refusal that is no longer what is standing in the way.
+     * @param conflict pass true — and only for an answered 409 — when the register already holds a
+     *   record occupying this one's identity. See [PendingEntry.conflict]. Written on EVERY call for
+     *   [skewRun]'s reason and one more: an entry that clashed on one pass and was refused for a bad
+     *   field on the next must stop being described as a clash, or the tray goes on telling the
+     *   designer to open a record that has nothing to do with what is now standing in the way.
      */
     suspend fun markFailure(
         context: Context,
         entryId: String,
         reason: String,
         skewRun: String? = null,
+        conflict: Boolean = false,
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
@@ -415,7 +617,12 @@ object OfflineOutbox {
                     context,
                     current.map {
                         if (it.id == entryId) {
-                            it.copy(failure = reason, failedAt = Instant.now().toString(), skewRun = skewRun)
+                            it.copy(
+                                failure = reason,
+                                failedAt = Instant.now().toString(),
+                                skewRun = skewRun,
+                                conflict = conflict,
+                            )
                         } else {
                             it
                         }
@@ -449,6 +656,13 @@ object OfflineOutbox {
      * stale run stamp left behind would go on describing a disagreement between builds that may no
      * longer be what is standing in the way.
      *
+     * SO IS [PendingEntry.conflict], for that reason exactly. A designer taps Try again on a clash
+     * because they have just deleted the duplicate at the office, or established that the record it
+     * clashed with is somebody else's after all — so the NEXT answer decides what this entry is, and
+     * a stale flag would leave the tray telling them to go and open a record the server has stopped
+     * objecting to. Nothing about the ENTRY itself is cleared: the payload and every staged file stay
+     * exactly where they are, which is the invariant [PendingEntry.conflict] spends a paragraph on.
+     *
      * @return true when an entry with that id was found and unmarked.
      */
     suspend fun clearFailure(context: Context, entryId: String): Boolean = withContext(Dispatchers.IO) {
@@ -458,7 +672,11 @@ object OfflineOutbox {
             write(
                 context,
                 current.map {
-                    if (it.id == entryId) it.copy(failure = null, failedAt = null, skewRun = null) else it
+                    if (it.id == entryId) {
+                        it.copy(failure = null, failedAt = null, skewRun = null, conflict = false)
+                    } else {
+                        it
+                    }
                 }
             )
             true
@@ -471,7 +689,10 @@ object OfflineOutbox {
             val current = read(context)
             val refused = current.count { it.failure != null }
             if (refused == 0) return@withLock 0
-            write(context, current.map { it.copy(failure = null, failedAt = null, skewRun = null) })
+            write(
+                context,
+                current.map { it.copy(failure = null, failedAt = null, skewRun = null, conflict = false) }
+            )
             refused
         }
     }

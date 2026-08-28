@@ -10,8 +10,9 @@
  * application's dock offers, and the sharpening the upstream engine has always been able to do and
  * its own UI never exposed. All of it is arithmetic on this device.
  *
- * HOW MANY CONTROLS THAT IS, IT DOES NOT SAY — `traceParamTable.PARAM_COUNT` publishes the number and
- * the "Show all N controls" button prints it. A figure written out in prose here is a second copy
+ * HOW MANY CONTROLS THAT IS, IT DOES NOT SAY — `traceParamTable.PARAM_COUNT` publishes the total and
+ * `ADVANCED_COUNT` publishes what the disclosure button reveals, which is the number that button
+ * prints. A figure written out in prose here is a second copy
  * that goes stale the first time a slider is added, and one already did: this header claimed
  * twenty-nine while the table held thirty-two.
  *
@@ -105,7 +106,7 @@ import {
 import {
   CHOICES,
   ESSENTIAL_KEYS,
-  PARAM_COUNT,
+  ADVANCED_COUNT,
   PARAM_GROUPS,
   SLIDERS,
   TOGGLES,
@@ -113,6 +114,7 @@ import {
   changedAdvancedLabels,
   changedLabels,
   formatValue,
+  inactiveReason,
   isEssential,
   overwriteNotice,
   type ChoiceSpec,
@@ -147,17 +149,38 @@ import { Reveal1 } from "@/components/ui/reveal1";
 import { saveBlobToDisk } from "@/lib/designWorkshops";
 
 import {
+  ATTACHABLE_FORMATS,
   EXPORT_FORMATS,
   PNG_MAX_EDGE_PX,
   RENDER_SUFFIX,
   TRACE_SUFFIX,
   exportPngFile,
   exportSvgFile,
+  exportVectorFile,
   isExported,
   paintGeometry,
+  type AttachFormatId,
   type ExportFormatId
 } from "./traceExport";
-import { buildComparisonPlates, isComparable } from "./comparisonPlates";
+import {
+  COMPARISON_DIFFERENCE_ALT,
+  COMPARISON_DIFFERENCE_BADGE,
+  COMPARISON_DIFFERENCE_NOTE,
+  COMPARISON_DIFFERENCE_PENDING,
+  buildComparisonPlates,
+  buildDifferencePlate,
+  isComparable,
+  isDifference
+} from "./comparisonPlates";
+import { REVEAL_PEEK_HOLD_MS } from "@/components/ui/reveal1Transform";
+import {
+  PROGRESS_UNMEASURED_NOTE,
+  UNWEIGHTED,
+  fractionAt,
+  progressWeights,
+  traceProgressSentence,
+  type ProgressWeights
+} from "./traceStages";
 import type { SvgInput } from "./geometryToSvg";
 // TYPE-ONLY, so the panel that composes this one can own the contract without a runtime cycle.
 import type { AttachAnswer } from "./UploadTabPanel";
@@ -223,13 +246,18 @@ type Phase =
 /**
  * Which full-resolution run is in flight, if any.
  *
- * ONE PIECE OF STATE FOR ALL THREE, because all three are the same operation with a different ending:
- * disarm the debounce, re-trace at full resolution, then attach / save the vector / save the raster.
- * Two independent busy flags would allow two full-resolution traces at once, and `runTrace` aborts the
- * previous controller — so the loser would report "the trace did not finish" while the winner quietly
- * succeeded, which is the exact class of bug the debounce/attach collision already was.
+ * ONE PIECE OF STATE FOR ALL OF THEM, because they are one operation with a different ending: disarm
+ * the debounce, re-trace at full resolution, then attach / save the file. Independent busy flags would
+ * allow two full-resolution traces at once, and `runTrace` aborts the previous controller — so the
+ * loser would report "the trace did not finish" while the winner quietly succeeded, which is the exact
+ * class of bug the debounce/attach collision already was.
+ *
+ * THE DOWNLOAD ARM IS KEYED BY FORMAT ID RATHER THAN BY A HAND-WRITTEN LIST, so a row added to
+ * `EXPORT_FORMATS` gets its own spinner with nothing here to remember. It read
+ * `"download-trace" | "download-render"` while there were exactly two download buttons; a third
+ * format would have spun the wrong one, or none.
  */
-type FullRun = "attach" | "download-trace" | "download-render";
+type FullRun = "attach" | `download-${ExportFormatId}`;
 
 /**
  * How much of the traced frame the comparator shows before the divider is dragged.
@@ -240,6 +268,47 @@ type FullRun = "attach" | "download-trace" | "download-render";
  * of 50 opens half-and-half. Named here so the argument is not a bare literal in the JSX.
  */
 const COMPARE_START_POSITION = 0;
+
+/**
+ * The four things the comparator can be showing.
+ *
+ * THE FIRST THREE ARE THE HANDSET'S CHIPS, BY NAME — `DwTraceCompareMode` at
+ * `android/.../DwSketchTraceCompare.kt:128`, whose labels are "Drawing", "Wipe" and "Photograph". The
+ * portal had only the wipe, and its two ends were reachable only by dragging the seam to an edge or by
+ * pressing Home and End: a designer who simply wanted to look at the drawing whole had to know that.
+ *
+ * THE FOURTH IS NEW ON BOTH CLIENTS and is named identically on both — see
+ * {@link COMPARISON_DIFFERENCE_NOTE} for the sentence and `differenceRgba` for the arithmetic the two
+ * share. It is last because the wipe is what a designer reaches for and this is what they reach for
+ * when the wipe has left them unsure, and because it is the only one that costs a third plate.
+ */
+type CompareMode = "drawing" | "wipe" | "photograph" | "difference";
+
+/**
+ * The chip row, in the handset's order, with the handset's words.
+ *
+ * THREE LITERALS AND ONE CONSTANT, WHICH IS NOT AN OVERSIGHT — it is the handset's own arrangement.
+ * "Difference" is the one label that is also written ON the picture, so the chip and the badge have
+ * to be the same word: a designer who presses one and reads the other has been shown two names for
+ * one view. `DwSketchTraceCompare.kt` passes `DW_TRACE_DIFFERENCE_LABEL` to both for that reason, and
+ * the other three name nothing but themselves.
+ */
+const COMPARE_MODES: readonly { readonly id: CompareMode; readonly label: string }[] = [
+  { id: "drawing", label: "Drawing" },
+  { id: "wipe", label: "Wipe" },
+  { id: "photograph", label: "Photograph" },
+  { id: "difference", label: COMPARISON_DIFFERENCE_BADGE }
+];
+
+/**
+ * The most a designer may magnify a plate in the comparator.
+ *
+ * Six, the same as the handset's `DW_TRACE_MAX_ZOOM`, and for the reason stated there: beyond it a
+ * plate capped at `COMPARISON_LONG_EDGE_PX` is showing its own pixels rather than the drawing's. The
+ * magnifier is not a convenience — a pencil line on a 1024px plate rendered into a card a few hundred
+ * CSS pixels wide is sub-pixel, so the failure this comparator exists to catch is invisible at fit.
+ */
+const COMPARE_MAX_ZOOM = 6;
 
 export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSource }: SketchTraceFieldProps) {
   const panelId = useId();
@@ -287,11 +356,45 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   const [result, setResult] = useState<SerializedTraceResult | null>(null);
   const [tracing, setTracing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  /**
+   * How full the bar is, or null when there is nothing to draw one from.
+   *
+   * NULL FOR A PREVIEW, AND NOT BECAUSE OF A FLAG HERE. `worker/trace.worker.ts` hands `Pipeline.run`
+   * a progress callback and hands `Pipeline.runPreview` none at all, so a preview emits no stage
+   * events and this simply never leaves null for one. Which is the right answer: a preview is a few
+   * hundred milliseconds and a bar that appeared and vanished on every slider release would be noise.
+   */
+  const [progressAt, setProgressAt] = useState<number | null>(null);
+  /**
+   * Where each stage starts on the bar, from THIS machine's last completed trace.
+   *
+   * See `traceStages.ts` for why the engine's own fraction is not good enough: it is a stage count, it
+   * never reaches 1, and the two stages that dominate a real trace are worth several of the others put
+   * together — so an unweighted bar rushes to a half and then sits there for most of the wait.
+   */
+  const [weights, setWeights] = useState<ProgressWeights>(UNWEIGHTED);
+  /**
+   * True from the press of Stop until the run's own `finally` is reached.
+   *
+   * A SEPARATE FLAG, AND IT IS WHAT MAKES "Stopping…" HONEST. The engine checks its cancellation token
+   * BETWEEN stages and nowhere else, so the worst case is the length of the longest single stage —
+   * seconds at full resolution. A control that vanished on the press would claim the run had stopped
+   * while it was still running; one that promised instant would be wrong. The handset says the same
+   * word for the same reason (`DwSketchTracePanel.kt:1317-1321`).
+   */
+  const [stopping, setStopping] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [format, setFormat] = useState<ExportFormatId>("svg");
+  /*
+    THE CHOOSER HOLDS AN `AttachFormatId`, NOT AN `ExportFormatId`, AND THE TYPE IS THE ENFORCEMENT.
+    Three of the five formats are take-away only (`traceExport.ts`'s header: a `.dxf` filed on the
+    record is a file the handset can neither produce nor preview), so "Attach as" draws from
+    `ATTACHABLE_FORMATS` and this state cannot hold anything else. `attachTrace` reads it, and its
+    `format === "svg"` test is therefore exhaustive over two cases rather than five.
+  */
+  const [format, setFormat] = useState<AttachFormatId>("svg");
   const [running, setRunning] = useState<FullRun | null>(null);
   /** What the last download saved, for the live region beside the buttons. Never closes the panel. */
   const [saved, setSaved] = useState<string | null>(null);
@@ -305,14 +408,49 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   const [compare, setCompare] = useState<{
     readonly traceUrl: string;
     readonly originalUrl: string;
+    /**
+     * The same two pictures as blobs, for the difference view to subtract when it is asked for.
+     *
+     * NO EXTRA MEMORY. An object URL pins its blob until it is revoked, so these two references are
+     * already alive for exactly as long as the URLs beside them; holding them is what keeps
+     * `buildDifferencePlate` from having to fetch a `blob:` URL back through the network stack to
+     * reach bytes this component never let go of.
+     */
+    readonly traceBlob: Blob;
+    readonly originalBlob: Blob;
     readonly width: number;
     readonly height: number;
     readonly reduced: boolean;
   } | null>(null);
   /** Why there is no comparison, when there is a trace but the plates could not be built. */
   const [compareProblem, setCompareProblem] = useState<string | null>(null);
+  /** Which of the four views the comparator is showing. Wipe, as on the handset, is the default. */
+  const [compareMode, setCompareMode] = useState<CompareMode>("wipe");
+  /**
+   * Where the designer left the seam.
+   *
+   * HELD HERE AND NOT IN `Reveal1`, which is what makes the three chips possible at all: "Drawing" and
+   * "Photograph" write the DISPLAYED position to an end without touching this, so pressing Wipe again
+   * comes back to where the designer was rather than to the middle. The comparator was uncontrolled
+   * until 2026-08-27 and none of that could be expressed.
+   */
+  const [comparePosition, setComparePosition] = useState(COMPARE_START_POSITION);
+  /** The third plate, once somebody has asked for it. Object URL, revoked with the other two. */
+  const [difference, setDifference] = useState<string | null>(null);
+  /** Why there is no third plate, in the sentence written to be read. */
+  const [differenceProblem, setDifferenceProblem] = useState<string | null>(null);
+  const [differenceBusy, setDifferenceBusy] = useState(false);
 
   const tracerRef = useRef<Tracer | null>(null);
+  /**
+   * The same weights as {@link weights}, for the progress callback to read.
+   *
+   * A REF AS WELL AS STATE, and not instead of it. `runTrace` is a `useCallback` that must not list
+   * the weights in its dependency array — doing so would give it a new identity the moment a trace
+   * finished, which the debounce effect watches, so every completed trace would arm another one. The
+   * callback inside it therefore reads this, which is the value NOW; the bar renders from the state.
+   */
+  const weightsRef = useRef<ProgressWeights>(UNWEIGHTED);
   const abortRef = useRef<AbortController | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -409,6 +547,20 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         setRuntime(loaded);
         setParams(loaded.defaults);
         setPresetParams(loaded.defaults);
+        /*
+          THE STYLE PICKER OPENS ON THE STYLE THAT IS ACTUALLY LOADED.
+
+          It used to open on a row reading "Engine defaults" while the parameters underneath carried
+          `styleId: "clean-line"` — so the control named one thing, the drawing was made by another,
+          and the hint below it showed the generic fallback instead of Clean line's own description.
+          Choosing that row called `pickStyle("")`, found no preset and returned having done nothing:
+          a dead menu row that also mislabelled the live state.
+
+          `sanitizeTraceParams` forces a non-empty `styleId` (an empty one becomes the default), so
+          "nothing selected" is not a state the engine can be in and the picker no longer offers it.
+          The handset reached the same conclusion and argued it in place — `includeNone = false`.
+        */
+        setStyleId(loaded.defaults.styleId);
         setPhase({ status: "ready" });
         // The presets are fetched after the runtime rather than beside it: `engine/subjects.ts` pulls
         // `engine/classify.ts` onto the MAIN thread, and there is no reason to make the designer wait
@@ -594,6 +746,8 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
       setTracing(true);
       setProblem(null);
       setProgress(null);
+      setProgressAt(null);
+      setStopping(false);
       try {
         const answer = await tracer.trace({
           // A fresh clone every time. The buffer is TRANSFERRED, so the caller's typed array is
@@ -604,9 +758,22 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
           params,
           preview,
           signal: controller.signal,
-          onProgress: (p) => setProgress(`${p.label}…`)
+          onProgress: (p) => {
+            // THE ENGINE'S OWN LABEL, NEVER THIS FILE'S. `traceProgressSentence` adds the stage number
+            // around it and nothing else — re-typing engine wording in a client is how the two clients
+            // end up describing one operation differently, which `trace.worker.ts` says in its own
+            // comment about `runPreview`.
+            setProgress(traceProgressSentence(p.stageId, p.label));
+            setProgressAt(fractionAt(weightsRef.current, p.stageId, p.fraction));
+          }
         });
         setResult(answer);
+        // THE BAR LEARNS FROM THE RUN THAT JUST FINISHED. `stages` is empty for a preview, and
+        // `progressWeights` answers UNWEIGHTED for that rather than dividing by zero — so a panel that
+        // has only ever previewed keeps the engine's even spacing and keeps saying so.
+        const learned = progressWeights(answer.stages);
+        weightsRef.current = learned;
+        setWeights(learned);
         return answer;
       } catch (error) {
         // A superseded or aborted trace is the normal consequence of moving a slider, not a failure,
@@ -626,11 +793,17 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         if (abortRef.current === controller) {
           setTracing(false);
           setProgress(null);
+          setProgressAt(null);
+          // CLEARED HERE AND NOWHERE ELSE, which is the whole of what makes "Stopping…" mean anything:
+          // this line runs when the run really has unwound, so the word is on screen for exactly as
+          // long as stopping takes rather than for a guessed interval.
+          setStopping(false);
         }
       }
     },
     [runtime, traceSource, params]
   );
+
 
   /**
    * Re-preview whenever the pixels or the parameters change. Debounced — see RETRACE_DEBOUNCE_MS.
@@ -702,6 +875,35 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   }, []);
 
   /**
+   * Forget the difference plate, because the two it was subtracted from are gone.
+   *
+   * CALLED FROM EVERY PATH THAT INSTALLS NEW URLS, and it has to be: `installCompareUrls` revokes the
+   * whole previous array, the difference URL is in it, and a `difference` state that survived would be
+   * an `<img src>` pointing at a revoked blob — a broken picture where a designer expects the answer to
+   * "did the trace lose that line". The refusal sentence goes with it: a device that could not make
+   * room for one plate may well manage the next one, and a stale refusal beside a fresh trace is a
+   * sentence about work that is no longer being described.
+   */
+  /**
+   * Add one URL to the set the comparator holds, WITHOUT revoking what is already there.
+   *
+   * A SEPARATE FUNCTION AND NOT `installCompareUrls([...previous, url])`, which is the obvious spelling
+   * and revokes the two plates it was meant to preserve: that helper revokes the whole previous array
+   * by design, because its job is replacing a pair. This one is for the third plate, which JOINS a pair
+   * that has to stay alive. Getting the two confused blanks the comparator the moment the fourth chip
+   * is pressed.
+   */
+  const addCompareUrl = useCallback((url: string) => {
+    compareUrlsRef.current = [...compareUrlsRef.current, url];
+  }, []);
+
+  const forgetDifference = useCallback(() => {
+    setDifference(null);
+    setDifferenceProblem(null);
+    setDifferenceBusy(false);
+  }, []);
+
+  /**
    * Build the two pictures the before/after comparator shows, whenever the drawing or the photograph
    * changes.
    *
@@ -733,6 +935,7 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
       installCompareUrls([]);
       setCompare(null);
       setCompareProblem(null);
+      forgetDifference();
       return;
     }
     let cancelled = false;
@@ -750,15 +953,19 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         installCompareUrls([]);
         setCompare(null);
         setCompareProblem(outcome.reason);
+        forgetDifference();
         return;
       }
       const traceUrl = URL.createObjectURL(outcome.trace);
       const originalUrl = URL.createObjectURL(outcome.original);
       installCompareUrls([traceUrl, originalUrl]);
       setCompareProblem(null);
+      forgetDifference();
       setCompare({
         traceUrl,
         originalUrl,
+        traceBlob: outcome.trace,
+        originalBlob: outcome.original,
         width: outcome.width,
         height: outcome.height,
         reduced: outcome.reduced
@@ -767,7 +974,51 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     return () => {
       cancelled = true;
     };
-  }, [svgInput, traceSource, installCompareUrls]);
+  }, [svgInput, traceSource, installCompareUrls, forgetDifference]);
+
+  /**
+   * Build the third plate, once, on the first press of the fourth chip.
+   *
+   * ON THE PRESS AND NOT WITH THE OTHER TWO, which is the same decision the handset made in this same
+   * wave. It is the only view of the four that costs a plate of its own, most designers never open it,
+   * and `buildComparisonPlates` already runs per SETTLED trace — which is once per slider drag, on the
+   * page thread. Adding a third encode there would be paid by everybody for a picture almost nobody
+   * asked for.
+   *
+   * THE CHIP STAYS PRESSABLE AFTER A REFUSAL. Pressing it is how a designer reads the sentence saying
+   * why there is nothing there; a chip that went dead with no explanation is the state this whole panel
+   * is written against. So a second press with a refusal standing simply tries again — a browser that
+   * would not give the page a surface a moment ago may well now.
+   */
+  const showDifference = useCallback(() => {
+    setCompareMode("difference");
+    if (compare === null || difference !== null || differenceBusy) return;
+    setDifferenceProblem(null);
+    setDifferenceBusy(true);
+    const plates = compare;
+    void (async () => {
+      const outcome = await buildDifferencePlate(
+        plates.originalBlob,
+        plates.traceBlob,
+        plates.width,
+        plates.height
+      );
+      if (goneRef.current) return;
+      // THE PLATES MAY HAVE MOVED UNDER THIS. A newer trace settling while the subtraction ran
+      // installed a new pair and revoked the old URLs, so a difference built from the old pair would be
+      // a picture of a drawing that is no longer on screen — the stale-comparison failure the build
+      // effect's own cancel token exists to prevent, one press further along.
+      if (compareUrlsRef.current[0] !== plates.traceUrl) return;
+      setDifferenceBusy(false);
+      if (!isDifference(outcome)) {
+        setDifferenceProblem(outcome.reason);
+        return;
+      }
+      const url = URL.createObjectURL(outcome.plate);
+      addCompareUrl(url);
+      setDifference(url);
+    })();
+  }, [addCompareUrl, compare, difference, differenceBusy]);
 
   /* ──────────────────────────────────────────────────────────────────────────
    * Presets and controls
@@ -825,6 +1076,20 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   const modifiedSet = useMemo(() => new Set(modifiedLabels), [modifiedLabels]);
 
   /**
+   * The style the engine would have picked for this photograph, when it is not the one already chosen.
+   *
+   * NULL IS THE COMMON ANSWER and every branch that produces it is a real state rather than a guard:
+   * no trace yet, a preview (which does not classify, so `profile` is null), a suggestion naming a
+   * preset this build's list does not have, and — the one that matters — a suggestion the designer is
+   * already using, where a row saying "try the style you are using" is noise.
+   */
+  const suggestedStyle = useMemo(() => {
+    const id = result?.profile?.suggestion ?? "";
+    if (id.length === 0 || id === styleId) return null;
+    return styles.find((style) => style.id === id) ?? null;
+  }, [result, styleId, styles]);
+
+  /**
    * The one sentence that says why the comparator is not showing a comparison, and the empty string
    * when it is.
    *
@@ -880,6 +1145,37 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   function endFullRun() {
     fullRunRef.current = false;
     setRunning(null);
+  }
+
+  /**
+   * Ask the running trace to stop.
+   *
+   * REAL WORK-STOPPING, NOT HIDING. The abort posts a cancel to the worker, whose `CancellationToken`
+   * unwinds `Pipeline.run` between stages — the same mechanism a superseded preview has always used,
+   * which is why this needed a BUTTON and not a mechanism. `traceClient.busy`'s own docblock has
+   * called itself "the enabled state of a Cancel control" since it was written and no such control
+   * was ever built: until now the only way to abandon a full-resolution trace was to move a slider and
+   * hope, and there was nothing on screen that said so.
+   *
+   * `runTrace`'s `catch` already treats a cancellation as the ordinary consequence of changing
+   * something rather than as a failure, so nothing red appears and whatever drawing is already on
+   * screen stays exactly where it was.
+   *
+   * IT ALSO ENDS THE FULL RUN, not just the trace. A press is awaiting `runTrace` and its own `finally`
+   * will run — but the buttons render from `running`, and leaving every one of them disabled until the
+   * last stage finishes unwinding is a panel that looks stopped without being usable. The pending
+   * preview timer goes with it, because a re-trace firing 220 ms after a designer pressed Stop is the
+   * panel disagreeing with the button.
+   */
+  function stopTrace() {
+    if (!tracing || stopping) return;
+    setStopping(true);
+    abortRef.current?.abort();
+    if (retraceTimerRef.current !== null) {
+      window.clearTimeout(retraceTimerRef.current);
+      retraceTimerRef.current = null;
+    }
+    endFullRun();
   }
 
   /**
@@ -1000,21 +1296,32 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * plausible way for this feature to be wrong while appearing to work. So the press pays for one more
    * trace, and the two downloads and the attach all come from the same full-resolution run.
    *
-   * THE TWO ARTEFACTS ARE THE OWNER'S TWO REQUESTS AND THEY ARE GENUINELY DIFFERENT THINGS:
-   *   · "trace"  — the VECTOR geometry, an `.svg`. Editable, scalable, re-openable in Illustrator,
-   *     Inkscape or CorelDRAW, and byte-for-byte the file the record's `lineArtFile` receives.
-   *   · "render" — the RENDERED raster, a `.png`, painted by the same `paintGeometry` that drew the
-   *     preview above. What anybody can open, print or drop into a slide.
-   * Both names are the photograph's own stem plus one suffix (`traceExport.ts` holds the three), so the
+   * WHAT THE ARTEFACTS ARE, AND WHY THERE ARE FIVE OF THEM RATHER THAN THE OWNER'S ORIGINAL TWO:
+   *   · `svg` — the VECTOR geometry. Editable, scalable, re-openable in Illustrator, Inkscape or
+   *     CorelDRAW, and byte-for-byte the file the record's `lineArtFile` receives.
+   *   · `png` — the RENDERED raster, painted by the same `paintGeometry` that drew the preview above.
+   *     What anybody can open, print or drop into a slide.
+   *   · `pdf`, `eps`, `dxf` — that same vector geometry, written for a machine that will not take an
+   *     SVG: anybody's PDF reader, a print shop's PostScript workflow, a cutter or CNC controller.
+   *     These were finished writers sitting unreachable in `lib/trace/engine/` until 2026-08-27, and
+   *     what they were missing was not a writer but the `VecDocument` adapter in
+   *     `geometryToDocument.ts` — the worker sends flat typed arrays and every one of them takes a
+   *     document.
+   * Every name is the photograph's own stem plus one suffix (`traceExport.ts` holds both words), so the
    * downloads folder still says which photograph each came from.
+   *
+   * THE HANDLER IS FORMAT-DRIVEN AND THE ROW OF BUTTONS RENDERS FROM THE SAME TABLE, which is the
+   * whole mechanism that stops the next writer going unexposed the way these three did: there is no
+   * place to add a format that is not also the place the control comes from.
+   * `e2e/sketch-export-formats-unit.spec.ts` asserts that in both directions.
    *
    * NOTHING PERSISTS. There is no stored trace to fetch and none is created — see property 5 in this
    * file's header. This is a `File` made in memory on the press and handed to the browser's own save
    * path; close the panel and it cannot be produced again without re-tracing.
    */
-  async function downloadDerived(what: "trace" | "render") {
+  async function downloadDerived(what: ExportFormatId) {
     if (svgInput === null || file === null || runtime === null || params === null) return;
-    beginFullRun(what === "trace" ? "download-trace" : "download-render");
+    beginFullRun(`download-${what}`);
     setSaved(null);
     try {
       const latest = await runTrace(false);
@@ -1023,10 +1330,20 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         return;
       }
       const input = inputFrom(latest);
+      /*
+        THE PNG IS THE ONE THAT GETS NO PROVENANCE NOTE, AND THAT IS NOT AN OMISSION HERE.
+        `exportPngFile` takes no such argument — a PNG has no comment channel this code writes — and
+        the same is true of the DXF one layer down, where `writeDxf` has no metadata parameter at all.
+        Both gaps are stated in the copy under these buttons rather than quietly tolerated (§1.10).
+      */
       const outcome =
-        what === "trace"
+        what === "svg"
           ? exportSvgFile(input, file.name, provenanceFor(latest, file.name), { suffix: TRACE_SUFFIX })
-          : await exportPngFile(input, file.name, PNG_MAX_EDGE_PX, { suffix: RENDER_SUFFIX });
+          : what === "png"
+            ? await exportPngFile(input, file.name, PNG_MAX_EDGE_PX, { suffix: RENDER_SUFFIX })
+            : await exportVectorFile(what, input, file.name, provenanceFor(latest, file.name), {
+                suffix: TRACE_SUFFIX
+              });
       if (!isExported(outcome)) {
         setProblem(outcome.reason);
         return;
@@ -1265,11 +1582,53 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                   {tracing ? (
                     <>
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                      {progress ?? "Tracing…"}
+                      {stopping ? "Stopping…" : (progress ?? "Tracing…")}
                     </>
                   ) : null}
                 </span>
               </div>
+              {/*
+                ── THE BAR AND THE STOP, WHICH ARE ONE ROW BECAUSE THEY ANSWER ONE QUESTION ──────
+
+                "Is this thing still going, and can I get out of it." The panel used to answer neither:
+                the engine's `fraction` was received on every event and discarded, and cancellation
+                existed with nothing to press. A full-resolution trace of a 12 MP photograph is seconds
+                of solid arithmetic and the stage that dominates it is `edge`, so a label with no bar
+                reads as a hang there.
+
+                DRAWN ONLY WHEN THERE IS SOMETHING TO DRAW. `progressAt` is null for a preview, because
+                `trace.worker.ts` hands `Pipeline.runPreview` no progress callback at all — so this row
+                belongs to the presses, which are the runs long enough to want it.
+              */}
+              {tracing && progressAt !== null ? (
+                <div className="mt-2 grid gap-1">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-field-200">
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width] duration-200"
+                      style={{ width: `${Math.round(progressAt * 100)}%` }}
+                    />
+                  </div>
+                  {/* A BAR THAT WILL VISIBLY STALL, SAYING SO. Until this machine has finished one
+                      trace the boundaries are the engine's even twelfths, and the two long stages are
+                      worth several of the others put together. One line costs less than a designer
+                      deciding the panel has frozen. */}
+                  {!weights.measured ? (
+                    <p className="text-xs leading-4 text-ink-500">{PROGRESS_UNMEASURED_NOTE}</p>
+                  ) : null}
+                </div>
+              ) : null}
+              {tracing ? (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-line-200 bg-card px-2 py-1 text-xs font-medium text-ink-700 transition hover:border-purple-300 disabled:opacity-60"
+                    onClick={stopTrace}
+                    disabled={stopping}
+                  >
+                    {stopping ? "Stopping…" : "Stop"}
+                  </button>
+                </div>
+              ) : null}
               <div className="mt-2 grid place-items-center rounded-md bg-field-100 p-2">
                 <canvas ref={canvasRef} className="max-h-[420px] max-w-full" aria-label="The traced drawing" />
               </div>
@@ -1347,6 +1706,30 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
               </div>
               {compare ? (
                 <>
+                  {/*
+                    THE FOUR VIEWS, AS THE HANDSET'S CHIP ROW. Three of the four labels are its words
+                    exactly (`DwSketchTraceCompare.kt:292-306`); the fourth is new on both clients and
+                    is named the same on both. `aria-pressed` rather than a radio group, matching the
+                    "Attach as" row below and the handset's own chips: these are four ways of looking
+                    at one thing, not four values of a field the panel is about to write.
+                  */}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {COMPARE_MODES.map((entry) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        className={
+                          compareMode === entry.id
+                            ? "rounded-md border border-purple-600 bg-purple-50 px-3 py-1.5 text-xs font-medium text-purple-800"
+                            : "rounded-md border border-line-200 bg-card px-3 py-1.5 text-xs font-medium text-ink-700 transition hover:border-purple-300"
+                        }
+                        aria-pressed={compareMode === entry.id}
+                        onClick={() => (entry.id === "difference" ? showDifference() : setCompareMode(entry.id))}
+                      >
+                        {entry.label}
+                      </button>
+                    ))}
+                  </div>
                   <Reveal1
                     className="mt-2"
                     beforeImage={{
@@ -1356,8 +1739,45 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                     afterImage={{ src: compare.traceUrl, alt: "The traced drawing, on white" }}
                     beforeLabel="Photograph"
                     afterLabel="Traced drawing"
+                    /*
+                      CONTROLLED, WHICH IS WHAT MAKES THE CHIPS POSSIBLE. The two end states are this
+                      one number written to 0 and 100 — and they are written to the DISPLAYED position
+                      only, because `comparePosition` is where the designer left the seam and pressing
+                      Wipe again has to come back to it. `initialPosition` is still passed for the
+                      component's own default, which nothing here reads.
+                    */
+                    position={
+                      compareMode === "drawing" ? 0 : compareMode === "photograph" ? 100 : comparePosition
+                    }
+                    onPosition={(next) => {
+                      setComparePosition(next);
+                      // MOVING THE SEAM IS ASKING FOR THE WIPE. A designer who drags while "Drawing" is
+                      // selected has just told the panel which view they want, and a chip row that then
+                      // disagreed with the picture would be a control claiming something untrue.
+                      setCompareMode("wipe");
+                    }}
                     initialPosition={COMPARE_START_POSITION}
                     ariaLabel="Traced drawing against the photograph"
+                    maxZoom={COMPARE_MAX_ZOOM}
+                    peekHoldMs={REVEAL_PEEK_HOLD_MS}
+                    /*
+                      THE DESCRIPTION AND THE BADGE ARE BOTH THE HANDSET'S, and both are constants
+                      rather than literals for the reason the note below them is: this frame and
+                      `DwSketchTraceCompare.kt`'s frame show one picture to one designer, and the two
+                      apps drifting apart on what they call it is the failure the four-renderer rule
+                      exists to prevent. The badge is not decoration here — a difference plate of a
+                      GOOD trace is very nearly black, and a nearly black frame with no word on it is
+                      indistinguishable from a plate that failed to draw.
+                    */
+                    soloImage={
+                      compareMode === "difference" && difference !== null
+                        ? {
+                            src: difference,
+                            alt: COMPARISON_DIFFERENCE_ALT,
+                            label: COMPARISON_DIFFERENCE_BADGE
+                          }
+                        : null
+                    }
                     // The photograph's own ratio, so neither layer is centre-cropped. Without it the
                     // frame is 16:9 and a portrait A4 sheet loses most of the drawing off the top and
                     // bottom — see the component's note on `aspectRatio`.
@@ -1369,19 +1789,39 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                     directory states the rule — "a drag is a pointer gesture and is unreachable from a
                     keyboard, from a switch device and from a screen reader" — and the comparator
                     answers to the arrow keys, Home and End for exactly that reason. A hint nobody can
-                    see is a feature nobody can reach.
+                    see is a feature nobody can reach. The hold and the magnifier are on the same list
+                    for the same reason: the handset says its own two out loud under its own frame.
                   */}
                   <p className="mt-2 text-xs leading-5 text-ink-500">
                     The drawing is shown first. Drag the handle — or focus it and use the arrow keys, Home and
-                    End — to reveal the photograph underneath. The comparison paints the drawing on white so it
-                    is visible over the photograph; the file that is attached or downloaded keeps whatever
-                    background you chose.
+                    End — to reveal the photograph underneath. Press and hold the picture to see the photograph,
+                    and let go to come back: the seam stays where you left it. Hold Ctrl (or ⌘) and scroll to
+                    magnify up to {COMPARE_MAX_ZOOM}×, or press + and − with the frame focused and 0 to go back
+                    to fit; magnified, dragging moves the picture instead of the seam. The comparison paints the
+                    drawing on white so it is visible over the photograph; the file that is attached or
+                    downloaded keeps whatever background you chose.
                     {compare.reduced
                       ? ` Both pictures here are ${compare.width}x${compare.height}, reduced from ${
                           result ? `${Math.round(result.width)}x${Math.round(result.height)}` : "the traced size"
                         } for the comparison only.`
                       : ""}
                   </p>
+                  {/*
+                    THE DIFFERENCE VIEW'S OWN SENTENCE, SAID ONLY WHERE IT IS TRUE. The plate is black
+                    where the two agree and bright where they do not, which is not what anybody expects
+                    a picture of their sketch to look like — printed under every view it would be four
+                    lines a designer learns to skip, and skipping is how the sentence that matters gets
+                    missed. `COMPARISON_DIFFERENCE_NOTE` is the handset's wording verbatim.
+                  */}
+                  {compareMode === "difference" ? (
+                    <p aria-live="polite" className="mt-2 text-xs leading-5 text-ink-500">
+                      {differenceProblem !== null
+                        ? differenceProblem
+                        : difference === null
+                          ? COMPARISON_DIFFERENCE_PENDING
+                          : COMPARISON_DIFFERENCE_NOTE}
+                    </p>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -1426,8 +1866,9 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                   ariaLabel="Style"
                   describedBy={`${panelId}-style-hint`}
                   searchable
+                  /* NO "Engine defaults" ROW — see the load effect. It was a row that could not be
+                     chosen, on a control that opened claiming it. */
                   options={[
-                    { value: "", label: "Engine defaults" },
                     ...styleGroups.flatMap((group) =>
                       styles
                         .filter((style) => style.group === group)
@@ -1457,8 +1898,11 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                   `adjust` as idempotent over the current tree, which is the property the hint below
                   promises the designer in words.
                 */}
+                {/* THE HANDSET'S LABEL, WHICH IS THE PLAINER ONE. `DwSketchTraceParams` calls this
+                    "What this is a drawing of"; the portal said "Subject", which is the engine's word
+                    for the table and not a designer's word for the thing in front of the camera. */}
                 <span className="field-label" id={`${panelId}-subject-label`}>
-                  Subject
+                  What this is a drawing of
                 </span>
                 <Dropdown
                   value={subjectId}
@@ -1467,24 +1911,79 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                     if (next) applySubject(next);
                   }}
                   disabled={disabled || subjects.length === 0}
-                  ariaLabel="Subject"
+                  ariaLabel="What this is a drawing of"
                   describedBy={`${panelId}-subject-hint`}
-                  // No emptyLabel: the list always carries the "What is in the photograph?" row, so
-                  // the empty state is unreachable here and a sentence that cannot render is a
-                  // sentence the next reader has to disprove. The panel says so at the top instead,
-                  // in the notice that fires when the preset fetch fails.
-                  placeholder="What is in the photograph?"
+                  // No emptyLabel: the list always carries the "Choose a material" row, so the empty
+                  // state is unreachable here and a sentence that cannot render is a sentence the next
+                  // reader has to disprove. The panel says so at the top instead, in the notice that
+                  // fires when the preset fetch fails.
+                  placeholder="Choose a material"
                   searchable
+                  /*
+                    THE TEN HINTS, RENDERED — they were fetched and thrown away.
+
+                    `loadTracePresets` has always carried `subject.hint`, the one sentence saying what
+                    each subject actually changes ("Weave is periodic texture, not line work…"), and
+                    nothing on this panel ever showed one: the control printed a single generic
+                    paragraph instead, so choosing between ten materials was choosing between ten
+                    names. `SelectOption.hint` puts it on the option row AND makes it searchable, which
+                    is the behaviour §11.5 of the frontend reference describes and the handset already
+                    has on both of its own preset pickers.
+                  */
                   options={[
-                    { value: "", label: "What is in the photograph?" },
-                    ...subjects.map((subject) => ({ value: subject.id, label: subject.name }))
+                    { value: "", label: "Choose a material" },
+                    ...subjects.map((subject) => ({
+                      value: subject.id,
+                      label: subject.name,
+                      hint: subject.hint
+                    }))
                   ]}
                 />
                 <p id={`${panelId}-subject-hint`} className="text-xs text-ink-500">
-                  A subject nudges the settings for the material in front of the camera. It leaves the style alone
-                  and can be applied more than once without compounding.
+                  {/* THE CHOSEN SUBJECT'S OWN SENTENCE ONCE THERE IS ONE, and the generic one only
+                      while there is not. The handset shows the hint twice for the same reason — on the
+                      row while choosing, and under the control afterwards, because the row is gone by
+                      the time a designer wonders what they picked. */}
+                  {subjects.find((subject) => subject.id === subjectId)?.hint ??
+                    "A subject nudges the settings for the material in front of the camera. It leaves the style alone and can be applied more than once without compounding."}
                 </p>
               </div>
+            </div>
+          ) : null}
+
+          {/* ── What the engine thinks this photograph is ───────────────────── */}
+          {/*
+            THE CLASSIFICATION WAS ALREADY PAID FOR AND THROWN AWAY.
+
+            `SerializedProfile.suggestion` is a style preset id, is never empty on a full trace, and
+            crosses the worker boundary on every one of them — and this file contained no occurrence of
+            "suggestion" or "profile" at all. So the engine looked at the photograph, formed an opinion,
+            sent it, and the panel discarded it while a designer scrolled a twenty-item list.
+
+            IT PROPOSES AND NEVER APPLIES. Applying a style REPLACES every setting — `pickStyle` says
+            so — so a suggestion that applied itself would silently discard a designer's tuning at the
+            exact moment their trace finished. The button is the application, which is the shape the
+            handset uses and the shape the crop tool's "Use these corners" already established here.
+
+            DRAWN ONLY WHEN THERE IS SOMETHING TO SAY: nothing on a preview, because previews do not
+            classify and `profile` is null for them, and nothing when the engine agrees with the style
+            already chosen.
+          */}
+          {suggestedStyle !== null ? (
+            <div aria-live="polite" className="mb-3 rounded-md border border-line-200 bg-field-100 px-3 py-2">
+              <p className="text-xs leading-5 text-ink-700">
+                Looking at this photograph, the engine suggests the “{suggestedStyle.name}” style.{" "}
+                {suggestedStyle.description}
+              </p>
+              <button
+                type="button"
+                className="field-button-secondary mt-2"
+                onClick={() => pickStyle(suggestedStyle.id)}
+                disabled={disabled || busy}
+              >
+                <Wand2 className="h-4 w-4" aria-hidden />
+                Use the “{suggestedStyle.name}” style
+              </button>
             </div>
           ) : null}
 
@@ -1506,17 +2005,31 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                   aria-expanded={showAll}
                 >
                   <Sliders className="h-3.5 w-3.5" aria-hidden />
-                  {showAll ? "Show the essentials" : `Show all ${PARAM_COUNT} controls`}
+                  {/*
+                    THE HANDSET'S TWO LABELS, AND ITS NUMBER RATHER THAN THIS PANEL'S.
+                    `DwSketchTracePanel` reads "Show everything (N more)" and "Hide the other N
+                    settings", counting the controls NOT on screen. The portal counted the TOTAL — the
+                    button said "Show all 32 controls" while seven of the thirty-two were already in
+                    front of the designer, so the press revealed twenty-five and the label had promised
+                    thirty-two. `ADVANCED_COUNT` is measured off the table; nothing here writes a
+                    figure of its own.
+                  */}
+                  {showAll ? `Hide the other ${ADVANCED_COUNT} settings` : `Show everything (${ADVANCED_COUNT} more)`}
                   <ChevronDown className={showAll ? "h-3.5 w-3.5 rotate-180" : "h-3.5 w-3.5"} aria-hidden />
                 </button>
               </div>
 
-              {/* Progressive disclosure is only honest if what it hides can still announce itself. */}
+              {/* Progressive disclosure is only honest if what it hides can still announce itself.
+                  THE HANDSET'S SENTENCE, VERBATIM — "not on screen" rather than "hidden", which is
+                  its deliberate choice and the better one on both clients: "hidden" points a designer
+                  at this one disclosure, and on the handset one whole tier of controls lives on a
+                  different step of the panel entirely. What is true on both is that the control is not
+                  in front of them. */}
               {!showAll && hiddenModified.length > 0 ? (
                 <p className="mb-2 text-xs text-ink-500">
                   {hiddenModified.length === 1
-                    ? `One hidden control differs from the style: ${hiddenModified[0]}.`
-                    : `${hiddenModified.length} hidden controls differ from the style: ${hiddenModified.join(", ")}.`}
+                    ? `One setting that is not on screen has moved: ${hiddenModified[0]}.`
+                    : `${hiddenModified.length} settings that are not on screen have moved: ${hiddenModified.join(", ")}.`}
                 </p>
               ) : null}
 
@@ -1574,8 +2087,14 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
           {/* ── Format and attach ──────────────────────────────────────────── */}
           <div className="grid gap-1">
             <span className="field-label">Attach as</span>
+            {/* TWO CHIPS, NOT FIVE, AND THE TABLE DECIDES WHICH. `ATTACHABLE_FORMATS` is
+                `EXPORT_FORMATS` filtered on `attachable`, so a format moves between this row and the
+                download row below by one boolean and never by editing JSX in two places. Why the
+                other three are not here is argued in `traceExport.ts`'s header: the record is a shared
+                archive the handset also reads, and a `.dxf` filed on it is a file that client can
+                neither produce nor preview. */}
             <div className="flex flex-wrap gap-2">
-              {EXPORT_FORMATS.map((entry) => (
+              {ATTACHABLE_FORMATS.map((entry) => (
                 <button
                   key={entry.id}
                   type="button"
@@ -1592,7 +2111,23 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                 </button>
               ))}
             </div>
-            <p className="text-xs text-ink-500">{EXPORT_FORMATS.find((e) => e.id === format)?.hint}</p>
+            <p className="text-xs text-ink-500">{ATTACHABLE_FORMATS.find((e) => e.id === format)?.hint}</p>
+            {/*
+              WHAT THE CHOICE DOES NOT CHANGE, SAID ONCE FOR BOTH CHIPS RATHER THAN INSIDE ONE HINT.
+              It used to be the tail of the PNG hint, which put a claim about the REPORT on the format
+              a designer was about to switch away from. Verified 2026-08-27 against the three files the
+              frontend contract names as the authority on what a report contains:
+              `report_builder.format_value` prints a FILE as "1 document attached",
+              `_image_sources` skips every field that is not IMAGE/IMAGE_LIST, and
+              `_render_media_annexure` gathers through `_images` — so the annexure is photographs and
+              the attached bytes stay in the workshop record. Re-check with
+              `grep -n "_image_sources\|_render_media_annexure" backend/app/services/report_builder.py`.
+            */}
+            <p className="text-xs leading-5 text-ink-500">
+              Either form is filed as an attachment on the sketch, and the choice does not change what the
+              ministry report shows: the report prints the sketch photograph, names the attached file and
+              does not carry it. The file is in the workshop record for whoever opens it there.
+            </p>
             {/* A CAP STATED WHERE IT BITES. The SVG carries the frame in its provenance note (see
                 `provenanceFor`); a PNG has no channel for it, so a cropped or sharpened trace filed as
                 a PNG records how it was made nowhere but on this screen. §1.10: skipped work is said
@@ -1667,45 +2202,85 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
           */}
           <div className="mt-4 border-t border-line-200 pt-3">
             <span className="field-label">Download a copy to this device</span>
+            {/*
+              ONE BUTTON PER TABLE ROW, WHICH IS THE WHOLE OF THE FIX. This row was two hard-coded
+              buttons while `EXPORT_FORMATS` held two entries and `engine/exportFormats.ts` held three
+              more finished writers nobody could reach — a designer could trace a sketch and had no way
+              to take the vector result away in a format their printer or their cutter would open.
+              Rendering from the table means the two facts are one fact: a row without a control cannot
+              exist, and `e2e/sketch-export-formats-unit.spec.ts` fails if a writer the engine can run
+              is neither in the table nor in `NOT_OFFERED` with a reason.
+
+              The words come from `entry.download` rather than from here, so the two labels
+              `sketch-trace-panel.spec.ts` pins live beside the format they belong to.
+            */}
             <div className="mt-1 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="field-button-secondary"
-                onClick={() => void downloadDerived("trace")}
-                disabled={disabled || busy || result === null || file === null}
-              >
-                {running === "download-trace" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                ) : (
-                  <Download className="h-4 w-4" aria-hidden />
-                )}
-                Download the trace (SVG)
-              </button>
-              <button
-                type="button"
-                className="field-button-secondary"
-                onClick={() => void downloadDerived("render")}
-                disabled={disabled || busy || result === null || file === null}
-              >
-                {running === "download-render" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                ) : (
-                  <Download className="h-4 w-4" aria-hidden />
-                )}
-                Download the rendered image (PNG)
-              </button>
+              {EXPORT_FORMATS.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className="field-button-secondary"
+                  onClick={() => void downloadDerived(entry.id)}
+                  disabled={disabled || busy || result === null || file === null}
+                >
+                  {running === `download-${entry.id}` ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Download className="h-4 w-4" aria-hidden />
+                  )}
+                  {entry.download}
+                </button>
+              ))}
             </div>
-            <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
-              The SVG is the trace itself — the paths, editable and scalable, the same file “Add the line art”
-              attaches. The PNG is the drawing rendered as a picture, up to {PNG_MAX_EDGE_PX}px on its long
-              edge, transparent wherever the drawing is not unless you turned the white background on. Both are
-              re-traced at full resolution when you press, so neither is the smaller preview above. Neither is
-              filed on the record and neither is uploaded.
+            {/* HONEST NAMING, ONE LINE EACH. The audience is a designer, not a developer: nobody
+                should have to know what a `.dxf` is before pressing a button that makes one, and the
+                sentence that says what a format is FOR is the same string the "Attach as" chooser
+                shows, so the two surfaces cannot describe one format differently. */}
+            <ul className="mt-2 grid max-w-prose gap-1 text-xs leading-5 text-ink-500">
+              {EXPORT_FORMATS.map((entry) => (
+                <li key={entry.id}>
+                  <span className="font-medium text-ink-700">{entry.label}</span> — {entry.hint}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 max-w-prose text-xs leading-5 text-ink-500">
+              Every one of these is re-traced at full resolution when you press it, so none of them is the
+              smaller preview above. None of them is filed on the record, none is uploaded, and none reaches
+              the report: the ministry document prints the sketch photograph, and a drawing downloaded here is
+              a copy for you, your printer or your CAD operator. Attaching to the record is the row above.
             </p>
             <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
               Nothing here is stored: the trace lives only while this panel is open, so closing it, choosing
               another photograph or reloading the page discards it, and a download after that means tracing
               again.
+            </p>
+            {/*
+              WHAT IS WRITTEN INSIDE THE FILE ABOUT WHO MADE IT — the handset's
+              `DW_TRACE_EXPORT_ENGINE_NAME_SENTENCE`, copied back here because it is true of the portal's
+              downloads too and no web surface said it.
+
+              SCOPED TO THE TWO FORMATS IT IS ACTUALLY TRUE OF, which is where the two clients genuinely
+              differ. `exportVectorFile` passes `includeMetadata: true`, so `pdfWriter` emits
+              `/Producer (Offline Tracer) /Creator (Offline Tracer)` and `epsWriter` emits
+              `%%Creator: Offline Tracer`. The SVG is NOT among them here: this page writes its own
+              through `geometryToSvg.buildSvg` rather than through the engine's writer, and that
+              function emits no producer line at all.
+
+              THE HANDSET'S SET IS NARROWER STILL, AND THIS COMMENT USED TO GET IT BACKWARDS. It said
+              the handset's SVG carries the line because the engine's own writer produces it. It does
+              not: `dwTraceKotlinSvgOf` and `DwTraceKotlinExporter` both pass `includeMetadata: false`
+              for exactly the branding reason, which leaves ONE branded file on that client — the EPS,
+              whose `%%Creator` the vendored writer emits outside that flag. So the honest comparison
+              is two formats here against one there, and the difference is a deliberate option this
+              page has not taken rather than a capability it has. Re-check with
+              `grep -rn "Offline Tracer" frontend/lib/trace frontend/components/sketches/upload` and
+              `grep -rn "includeMetadata" android/app/src/main/java`.
+            */}
+            <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
+              The PDF and the EPS record that they were made by the Offline Tracer engine, which is the
+              tracing library this app uses on the device. That is a note about the software — not about the
+              drawing, and not about you. The SVG this page writes carries no such line, because this page
+              writes it rather than the engine.
             </p>
             {/* Mounted whether or not anything has been saved, so the sentence is a CHANGE to a region
                 already in the document — the same reason the success sentence at the bottom of this
@@ -1713,19 +2288,22 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
             {/*
               THE SAME GAP AS THE ATTACH'S, SAID IN THE OTHER HALF OF THE PANEL.
 
-              `provenanceFor` is handed to `exportSvgFile` on both routes and `exportPngFile` takes no
-              provenance argument on either — a PNG has no comment channel this code writes. The copy
-              under the format buttons above says so for the file that reaches the RECORD; the download
-              block said nothing, so a designer who cropped and then pressed "Download the rendered
-              image" got a file whose frame is recorded nowhere and was told nothing about it.
-              `traceExport.ts` sets the standard this now meets: stated in the copy beside the button
-              rather than quietly tolerated.
+              `provenanceFor` reaches every format that has somewhere to put it, and three of the five
+              do: the SVG carries it as an XML comment, the PDF in its `/Title` and the EPS in its
+              `%%Title:`. `exportPngFile` takes no provenance argument — a PNG has no comment channel
+              this code writes — and `writeDxf` has no metadata parameter at all, because DXF R12 has
+              nowhere to keep one. The copy under the format buttons above says this for the file that
+              reaches the RECORD; the download block said nothing at all until 2026-08-24, so a designer
+              who cropped and then pressed "Download the rendered image" got a file whose frame is
+              recorded nowhere and was told nothing about it. `traceExport.ts` sets the standard this
+              meets: stated in the copy beside the button rather than quietly tolerated.
             */}
             {edited !== null ? (
-              <p className="mt-1 max-w-prose text-xs leading-5 text-amber-800">
-                The frame you chose is written into the SVG&apos;s provenance note, so the downloaded SVG
-                carries it. The PNG has nowhere to carry it: saved on its own, it does not record that it
-                was cropped or sharpened.
+              <p className="mt-2 max-w-prose text-xs leading-5 text-amber-800">
+                The frame you chose is written into the SVG&apos;s provenance note, the PDF&apos;s title and
+                the EPS&apos;s header, so those three say how they were made. The PNG and the DXF have
+                nowhere to carry it: saved on their own, neither records that the drawing was cropped or
+                sharpened.
               </p>
             ) : null}
             <p aria-live="polite" aria-atomic="true" className="mt-1 text-xs leading-5 text-ink-500">
@@ -1823,6 +2401,7 @@ function SliderRow({
       <p id={`${id}-hint`} className="mt-0.5 text-xs leading-4 text-ink-500">
         {spec.hint}
       </p>
+      <InertNote reason={inactiveReason(spec.key, params)} />
     </div>
   );
 }
@@ -1864,6 +2443,7 @@ function ToggleRow({
           <p id={`${id}-hint`} className="text-xs leading-4 text-ink-500">
             {spec.hint}
           </p>
+          <InertNote reason={inactiveReason(spec.key, params)} />
         </div>
       </div>
     </div>
@@ -1923,8 +2503,32 @@ function ChoiceRow({
       <p id={`${id}-hint`} className="mt-0.5 text-xs leading-4 text-ink-500">
         {spec.hint}
       </p>
+      <InertNote reason={inactiveReason(spec.key, params)} />
     </div>
   );
+}
+
+/**
+ * "This control is doing nothing under your current settings", when it is.
+ *
+ * ── A SENTENCE, NEVER A DISABLED ROW ──────────────────────────────────────────────────────────
+ *
+ * `inactiveReason` reads the condition in `engine/pipeline.ts` that makes the claim true, and the
+ * trap it exists for is not hypothetical: the MEDIAN noise filter reads a radius this panel does not
+ * expose and never reads "Noise reduction" at all, and MEDIAN is what the `sketch` subject selects.
+ * So a designer could drag that slider for a minute on the commonest configuration this panel has and
+ * conclude the trace was broken. Nothing on this client said so.
+ *
+ * The row stays writable, because greying it out would stop somebody setting a value for the
+ * configuration they are about to switch to — which is exactly what comparing two edge engines is.
+ *
+ * NOT A LIVE REGION. It changes as a consequence of a control the designer just operated, in the same
+ * commit, so a reader who moved the switch is told by the switch; announcing it as well would talk
+ * over them. It is inside the row and reached in the ordinary way.
+ */
+function InertNote({ reason }: { reason: string | null }) {
+  if (reason === null) return null;
+  return <p className="mt-0.5 text-xs leading-4 text-amber-800">{reason}</p>;
 }
 
 /** Re-exported so a host can name the essentials without importing the table. */

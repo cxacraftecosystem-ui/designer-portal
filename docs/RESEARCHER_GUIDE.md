@@ -78,10 +78,11 @@ The web app needs nothing installed. Open the URL, sign in.
 
 ---
 
-## 4. What the seven roles actually mean
+## 4. What the eight roles actually mean
 
 Roles are a ladder. Each rung includes everything below it — with exactly one exception, named
-under the table, and it is the one that concerns designers.
+under the table, and it is the one that concerns designers. (Eight since 2026-08-27, when
+**Inspector / Reviewer** was added between Designer and Professor.)
 
 | Role | In practice |
 |---|---|
@@ -89,6 +90,7 @@ under the table, and it is the one that concerns designers.
 | **Field Contributor** | The same, plus you can review a volunteer's submissions. **Still cannot create records** — this surprises people, and it is deliberate. |
 | **Researcher** | The working tier. Create artisans, products, tools, processes and interviews; edit your own; fill in gaps on other people's. This is the tier most field staff should hold. |
 | **Designer** | Everything a researcher does, plus the one thing this portal exists for: running a design & prototype workshop end to end — its stages, its custom sections, its AI layers — and signing the report that goes out under your name. A designer account can only sign in while the designer roster still lists it. |
+| **Inspector / Reviewer** | For somebody who **examines a designer's work without running workshops themselves** — an examiner, an external assessor, a funder's reviewer. Everything a researcher does, plus you can review, reject and send back a **designer's** records, plus **read-only** sight of the stage data of any design workshop an admin has put you on. You **cannot** run a workshop, change a single stage of one, generate its report, or sign anything — outranking a designer does not get you that (see the first rule below). Nor does being put on a workshop hand you its recordings, photographs or transcripts: that was left as a decision for the owners to make rather than something the tier quietly came with. |
 | **Professor** | Everything a researcher does, plus: manage the craft and workshop vocabularies, edit the questionnaire itself, download the full dataset, review anyone below you, and edit records created by anyone below you. |
 | **Admin** | Plus: create and delete user accounts, **delete records**, grant workshop access, assign tasks, and approve late submissions. |
 | **Master Admin** | Plus: provider API keys, repository settings, publishing app updates. One account. |
@@ -100,10 +102,15 @@ Three rules that catch people out:
   the master admin specifically. A professor outranks a designer and is still refused, on purpose
   — a workshop is a fortnight of a named person's work ending in a report submitted under their
   name, and that is a job somebody was empanelled for rather than a privilege seniority earns.
+  **An Inspector / Reviewer outranks a designer and is refused for the identical reason**, which is
+  the whole shape of that tier: everything it sees inside a workshop it sees because an admin gave
+  it that workshop to read, never because of where it sits on this list.
 
 - **You can only review work by someone ranked strictly below you.** Two professors cannot approve
   each other; only the master admin reviews everyone. If a record you expected to see is not in your
-  review queue, its author probably outranks you or matches you.
+  review queue, its author probably outranks you or matches you. This is why an Inspector / Reviewer
+  sees a designer's records in the queue and a designer does not see another designer's: 37 is
+  strictly above 35, and 35 is not strictly above 35.
 - **Only admins delete.** Everyone else's mistake is fixed by editing or by rejecting, not removing.
   The exception: you may always delete **media you uploaded yourself**, from the record's edit
   screen, without holding any delete rights.

@@ -130,9 +130,55 @@ def _provenance(interview_meta: dict[str, Any]) -> dict[str, Any]:
 def _may_take(media: Any, media_owners: set[str] | None) -> bool:
     """Whether this caller may be handed the fetchable URL for one media row.
 
-    ``None`` is ``records.ALL_MEDIA_URLS`` — professor and above, or a holder of the global
-    dataset-download permission. Otherwise the row's uploader has to be in the resolved set: the
-    caller themselves, or a researcher who granted them data access.
+    ``None`` is ``records.ALL_MEDIA_URLS`` — professor and above. Otherwise the row's uploader has to
+    be in the resolved set: the caller themselves, or a researcher who granted them data access.
+
+    "OR A HOLDER OF THE GLOBAL DATASET-DOWNLOAD PERMISSION" USED TO STAND IN THAT SENTENCE AND IT WAS
+    NOT TRUE. ``can_download_dataset`` is a grantable boolean a RESEARCHER can hold, and
+    ``records.media_url_owners`` deliberately stopped consulting it — its docstring carries the
+    measurement and the two download surfaces that decide the opposite for the same account. This
+    predicate reads whatever that function returns, so the sentence described a widening that had
+    already been deleted underneath it, which is the worst kind of stale comment: it tells a reader
+    the gate is looser than it is, and the next person to "restore consistency" would put the hole
+    back.
+
+    NO DESIGN-WORKSHOP ARM HERE, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
+    ``records.media_url_scope`` answers "whose media bytes may travel" in two halves: the uploaders,
+    and the design workshops this account may open, whose files are recognised by the TAG
+    ``linkedRecordType="designWorkshop"`` plus the workshop id (``dictation_consent.MEDIA_TAG``). The
+    second half would be nearly free to honour here — unlike most hand-built payloads, this predicate
+    is handed the ORM ROW, which still carries both tag columns, so no plumbing would be needed. What
+    it would buy is nothing, and the reason is which rows this document is built from.
+
+    ``consolidate_for_artisan`` selects media by ``questionnaireInterviewId``, and the only writer of
+    that column in this repository is ``records.media_relation_data``, which DERIVES it from the link
+    type: it returns that key for the tags ``questionnaire`` and ``questionnaireinterview`` and
+    nothing at all for ``designWorkshop`` (that tag has no column on MediaFile — the whole reason the
+    workshop half has to be a tag test). Its two callers (``POST /media/complete`` and
+    ``POST /media/{id}/relink`` — true as of 2026-08-27; check
+    ``grep -rn media_relation_data backend/app``) write the tag and the key from the SAME pair, and
+    ``MediaCompleteRequest`` carries no ``questionnaireInterviewId`` for a client to send past them.
+    The two questionnaires are also different features that share a word: this one consolidates
+    ``QuestionnaireInterview`` sittings with artisans, whose only workshop column is a ``Workshop``,
+    while a design workshop's questionnaire is the ``Questionnaire``/``QuestionnaireForm*`` family
+    keyed by ``designWorkshopId`` and read by ``services/questionnaire_forms``. Neither writes a media
+    row the other can see.
+
+    So the arm could never fire, and honouring it would cost a second round trip — the workshop
+    lookup inside ``media_url_scope`` — on a document whose whole shape is an argument about round
+    trips (see ``consolidate_for_artisan``'s QUERY BUDGET: seven statements in two gathered waves,
+    the same for an artisan in four interviews and one in forty). Adding a query that cannot change
+    an answer is exactly what that budget forbids.
+
+    THIS PREDICATE CANNOT BECOME A SECOND, COMPETING COPY OF THE ENCODER'S RULE, WHICH IS WHY IT IS
+    SAFE FOR IT TO DIVERGE. ``records._redact_sensitive`` recognises a media node by ``objectKey`` and
+    scrubs the takeable keys off it; the entry ``consolidate_for_artisan`` builds carries no
+    ``objectKey`` at all (see the comment beside its ``"url"`` key), so the encoder walks straight
+    past it and this function is the ONLY gate on those bytes — not a duplicate of one. The day a
+    questionnaire clip genuinely can carry the workshop tag, widen it HERE by adding the tag test as
+    a second arm, and take the workshop ids from ``media_url_scope`` rather than folding the
+    co-designer's id into ``media_owners``: the uploader set means "may take that uploader's data
+    everywhere", and this document reaches every sitting an artisan has ever been in.
     """
     return media_owners is None or get_value(media, "uploadedById") in media_owners
 
@@ -178,6 +224,12 @@ async def consolidate_for_artisan(
     media_vis = await viewable_where(current_user, owner_field="uploadedById")
     # WHOSE recordings this caller may actually be handed. Resolved once for the whole document, before
     # the wave, because it is a single grant lookup and every recording entry below consults it.
+    #
+    # THE UPLOADER HALF ONLY, NAMED SO IT IS VISIBLY A CHOICE. ``records.media_url_scope`` would also
+    # return the design workshops this account may open, and nothing this document carries can be
+    # tagged with one — the media below is selected by ``questionnaireInterviewId``, a column written
+    # only from the ``questionnaire``/``questionnaireinterview`` link types. ``_may_take`` sets out the
+    # derivation in full, and what to change on the day it stops holding.
     media_owners = await media_url_owners(current_user)
 
     interview_where: dict[str, Any] = {"artisans": {"some": {"artisanId": artisan_id}}}

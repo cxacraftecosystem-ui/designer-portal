@@ -1,0 +1,40 @@
+-- The third of the tool's dimension triple, so a measured HEIGHT can be recorded as a height.
+--
+-- =============================================================================================
+-- WHY THIS COLUMN DID NOT EXIST, WHICH IS THE ONLY THING WORTH KNOWING HERE
+-- =============================================================================================
+--
+-- "ProductDocumentation" has carried "lengthInches" / "breadthInches" / "heightInches" since it was
+-- written. "ToolDocumentation" stopped at two, and nothing pointed at the gap because two separate
+-- places already assumed it closed: `measurement_provenance`'s header says BOTH tables carry the
+-- triple, and its `DIMENSION_FIELDS` set already names `heightInches`.
+--
+-- The consequence was small and quiet and exactly the kind this repository hunts. A tool's height,
+-- once measured, had nowhere to go but the plain "height" column beside it — a column that DECLARES
+-- NO UNIT. `design_workshops._METHOD_CARRIED_DIMENSIONS` could therefore carry the tool's length and
+-- breadth into a stage entry as centimetres with their measurement method attached, and had to leave
+-- the height behind as `heightAsRecorded`: a number with no unit and no method, which the carry's
+-- own comment described as stating "neither their unit nor their method". That comment named the
+-- fix and called it "the repo owner's call". The owner made it on 2026-08-27.
+--
+-- =============================================================================================
+-- WHY THE PLAIN "height" COLUMN STAYS
+-- =============================================================================================
+--
+-- It is not a duplicate and it is not being migrated into this one. Rows already hold values in
+-- "height", and NOTHING IN THE DATABASE CAN SAY WHAT UNIT THOSE ARE IN — that is the whole defect
+-- the `*Inches` naming exists to prevent. Copying them across would invent a unit for every one of
+-- them, which `_inches_to_cm` and the paragraph above it call the failure this design avoids.
+-- So "height" keeps whatever it holds and keeps meaning "as recorded, unit unknown", and
+-- "heightInches" starts empty and only ever holds a figure somebody measured in inches.
+--
+-- =============================================================================================
+-- WHY THIS IS SAFE TO APPLY
+-- =============================================================================================
+--
+-- Additive and nullable. No existing row changes, no existing query breaks, and a client that has
+-- never heard of the column is unaffected — which matters here because a handset may be a fortnight
+-- behind the server. The type mirrors its two siblings and the product's triple exactly:
+-- Decimal(10, 2).
+
+ALTER TABLE "ToolDocumentation" ADD COLUMN "heightInches" DECIMAL(10,2);

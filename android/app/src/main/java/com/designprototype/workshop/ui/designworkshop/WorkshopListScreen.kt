@@ -57,7 +57,7 @@ import com.designprototype.workshop.data.DW_WORKSHOP_CREATE_REFUSAL
 import com.designprototype.workshop.data.DesignWorkshopCreateBody
 import com.designprototype.workshop.data.DwEligibleViewerDto
 import com.designprototype.workshop.data.DwEligibleViewers
-import com.designprototype.workshop.data.DwPy
+import com.designprototype.workshop.data.DW_MAX_NAMED_DESIGNERS
 import com.designprototype.workshop.data.mayMintLocalWorkshop
 import com.designprototype.workshop.data.ReportTemplateDto
 import com.designprototype.workshop.data.SchemaResponse
@@ -69,6 +69,11 @@ import com.designprototype.workshop.data.WorkshopSyncStatus
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.DwCustomSectionStore
 import com.designprototype.workshop.data.computeWorkshopCompleteness
+import com.designprototype.workshop.data.dwAdoptCandidateNotice
+import com.designprototype.workshop.data.dwAdoptNoCandidatesMessage
+import com.designprototype.workshop.data.dwNamedDesignerId
+import com.designprototype.workshop.data.dwNamedDesignerTeam
+import com.designprototype.workshop.data.dwOrderedDesignerPicks
 import com.designprototype.workshop.data.dwPersonLabel
 import com.designprototype.workshop.data.dwViewerAdministrationMissing
 import com.designprototype.workshop.data.dwViewerOfferNotice
@@ -78,6 +83,7 @@ import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.overallPercent
 import com.designprototype.workshop.data.visibleDesignWorkshops
 import com.designprototype.workshop.ui.FieldPermissions
+import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
@@ -138,6 +144,25 @@ private data class WorkshopRow(
      * which is the one case where there is nothing local to be behind.
      */
     val status: WorkshopSyncStatus? = null,
+    /**
+     * THE SERVER RETURNED THIS ROW ON THE WALK THAT BUILT THIS LIST — not "this device remembers a
+     * workshop by that id".
+     *
+     * **A DIFFERENT FACT FROM [remoteId], AND THE DIFFERENCE IS AN ACCESS CHECK.** A draft on the
+     * disk carries the id of the workshop it was last pointed at, and that id survives everything:
+     * a grant revoked from the viewers screen, a designer taken off a workshop, the narrowing that
+     * came with naming several designers at create. So a row can hold a perfectly good-looking
+     * `remoteId` for a workshop `GET /design-workshops` no longer offers this account — this
+     * device's memory is stale in the PERMISSIVE direction, which is the only direction that
+     * matters.
+     *
+     * It is read by exactly one thing, and that is why it exists: [AdoptIntoWorkshopDialog] offers
+     * DESTINATIONS. Adoption is one-way and unrepeatable, and pointing a fortnight of fieldwork at
+     * a workshop the server will answer 404 for strands it behind a refusal no sync can clear.
+     * Everywhere else, showing a remembered row is right — a designer's own list must not go blank
+     * because a request failed.
+     */
+    val fromServer: Boolean = false,
 ) {
     val localOnly: Boolean get() = remoteId == null
 }
@@ -300,7 +325,7 @@ fun WorkshopListScreen(
                     updatedAt = dto.updatedAt.orEmpty(),
                     schema = registry,
                     draft = draft,
-                )
+                ).copy(fromServer = true)
             }
 
             val covered = fromServer.map { it.localId }.toSet()
@@ -725,13 +750,38 @@ fun WorkshopListScreen(
         AdoptIntoWorkshopDialog(
             repository = repository,
             row = row,
-            // EVERY WORKSHOP THIS LIST ALREADY KNOWS ABOUT, and no request of its own. A designer
-            // doing this is by definition holding a draft that could not be created, which is very
-            // often because they are in a courtyard — so a picker that needed the network would be
-            // unavailable at exactly the moment it is reached for. The list has already walked every
-            // page this account may see; those rows are the candidates.
-            candidates = rows.filter { !it.localOnly },
+            /*
+              EVERY WORKSHOP THE SERVER JUST SAID THIS ACCOUNT MAY OPEN — and no request of its own.
+
+              STILL NO ROUND TRIP. A designer doing this is by definition holding a draft that could
+              not be created, which is very often because they are in a courtyard; a picker that
+              needed the network would be unavailable at exactly the moment it is reached for. The
+              list screen has already walked every page this account may see, so its rows are the
+              candidate set and this dialog spends nothing.
+
+              BUT ONLY THE ROWS THE WALK ACTUALLY RETURNED, and that filter is new. `remoteId` is a
+              memory on the disk: it outlives a grant revoked from the viewers screen, a designer
+              taken off a workshop, and the narrowing that arrived with naming several designers at
+              create — so a row can carry a good-looking id for a workshop the server no longer
+              offers this account. Everywhere else on this screen showing that row is right. As a
+              DESTINATION it is not: adoption is one-way and unrepeatable, and pointing a fortnight
+              at a workshop that answers 404 strands it behind a refusal no sync pass can clear. See
+              [WorkshopRow.fromServer].
+
+              OFFLINE IS THE DELIBERATE EXCEPTION, and the browser answers it the same way: with no
+              answer from the server there is nothing to confirm against, and refusing to offer
+              anything would take the feature away in the courtyard it exists for. The remembered
+              rows are offered, and [dwAdoptCandidateNotice] says exactly what they are. What is
+              NOT needed here is the browser's extra "hold the button until the repository has
+              answered once" gate — this control lives ON a row, so the walk has already finished
+              (or already failed, setting `offline`) before the dialog can be opened at all.
+            */
+            candidates = rows.filter { it.remoteId != null && (offline || it.fromServer) },
             offline = offline,
+            // The two other ways this list can be a PREFIX, neither of which is visible from inside
+            // a dialog that covers the screen causing it. See [dwAdoptCandidateNotice].
+            searched = search.isNotBlank(),
+            listTruncated = partial != null,
             onDismiss = { adopting = null },
             /*
               THE ADOPT PATH WAS CHECKED FOR THE INTERRUPTED-CREATE HAZARD ON 2026-08-22 AND IS SAFE,
@@ -979,7 +1029,23 @@ private fun CompletenessRing(percent: Int) {
  * which is the whole point of the paragraph above — carries none and the resolver is never armed for
  * it. The stamp's own comment has the fortnight that costs.
  *
- * ── AND IT NAMES WHO THE WORKSHOP IS FOR, WHICH IS THE ONE ANSWER THE REPORT PRINTS ─────────────
+ * ── AND IT NAMES WHO THE WORKSHOP IS FOR — WHICH IS BOTH WHO MAY OPEN IT AND WHOSE NAME IS ON IT ─
+ *
+ * TWO QUESTIONS, and the field used to be one. WHO MAY OPEN IT is SEVERAL people and it is a
+ * security boundary: a design workshop is visible only to its creator, to admins, and to whoever
+ * holds a `DesignWorkshopViewer` row, and a DESIGNER cannot create one — so `createdById` never
+ * matches for them and the workshops a designer can see are exactly the ones they are named on.
+ * A real workshop is a fortnight worked by two designers alongside a master craftsperson and a
+ * reviewing officer. With one name on the create, everybody after the first had to be added
+ * afterwards from "Designers on a workshop", and an admin who forgot left a designer who could not
+ * open the workshop their own stage 1 already named. The picker below is a multi-select for that
+ * reason, and the create writes one viewer row per name.
+ *
+ * WHOSE NAME IS ON IT is exactly ONE — stage 1 and stage 3 declare a single designer block, and
+ * `report_meta` feeds the promoted name into the .docx's `dc:creator`, which the file format cannot
+ * express as a list. So the form also resolves a LEAD and PRINTS who it is, because a multi-select
+ * draws its ticks in the server's name order and "the first one you ticked" is invisible to the
+ * person ticking. [dwNamedDesignerTeam] is the rule, shared with the body below.
  *
  * `seed_designer_prefill` copies a `DesignerProfile` into stage 1 and stage 3 the instant the record
  * exists, and until [DesignWorkshopCreateBody.designerUserId] could be SENT the profile it copied
@@ -993,16 +1059,20 @@ private fun CompletenessRing(percent: Int) {
  *
  * THE PICKER'S OPTIONS ARE THE SERVER'S AND THE SEARCH IS THE SERVER'S. `GET /design-workshops/
  * eligible-viewers` is the same endpoint `WorkshopViewersScreen` uses, deliberately: the create
- * route's `assert_designer_may_be_named` delegates to the same `_assert_every_id_may_be_granted`
+ * route's `assert_every_designer_may_be_named` delegates to the same `_assert_every_id_may_be_granted`
  * that endpoint is built on, so offering somebody here whom the create would refuse is impossible by
- * construction rather than by agreement. It is capped at 2000 accounts and the cap is REACHED on a
+ * construction rather than by agreement. It asks the rule ONCE for the whole set and names every
+ * account it objected to, so an ineligible id anywhere in the list refuses the WHOLE create with a
+ * 422 — and leaves no orphan record, because the question is asked above the create. It is capped at 2000 accounts and the cap is REACHED on a
  * real repository (2543 eligible), so the box below asks the server rather than filtering what
  * arrived — a local filter would search only the part of the alphabet that fitted and answer "no
  * such person" about a colleague who is perfectly eligible and merely sorts late.
  *
  * NAMING SOMEBODY ALSO PUTS THEM ON THE WORKSHOP: the create route grants their viewer row in the
  * same call. That replaces two admin steps with one, and forgetting the second is how a designer
- * ends up locked out of the workshop whose stage 1 already carries their name.
+ * ends up locked out of the workshop whose stage 1 already carries their name. It matters twice over
+ * now that the list is scoped — a designer who was not named cannot see the workshop at all, and
+ * therefore cannot use "Move into a workshop" to get a fortnight captured offline into it either.
  */
 @Composable
 private fun CreateWorkshopDialog(
@@ -1024,8 +1094,23 @@ private fun CreateWorkshopDialog(
     var templates by remember { mutableStateOf<List<ReportTemplateDto>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
 
-    /** The account chosen in the picker, or "" for the "Not decided yet" row. */
-    var designerUserId by remember { mutableStateOf("") }
+    /**
+     * The designers ticked in the picker, in the order they were added. Empty is "not decided yet".
+     *
+     * A LIST AND NOT THE SHEET'S `Set`, because with no lead chosen the FIRST of these is the
+     * designer whose profile stage 1 carries — and a `Set` promises no order at all. See
+     * [dwOrderedDesignerPicks], which is what keeps this one deterministic and visible.
+     */
+    var designerUserIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    /**
+     * Whose name the report carries, or "" to let it be derived (the first ticked, never the admin).
+     *
+     * SEPARATE FROM THE SELECTION BECAUSE THEY ARE SEPARATE QUESTIONS. Several people may OPEN the
+     * workshop; exactly one name is ON it — stage 1 and stage 3 declare a single designer block and
+     * `report_meta` feeds it into the .docx's `dc:creator`. Resolved through [dwNamedDesignerTeam]
+     * everywhere it is read, so the sentence on the form and the body on the wire cannot disagree.
+     */
+    var leadDesignerId by remember { mutableStateOf("") }
     /** What the admin has typed. [dwViewerSearchTerm] turns it into what the server is asked. */
     var designerQuery by remember { mutableStateOf("") }
     /**
@@ -1043,9 +1128,11 @@ private fun CreateWorkshopDialog(
      * **THE ANTI-AMNESIA STORE, and it is the same one `WorkshopViewersScreen` keeps for the same
      * reason.** A search REPLACES [designerOffer], so an admin who found a colleague under one
      * surname, picked them, then typed a second surname would be left with a picker whose trigger
-     * reads "Not decided yet" while [designerUserId] still holds the first pick — a form that has
-     * quietly stopped agreeing with itself on the one field that decides whose name the report
-     * prints. The pick is put back into the options from here.
+     * reads "Not decided yet" while [designerUserIds] still holds the first pick — a form that has
+     * quietly stopped agreeing with itself on the field that decides who may open the workshop AND
+     * whose name the report prints. The picks are put back into the options from here, ALL of them:
+     * a multi-select can hold ticks from four different searches at once. It is also what lets the
+     * lead line print a NAME rather than a bare cuid.
      */
     var seenDesigners by remember { mutableStateOf<Map<String, DwEligibleViewerDto>>(emptyMap()) }
     var designerSearching by remember { mutableStateOf(false) }
@@ -1129,12 +1216,15 @@ private fun CreateWorkshopDialog(
      * `dwViewerChoices` keeps its groups in order: it is not part of the answer to the term that is
      * currently typed, and pretending otherwise would move a row the admin is looking at.
      */
-    val designerOptions = remember(designerOffer, seenDesigners, designerUserId) {
+    val designerOptions = remember(designerOffer, seenDesigners, designerUserIds) {
         val offered = designerOffer?.users.orEmpty()
-        val retained = designerUserId
-            .takeIf { id -> id.isNotBlank() && offered.none { it.id == id } }
-            ?.let { seenDesigners[it] }
-        (offered + listOfNotNull(retained)).map { person ->
+        val answered = offered.mapTo(HashSet()) { it.id }
+        // EVERY TICK THE CURRENT ANSWER NO LONGER CONTAINS, not just one. The singular control only
+        // ever had to rescue a single `value`; a multi-select can hold ticks from four different
+        // searches at once, and rescuing only the newest would be a control that forgets three of
+        // them while still sending all four.
+        val retained = designerUserIds.filterNot { it in answered }.mapNotNull { seenDesigners[it] }
+        (offered + retained).map { person ->
             com.designprototype.workshop.ui.SelectOption(
                 value = person.id,
                 // `dwPersonLabel` and not `name.ifBlank { email }`: a name that is nothing but a
@@ -1248,22 +1338,14 @@ private fun CreateWorkshopDialog(
                 // order as the viewers screen and as the web, because an admin moves between the
                 // three and must not be told three different stories about one cut list.
                 //
-                // THE FIFTH LINE IS THIS SCREEN'S OWN AND IS NOT ADDED TO THAT FUNCTION. A complete,
-                // unsearched, EMPTY eligible set is the one state `dwViewerOfferNotice` deliberately
-                // says nothing about, because the viewers screen answers it in its picker's
-                // `emptyMessage` instead — and `SearchableSelectField` has no such slot, so an empty
-                // picker here would offer "Not decided yet" alone with nothing to say why. That reads
-                // as a broken control rather than as a statement about the empanelment roster, which
-                // is what it is. Kept out of the shared function so the four states that ARE shared
-                // stay byte-for-byte the same on both screens and in the browser.
-                val designerNotice = designerStandDown ?: designerOffer?.let { offer ->
-                    dwViewerOfferNotice(offer)
-                        ?: (
-                            "No account on this repository may be named as this workshop's designer. " +
-                                "An account has to be able to run a design workshop, and be on the " +
-                                "ACTIVE designer roster, before it can be named on one."
-                            ).takeIf { offer.users.isEmpty() && offer.search == null }
-                }
+                // THE FIFTH STATE — a complete, unsearched, EMPTY eligible set — IS NOT SAID HERE.
+                // `dwViewerOfferNotice` deliberately says nothing about it because the viewers screen
+                // answers it in its picker's `emptyMessage`, and now so does this one: a multi-select
+                // has that slot where the single-select did not, and on this handset `emptyMessage`
+                // REPLACES the trigger on the form rather than hiding inside a sheet, so it is a
+                // sentence on the page and not a sentence behind a control nobody would open. Said in
+                // both places it would be said twice.
+                val designerNotice = designerStandDown ?: designerOffer?.let { dwViewerOfferNotice(it) }
                 designerNotice?.let {
                     Text(
                         it,
@@ -1278,32 +1360,156 @@ private fun CreateWorkshopDialog(
                         fontSize = 12.sp
                     )
                 }
-                SearchableSelectField(
-                    label = "Designer this workshop is for",
-                    options = designerOptions,
-                    selectedValue = designerUserId,
-                    // "NOT DECIDED YET" IS A REAL ANSWER AND IT IS THE DEFAULT ONE, so it is offered
-                    // as a row rather than left to the placeholder: that is what lets an admin UNDO a
-                    // pick without closing the form. The server folds it to "nobody named" and the
-                    // seed then behaves exactly as it did before this field existed.
-                    placeholder = "Not decided yet",
-                    includeNone = true,
-                    enabled = !busy && designerStandDown == null,
-                    onSelect = { picked -> designerUserId = picked }
-                )
-                Text(
-                    "Their designer profile is copied into stage 1 and stage 3, and they are given " +
-                        "access to this workshop in the same step. Leave it as “Not decided yet” if " +
-                        "you do not know — stage 1 then carries whoever creates the workshop, and a " +
-                        "designer can be added later from “Designers on a workshop”.",
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
-                )
+
+                /*
+                  ── A MULTI-SELECT, AND THAT IS A SECURITY BOUNDARY RATHER THAN A CONVENIENCE ────
+
+                  A design workshop is visible ONLY to its creator, to admins, and to whoever holds a
+                  `DesignWorkshopViewer` row. A DESIGNER cannot create one, so `createdById` never
+                  matches for them: the workshops a designer can see are exactly the ones they are
+                  named on. A real workshop is a fortnight worked by two designers alongside a master
+                  craftsperson and a reviewing officer, and with one name on the create everybody
+                  after the first had to be added afterwards from "Designers on a workshop" — an
+                  admin who forgot left a designer who could not open the workshop their own stage 1
+                  already named. That gap is what this control closes; the create writes one viewer
+                  row per name, in the same call.
+
+                  THE SHEET'S OWN FILTER IS NOT THE SEARCH BOX. It narrows what came BACK; the field
+                  above decides what comes back, and on a repository with 2543 eligible accounts
+                  under a 2000 ceiling those are not the same list.
+                */
+                // DRAWN ONLY WHEN IT CAN SAY SOMETHING TRUE. With the picker stood down there is no
+                // list, and a multi-select with no options replaces its trigger with `emptyMessage` —
+                // which here would read "no account on this repository may be named", a claim about
+                // the empanelment roster that a failed read does not support and that would sit
+                // directly under a sentence saying the list could not be read. Rule 10, twice over.
+                //
+                // THE ONE EXCEPTION IS A SELECTION ALREADY MADE. If the connection dropped after an
+                // admin ticked somebody, those ids are still what the create will carry, so the
+                // control stays on screen — disabled, but showing its chips — rather than hiding the
+                // answer the form is about to send.
+                if (designerStandDown == null || designerUserIds.isNotEmpty()) {
+                    SearchableMultiSelectField(
+                        label = "Designers this workshop is for",
+                        options = designerOptions,
+                        selected = designerUserIds.toSet(),
+                        // "NOT DECIDED YET" IS A REAL ANSWER AND IT IS THE DEFAULT ONE — a workshop is
+                        // opened in a room on day one and the admin may genuinely not know yet who will
+                        // run it. An EMPTY SELECTION already says it, which is why there is no row in the
+                        // sheet offering it as well: two controls for one answer, one of which you would
+                        // have to untick the other to reach. (The single-select needed the row because
+                        // there was no other way to undo a pick without closing the form.)
+                        placeholder = "Not decided yet",
+                        // TWO MESSAGES, because they are two different facts and the whole defect this
+                        // surface was fixed for is those two looking identical. "Nobody is eligible" is a
+                        // statement about the empanelment roster; "nothing matched" is a statement about
+                        // the term just typed. Same split, same words, as `WorkshopViewersScreen`.
+                        emptyMessage = if (designerOffer?.search != null) {
+                            "No eligible account matches that search."
+                        } else {
+                            "No account on this repository may be named as this workshop's designer. " +
+                                "An account has to be able to run a design workshop, and be on the " +
+                                "ACTIVE designer roster, before it can be named on one."
+                        },
+                        enabled = !busy && designerStandDown == null,
+                        onSelectedChange = { picked ->
+                            // ORDERED, and the lead written down rather than inferred. The sheet hands
+                            // back a `Set`, which promises no order — and with no lead the FIRST of the
+                            // team is whose profile stage 1 carries. See [dwOrderedDesignerPicks].
+                            val next = dwOrderedDesignerPicks(
+                                previous = designerUserIds,
+                                picked = picked,
+                                offered = designerOptions.map { it.value },
+                            )
+                            designerUserIds = next
+                            // RESOLVED AND STORED on every change, so the state always equals what the
+                            // line below prints and what the body will carry. Unticking the lead PROMOTES
+                            // the first remaining designer; it never puts them back, because an admin who
+                            // unticked somebody has removed them and that is the one direction an access
+                            // control must not drift in.
+                            leadDesignerId = dwNamedDesignerTeam(next, leadDesignerId).lead.orEmpty()
+                        }
+                    )
+                    Text(
+                        "Everybody named here can open this workshop and fill in its stages — a design " +
+                            "workshop is visible only to the designers on it, and to admins. One of them " +
+                            "is the one whose designer profile is copied into stage 1 and stage 3, and " +
+                            "whose name the report carries. Leave it as “Not decided yet” if you do not " +
+                            "know — stage 1 then carries whoever creates the workshop, and designers can " +
+                            "be added later from “Designers on a workshop”.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 11.sp
+                    )
+                }
+
+                // ── The cap, refused rather than trimmed ─────────────────────────────────────────
+                //
+                // The SERVER refuses an over-long list outright rather than keeping the first
+                // hundred, and so does the "Designers on a workshop" screen against the same table.
+                // Trimming here would drop designers the admin ticked and could not see go, and it
+                // would make this form disagree with the server about what was asked for. "Select all
+                // N shown" is what can cross it in one tap.
+                if (designerUserIds.size > DW_MAX_NAMED_DESIGNERS) {
+                    Text(
+                        "A workshop can be opened for at most $DW_MAX_NAMED_DESIGNERS designers, and " +
+                            "this list has ${designerUserIds.size}. Take some off before starting.",
+                        color = MaterialTheme.field.warning,
+                        fontSize = 12.sp
+                    )
+                }
+
+                // ── Whose name is on it ─────────────────────────────────────────────────────────
+                //
+                // PRINTED, NEVER LEFT IMPLICIT. The picker draws its ticks in the SERVER'S name
+                // order, so "the first one you ticked" is invisible to the person ticking — and that
+                // is exactly what the server promotes to lead when no lead is sent. Whose designer
+                // profile is copied into stage 1 and whose name reaches the .docx's `dc:creator` must
+                // not be decided by an order nobody can see.
+                //
+                // Resolved through the SAME function the body below uses, so the sentence and the
+                // wire cannot disagree. The chooser appears only from two designers upward: with one
+                // there is nothing to choose, and a picker holding a single row is a question with a
+                // single answer.
+                val namedTeam = dwNamedDesignerTeam(designerUserIds, leadDesignerId)
+                namedTeam.lead?.let { lead ->
+                    Text(
+                        "Stage 1, stage 3 and the report will carry " +
+                            (seenDesigners[lead]?.let { dwPersonLabel(it.name, it.email) } ?: lead) +
+                            " — their designer profile is the one copied in. Everybody ticked can " +
+                            "open the workshop.",
+                        color = MaterialTheme.field.body,
+                        fontSize = 12.sp
+                    )
+                    if (namedTeam.team.size > 1) {
+                        SearchableSelectField(
+                            label = "Whose name the report carries",
+                            // The ticked set only. Every row is already on this screen and there are
+                            // at most [DW_MAX_NAMED_DESIGNERS] of them, so unlike the picker above
+                            // nothing here has been cut by a server.
+                            options = namedTeam.team.map { id ->
+                                val person = seenDesigners[id]
+                                com.designprototype.workshop.ui.SelectOption(
+                                    value = id,
+                                    label = person?.let { dwPersonLabel(it.name, it.email) } ?: id,
+                                    hint = person?.email?.takeIf { it.isNotBlank() },
+                                )
+                            },
+                            selectedValue = lead,
+                            includeNone = false,
+                            enabled = !busy,
+                            onSelect = { picked -> if (picked.isNotBlank()) leadDesignerId = picked }
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                enabled = !busy && title.isNotBlank(),
+                // The over-cap selection is refused HERE rather than trimmed on the way out, for the
+                // reason the notice above gives: the server refuses it too, and a client that quietly
+                // sent something else would be disagreeing with the admin about what they asked for.
+                enabled = !busy && title.isNotBlank() &&
+                    designerUserIds.size <= DW_MAX_NAMED_DESIGNERS,
                 onClick = {
                     // BEFORE THE NETWORK AND BEFORE THE DISK. See this dialog's header for the
                     // fortnight this ordering saves. The cached user is what the whole app already
@@ -1317,6 +1523,10 @@ private fun CreateWorkshopDialog(
                     } else {
                     busy = true
                     scope.launch {
+                        // RESOLVED ONCE, and by the same function that printed the sentence above.
+                        // Whose name lands on a ministry document is not a place for the screen and
+                        // the body to compute an answer each.
+                        val designers = dwNamedDesignerTeam(designerUserIds, leadDesignerId)
                         val body = DesignWorkshopCreateBody(
                             title = title.trim(),
                             templateId = templateId,
@@ -1326,7 +1536,16 @@ private fun CreateWorkshopDialog(
                             // None` — but the same value is about to be written to the disk, where
                             // "" and null would be two spellings of one state for every later pass
                             // to disagree about. See [dwNamedDesignerId].
-                            designerUserId = dwNamedDesignerId(designerUserId),
+                            designerUserId = designers.lead,
+                            // THE WHOLE TEAM, lead first — and null, not `[]`, when nobody was named.
+                            // Whether this key actually reaches the wire is decided one layer down by
+                            // `WorkshopRepository.createDesignWorkshop`: it is OMITTED for a
+                            // one-designer create, because `APIModel` is `extra="forbid"` and an API
+                            // that predates the field would 422 a body that merely carries it — and a
+                            // 422 is never queued, so that would strand the fortnight rather than
+                            // refuse a request. The body written to the DISK below is this one, so
+                            // the draft remembers the whole team whatever the wire chose to send.
+                            designerUserIds = designers.team.takeIf { it.isNotEmpty() },
                             craftName = craft.trim().takeIf { it.isNotEmpty() },
                             clusterName = cluster.trim().takeIf { it.isNotEmpty() },
                         )
@@ -1375,6 +1594,13 @@ private fun CreateWorkshopDialog(
                                     // runs, and a picker that wrote both would give one fact two
                                     // writers.
                                     designerUserId = body.designerUserId,
+                                    // AND EVERYBODY ELSE THE WORKSHOP WAS OPENED FOR, for exactly
+                                    // the same reason: a workshop is visible only to the designers
+                                    // named on it, so a courtyard create that forgot the other three
+                                    // would file a fortnight into a workshop three of the four people
+                                    // who worked it cannot open. Empty is "the lead alone, or
+                                    // nobody"; it is never read without `designerUserId` beside it.
+                                    designerUserIds = body.designerUserIds.orEmpty(),
                                     remoteId = remote.getOrNull()?.id,
                                     ownerUserId = repository.cachedUser()?.id,
                                     /*
@@ -1461,13 +1687,23 @@ private fun CreateWorkshopDialog(
  * A designer reaching this control is, by definition, holding a draft that could not be created —
  * which very often means they are in the courtyard where they captured it. A picker that needed a
  * round trip would be empty at exactly the moment it is used. The list screen has already walked
- * every page the server says this account may see and has merged them with what is on the disk, so
- * its own rows are the honest candidate set.
+ * every page the server says this account may see, so its own rows are the honest candidate set.
  *
- * AND IT SAYS WHEN THAT SET IS PARTIAL. If the list could not reach the server this dialog is
- * offering only the workshops this phone happens to have opened before, which may not include the
- * one the admin created an hour ago. Saying so is the difference between "your workshop is not here
- * yet" and "this app has lost your workshop".
+ * WHAT IT IS NO LONGER FED FROM IS THIS DEVICE'S MEMORY. A draft on the disk keeps the id of the
+ * workshop it was last pointed at, and that id outlives the access: a grant revoked from the
+ * viewers screen, a designer taken off a workshop, the narrowing that came with naming several
+ * designers at create. As a row on a list, showing a remembered workshop is right. As a
+ * DESTINATION for a one-way move it is not — the fortnight would be filed against an id this
+ * account cannot open, and every later sync would answer 404 with nothing able to undo it. So while
+ * the server is answering, only the rows it returned are offered. With no connection there is
+ * nothing to confirm against, the remembered rows are offered instead, and [dwAdoptCandidateNotice]
+ * says exactly that. `AdoptLocalDraftDialog.tsx` makes the same split for the same reason.
+ *
+ * AND IT SAYS WHENEVER THE SET IS PARTIAL — offline, narrowed by the list's own search box, or cut
+ * short by a bounded page walk. All three are invisible from inside a dialog that covers the screen
+ * causing them, and a designer who cannot find the workshop an admin made an hour ago will conclude
+ * the admin never made it. Saying so is the difference between "your workshop is not here yet" and
+ * "this app has lost your workshop".
  *
  * ── WHAT IT WARNS ABOUT BEFORE IT DOES IT ───────────────────────────────────────────────────────
  *
@@ -1482,6 +1718,10 @@ private fun AdoptIntoWorkshopDialog(
     row: WorkshopRow,
     candidates: List<WorkshopRow>,
     offline: Boolean,
+    /** The workshops screen's search box holds something, so [candidates] is narrowed by it. */
+    searched: Boolean,
+    /** The page walk stopped before it had covered what the server said this account may see. */
+    listTruncated: Boolean,
     onDismiss: () -> Unit,
     onAdopt: (remoteId: String) -> Unit,
 ) {
@@ -1512,17 +1752,30 @@ private fun AdoptIntoWorkshopDialog(
                     fontSize = 12.sp
                 )
                 if (options.isEmpty()) {
+                    /*
+                      NOT "you have no workshops" — unless that is actually what this means.
+
+                      Since a workshop is visible only to the designers NAMED on it, the common cause
+                      of an empty destination list is an admin who created it and did not tick this
+                      designer, and the sentence has to name the two doors out of that: being named,
+                      and the join card. See [dwAdoptNoCandidatesMessage].
+
+                      BUT IT IS A CLAIM ABOUT ACCESS, so it may only be made when the list is the
+                      whole answer. Narrowed by the search box, or cut short by the page walk, an
+                      empty picker says nothing whatever about what this account may open — and
+                      telling a designer no workshop is open to them when one is three letters away
+                      is the same absence-reads-as-non-existence failure one layer up. So a caveat,
+                      where there is one, is what gets said instead of the claim.
+                    */
                     Text(
                         if (offline) {
-                            "There are no workshops on this phone to move it into, and the server " +
-                                "could not be reached — so this list may not be the whole story. Ask " +
-                                "an admin to create the workshop, then open this list once with a " +
-                                "connection and try again."
+                            dwAdoptNoCandidatesMessage(offline = true)
                         } else {
-                            "You do not have access to any workshop on the server yet. Ask an admin " +
-                                "to create one for your cluster and give you access; it appears here " +
-                                "and this draft can then be moved into it. Nothing on this phone is " +
-                                "at risk in the meantime."
+                            dwAdoptCandidateNotice(
+                                offline = false,
+                                searched = searched,
+                                listTruncated = listTruncated,
+                            ) ?: dwAdoptNoCandidatesMessage(offline = false)
                         },
                         color = MaterialTheme.field.warning,
                         fontSize = 12.sp
@@ -1535,16 +1788,16 @@ private fun AdoptIntoWorkshopDialog(
                         includeNone = false,
                         onSelect = { picked -> chosen = picked }
                     )
-                    if (offline) {
-                        // PARTIAL, AND SAID SO. A designer who cannot find the workshop the admin
-                        // just made would otherwise conclude the admin had not made it.
-                        Text(
-                            "The server could not be reached, so this list holds only the workshops " +
-                                "this phone already knows about. A workshop created for you today may " +
-                                "not be here until you open this list with a connection.",
-                            color = MaterialTheme.field.warning,
-                            fontSize = 11.sp
-                        )
+                    // PARTIAL, AND SAID SO — in one line, whichever of the three reasons applies. A
+                    // designer who cannot find the workshop the admin just made would otherwise
+                    // conclude the admin had not made it, and this picker is the one control on the
+                    // screen whose wrong answer cannot be undone.
+                    dwAdoptCandidateNotice(
+                        offline = offline,
+                        searched = searched,
+                        listTruncated = listTruncated,
+                    )?.let {
+                        Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp)
                     }
                     Text(
                         "Check the name. Moving it into the wrong workshop files this fortnight's " +
@@ -1640,8 +1893,8 @@ internal fun dwDesignerPickerStandDown(
 ): String? {
     val cannotReach =
         "There is no connection, so the list of designers cannot be read. Start the workshop now " +
-            "and name the designer once this phone is back online — nothing is lost by leaving it, " +
-            "and stage 1 carries whoever started it until then."
+            "and name its designers once this phone is back online — nothing is lost by leaving " +
+            "it, and stage 1 carries whoever started it until then."
     if (offline) return cannotReach
     if (error == null) return null
     if (dwViewerAdministrationMissing((error as? HttpException)?.code())) {
@@ -1650,28 +1903,9 @@ internal fun dwDesignerPickerStandDown(
     }
     if (isConnectionFailure(error)) return cannotReach
     return "The list of designers could not be read just now. The workshop can still be started; " +
-        "stage 1 will carry whoever started it, and a designer can be added afterwards from " +
+        "stage 1 will carry whoever started it, and its designers can be added afterwards from " +
         "“Designers on a workshop”."
 }
-
-/**
- * What the create carries for a pick: the chosen account id, or null for "nobody named".
- *
- * **BLANK IS ABSENT, AND IT IS FOLDED HERE RATHER THAN LEFT TO THE SERVER.** The route does fold it
- * — `(payload.designerUserId or "").strip() or None` — but the same value is also written to
- * [com.designprototype.workshop.data.WorkshopDraft.designerUserId] on the disk, where "" and null
- * would be two spellings of one state for every later sync pass to disagree about. One fold, before
- * either copy is made.
- *
- * **PYTHON'S `strip()`, so the two sides agree on emptiness** — the same choice [dwViewerSearchTerm]
- * makes and for the same reason: Python calls the no-break space U+00A0 whitespace and
- * `Char.isWhitespace` does not. An id never comes from a keyboard here (the picker hands back the
- * server's own `DwEligibleViewerDto.id`, or "" from the "Not decided yet" row), so this is belt and
- * braces rather than a live defect — but a value that means "nobody" on the server and "somebody" on
- * the phone is precisely the disagreement this field exists to end, and it costs one call to be sure.
- */
-internal fun dwNamedDesignerId(picked: String?): String? =
-    DwPy.strip(picked.orEmpty()).takeIf { it.isNotEmpty() }
 
 // --------------------------------------------------------------------------------------
 // Helpers

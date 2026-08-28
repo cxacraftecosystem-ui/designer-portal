@@ -54,6 +54,7 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.decodeWorkshopCode
 import com.designprototype.workshop.data.dwRefId
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
+import com.designprototype.workshop.ui.DwQrLiveScanControl
 import com.designprototype.workshop.ui.DwQrScanControl
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
@@ -1745,6 +1746,33 @@ private fun DwReferenceScanPanel(
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
+            )
+            /*
+             * THE LIVE CAMERA, ADDED 2026-08-28, AND ITS ABSENCE HERE WAS HALF THE REPORTED DEFECT.
+             *
+             * `ui/DwQrLiveScanner.kt`'s own header named this surface as the one that did not get the
+             * live scanner and called the mount "the next wave's one-line change". It then stayed
+             * that way, so this — the reference picker inside a stage, which is where a card is read
+             * most often in a workshop — had exactly one camera route: `TakePicture()`, which hands
+             * off to the SYSTEM camera app. That has no reticle, no region of interest and no live
+             * detection at all: a camera is on and nothing is being scanned. A designer meeting only
+             * this surface would report precisely the complaint of 2026-08-27, and would be right,
+             * with no defect anywhere in the live scanner's own arithmetic.
+             *
+             * ABOVE the still control and not instead of it, on the reasoning both other surfaces
+             * give: neither is a fallback for the other, and the picked-picture route is the only one
+             * that can read a code somebody was SENT.
+             */
+            DwQrLiveScanControl(
+                enabled = enabled && !busy,
+                onText = { text ->
+                    typed = text
+                    resolve(text)
+                },
+                onRefusal = { message ->
+                    confirmed = null
+                    refusal = message
+                },
             )
             DwQrScanControl(
                 enabled = enabled && !busy,

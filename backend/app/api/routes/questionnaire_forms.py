@@ -69,6 +69,7 @@ from app.schemas.questionnaire import (
     QuestionnaireReuse,
     QuestionnaireUpdate,
 )
+from app.services.concurrency import gather_reads
 from app.services.design_workshop_viewers import has_viewer_grant
 from app.services.design_workshops import load_workshop_or_404
 from app.services.pagination import normalize_pagination, page_payload
@@ -656,15 +657,20 @@ async def list_questionnaires(
         where.setdefault("AND", []).append(_visible_questionnaire_where(current_user))
 
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
-    total = await db.questionnaire.count(where=where)
-    rows = await db.questionnaire.find_many(
-        where=where,
-        skip=skip,
-        take=clean_size,
-        # Paged over a non-unique sort key, so the ``id`` tiebreak is what stops a questionnaire
-        # appearing on two pages while another appears on none. See ``records.with_id_tiebreak``.
-        order=with_id_tiebreak({"createdAt": "desc"}),
-        include={"owner": True, "designWorkshop": True},
+    # Count and page together — the shape ``records.count_and_page`` exists for, spelled out here
+    # because this read needs ``include=`` and that helper takes ``relations``. Neither reads the
+    # other, so awaiting them in turn spent a cross-region round trip on the total alone.
+    total, rows = await gather_reads(
+        db.questionnaire.count(where=where),
+        db.questionnaire.find_many(
+            where=where,
+            skip=skip,
+            take=clean_size,
+            # Paged over a non-unique sort key, so the ``id`` tiebreak is what stops a questionnaire
+            # appearing on two pages while another appears on none. See ``records.with_id_tiebreak``.
+            order=with_id_tiebreak({"createdAt": "desc"}),
+            include={"owner": True, "designWorkshop": True},
+        ),
     )
     summaries = [
         {

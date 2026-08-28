@@ -373,7 +373,44 @@ class Settings(BaseSettings):
     scale_approx_count_threshold: int = Field(default=5_000, alias="SCALE_APPROX_COUNT_THRESHOLD")
 
     # Request rate limiting. Off means the middleware is never added to the stack at all.
+    #
+    # THIS FLAG NOW DOES SOMETHING. Until 2026-08-27 it did not: `app/scale/rate_limit.py` was
+    # complete, and the three fields here were read by nothing that could change a request —
+    # `flags.snapshot()` reported them and `install_rate_limit` consumed them, and nothing called
+    # `install_rate_limit`. Setting SCALE_RATE_LIMIT_ENABLED=true on a box changed no behaviour
+    # whatsoever. It is wired in now (check: `grep -n install_rate_limit app/main.py`), so this
+    # variable is the difference between a limiter and no limiter — and any older comment in this
+    # tree saying "nothing in this repository rate-limits any endpoint" describes the world before
+    # that date.
     scale_rate_limit_enabled: bool = Field(default=False, alias="SCALE_RATE_LIMIT_ENABLED")
+    # 120 requests per 60s, PER SIGNED-IN USER (per address when anonymous) — checked rather
+    # than inherited, before the flag was turned on anywhere. The three facts that make it safe
+    # rather than merely plausible:
+    #
+    #  1. It is a token bucket, so the FIRST 120 are instantaneous and only the sustained rate is
+    #     capped at 2/s. A dashboard page load or a stage-by-stage save burst never touches it.
+    #  2. Every client already reads a 429 as "the server is asking for time", not as a refusal —
+    #     checked in all three, because a limiter whose 429 is filed as a permanent failure would
+    #     DELETE fieldwork rather than delay it. Android's `WorkshopRepository.isTransient` keeps
+    #     401/408/429 retryable for the outbox; `WorkshopSync.isConnectionFailure` puts the same
+    #     three on the connection's side, so the design-workshop pass PAUSES instead of stamping a
+    #     photograph refused; `frontend/lib/offline.ts` says the same for the web outbox. The worst
+    #     case for a designer catching up on a fortnight offline is a slower pass.
+    #  3. The heaviest real burst in this product is the Android media upload, and it is
+    #     DELIBERATELY SERIAL — one file at a time, each gated on a multi-second S3 PUT. See the
+    #     "ONE AT A TIME rather than the three-abreast the record outbox uses" note in
+    #     `uploadPending`, in android/app/src/main/java/com/designprototype/workshop/data/
+    #     WorkshopSync.kt. Two origin calls per photograph is nowhere near 2/s.
+    #
+    # DO NOT RAISE IT MUCH. Production runs ONE uvicorn worker per box on purpose — both
+    # infra/k8s/base/deployment-api.yaml and the systemd unit in infra/terraform/user_data.sh say
+    # so, at length — so 2/s per identity is already a meaningful slice of everything the machine
+    # can serve. A limit of 600 would let one stuck phone take the box, which is the outage the
+    # limiter exists to prevent.
+    #
+    # It is NOT the brute-force protection. The sign-in endpoints carry their own, much tighter
+    # budget of FAILED attempts, and it lives in app/scale/rate_limit.py rather than here — see
+    # `_CREDENTIAL_FAILURES` and the module docstring for why it is a constant and not a setting.
     scale_rate_limit_requests: int = Field(default=120, alias="SCALE_RATE_LIMIT_REQUESTS")
     scale_rate_limit_window_seconds: float = Field(
         default=60.0, alias="SCALE_RATE_LIMIT_WINDOW_SECONDS"

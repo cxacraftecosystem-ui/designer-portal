@@ -286,7 +286,7 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 | `GOOGLE_ANDROID_CLIENT_ID` | No | unset | No | Extra accepted audience if Android tokens arrive with the Android client ID. |
 | `MASTER_ADMIN_EMAIL` | **Yes** | — | No | Google account permanently at `MASTER_ADMIN` (rank 60). The app will not start without it. |
 | `MASTER_ADMIN_NAME` | No | `Ankit Kumar` | No | Display name for that account. |
-| `DEFAULT_SIGNUP_ROLE` | No | `CROWDSOURCE_VOLUNTEER` | No | Tier given to brand-new self-registered Google accounts on the seven-tier ladder. Set `RESEARCHER` to restore the old open-signup behaviour. |
+| `DEFAULT_SIGNUP_ROLE` | No | `CROWDSOURCE_VOLUNTEER` | No | Tier given to brand-new self-registered Google accounts on the eight-tier ladder. Set `RESEARCHER` to restore the old open-signup behaviour. |
 
 ### Speech-to-text and AI (all optional)
 

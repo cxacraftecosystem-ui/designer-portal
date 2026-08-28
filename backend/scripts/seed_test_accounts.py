@@ -35,7 +35,8 @@ PASSWORD = "LocalDev123!"
 
 #: One per tier of the ladder in ``deps.ROLE_RANK``, plus DESIGNER — which is not a rung anybody
 #: reaches by promotion but a set member (see ``can_run_design_workshops``), and is therefore the
-#: one role whose absence hides the most.
+#: one role whose absence hides the most. INSPECTOR is here for the mirror-image reason: it is a
+#: rung, it outranks the set member, and it is refused by the same set.
 #: ``@example.org`` and NOT ``@test.local``. The login body is validated by pydantic's EmailStr,
 #: which runs ``email-validator`` and refuses ``.local`` — it is not a public TLD. The first
 #: version of this script used it and produced six accounts that were created successfully and
@@ -46,6 +47,11 @@ ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("contributor@example.org", "FIELD_CONTRIBUTOR", "Test Field Contributor"),
     ("researcher@example.org", "RESEARCHER", "Test Researcher"),
     ("designer@example.org", "DESIGNER", "Test Designer"),
+    # The tier whose refusals are the hardest to reason about without an account to hold: it
+    # OUTRANKS the designer above it and is refused everywhere on the design-workshop surface, so
+    # "log in and watch it fail" is the only cheap way to check a workshop gate has not quietly
+    # become a rank floor. It needs no roster row — ``roster_allows`` gates DESIGNER only.
+    ("inspector@example.org", "INSPECTOR", "Test Inspector"),
     ("professor@example.org", "PROFESSOR", "Test Professor"),
     ("admin2@example.org", "ADMIN", "Test Admin"),
 )

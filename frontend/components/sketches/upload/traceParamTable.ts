@@ -543,8 +543,26 @@ export function isEssential(key: string): boolean {
   return ESSENTIAL_SET.has(key);
 }
 
-/** Total controls in the table — what the "show everything" button counts. */
+/** Total controls in the table. */
 export const PARAM_COUNT = SLIDERS.length + TOGGLES.length + CHOICES.length;
+
+/**
+ * How many controls the disclosure actually reveals — the total minus the ones already on screen.
+ *
+ * THE NUMBER THE BUTTON PRINTS, AND IT USED TO BE THE WRONG ONE. The button read "Show all 32
+ * controls" while 7 of the 32 were already in front of the designer, so pressing it revealed 25 and
+ * the label had promised 32. The handset says "Show everything (N more)" and counts the ones that are
+ * NOT on screen, which is both the honest number and the one a designer can check by looking.
+ *
+ * COUNTED OFF THE TABLE RATHER THAN OFF `ESSENTIAL_KEYS.length`, because those are two different
+ * facts: the key list is what the panel ASKS for, and this is what the table HAS. An essential key
+ * naming a control that no longer exists would leave the two disagreeing, and the disagreement would
+ * surface as a button promising one more control than the press produces.
+ */
+export const ADVANCED_COUNT =
+  SLIDERS.filter((spec) => !isEssential(spec.key)).length +
+  TOGGLES.filter((spec) => !isEssential(spec.key)).length +
+  CHOICES.filter((spec) => !isEssential(spec.key)).length;
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Applying a change
@@ -654,4 +672,85 @@ export function overwriteNotice(source: string, before: TraceParams, after: Trac
   return overwritten.length === 1
     ? `${source} changed one setting: ${list}.`
     : `${source} changed ${overwritten.length} settings: ${list}.`;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * A control that cannot do anything right now
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * One sentence saying this control has no effect under the current settings, or null.
+ *
+ * ── THE TRAP THIS EXISTS FOR, WHICH IS NOT HYPOTHETICAL ───────────────────────────────────────
+ *
+ * `DenoiseMode.MEDIAN`'s branch in `engine/pipeline.ts` reads `preprocess.medianRadius` and never
+ * `preprocess.denoiseStrength` — verified 2026-08-27 at `pipeline.ts:520-534`, where the MEDIAN arm
+ * calls `Denoise.median(grey, p.preprocess.medianRadius)` and `strength` is read only by the other
+ * three. MEDIAN is what the `sketch` subject selects. So a designer can drag "Noise reduction" for a
+ * minute on the commonest configuration this panel has, watch nothing change, and reasonably conclude
+ * the trace is broken — and nothing on either client said so until the handset wrote these sentences.
+ *
+ * ── EVERY REASON WAS READ OFF `pipeline.ts`, NOT INFERRED FROM A LABEL ────────────────────────
+ *
+ * Each arm below names the condition in the engine that makes it true. That is the only way this can
+ * be maintained: a sentence saying "this does nothing" is a strong claim, and one derived from what a
+ * control's NAME suggests rather than from what the pipeline reads is a claim that will be wrong the
+ * first time a stage is reordered.
+ *
+ * ── THE CONTROL STAYS DRAWN AND STAYS WRITABLE ────────────────────────────────────────────────
+ *
+ * A sentence, never a disabled row. Greying it out would stop a designer setting a value for the
+ * configuration they are about to switch to — which is exactly what somebody comparing two engines
+ * does — and would say "you may not" where the truth is "not yet".
+ *
+ * ── WHERE THIS DIFFERS FROM THE HANDSET'S, AND WHY IT IS SHORTER ──────────────────────────────
+ *
+ * `dwTraceInactiveReason` takes a MAP of leaves that may be missing, so it has to keep "the flag is
+ * off" apart from "the flag was never sent" — a tree with no `cleanup.skeletonize` leaf is a version
+ * skew, and reading it as "thinning is switched off" would put a confident sentence under a control on
+ * the strength of a leaf that is not there. Here the parameters are a typed tree that
+ * `sanitizeTraceParams` has already completed, so every leaf exists and the distinction cannot arise.
+ * The sentences are the handset's, verbatim.
+ */
+export function inactiveReason(key: string, params: TraceParams): string | null {
+  const engine = params.edge.engine;
+  const outline = params.output.vectorMode === "OUTLINE";
+  switch (key) {
+    // `pipeline.ts:806-808` — blurSigma is passed only in the CANNY arm.
+    case "edge.blurSigma":
+      return engine === "CANNY" ? null : "Only the Canny engine reads this.";
+    // `pipeline.ts:838-852` — the flow settings are read only in the default (FDOG) arm.
+    case "edge.flow.sigmaM":
+      return engine === "FDOG" ? null : "Only the Flow engine reads this.";
+    // `pipeline.ts:817` and `:851` — XDoG and FDOG share xdogPhi; nothing else reads it.
+    case "edge.xdogPhi":
+      return engine === "XDOG" || engine === "FDOG"
+        ? null
+        : "Only the XDoG and Flow engines read this.";
+    // `pipeline.ts:613` — `p.cleanup.skeletonize && !outlineMode`.
+    case "cleanup.skeletonize":
+      return outline ? "Outline mode traces the edge of a region, so nothing is thinned." : null;
+    // `pipeline.ts:619` — inside the skeletonize branch only, so BOTH conditions are reported.
+    case "cleanup.pruneSpurs":
+      if (!params.cleanup.skeletonize) return "“Reduce ink to centrelines” is off, so there is no skeleton to prune.";
+      return outline ? "Outline mode traces the edge of a region, so nothing is thinned." : null;
+    // `pipeline.ts:620` and `:631` — both branches require bridgeGaps.
+    case "cleanup.maxGap":
+      return params.cleanup.bridgeGaps ? null : "“Bridge stroke ends” is off.";
+    // `pipeline.ts:540-545` — the CLAHE call is inside `if (p.preprocess.claheEnabled)`.
+    case "preprocess.claheClip":
+      return params.preprocess.claheEnabled ? null : "“Equalise local contrast” is off.";
+    // `pipeline.ts:552-553` — the unsharp mask runs only when the amount is above zero.
+    case "preprocess.unsharpSigma":
+      return params.preprocess.unsharpAmount > 0 ? null : "“Sharpen amount” is 0.";
+    // `pipeline.ts:520-534` — see this function's header. The MEDIAN case is the trap.
+    case "preprocess.denoiseStrength":
+      if (params.preprocess.denoise === "NONE") return "The noise filter is set to None.";
+      if (params.preprocess.denoise === "MEDIAN") {
+        return "The median filter works from a fixed radius the panel does not expose, not from this.";
+      }
+      return null;
+    default:
+      return null;
+  }
 }

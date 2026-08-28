@@ -41,12 +41,16 @@ import pytest
 from fastapi import HTTPException
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
-from app.api.routes import design_workshops as routes
+from app.api.routes import design_workshop_inspections as inspections, design_workshops as routes
 from app.services import design_ratings as dr, design_workshops as dw, entry_provenance as ep
 
 ASHA = SimpleNamespace(id="usr_asha", name="Asha Patel", role="DESIGNER")
 MEENA = SimpleNamespace(id="usr_meena", name="Meena Iyer", role="RESEARCHER")
 ADMIN = SimpleNamespace(id="usr_admin", name="Root", role="MASTER_ADMIN")
+#: Rank 37, added 2026-08-27. Reads a workshop it is not a member of and cannot write to it, which
+#: is exactly why its provenance has to resolve: an inspector is reading somebody ELSE's work, so
+#: "who wrote this field" is the whole of what they are looking at.
+INSPECTOR = SimpleNamespace(id="usr_ravi", name="Ravi Nair", role="INSPECTOR")
 
 #: One hydrated field (the artisan's recorder owns it) and one typed field (the designer owns it),
 #: which is the pair every reader has to carry intact. A reader that drops either half is broken in
@@ -612,6 +616,108 @@ def test_no_record_reader_can_serve_a_stale_value_because_there_is_no_overlay():
     )
 
 
+# --------------------------------------------------------------------------------------
+# Reader 8: the inspector's read-only view
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def inspection(reader, monkeypatch):
+    """The inspections route's own doubles, over the same three rows the other readers use.
+
+    It needs a fixture of its own rather than reusing ``reader``: that one patches names on
+    ``design_workshops``, and this route imported ITS copies at module load
+    (``from app.services.design_workshops import entry_rows, …``), so a patch on the source module
+    would not be seen here. The provenance lines are not stubbed — ``_stages_payload``,
+    ``_provenance_maps`` and ``resolve_display_names`` are the real ones, imported from the very
+    module the other readers exercise.
+
+    ``load_inspectable_workshop_or_404`` is the only loader replaced, and replacing it is what keeps
+    this test about provenance instead of about the scope query: whether the INSPECTOR row exists is
+    ``test_dw_inspector_scope.py``'s subject, and asserting it twice in two files is how the two
+    drift apart.
+    """
+    # THIS FIXTURE BUILDS ITS OWN STAMPS AND DOES NOT TOUCH THE MODULE-LEVEL `STAMPS`, AND THAT IS
+    # THE WHOLE OF WHY THIS TEST IS TRUSTWORTHY.
+    #
+    # `_row` stores `dict(stamps)` — a SHALLOW copy — so every row built from `_entries()` shares the
+    # one `STAMPS["name"]` dict, and `resolve_display_names` fills `byName` IN PLACE. Whichever test
+    # runs first resolves that shared dict for the rest of the session, and every later test then
+    # inherits a name its own reader never produced.
+    #
+    # TWO WEAKER FIXES WERE TRIED AND BOTH WERE WRONG, so do not "simplify" back to either. Reusing
+    # `_entries()` made this test pass while proving nothing: `wanted` came out empty,
+    # `resolve_display_names` returned before it queried, and a route that never called it at all
+    # would have looked identical. `copy.deepcopy(_entries())` did not fix it either — a deep copy
+    # faithfully reproduces whatever the global holds AT THAT MOMENT, which by then is the resolved
+    # name. Restoring `byName` after the copy fixed the module-alone run and still left this test
+    # ordering-dependent in the full suite, because it keeps reading a dict other tests mutate.
+    #
+    # Owning the data outright is the only version that cannot be perturbed by what ran before.
+    reference = {
+        "by": MEENA.id, "byName": None, "at": "2026-03-01T09:00:00+00:00",
+        "source": ep.SOURCE_REFERENCE, "refModel": "Artisan", "refId": "art_1", "refKey": "name",
+    }
+    designer = {
+        "by": ASHA.id, "byName": ASHA.name, "at": "2026-03-08T15:30:00+00:00",
+        "source": ep.SOURCE_DESIGNER,
+    }
+    fresh = [
+        _row("ent_setup", SINGLETON_STAGE, "workshopSetup", {"venue": "Barpali"},
+             {"venue": dict(designer)}),
+        _row("ent_p1", COLLECTION_STAGE, "participant",
+             {"name": "Sita Devi", "phone": "9000011111"},
+             {"name": dict(reference), "phone": dict(designer)}, ordinal=0),
+        _row("ent_p2", COLLECTION_STAGE, "participant",
+             {"name": "Kamla Bai"}, {"name": dict(reference)}, ordinal=1),
+    ]
+
+    async def _load(*_a, **_k):
+        return SimpleNamespace(id="dw_1", title="Bagru 2026", deletedAt=None)
+
+    async def _rows(_workshop_id, *, stage_key=None):
+        return [r for r in fresh if stage_key is None or r.stageKey == stage_key]
+
+    async def _definition(*_a, **_k):
+        return SimpleNamespace(version="v1", sections=(), fields_by_stage={}, fields=())
+
+    monkeypatch.setattr(inspections, "load_inspectable_workshop_or_404", _load)
+    monkeypatch.setattr(inspections, "entry_rows", _rows)
+    monkeypatch.setattr(inspections, "load_definition_or_empty", _definition)
+    monkeypatch.setattr(inspections, "workshop_summary", lambda record: {"id": record.id})
+    monkeypatch.setattr(inspections, "workshop_completeness", lambda *_a, **_k: {})
+    return reader
+
+
+async def test_the_inspector_read_resolves_the_overlay(inspection):
+    """``GET /design-workshop-inspections/{id}`` — the read-only twin of the designer's detail read.
+
+    This route was added by the INSPECTOR wave and went unclassified until the tripwire below caught
+    it, which it could only do once ``records.py``'s stray carriage return stopped breaking this
+    module's tokenizer. So the assertion here is the one the wave never wrote: an inspector opening
+    somebody else's workshop sees the AUTHOR of each field, not "(unknown)".
+    """
+    out = await inspections.read_workshop_under_inspection("dw_1", current_user=INSPECTOR)
+    _assert_resolved(
+        out["stages"][COLLECTION_STAGE]["provenance"]["collections"]["participant"]["ent_p1"],
+        where="GET /design-workshop-inspections/{id}",
+    )
+    assert out["stages"][SINGLETON_STAGE]["provenance"]["singleton"]["venue"]["by"] == ASHA.id
+    assert inspection.users.calls == [[MEENA.id]], "one lookup for the whole workshop, not one per row"
+
+
+async def test_the_inspector_read_says_on_the_wire_that_it_is_read_only(inspection):
+    """``readOnly`` travels in the payload, and this is the reader that must not lose it.
+
+    The route's own comment gives the reason — both clients will eventually render this through the
+    same screen as the designer's read, and a screen that cannot tell the two apart offers a Save
+    button the API answers 404 to. It is asserted beside the provenance because they arrive from the
+    same handler and a refactor that rebuilt the payload would drop them together.
+    """
+    out = await inspections.read_workshop_under_inspection("dw_1", current_user=INSPECTOR)
+    assert out["readOnly"] is True
+
+
 #: Comments and string literals are not code, and matching them made this check cry wolf.
 #:
 #: `app/services/design_workshop_grants.py` was reported as an unclassified reader of
@@ -708,6 +814,11 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
     allowed = {
         "app/api/routes/design_workshops.py",
         "app/api/routes/analytics.py",
+        # Classified 2026-08-27, when this check first ran against the INSPECTOR wave. It reads the
+        # table through `entry_rows` and DOES resolve provenance — see the two tests in "Reader 8"
+        # above, which is the order this list requires: classify by writing the test, never by
+        # adding the name.
+        "app/api/routes/design_workshop_inspections.py",
         "app/services/design_workshops.py",
         "app/services/dictation_consent.py",
         "app/services/design_ratings.py",

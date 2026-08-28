@@ -62,6 +62,8 @@ import {
 } from "@/lib/designWorkshops";
 import {
   diffExports,
+  generationOf,
+  generationsAreAbsolute,
   inGenerationOrder,
   sameFileAs,
   stagesTouchedSince,
@@ -107,9 +109,15 @@ function Checksum({ value, onDevice }: { value: string | null; onDevice: boolean
     return (
       <span className="text-xs text-ink-500">
         No checksum recorded — this file cannot be matched to a copy by its contents.
+        {/* THE HANDSET DOES SEND ONE. `ReportScreen.kt` passes `checksumSha256` on every export it
+            records, so a phone-made row without a checksum was written by a build that predates
+            that — which is an old ROW, not a missing capability. The sentence has to say which,
+            because a designer who reads "the app cannot do this" stops expecting it to, and the
+            handset's own copy of this sentence (`DwReportHistoryScreen.kt`) already says the row is
+            old. Two clients describing one archive must not disagree about what the archive holds. */}
         {onDevice
-          ? " The Android app does not yet send one for a report it generates, so a phone-made file can" +
-            " be identified only by its name and the moment it was made."
+          ? " A report the Android app generates does send one, so a row without it was made by a" +
+            " build that predates that."
           : ""}
       </span>
     );
@@ -217,9 +225,18 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
   }, [id]);
 
   const ordered = useMemo(() => (history ? inGenerationOrder(history) : []), [history]);
-  const generationOf = useCallback(
-    (exportId: string) => ordered.findIndex((row) => row.id === exportId) + 1,
-    [ordered]
+  /**
+   * Are the numbers on this screen the workshop's own, or this browser's positions inside a window
+   * the server may have cut?
+   *
+   * Read by every label that prints a generation number, so the caveat appears exactly when it is
+   * true and never when it is not. Announcing "of the 100 most recent" against a number the server
+   * computed would disclose a defect this payload no longer has, and a reader who believed it would
+   * stop trusting a number that is correct.
+   */
+  const generationsAbsolute = useMemo(
+    () => (history ? generationsAreAbsolute(history) : false),
+    [history]
   );
 
   const templateName = useCallback(
@@ -252,16 +269,21 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
     [history, ordered]
   );
 
+  // Newest first, and numbered by `generationOf` rather than by a position in this array: the
+  // picker's "Generation 7" and the card's "Generation 7" are the same file being named twice, and
+  // one arithmetic has to produce both.
   const exportOptions = useMemo(
     () =>
-      ordered
-        .slice()
-        .reverse()
-        .map((row, index) => ({
-          value: row.id,
-          label: `Generation ${ordered.length - index} · ${formatDateTime(row.generatedAt)} · ${row.format}`
-        })),
-    [ordered]
+      history
+        ? ordered
+            .slice()
+            .reverse()
+            .map((row) => ({
+              value: row.id,
+              label: `Generation ${generationOf(history, row.id)} · ${formatDateTime(row.generatedAt)} · ${row.format}`
+            }))
+        : [],
+    [history, ordered]
   );
 
   return (
@@ -331,11 +353,12 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
                 <li key={row.id}>
                   <ExportCard
                     record={row}
-                    generation={generationOf(row.id)}
+                    generation={generationOf(history, row.id)}
+                    generationIsAbsolute={generationsAbsolute}
                     windowTruncated={history.exportsTruncated}
                     templateName={templateName(row.templateId)}
                     duplicates={sameFileAs(history, row.id)
-                      .map((other) => generationOf(other.id))
+                      .map((other) => generationOf(history, other.id))
                       .filter((position) => position > 0)}
                     staleStages={row.id === ordered[ordered.length - 1].id ? staleAfterNewest.length : null}
                   />
@@ -356,6 +379,7 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
 function ExportCard({
   record,
   generation,
+  generationIsAbsolute,
   windowTruncated,
   templateName,
   duplicates,
@@ -364,18 +388,28 @@ function ExportCard({
   record: DwExportRecord;
   generation: number;
   /**
-   * True when the server cut the window this generation number is a position inside.
+   * True when `generation` is the SERVER'S number — the file's place in the workshop's whole export
+   * record — rather than this browser's position inside the window it was sent.
    *
-   * `GET .../report/history` takes the NEWEST hundred and flags the overflow as `exportsTruncated`;
-   * `inGenerationOrder` then re-sorts THAT WINDOW oldest-first and every label on this screen is an
-   * index into it. So once the cap bites, "Generation 3" means "the third of the hundred listed",
-   * not the third file this workshop ever produced — off by exactly the number of files cut, which
-   * this page knows it does not know. Audit 2026-08-15 (LOW, frontend).
+   * It decides whether the caveat below is printed at all. `_export_payload` counts the files
+   * nobody was sent as well as the ones they were, so where its number is present the hundred-file
+   * cap shortens the LISTING and does not touch the NUMBERING.
+   */
+  generationIsAbsolute: boolean;
+  /**
+   * True when the server cut the window this row was listed in.
+   *
+   * `GET .../report/history` takes the NEWEST hundred and flags the overflow as `exportsTruncated`.
+   * Where the payload carries no `generation`, `inGenerationOrder` re-sorts THAT WINDOW oldest-first
+   * and the label is an index into it — so once the cap bites, "Generation 3" means "the third of
+   * the hundred listed", not the third file this workshop ever produced, off by exactly the number
+   * of files cut, which this page knows it does not know. Audit 2026-08-15 (LOW, frontend).
    *
    * The screen already discloses that files are missing, in two places. What it did not say is that
-   * the NUMBERS are relative to what is left, and a generation number is precisely the thing a
+   * the NUMBERS were relative to what is left, and a generation number is precisely the thing a
    * designer quotes months later ("the cost sheet changed at generation 7") — a number that silently
-   * means something different from what it did last quarter is worse than no number.
+   * means something different from what it did last quarter is worse than no number. BOTH halves
+   * have to hold before that caveat is true, which is why it reads `!generationIsAbsolute && …`.
    */
   windowTruncated: boolean;
   templateName: string;
@@ -392,7 +426,7 @@ function ExportCard({
             discover it in the picker. */}
         <span className="font-medium text-ink-900">
           {generation > 0
-            ? windowTruncated
+            ? !generationIsAbsolute && windowTruncated
               ? `Generation ${generation} of the 100 most recent`
               : `Generation ${generation}`
             : "Undated file — it cannot be compared"}
@@ -584,8 +618,10 @@ function DiffPanel({
                   Generation {diff.earlierGeneration} → generation {diff.laterGeneration}
                   {/* Same caveat as the card's, in the one other place these numbers are printed —
                       see `ExportCard`'s `windowTruncated`. Two labels for one arithmetic must never
-                      disagree about how honest it is. */}
-                  {history.exportsTruncated ? " (of the 100 most recent)" : ""}
+                      disagree about how honest it is, so both read the same two facts. */}
+                  {history.exportsTruncated && !generationsAreAbsolute(history)
+                    ? " (of the 100 most recent)"
+                    : ""}
                 </strong>
                 {": "}
                 {touched.length === 0
@@ -811,8 +847,13 @@ function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory 
         ) : null}
         {history.exportsTruncated ? (
           <li>
-            Only the most recent 100 files are listed, and the generation numbers above count only those hundred — an
-            older file made before them is not generation 0, it is simply not here.
+            {/* The numbers are the record's own once `_export_payload` sends them, so only the
+                LISTING is short. Saying the numbering is relative in that case would disclose a
+                defect this payload no longer has. `dwReportHistoryLimits` splits the same two
+                cases with the same two sentences. */}
+            {generationsAreAbsolute(history)
+              ? "Only the most recent 100 files are listed. The generation numbers are the workshop’s own, so an older file is simply not shown rather than renumbered."
+              : "Only the most recent 100 files are listed, and the generation numbers above count only those hundred — an older file made before them is not generation 0, it is simply not here."}
           </li>
         ) : null}
       </ul>

@@ -21,10 +21,27 @@ written to be copied. What a porter must change, and nothing else:
   any of it changes what the user asked for.
 
 **THE WRITE IN HERE IS CAUSED BY AN UNAUTHENTICATED REQUEST, AND THAT IS BOUNDED FOUR WAYS.**
-Anyone on the internet can POST to the login endpoint; there is no rate limit, no captcha and no
-lockout anywhere in this codebase (``app/scale/rate_limit.py`` exists but ``install_rate_limit`` is
-never called from ``create_app``, and nginx carries no ``limit_req``), so this module supplies its
-own bound and must keep supplying it:
+Anyone on the internet can POST to the login endpoint, and on a default deployment nothing outside
+this module counts how often, so this module supplies its own bound and must keep supplying it.
+
+**CORRECTED 2026-08-27, CONCLUSION UNCHANGED.** The parenthesis here used to read *"there is no
+rate limit, no captcha and no lockout anywhere in this codebase (``app/scale/rate_limit.py``
+exists but ``install_rate_limit`` is never called from ``create_app``, and nginx carries no
+``limit_req``)"*. Its middle clause is now false: ``app/main.py`` imports the function at module
+level and ``create_app`` calls ``install_rate_limit(app)``. What did NOT change is the
+conclusion, because the limiter is OPT-IN and off by default:
+``Settings.scale_rate_limit_enabled`` is ``Field(default=False,
+alias="SCALE_RATE_LIMIT_ENABLED")``, and ``install_rate_limit`` returns ``False`` without
+calling ``add_middleware`` at all when the flag is off. A fresh clone, and every box that has
+not set ``SCALE_RATE_LIMIT_ENABLED=true``, still reaches the login endpoint unbounded.
+Turned ON, the two credential doors get a second and much tighter allowance spent only by
+401s (``_CREDENTIAL_FAILURES = 20`` in ``_CREDENTIAL_WINDOW_SECONDS = 300``, over
+``_CREDENTIAL_PREFIXES = ("/api/auth/login", "/api/datasets/token")``, all in
+``app/scale/rate_limit.py``) — a real bound, but not one any reader may assume is on.
+The ``limit_req`` clause is neither true nor false here: no nginx configuration is tracked in
+this repository at all (``git ls-files | grep -i nginx`` answered nothing on 2026-08-27), and
+the only ``limit_req`` anywhere in the tree is this sentence and its siblings in prose.
+The four bounds below are what holds either way:
 
 1. **A row is only ever created for a PROVEN identity.** The caller must have passed a bcrypt check
    against an existing account, or presented a Google ID token that verified against a configured

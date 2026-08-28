@@ -1,0 +1,40 @@
+-- The INSPECTOR tier: rank 37, between DESIGNER (35) and PROFESSOR (40).
+--
+-- Somebody who INSPECTS and REVIEWS a designer's work without running workshops themselves. The
+-- authority the tier carries is decided entirely in application code (`app/core/deps.py::ROLE_RANK`
+-- and the predicates around it); this migration does one thing, which is teach the database that the
+-- value exists so a row may hold it.
+--
+-- WHY THE NAME IS `INSPECTOR` AND NOT `REVIEWER`. "Review" already names a different, RELATIONAL
+-- concept in this product: `canReview` is held by everyone at FIELD_CONTRIBUTOR and above and means
+-- "may review anyone ranked strictly below me" (`deps.can_review_record`, `api/routes/review.py`).
+-- A tier called REVIEWER would make one word mean two things in one schema — a stored value nobody
+-- could read without asking which sense was meant. The UI label is "Inspector / Reviewer" so users
+-- see both words; the STORED token is unambiguous.
+--
+-- ADDITIVE AND FORWARD-ONLY. Postgres cannot remove an enum value, so there is no down migration and
+-- there does not need to be one: an unused value is inert. Nothing existing is altered, nothing is
+-- dropped, and no row is rewritten — production holds 2 users and 1 workshop (pre-launch, checked
+-- 2026-08-27), so there is nothing to backfill and no account changes tier because of this file.
+--
+-- WHY THE ENUM VALUE IS ADDED IN ITS OWN STATEMENT, AND WHY IT IS THE FIRST ONE. Copied deliberately
+-- from `20260807120000_designer_role_roster_profile`, which is the migration that added DESIGNER and
+-- whose header records the same trap. Before Postgres 12, and inside any transaction on every
+-- version up to 14, a value added by `ALTER TYPE ... ADD VALUE` cannot be USED in the same
+-- transaction — the error is `unsafe use of new value "INSPECTOR" of enum type "UserRole"`. Prisma
+-- sends a migration file as ONE multi-statement query, which Postgres wraps in an implicit
+-- transaction, so any later statement in this file that mentioned 'INSPECTOR' would fail the deploy.
+-- Nothing below does, and nothing below should: this file must stay a single statement. If a future
+-- change genuinely needs to write the value (a backfill, a CHECK constraint, a partial index with
+-- the literal in its predicate), it belongs in a SEPARATE migration directory that runs after this
+-- one, not appended here.
+--
+-- IF YOU ARE LOOKING FOR THE RANK, IT IS NOT HERE. Postgres orders an enum by the order its values
+-- were CREATED, so adding INSPECTOR now makes it sort last of the eight in the database, below
+-- CROWDSOURCE_VOLUNTEER. That is harmless because nothing in this application orders or compares by
+-- the enum — every comparison goes through `deps.ROLE_RANK`, a dict in Python — but a query written
+-- by hand against this database with `ORDER BY "role"` or `WHERE "role" > 'DESIGNER'` will get an
+-- answer that has nothing to do with the ladder. `schema.prisma`'s own comment on the enum says so.
+
+-- AlterEnum
+ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'INSPECTOR';

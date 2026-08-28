@@ -2,8 +2,11 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -118,6 +121,85 @@ TRANSCRIPTION_CHUNK_MS = 10 * 60 * 1000
 # Dedicated STT providers accept far larger uploads than Whisper, so they skip local chunking.
 ELEVENLABS_MAX_BYTES = 1000 * 1024 * 1024
 DEEPGRAM_MAX_BYTES = 2 * 1024 * 1024 * 1024
+
+
+# ── AUDIO THAT IS A FILE ON DISK RATHER THAN A ``bytes`` IN THE HEAP ────────────────────────────
+#
+# Every transcription entry point in this module takes ``content: bytes`` and always has. That is
+# the right shape for a live dictation, which arrives as an ``UploadFile`` the caller has already
+# read; it is the wrong shape for a stored recording, because the caller then has to pull the whole
+# object out of S3 into this process first, and the largest live object in this deployment is
+# 668.44 MiB against a 1 GiB box (MEASURED, docs/SCALABILITY.md §5.1).
+#
+# So every one of them now ALSO takes ``source_path``, keyword-only and defaulting to None: the
+# path of a temp file ``s3.download_to_temp`` streamed the object into. ``content`` stays the first
+# positional parameter and keeps working exactly as it did, which is what lets a caller a fortnight
+# behind — and every existing test — pass bytes and see no change at all.
+#
+# WHERE ONE IS GIVEN THE OTHER IS None. Nothing in this module holds both.
+
+
+def _source_size(content: bytes | None, source_path: str | None) -> int:
+    """How many bytes the audio is, WITHOUT bringing it into the heap to find out.
+
+    The provider ceilings below used to be checked against ``len(content)``, i.e. against bytes
+    already resident — which meant the check could only ever fire after the cost it was there to
+    avoid had been paid. Against a path it is a ``stat``.
+    """
+    if source_path is not None:
+        try:
+            return os.path.getsize(source_path)
+        except OSError:
+            return 0
+    return len(content or b"")
+
+
+@contextmanager
+def _upload_body(
+    content: bytes | None, source_path: str | None
+) -> Iterator[Any]:
+    """The audio in whatever form ``requests`` should be handed it, with the handle closed after.
+
+    **BE PRECISE ABOUT WHAT THIS BUYS, BECAUSE THE OBVIOUS CLAIM IS WRONG.**
+
+    * As ``data=`` (Deepgram posts the raw body) a file object genuinely STREAMS: ``requests`` takes
+      the length from the file, sets ``Content-Length`` and lets urllib3 read it in chunks, so the
+      recording is never in this process's heap at all. That is a real removal of one whole copy.
+    * As ``files=`` (OpenAI and ElevenLabs post multipart) it does NOT. ``requests``'
+      ``PreparedRequest._encode_files`` calls ``fp.read()`` on any file object it is given and then
+      assembles the whole multipart body as one contiguous ``bytes``, so the second copy §5.1 models
+      is still made at send time. What a handle removes here is the CALLER's copy: the object no
+      longer sits in the heap for the length of the job, across every rung of the provider chain and
+      the refinement hop after it — only during the one POST that is sending it.
+    * Removing the multipart copy as well needs a streaming multipart encoder
+      (``requests_toolbelt.MultipartEncoder``), which is a new dependency this repository has not
+      taken. It is written up in docs/SCALABILITY.md §5.1 rather than done quietly here.
+
+    The handle is opened fresh per ``with`` block so a retry — ``_post_elevenlabs_transcription``
+    and ``_post_deepgram_transcription`` each re-send once on a rejected option — reads from the
+    start. A consumed handle sent again would upload an empty body and be refused for the wrong
+    reason.
+    """
+    if source_path is not None:
+        with open(source_path, "rb") as handle:
+            yield handle
+    else:
+        yield content
+
+
+def _bytes_of(content: bytes | None, source_path: str | None) -> bytes:
+    """The audio as ``bytes``, reading the temp file when that is where it is.
+
+    ONLY FOR PROVIDERS THAT CANNOT BE STREAMED INTO. A base64 inline part has no partial form —
+    there is no way to encode half a file into a JSON body — so the Gemini rung has to materialise
+    the recording whatever this module does elsewhere, and at 1.33x for the encoding plus the JSON
+    body around it. It is bounded by the caller's own size gate before the object is fetched, not
+    by anything here.
+    """
+    if source_path is not None:
+        with open(source_path, "rb") as handle:
+            return handle.read()
+    return content or b""
 
 
 def _transcription_result(text: str, payload: Any = None) -> dict[str, Any]:
@@ -258,14 +340,22 @@ def _diarized_markdown(turns: list[tuple[Any, str]]) -> str | None:
     )
 
 
-def _post_openai_transcription(content: bytes, filename: str, mime_type: str, settings: Settings) -> dict[str, Any]:
-    response = requests.post(
-        "https://api.openai.com/v1/audio/transcriptions",
-        headers={"Authorization": f"Bearer {_key('OPENAI_API_KEY')}"},
-        data={"model": settings.openai_transcription_model, "response_format": "json"},
-        files={"file": (filename, content, mime_type or "application/octet-stream")},
-        timeout=180,
-    )
+def _post_openai_transcription(
+    content: bytes | None,
+    filename: str,
+    mime_type: str,
+    settings: Settings,
+    *,
+    source_path: str | None = None,
+) -> dict[str, Any]:
+    with _upload_body(content, source_path) as body:
+        response = requests.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {_key('OPENAI_API_KEY')}"},
+            data={"model": settings.openai_transcription_model, "response_format": "json"},
+            files={"file": (filename, body, mime_type or "application/octet-stream")},
+            timeout=180,
+        )
     response.raise_for_status()
     payload = response.json()
     text = str(payload.get("text") or "").strip()
@@ -273,7 +363,12 @@ def _post_openai_transcription(content: bytes, filename: str, mime_type: str, se
 
 
 def _transcribe_on_personal_key(
-    content: bytes, filename: str, mime_type: str, credential: AiCredential
+    content: bytes | None,
+    filename: str,
+    mime_type: str,
+    credential: AiCredential,
+    *,
+    source_path: str | None = None,
 ) -> dict[str, Any] | None:
     """One transcription attempt on a designer's OWN key. ``None`` means "not this provider".
 
@@ -284,13 +379,14 @@ def _transcribe_on_personal_key(
     audio — so this is belt and braces rather than the enforcement point.
     """
     if credential.provider is AiProvider.OPENAI:
-        response = requests.post(
-            "https://api.openai.com/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {credential.api_key}"},
-            data={"model": credential.model, "response_format": "json"},
-            files={"file": (filename, content, mime_type or "application/octet-stream")},
-            timeout=180,
-        )
+        with _upload_body(content, source_path) as body:
+            response = requests.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {credential.api_key}"},
+                data={"model": credential.model, "response_format": "json"},
+                files={"file": (filename, body, mime_type or "application/octet-stream")},
+                timeout=180,
+            )
         response.raise_for_status()
         payload = response.json()
         return _transcription_result(str(payload.get("text") or "").strip(), payload)
@@ -314,8 +410,14 @@ def _transcribe_on_personal_key(
                             },
                             {
                                 "inlineData": {
+                                    # THE ONE RUNG THAT CANNOT BE STREAMED INTO — see `_bytes_of`.
+                                    # An inline part is base64 inside a JSON body and has no
+                                    # partial form, so the recording is materialised here whatever
+                                    # the caller did. The caller's own size gate is what bounds it.
                                     "mimeType": mime_type or "audio/mpeg",
-                                    "data": base64.b64encode(content).decode("ascii"),
+                                    "data": base64.b64encode(
+                                        _bytes_of(content, source_path)
+                                    ).decode("ascii"),
                                 }
                             },
                         ]
@@ -403,20 +505,32 @@ def _elevenlabs_text(payload: dict[str, Any]) -> tuple[str, int]:
     return (_diarized_markdown(turns) or plain), _speaker_count(turns)
 
 
-def _post_elevenlabs_transcription(content: bytes, filename: str, mime_type: str, settings: Settings) -> dict[str, Any]:
+def _post_elevenlabs_transcription(
+    content: bytes | None,
+    filename: str,
+    mime_type: str,
+    settings: Settings,
+    *,
+    source_path: str | None = None,
+) -> dict[str, Any]:
     """ElevenLabs Scribe v2 speech-to-text: the batch model, diarized, biased towards craft terms.
 
     Accepts files up to 3 GB and 10 hours, so nothing is chunked locally.
     """
 
     def send(conservative: bool) -> Any:
-        return requests.post(
-            "https://api.elevenlabs.io/v1/speech-to-text",
-            headers={"xi-api-key": _key("ELEVENLABS_API_KEY")},
-            data=_elevenlabs_fields(settings, conservative=conservative),
-            files={"file": (filename, content, mime_type or "application/octet-stream")},
-            timeout=600,
-        )
+        # A FRESH HANDLE PER SEND, which is why `_upload_body` is inside this closure and not around
+        # both calls: the retry below re-posts the same audio, and a handle the first POST already
+        # read to the end would upload nothing and be refused for a reason that has nothing to do
+        # with the option that was actually rejected.
+        with _upload_body(content, source_path) as body:
+            return requests.post(
+                "https://api.elevenlabs.io/v1/speech-to-text",
+                headers={"xi-api-key": _key("ELEVENLABS_API_KEY")},
+                data=_elevenlabs_fields(settings, conservative=conservative),
+                files={"file": (filename, body, mime_type or "application/octet-stream")},
+                timeout=600,
+            )
 
     response = send(conservative=False)
     degraded = response.status_code in _OPTION_REJECTED_STATUSES
@@ -500,20 +614,36 @@ def _deepgram_text(payload: dict[str, Any]) -> tuple[str, int]:
     return (_diarized_markdown(turns) or plain), _speaker_count(turns)
 
 
-def _post_deepgram_transcription(content: bytes, filename: str, mime_type: str, settings: Settings) -> dict[str, Any]:
-    """Deepgram pre-recorded STT on Nova-3, multilingual, diarized and craft-vocabulary biased."""
+def _post_deepgram_transcription(
+    content: bytes | None,
+    filename: str,  # unused, and always was: Deepgram posts a raw body. Kept for _PROVIDER_CALLS.
+    mime_type: str,
+    settings: Settings,
+    *,
+    source_path: str | None = None,
+) -> dict[str, Any]:
+    """Deepgram pre-recorded STT on Nova-3, multilingual, diarized and craft-vocabulary biased.
+
+    THE ONE RUNG THAT TRULY STREAMS. Deepgram takes the audio as the raw request body rather than as
+    a multipart field, and `requests` hands a file object straight to urllib3 with a Content-Length
+    taken off the file — so with a `source_path` the recording is never in this process's heap at
+    all, not even for the duration of the POST. `_upload_body` explains why the multipart rungs
+    cannot make the same claim.
+    """
 
     def send(conservative: bool) -> Any:
-        return requests.post(
-            "https://api.deepgram.com/v1/listen",
-            params=_deepgram_params(settings, conservative=conservative),
-            headers={
-                "Authorization": f"Token {_key('DEEPGRAM_API_KEY')}",
-                "Content-Type": mime_type or "application/octet-stream",
-            },
-            data=content,
-            timeout=600,
-        )
+        # Fresh handle per send, for the retry — see the same note in `_post_elevenlabs_transcription`.
+        with _upload_body(content, source_path) as body:
+            return requests.post(
+                "https://api.deepgram.com/v1/listen",
+                params=_deepgram_params(settings, conservative=conservative),
+                headers={
+                    "Authorization": f"Token {_key('DEEPGRAM_API_KEY')}",
+                    "Content-Type": mime_type or "application/octet-stream",
+                },
+                data=body,
+                timeout=600,
+            )
 
     response = send(conservative=False)
     degraded = response.status_code in _OPTION_REJECTED_STATUSES
@@ -534,12 +664,31 @@ def _post_deepgram_transcription(content: bytes, filename: str, mime_type: str, 
     return result
 
 
-def _split_audio_into_chunks(content: bytes) -> list[tuple[bytes, str, str]] | None:
+def _split_audio_into_chunks(
+    content: bytes | None, *, source_path: str | None = None
+) -> Iterator[tuple[bytes, str, str]] | None:
     """Split audio into <=10-minute mono MP3 chunks, each safely under the Whisper size limit.
 
-    Returns a list of ``(bytes, filename, mime_type)`` or ``None`` when splitting is not possible
-    (pydub/ffmpeg unavailable or the bytes can't be decoded) — the caller then falls back to a
-    single-shot upload.
+    Yields ``(bytes, filename, mime_type)`` ONE AT A TIME, or returns ``None`` when splitting is not
+    possible (pydub/ffmpeg unavailable, or the audio can't be decoded) — the caller then falls back
+    to a single-shot upload.
+
+    **A GENERATOR, AND THE ``None`` STILL HAS TO ARRIVE EAGERLY.** This function used to append every
+    chunk to a list and return the whole list, so a two-hour interview held twelve decoded MP3 chunks
+    in the heap at once when it needed one at a time (docs/SCALABILITY.md §5.1 fix 2). Making the
+    whole thing a generator function would have broken the caller's ``if not chunks`` fallback in
+    silence — a generator object is truthy whether or not it will ever yield, so an undecodable
+    recording would have transcribed to the empty string instead of falling back to the single-shot
+    upload. So the decision is made here, before any yielding, and the streaming half is an inner
+    generator this returns.
+
+    **WHAT THIS DOES NOT FIX, SAID PLAINLY.** ``AudioSegment`` holds the ENTIRE decoded PCM in memory
+    however it was loaded, and decoded PCM is several times the compressed size. Reading from
+    *source_path* removes the compressed copy — ffmpeg opens the file itself rather than being handed
+    a ``BytesIO`` of it — and the generator removes the N-chunks accumulation, but the decoded whole
+    remains, and for a multi-hundred-megabyte input it will still not fit. Closing that needs ffmpeg's
+    own segmenter (``-f segment``) writing chunk files to disk, which is a different piece of work;
+    the caller's size gate is what keeps such a file from arriving here in the first place.
     """
     try:
         import io
@@ -549,39 +698,63 @@ def _split_audio_into_chunks(content: bytes) -> list[tuple[bytes, str, str]] | N
         logger.warning("pydub/ffmpeg unavailable; long audio cannot be chunked for transcription")
         return None
     try:
-        audio = AudioSegment.from_file(io.BytesIO(content))
+        # The PATH where there is one, so ffmpeg opens the file itself and this process never holds
+        # the compressed input; a BytesIO of the whole recording only where there is no file.
+        audio = AudioSegment.from_file(source_path or io.BytesIO(content or b""))
     except Exception as exc:  # noqa: BLE001 - undecodable container
         logger.warning("Unable to decode audio for chunked transcription: %s", exc)
         return None
 
-    chunks: list[tuple[bytes, str, str]] = []
-    for index, start in enumerate(range(0, max(len(audio), 1), TRANSCRIPTION_CHUNK_MS)):
-        segment = audio[start : start + TRANSCRIPTION_CHUNK_MS].set_channels(1)
-        buffer = io.BytesIO()
-        segment.export(buffer, format="mp3", bitrate="64k")
-        chunks.append((buffer.getvalue(), f"chunk-{index + 1:03d}.mp3", "audio/mpeg"))
-    return chunks or None
+    def _stream() -> Iterator[tuple[bytes, str, str]]:
+        for index, start in enumerate(range(0, max(len(audio), 1), TRANSCRIPTION_CHUNK_MS)):
+            segment = audio[start : start + TRANSCRIPTION_CHUNK_MS].set_channels(1)
+            buffer = io.BytesIO()
+            segment.export(buffer, format="mp3", bitrate="64k")
+            yield (buffer.getvalue(), f"chunk-{index + 1:03d}.mp3", "audio/mpeg")
+
+    return _stream()
 
 
-def _transcribe_whisper_sync(content: bytes, filename: str, mime_type: str, settings: Settings) -> dict[str, Any]:
+def _transcribe_whisper_sync(
+    content: bytes | None,
+    filename: str,
+    mime_type: str,
+    settings: Settings,
+    *,
+    source_path: str | None = None,
+) -> dict[str, Any]:
     """Whisper path: one shot when small; otherwise chunk, transcribe sequentially, and stitch."""
-    if len(content) <= WHISPER_MAX_BYTES:
-        return _post_openai_transcription(content, filename, mime_type, settings)
+    if _source_size(content, source_path) <= WHISPER_MAX_BYTES:
+        return _post_openai_transcription(
+            content, filename, mime_type, settings, source_path=source_path
+        )
 
-    chunks = _split_audio_into_chunks(content)
-    if not chunks:
+    chunks = _split_audio_into_chunks(content, source_path=source_path)
+    if chunks is None:
         # Can't split locally — attempt the whole file so the failure (if any) surfaces honestly.
-        return _post_openai_transcription(content, filename, mime_type, settings)
+        return _post_openai_transcription(
+            content, filename, mime_type, settings, source_path=source_path
+        )
 
     pieces: list[str] = []
+    # COUNTED AS THEY GO, because `chunks` is now a generator and `len()` of one is a TypeError. The
+    # count is reported on the result and a client shows it, so losing it is not an option.
+    count = 0
     for chunk_bytes, chunk_name, chunk_mime in chunks:
+        count += 1
         result = _post_openai_transcription(chunk_bytes, chunk_name, chunk_mime, settings)
         piece = str(result.get("text") or "").strip()
         if piece:
             pieces.append(piece)
+    if not count:
+        # The generator yielded nothing at all — the same "could not be split" outcome the eager
+        # version signalled with `return chunks or None`, and it must keep the same fallback.
+        return _post_openai_transcription(
+            content, filename, mime_type, settings, source_path=source_path
+        )
     text = " ".join(pieces).strip()
     result = _transcription_result(text, None)
-    result["chunks"] = len(chunks)
+    result["chunks"] = count
     return result
 
 
@@ -678,11 +851,13 @@ def _rate_limited_result(provider: str, response: Any, code: int) -> dict[str, A
 
 
 def _transcribe_sync(
-    content: bytes,
+    content: bytes | None,
     filename: str,
     mime_type: str,
     settings: Settings,
     chain: list[str],
+    *,
+    source_path: str | None = None,
 ) -> dict[str, Any]:
     """Walk *chain* until one provider produces a transcript.
 
@@ -696,13 +871,18 @@ def _transcribe_sync(
     rate_limited: dict[str, Any] | None = None
     empty: dict[str, Any] | None = None
     errors: list[str] = []
+    # ONE `stat`, NOT `len()` OF BYTES ALREADY RESIDENT. `_source_size` reads the temp file's length
+    # when the audio is on disk, so the provider ceiling is compared against a number that cost
+    # nothing to obtain; `len(content)` could only ever be evaluated after the whole recording had
+    # been pulled into this process, which is the cost the ceiling exists to avoid.
+    size = _source_size(content, source_path)
     for provider in chain:
         call, max_bytes = _PROVIDER_CALLS[provider]
-        if max_bytes is not None and len(content) > max_bytes:
+        if max_bytes is not None and size > max_bytes:
             errors.append(f"{provider}: file larger than the provider limit")
             continue
         try:
-            result = call(content, filename, mime_type, settings)
+            result = call(content, filename, mime_type, settings, source_path=source_path)
         except requests.HTTPError as exc:
             response = exc.response
             code = response.status_code if response is not None else None
@@ -765,13 +945,23 @@ async def transcribe_audio(file: UploadFile, settings: Settings) -> dict[str, An
 
 
 async def transcribe_audio_bytes(
-    content: bytes,
+    content: bytes | None,
     filename: str,
     mime_type: str,
     settings: Settings,
     *,
     user_id: str | None = None,
+    source_path: str | None = None,
 ) -> dict[str, Any]:
+    """Transcribe a recording through this deployment's provider chain.
+
+    *content* stays the first positional parameter and every existing caller keeps working
+    unchanged. A caller that has the recording as a FILE — everything that reads it out of object
+    storage — should pass ``content=None`` with ``source_path=`` the path
+    ``s3.download_to_temp`` returned instead, so the object is never resident in this process. The
+    name of the function is left alone deliberately: it is referenced by name in five modules' prose
+    and in the consent documentation, and renaming it would cost more than it says.
+    """
     # Prime the managed-secret cache on the event loop BEFORE any thread hop, so both the provider
     # chain below and the header reads inside the thread see keys saved in the UI.
     await managed_secrets.refresh_if_stale()
@@ -795,7 +985,12 @@ async def transcribe_audio_bytes(
         if personal is not None and personal.is_user_supplied:
             try:
                 answer = await asyncio.to_thread(
-                    _transcribe_on_personal_key, content, filename, mime_type, personal
+                    _transcribe_on_personal_key,
+                    content,
+                    filename,
+                    mime_type,
+                    personal,
+                    source_path=source_path,
                 )
                 if answer is not None:
                     return answer
@@ -828,6 +1023,7 @@ async def transcribe_audio_bytes(
             mime_type,
             settings,
             chain,
+            source_path=source_path,
         )
     except requests.HTTPError as exc:
         # A 429 (or a 503 "overloaded") is transient throttling, not a real failure — surface it as
@@ -2081,7 +2277,13 @@ def _timed_provider_chain(chain: list[str]) -> list[str]:
 
 
 def _transcribe_timed_sync(
-    content: bytes, filename: str, mime_type: str, settings: Settings, chain: list[str]
+    content: bytes | None,
+    filename: str,
+    mime_type: str,
+    settings: Settings,
+    chain: list[str],
+    *,
+    source_path: str | None = None,
 ) -> dict[str, Any]:
     """Walk the timed chain until one provider answers with cues. Mirrors ``_transcribe_sync``.
 
@@ -2092,6 +2294,9 @@ def _transcribe_timed_sync(
     kind of message that makes somebody wait for something that is not coming.
     """
     errors: list[str] = []
+    # One `stat` rather than `len()` of resident bytes — the same change, and for the same reason,
+    # as the one in `_transcribe_sync`. See `_source_size`.
+    size = _source_size(content, source_path)
     for provider in chain:
         # THE PROVIDER'S OWN SIZE CEILING, CHECKED BEFORE THE UPLOAD RATHER THAN BY THE UPLOAD, and
         # read out of `_PROVIDER_CALLS` so this path and `_transcribe_sync` cannot come to hold two
@@ -2102,34 +2307,36 @@ def _transcribe_timed_sync(
         # the file is too big for that engine. Nothing caps what may be uploaded as workshop media,
         # so this is a real file size and not a hypothetical one.
         _call, max_bytes = _PROVIDER_CALLS[provider]
-        if max_bytes is not None and len(content) > max_bytes:
+        if max_bytes is not None and size > max_bytes:
             errors.append(f"{provider}: file larger than the provider limit")
             continue
         try:
             if provider == "elevenlabs":
-                response = requests.post(
-                    "https://api.elevenlabs.io/v1/speech-to-text",
-                    headers={"xi-api-key": _key("ELEVENLABS_API_KEY")},
-                    data=_elevenlabs_fields(settings, conservative=False),
-                    files={"file": (filename, content, mime_type or "application/octet-stream")},
-                    timeout=600,
-                )
+                with _upload_body(content, source_path) as body:
+                    response = requests.post(
+                        "https://api.elevenlabs.io/v1/speech-to-text",
+                        headers={"xi-api-key": _key("ELEVENLABS_API_KEY")},
+                        data=_elevenlabs_fields(settings, conservative=False),
+                        files={"file": (filename, body, mime_type or "application/octet-stream")},
+                        timeout=600,
+                    )
                 response.raise_for_status()
                 payload = response.json()
                 fragments = _elevenlabs_cues(payload)
                 model = _elevenlabs_model(settings)
                 language = payload.get("language_code")
             else:
-                response = requests.post(
-                    "https://api.deepgram.com/v1/listen",
-                    params=_deepgram_params(settings, conservative=False),
-                    headers={
-                        "Authorization": f"Token {_key('DEEPGRAM_API_KEY')}",
-                        "Content-Type": mime_type or "application/octet-stream",
-                    },
-                    data=content,
-                    timeout=600,
-                )
+                with _upload_body(content, source_path) as body:
+                    response = requests.post(
+                        "https://api.deepgram.com/v1/listen",
+                        params=_deepgram_params(settings, conservative=False),
+                        headers={
+                            "Authorization": f"Token {_key('DEEPGRAM_API_KEY')}",
+                            "Content-Type": mime_type or "application/octet-stream",
+                        },
+                        data=body,
+                        timeout=600,
+                    )
                 response.raise_for_status()
                 payload = response.json()
                 fragments = _deepgram_cues(payload)
@@ -2167,7 +2374,12 @@ def _transcribe_timed_sync(
 
 
 async def transcribe_timed_bytes(
-    content: bytes, filename: str, mime_type: str, settings: Settings
+    content: bytes | None,
+    filename: str,
+    mime_type: str,
+    settings: Settings,
+    *,
+    source_path: str | None = None,
 ) -> dict[str, Any]:
     """Transcribe audio KEEPING the word or sentence timings, for subtitles.
 
@@ -2177,6 +2389,10 @@ async def transcribe_timed_bytes(
     The alternative — teaching the existing path to keep timings — would change what is written to
     ``MediaFile`` for every clip in the fleet, which belongs to another lane and to a migration.
     Anybody who wants to remove this cost should start there.
+
+    Takes ``source_path`` on the same terms as ``transcribe_audio_bytes``, and it matters more here
+    than anywhere: SUBTITLES accepts VIDEO as well as AUDIO, so this is the entry point most likely
+    to be handed the 668 MiB object §5.1 measured.
     """
     await managed_secrets.refresh_if_stale()
     chain = _timed_provider_chain(
@@ -2197,7 +2413,13 @@ async def transcribe_timed_bytes(
         }
     try:
         return await asyncio.to_thread(
-            _transcribe_timed_sync, content, filename, mime_type, settings, chain
+            _transcribe_timed_sync,
+            content,
+            filename,
+            mime_type,
+            settings,
+            chain,
+            source_path=source_path,
         )
     except requests.RequestException as exc:
         logger.error("Timed transcription failed: %s", redact_secrets(str(exc)))

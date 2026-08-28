@@ -15,11 +15,13 @@ import {
   ShieldCheck,
   ShieldUser,
   SlidersHorizontal,
+  Undo2,
   UserCog,
   Wrench,
   type LucideIcon
 } from "lucide-react";
 
+import { DeletedWorkshopsCard } from "@/components/admin/DeletedWorkshopsCard";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -134,6 +136,18 @@ export default function AdminHubPage() {
       description: "Media whose parent record was deleted — relink it below.",
       href: "#recovered-recordings",
       icon: AudioLines
+    },
+    {
+      // The other half of the design workshop's soft delete. The delete confirmation promises that
+      // an admin can restore a deleted workshop; until the list route grew `deletedOnly` nothing on
+      // any surface would name one, so the promise pointed at a screen that did not exist.
+      label: "Deleted workshops",
+      description: "Design workshops in the trash — restore one below.",
+      href: "#deleted-workshops",
+      // NOT Trash2, which is the bin every delete control in this app wears, the danger-tone confirm
+      // dialog included: the tile leads to the screen that UNDOES a deletion, and a bin on it reads
+      // as "delete something". Undo2 is the same mark the Restore button in the card itself carries.
+      icon: Undo2
     },
     {
       label: "User feedback",
@@ -325,6 +339,14 @@ export default function AdminHubPage() {
           <Pagination page={orphanPage} pages={orphanPages} total={orphans.length} onPage={setPage} />
         ) : null}
       </section>
+
+      {/*
+        Below the recovered recordings and not beside them: both are "something was deleted and the
+        pieces are still here", and an admin who has just deleted a workshop by mistake reaches this
+        hub from the tile above rather than by scrolling. It owns its own fetch, its own page and its
+        own error, so a failure in one recovery panel cannot blank the other.
+      */}
+      <DeletedWorkshopsCard />
     </>
   );
 }

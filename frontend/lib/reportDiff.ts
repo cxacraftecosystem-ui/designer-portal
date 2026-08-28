@@ -74,6 +74,23 @@
 /** One recorded export, exactly as `GET /design-workshops/{id}/report-history` serialises it. */
 export type DwExportRecord = {
   id: string;
+  /**
+   * THE FILE'S PLACE IN THE WORKSHOP'S WHOLE EXPORT RECORD — one-based, oldest first — as the
+   * SERVER computed it. Absent on a payload from a repository that predates the field.
+   *
+   * IT IS THE SERVER'S TO COMPUTE AND THIS CLIENT MUST NOT PREFER ITS OWN. The export list is
+   * capped at the newest hundred, so a client numbering the files it was sent restarts at 1 on
+   * whichever file survived the cut: every "Generation N" on screen is then off by the number of
+   * files dropped, and off by a DIFFERENT amount each time somebody generates another one — on a
+   * number a designer quotes into a covering email to a ministry months later. This browser
+   * derived it exactly that way, and `_export_payload(generation=…)` was added to close it.
+   *
+   * ABSENT IS AN ORDINARY STATE AND NOT AN ERROR: a repository one deploy behind this build
+   * answers without the field. {@link generationOf} then falls back to the position inside the
+   * window, which is exactly right until the cap bites and is DISCLOSED on screen the moment it
+   * might not be — see {@link generationsAreAbsolute}.
+   */
+  generation?: number;
   format: string;
   templateId: string;
   fileName: string;
@@ -305,6 +322,41 @@ export function inGenerationOrder(history: DwReportHistory): DwExportRecord[] {
 }
 
 /**
+ * Is every generation number on this payload the SERVER'S — the file's place in the whole export
+ * record — rather than this browser's position inside a window that may have been cut?
+ *
+ * The screen prints the difference. When this is true, "Generation 7" means the seventh file this
+ * workshop ever produced and is safe to quote into a covering email; when it is false AND the
+ * window was truncated, the number counts only the hundred files that were sent, and every label
+ * that prints one says so.
+ *
+ * EVERY, not SOME: one payload comes from one server, so a mixture cannot arise — and if it somehow
+ * did, numbering half the list one way and half the other is the one outcome with no honest label.
+ * `dwGenerationsAreAbsolute` in `data/DwReportHistory.kt` is the same test, deliberately: the two
+ * clients must not name the same file two different generations.
+ */
+export function generationsAreAbsolute(history: DwReportHistory): boolean {
+  return history.exports.length > 0 && history.exports.every((row) => (row.generation ?? 0) > 0);
+}
+
+/**
+ * One file's generation number, or 0 for a file that has none.
+ *
+ * THE SERVER'S ANSWER FIRST, ALWAYS — see {@link DwExportRecord.generation}. The fallback, this
+ * row's position among the dated exports that were actually sent, is correct right up to the moment
+ * the hundred-file cap bites and no further.
+ *
+ * Zero for an export that never recorded a generation time: a generation number is a POSITION IN
+ * TIME, so a row without one has none, and "Generation 0" would read as one.
+ */
+export function generationOf(history: DwReportHistory, exportId: string): number {
+  const record = history.exports.find((row) => row.id === exportId);
+  if (!record) return 0;
+  if ((record.generation ?? 0) > 0) return record.generation as number;
+  return inGenerationOrder(history).findIndex((row) => row.id === exportId) + 1;
+}
+
+/**
  * Compare two exports by id, in whichever order they were chosen.
  *
  * Returns null when either id is unknown or either export never recorded a generation time — a
@@ -340,8 +392,11 @@ export function diffExports(
   return {
     earlier,
     later,
-    earlierGeneration: ordered.indexOf(earlier) + 1,
-    laterGeneration: ordered.indexOf(later) + 1,
+    // The server's numbers where the server sent them; this window's positions only where it did
+    // not. `diffExports` is the other place a generation number is printed, and the two must agree
+    // — see {@link generationOf}.
+    earlierGeneration: generationOf(history, earlier.id),
+    laterGeneration: generationOf(history, later.id),
     windowFrom,
     windowTo,
     byStage,

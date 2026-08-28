@@ -157,6 +157,225 @@ const val DW_WORKSHOP_CREATE_DECLINED_BY_APP =
         "you captured is still here. Once an admin has created the workshop, use “Move into a " +
         "workshop” on this row and the whole fortnight goes up into it on the next pass."
 
+// ---------------------------------------------------------------------------------------------
+// WHO THE WORKSHOP IS FOR — several people, and one name on the report
+// ---------------------------------------------------------------------------------------------
+//
+// ── ONE ASK, TWO DIFFERENT QUESTIONS, AND CONFLATING THEM IS THE WHOLE TRAP ───────────────────
+//
+// "The designer this workshop is for" turned out to be two questions wearing one field:
+//
+//   WHO MAY OPEN IT — several. A real design workshop is a fortnight worked by two designers
+//   alongside a master craftsperson and a reviewing officer, and every one of them has to read the
+//   same 22 stages. This is a SECURITY BOUNDARY and not a convenience: a design workshop is
+//   visible only to its creator, to admins, and to whoever holds a `DesignWorkshopViewer` row —
+//   enforced in the QUERY on the list (`visible_to_clause`) and in the loader on the single read,
+//   which refuses with a 404 identical to a nonexistent id so the refusal cannot say whether the
+//   workshop is there. A DESIGNER cannot create a workshop at all, so `createdById` never matches
+//   for them: the workshops a designer can see are exactly the ones they hold a row on, and
+//   nothing else. Naming somebody at create is therefore the whole of how they get in — the create
+//   route writes one viewer row per name, in the same call.
+//
+//   WHOSE NAME IS ON IT — exactly one. Stage 1 and stage 3 declare a SINGLE designer block: one
+//   `designerName`, one `designerProfile`, one signature. `seed_designer_prefill` copies ONE
+//   `DesignerProfile` in, and `report_meta` feeds the promoted `designerName` into the .docx's
+//   `dc:creator`, a single-author field the file format cannot express as a list. So the set has a
+//   LEAD, and the lead is a separate answer from the membership.
+//
+// [dwNamedDesignerTeam] is where the two are separated, and it is pure so the separation can be
+// asserted without a phone in somebody's hand. `named_designer_team` in
+// `backend/app/services/design_workshops.py` is the same rule on the server and the two must
+// agree; `namedDesignerTeam` in `frontend/lib/designWorkshops.ts` is the browser's.
+//
+// ── THE LEAD IS NEVER THE ACCOUNT THAT PRESSED CREATE ─────────────────────────────────────────
+//
+// Every account that can reach the create dialog is an ADMIN or the master admin, and with nobody
+// named the server seeds the CREATOR's profile — which for an admin opening a workshop on a
+// colleague's behalf is the wrong person's name on a ministry document. That is the defect
+// `designerUserId` exists to end, so where a body names designers but no lead, the server promotes
+// the FIRST NAMED and never the creator. These functions promote the same one, so the sentence the
+// admin reads on the form and the row the server writes cannot disagree.
+
+/**
+ * The most accounts one create may name as this workshop's designers.
+ *
+ * **NOT A NUMBER CHOSEN HERE.** It is [DW_VIEWER_LIMIT] — the server's
+ * `MAX_DESIGN_WORKSHOP_VIEWERS` — because `POST /design-workshops` and
+ * `PUT /design-workshops/{id}/viewers` write the SAME table, and the create route imports its cap
+ * from that schema rather than picking a second one. A create that accepted a set the "Designers on
+ * a workshop" screen would refuse is one list with two rules, and the admin meets the disagreement
+ * as a 422 about a shape after building a selection by hand.
+ *
+ * The browser spells it as its own literal (`MAX_NAMED_DESIGNERS` in
+ * `frontend/lib/designWorkshops.ts`) with a test asserting the value, because nothing links the two
+ * numbers there at compile time. Here they are one constant and cannot drift.
+ *
+ * Nobody reaches it by working: a real workshop is run by four people.
+ */
+const val DW_MAX_NAMED_DESIGNERS: Int = DW_VIEWER_LIMIT
+
+/**
+ * WHO MAY OPEN IT, and WHOSE NAME IS ON IT — the answer to both, resolved together.
+ *
+ * @property lead the account whose `DesignerProfile` is seeded into stage 1 and stage 3 and whose
+ *   name the report carries, or null when nobody was named at all. Always the first of [team].
+ * @property team everybody who gets a viewer row, lead first. Empty means "not decided yet", which
+ *   is a real and common answer — a workshop is opened in a room on day one and the admin may
+ *   genuinely not know yet who will run it.
+ */
+data class DwNamedDesigners(val lead: String?, val team: List<String>)
+
+/**
+ * Resolve the picker's state into the two answers above.
+ *
+ * ── THE TWO RULES, AND THE CASE THAT MAKES THEM DIFFERENT ─────────────────────────────────────
+ *
+ * 1. **With designers ticked, the lead must be one of them.** An admin who names a lead and then
+ *    UNTICKS them has REMOVED that designer, and the workshop is visible only to the people on it;
+ *    re-adding them because [lead] still holds their id would put somebody back on a workshop after
+ *    the admin took them off, which is the one direction an access control must never drift. The
+ *    first ticked is promoted instead.
+ * 2. **With nothing ticked, a lead standing alone IS the team.** Not a hypothesis: a draft written
+ *    by a build that predates the multi-select carries a lead and an empty list, and reading rule 1
+ *    over it would drop the designer that fortnight was opened for on the day the create finally
+ *    went out.
+ *
+ * Blanks are absent, duplicates collapse, and the ticked order is otherwise preserved.
+ *
+ * **EMPTINESS IS PYTHON'S**, through [dwNamedDesignerId] — the server folds every id with
+ * `strip()`, and Python calls U+00A0 and U+202F whitespace while `Char.isWhitespace` does not. One
+ * fold, in one place, for the wire and the disk alike.
+ */
+fun dwNamedDesignerTeam(chosen: List<String>?, lead: String?): DwNamedDesigners {
+    val ticked = LinkedHashSet<String>()
+    chosen.orEmpty().forEach { raw -> dwNamedDesignerId(raw)?.let { ticked.add(it) } }
+    val preferred = dwNamedDesignerId(lead)
+    if (ticked.isEmpty()) {
+        return if (preferred == null) {
+            DwNamedDesigners(lead = null, team = emptyList())
+        } else {
+            DwNamedDesigners(lead = preferred, team = listOf(preferred))
+        }
+    }
+    val resolved = preferred?.takeIf { it in ticked } ?: ticked.first()
+    return DwNamedDesigners(
+        lead = resolved,
+        team = listOf(resolved) + ticked.filter { it != resolved },
+    )
+}
+
+/**
+ * The two designer keys of a create body, already folded — or neither.
+ *
+ * @property designerUserId the LEAD, or null. Unchanged in meaning since the singular picker.
+ * @property designerUserIds the whole team, lead first — or null, which is what keeps this key OFF
+ *   THE WIRE. `ApiClient.json` sets `explicitNulls = false`, so a null property is omitted from the
+ *   body entirely rather than sent as `null`.
+ */
+data class DwDesignerCreateFields(
+    val designerUserId: String?,
+    val designerUserIds: List<String>?,
+)
+
+/**
+ * THE ONE PLACE THAT DECIDES WHAT GOES ON THE WIRE, and the middle answer is why it exists.
+ *
+ *   NOBODY NAMED  → neither key. The server then behaves exactly as it did before either field
+ *                   existed and stage 1 carries whoever created the workshop.
+ *   ONE DESIGNER  → `designerUserId` ALONE — byte-for-byte the body this handset has been sending
+ *                   since the singular picker shipped.
+ *   SEVERAL       → both, lead first. Only here does the new key travel.
+ *
+ * ── WHY THE ONE-DESIGNER ANSWER IS THE LOAD-BEARING ONE ───────────────────────────────────────
+ *
+ * `DesignWorkshopCreateBody` is an `APIModel`, which is `extra="forbid"`. An API deployed before
+ * `designerUserIds` existed answers **422 `extra_forbidden` to a body that merely CARRIES the
+ * key**, whatever is in it — and this app ships separately from the API, so a handset updates when
+ * it next sees wifi while the server updates when somebody deploys it. That skew is a live state,
+ * not a theoretical one.
+ *
+ * And on this client it is not a refused request, it is a lost fortnight. A 4xx is never queued,
+ * and `WorkshopSync`'s create arm reads a 422 as a REFUSAL: an ordinary offline create — a workshop
+ * started in a courtyard with one designer on it — would come back permanently refused for a key
+ * the admin never asked for. So the key is sent only when there is genuinely a second designer,
+ * which is to say only when the admin has asked for something a server that has never heard of the
+ * field could not do anyway.
+ *
+ * An empty list is NEVER sent. `[]` reads on the wire as "I considered this and the answer is
+ * none", which is a different sentence from silence and one the server would have to interpret.
+ */
+fun dwDesignerCreateFields(chosen: List<String>?, lead: String?): DwDesignerCreateFields {
+    val resolved = dwNamedDesignerTeam(chosen, lead)
+    return when {
+        resolved.team.isEmpty() -> DwDesignerCreateFields(null, null)
+        resolved.team.size == 1 -> DwDesignerCreateFields(resolved.lead, null)
+        else -> DwDesignerCreateFields(resolved.lead, resolved.team)
+    }
+}
+
+/**
+ * Fold the sheet's answer back into an ORDERED selection.
+ *
+ * ── WHY A SET IS NOT ENOUGH, ON THIS FIELD SPECIFICALLY ───────────────────────────────────────
+ *
+ * `SearchableMultiSelectField` hands back a `Set<String>`, and a Set promises no order. That is
+ * fine for the fields it was built for — "artisans of selected crafts" is a bag — and it is not
+ * fine here, because with no explicit lead the FIRST of the team is the designer whose profile is
+ * copied into stage 1 and whose name reaches a ministry document. Whose name that is must not be
+ * decided by an iteration order nobody can see.
+ *
+ * So the screen keeps its own list and this is what maintains it:
+ *
+ *   - ids already chosen keep the position they had — re-opening the sheet and ticking a fifth
+ *     name must not renumber the four already there, and the lead least of all;
+ *   - newly ticked ids are appended in [offered] order, which is the order they are DRAWN in (the
+ *     server's `name` then `id`, never re-sorted here) — the only order the admin can actually see;
+ *   - anything ticked that is not on offer is appended last rather than dropped, because a silent
+ *     absence on this field is a designer who cannot open the workshop.
+ *
+ * Nothing is capped here. [DW_MAX_NAMED_DESIGNERS] is refused on screen with the count, exactly as
+ * `WorkshopViewersScreen` refuses an over-long save against the same table — trimming would drop
+ * designers the admin ticked and could not see go.
+ */
+fun dwOrderedDesignerPicks(
+    previous: List<String>,
+    picked: Set<String>,
+    offered: List<String>,
+): List<String> {
+    val kept = previous.filter { it in picked }
+    val already = HashSet(kept)
+    val added = offered.filter { it in picked && it !in already }
+    already.addAll(added)
+    return kept + added + picked.filter { it !in already }
+}
+
+/**
+ * The picked id the wire and the disk agree on — the trimmed value, or null for "nobody named".
+ *
+ * ── WHY NULL AND NOT "" ───────────────────────────────────────────────────────────────────────
+ *
+ * The picker's empty selection means "not decided yet". A body carrying the key with nothing in it
+ * reads on the wire as an answer given; the server would fold it itself — `(payload.designerUserId
+ * or "").strip() or None` — but the same value is also written to [WorkshopDraft.designerUserId] on
+ * the disk, where "" and null would be two spellings of one state for every later pass to disagree
+ * about. `ApiClient.json` leaves a null off the wire entirely, so a workshop with nobody named
+ * posts the same bytes it posted before this field existed.
+ *
+ * ── EMPTINESS IS PYTHON'S, NOT KOTLIN'S ───────────────────────────────────────────────────────
+ *
+ * The server strips with Python's `str.strip()`, which calls the no-break space U+00A0 and the
+ * narrow no-break space U+202F whitespace; `Char.isWhitespace` deliberately does not. A value that
+ * means "nobody" up there and "somebody" down here is exactly the disagreement this field exists to
+ * end, and it is the same choice `dwViewerSearchTerm` makes one screen over. [DwPy.strip] is the
+ * shared spelling.
+ *
+ * MOVED HERE FROM `ui/designworkshop/WorkshopListScreen.kt` when the picker became a multi-select:
+ * it decides what reaches the body and the draft, which is a data decision, and
+ * [dwNamedDesignerTeam] — which lives in the data layer and cannot import a screen — has to fold
+ * every id in the list the same single way.
+ */
+fun dwNamedDesignerId(picked: String?): String? = DwPy.strip(picked.orEmpty()).ifEmpty { null }
+
 /**
  * Move a workshop that exists only on this device into one that exists on the server.
  *
@@ -233,3 +452,85 @@ fun adoptedIntoWorkshop(draft: WorkshopDraft, remoteId: String, now: String): Wo
             stages = emptyMap(),
         ),
     )
+
+/**
+ * THE ONE SENTENCE ABOUT THE DESTINATION LIST, or null when it is the whole answer.
+ *
+ * ── WHY A LIST OF WORKSHOPS NEEDS A CAVEAT AT ALL, AND WHY IT NEEDS ONE MORE NOW ──────────────
+ *
+ * "Move into a workshop" is one-way and unrepeatable ([localDraftNeedsAWorkshop] guards it), so the
+ * picker beneath this sentence is the single most consequential control on the list screen: the
+ * wrong choice files a fortnight of one cluster's fieldwork inside another cluster's record and
+ * nothing in this app can move it back. A destination list that is quietly a PREFIX is therefore
+ * rule 10 at its most expensive — a designer who cannot find the workshop an admin made an hour ago
+ * concludes the admin never made it, and the honest reading of an absence is never "it does not
+ * exist".
+ *
+ * There are three ways the list can be short and they are three different facts with three
+ * different next moves, which is why this is a decision and not a layout:
+ *
+ *   NO CONNECTION — it holds only what this phone happens to have opened before. The workshop an
+ *   admin created today may simply not be on the device yet.
+ *   NARROWED BY THE SEARCH BOX — the workshops screen filters its rows server-side, and this picker
+ *   is fed from those rows, so a term typed to FIND the local draft also hides every workshop that
+ *   does not match it. Nothing on this dialog shows that box, which is what makes it worth a
+ *   sentence: the cause is on the screen underneath.
+ *   THE WALK STOPPED SHORT — `DesignWorkshopPageWalk` bounds itself at [DW_LIST_MAX_PAGES], and a
+ *   connection that dropped mid-walk ends it too, so the rows gathered can be fewer than the server
+ *   says this account may see.
+ *
+ * ORDERED WORST FIRST AND ONLY ONE IS EVER SHOWN. Offline leads because it is the only one under
+ * which the list is not the server's answer at all. The search comes next because it is the most
+ * recent thing the designer did and the fastest to undo, and because a narrowed request makes a
+ * truncated walk far less likely in the first place.
+ *
+ * Pure, so all four states are pinned by a JVM test rather than by somebody with a phone, a
+ * courtyard and a repository of 500 workshops.
+ */
+fun dwAdoptCandidateNotice(
+    offline: Boolean,
+    searched: Boolean,
+    listTruncated: Boolean,
+): String? = when {
+    offline ->
+        "The server could not be reached, so this list holds only the workshops this phone already " +
+            "knows about. A workshop created for you today may not be here until you open this " +
+            "list with a connection."
+    searched ->
+        "This list is narrowed by what you typed in the search box on the workshops screen. If the " +
+            "workshop you are moving this into is not here, close this, clear that box, and open " +
+            "it again."
+    listTruncated ->
+        "There are more workshops than this screen could read in one go, so this list may not hold " +
+            "all of them. Close this, search the workshops screen for the one you want, and open " +
+            "it again."
+    else -> null
+}
+
+/**
+ * There is no workshop to move this into — said differently depending on what that means.
+ *
+ * ── THE ANSWER CHANGED WHEN THE LIST BECAME SCOPED, AND SO DID THE NEXT MOVE ──────────────────
+ *
+ * A design workshop is visible only to the designers NAMED ON IT, to admins, and to its creator. So
+ * "no workshops here" is no longer only "none exist for you"; it is very often "the admin created
+ * it and did not tick your name", and the two need the same sentence because from here they are
+ * indistinguishable and the move is the same one: get named on it. The workshop CODE is the second
+ * door and it is already built — an admin who has the workshop open can hand out a join card, and
+ * redeeming one writes the same viewer row the create would have written.
+ *
+ * OFFLINE IS ITS OWN ANSWER because the claim is different: nothing has been read, so this says
+ * nothing at all about whether a workshop exists. Telling a designer to go and ask an admin for a
+ * workshop the admin already made is how a person walks up a hill for nothing.
+ */
+fun dwAdoptNoCandidatesMessage(offline: Boolean): String = if (offline) {
+    "There are no workshops on this phone to move it into, and the server could not be reached — " +
+        "so this list may not be the whole story. Ask an admin to create the workshop, then open " +
+        "this list once with a connection and try again."
+} else {
+    "No workshop on the server is open to this account yet. A design workshop is visible only to " +
+        "the designers named on it, so ask an admin to create one for your cluster and name you " +
+        "as one of its designers — or to send you its join card, which lets you in yourself from " +
+        "“Workshop access”. It appears here and this draft can then be moved into it. Nothing on " +
+        "this phone is at risk in the meantime."
+}

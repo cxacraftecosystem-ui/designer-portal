@@ -1493,18 +1493,44 @@ export function CollectionTable({
      reader. So the arrows are never hidden or disabled in favour of the grip, the grip answers the
      arrow keys too, and an arrow press announces itself in the hook's own words rather than silently.
 
-     ── ANDROID DELIBERATELY HAS NO GRIP, AND THAT DIVERGENCE IS RECORDED RATHER THAN COPIED ───────
+     ── THE TWO CLIENTS AGREE ON ARROWS AND GRIP, AND DIVERGE ONLY ON EDGE AUTO-SCROLL ───────────
 
-     `ui/designworkshop/StageScreen.kt` says so at its collection list: "Reorder is two arrow buttons
-     rather than a drag handle, and that is a dependency decision as much as an ergonomic one: a
-     reorderable LazyColumn means either a third-party library or a hand-rolled …". So the two clients
-     agree on the ARROWS, which is the path every designer has, and the web adds a third affordance
-     the handset does not — an addition, not a disagreement, and the report is identical either way
-     because both write the same `ordinal`. What they must NOT diverge on is the semantics of a move,
-     and until now they did: the handset does `reordered.add(target, reordered.removeAt(index))` — a
-     move — while these arrows swapped two elements in place. Identical for the ±1 an arrow asks for,
-     and this file now expresses it the same way the handset does, so the drag and the phone cannot
-     mean two different things by "put this third".
+     THIS PARAGRAPH USED TO BE HEADED "ANDROID DELIBERATELY HAS NO GRIP" and quoted
+     `ui/designworkshop/StageScreen.kt`: *"Reorder is two arrow buttons rather than a drag handle, and
+     that is a dependency decision as much as an ergonomic one: a reorderable LazyColumn means either
+     a third-party library or a hand-rolled …"*. That sentence was deleted from the handset on
+     2026-08-27, when its collection rows gained the grip — the Kotlin header now records why every
+     clause of it had stopped being true, including that the list was never a LazyColumn. It is
+     quoted here rather than quietly dropped because a stale premise carried across a client boundary
+     is exactly how a divergence outlives the decision that made it: this comment was the last place
+     the deleted sentence was still being believed.
+
+     TRUE AS OF 2026-08-27: both clients offer the arrows AND a grip on a collection row, both keep
+     the arrows always enabled as the assistive path, and both write the same `ordinal`, so the .docx
+     is identical either way. Re-check with
+     `grep -n gripModifier android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/StageScreen.kt`.
+
+     WHAT STILL DIFFERS IS EDGE AUTO-SCROLL, AND ONLY ON THIS SCREEN. `useDragReorder` scrolls the
+     page when a dragged card reaches the edge of the viewport; read its header for the geometry and
+     for why reduced motion changes HOW the list travels and never WHETHER a position is reachable.
+     The handset has that loop — `DwRankableList.kt` runs it, band, dwell and all, for the design
+     review list — but the stage form's collection does not, because the page's `ScrollState` is
+     created in `MainActivity` and never handed to `StageScreen`, so that screen holds no handle on
+     the thing that would have to move. It is PLUMBING RATHER THAN A DECISION, written down here so
+     the next reader does not re-derive it as one. Re-check with
+     `grep -c DW_AUTOSCROLL_LOOKAHEAD` over both Kotlin files — hits in `DwRankableList.kt`, none in
+     `StageScreen.kt`.
+
+     WHAT THEY MUST NOT DIVERGE ON IS THE SEMANTICS OF A MOVE, and until recently they did: the
+     handset does `reordered.add(target, reordered.removeAt(index))` — a move — while these arrows
+     swapped two elements in place. Identical for the ±1 an arrow asks for, and this file now
+     expresses it the same way the handset does, so the drag and the phone cannot mean two different
+     things by "put this third". The one remaining asymmetry in that arithmetic is what happens to an
+     out-of-range destination: `moveIndex` REFUSES (it returns the list unchanged), `dwMovedTo`
+     CLAMPS. Neither is reachable from a gesture — both sides choose the target from rows that exist,
+     and the handset abandons a drag whose arrangement moved underneath it — so this is a difference
+     in what an impossible call does, pinned on both sides (`e2e/drag-reorder-unit.spec.ts` here,
+     `DwCollectionDragTest` there) rather than one silently agreed.
 
      ── WHY NOTHING HERE IS A `useCallback`, unlike the sections editor ────────────────────────────
 

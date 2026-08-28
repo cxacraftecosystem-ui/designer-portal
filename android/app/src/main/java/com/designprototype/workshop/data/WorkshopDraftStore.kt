@@ -485,6 +485,40 @@ data class WorkshopDraft(
      * that has it and ignores the key.
      */
     val designerUserId: String? = null,
+    /**
+     * EVERYBODY THE WORKSHOP WAS OPENED FOR, lead first — the same create-only input as
+     * [designerUserId], for the set rather than the one.
+     *
+     * A workshop is visible only to the designers named on it (plus admins, plus its creator), so
+     * this is not a preference: it is the whole of how the second and third designer get in. It is
+     * carried on the disk for the one reason [designerUserId] is — a workshop started in a
+     * courtyard with no signal must still remember the team the admin ticked, so `WorkshopSync`'s
+     * create arm can name them all the moment the phone finds a bar of signal. `WorkshopSync` is
+     * its only reader; nothing deserialises it back on any read, and `PATCH /design-workshops/{id}`
+     * is closed to it.
+     *
+     * ── EMPTY IS NOT "NOBODY". IT IS "THE LEAD ALONE, OR NOBODY" ────────────────────────────────
+     *
+     * Read with [designerUserId] and never on its own, through
+     * [com.designprototype.workshop.data.dwNamedDesignerTeam]: an empty list beside a lead IS a
+     * team of one, which is exactly the shape every draft written before the multi-select carries.
+     * Reading this field alone over such a draft would drop the designer the fortnight was opened
+     * for on the day the create finally went out.
+     *
+     * DELIBERATELY NOT SEEDED FROM [designerUserId] on decode. Two copies of one fact disagree the
+     * day somebody unticks the lead, and the stale one is what the create would send.
+     *
+     * ── NO [WORKSHOP_DRAFT_SCHEMA_VERSION] RUNG IS OWED, by that constant's own rule ────────────
+     *
+     * Purely additive and defaulted: a draft written by any earlier build decodes with an empty
+     * list, which reads as "the lead alone, or nobody" — the same thing it has always meant — and a
+     * build from before this field reads a draft that has it and ignores the key. Spending a
+     * version number here would train the next reader to skip the ladder for the change that
+     * genuinely needs one. (The browser DID take a rung for this, at
+     * `DW_DRAFT_SCHEMA_VERSION` 3 → 4, because a TypeScript field cannot decode itself into
+     * existence; that is a language difference, not a disagreement about the data.)
+     */
+    val designerUserIds: List<String> = emptyList(),
     val createdAt: String = "",
     val updatedAt: String = "",
     /**

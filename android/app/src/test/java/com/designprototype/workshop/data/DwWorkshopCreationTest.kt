@@ -39,6 +39,7 @@ class DwWorkshopCreationTest {
         assertTrue(canCreateDesignWorkshops("ADMIN"))
         assertTrue(canCreateDesignWorkshops("MASTER_ADMIN"))
         assertFalse("the whole point of the rule", canCreateDesignWorkshops("DESIGNER"))
+        assertFalse("outranks a designer and is still refused", canCreateDesignWorkshops("INSPECTOR"))
         assertFalse("outranks a designer and is still refused", canCreateDesignWorkshops("PROFESSOR"))
         assertFalse(canCreateDesignWorkshops("RESEARCHER"))
         assertFalse(canCreateDesignWorkshops("FIELD_CONTRIBUTOR"))

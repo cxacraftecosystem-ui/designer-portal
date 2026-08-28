@@ -153,15 +153,17 @@ write path described in §5.5 is therefore **exercised by tests, not by producti
 | `ADMIN` | 50 | 3 |
 | `MASTER_ADMIN` | 60 | 1 |
 
-Two of the six tiers have no production occupant. The ladder is implemented and enforced (§10) but
-only four tiers are exercised by real accounts.
+Two of the six tiers measured have no production occupant. The ladder is implemented and enforced
+(§10) but only four tiers are exercised by real accounts — and on the eight-tier ladder that is four
+of eight, because the two tiers added since are pre-launch and unoccupied as well.
 
-**This table is a snapshot of a six-tier ladder, and the ladder is now seven.** `DESIGNER` (rank 35)
-was added on **2026-08-07** by `backend/prisma/migrations/20260807120000_designer_role_roster_profile`,
-after the 2026-07-27 measurement above, so it has no row here and **no count has been invented for
-it** — the six figures sum to the measured total of 20 accounts, which is the whole population as it
-stood, not evidence about a tier that did not yet exist. Anyone re-running this count must query
-seven roles and expect a seventh row. §9.1 describes the current ladder.
+**This table is a snapshot of a six-tier ladder, and the ladder is now eight.** Two tiers were added
+after the 2026-07-27 measurement above: `DESIGNER` (rank 35) on **2026-08-07** by
+`backend/prisma/migrations/20260807120000_designer_role_roster_profile`, and `INSPECTOR` (rank 37,
+labelled "Inspector / Reviewer") on **2026-08-27**. Neither has a row here and **no count has been
+invented for either** — the six figures sum to the measured total of 20 accounts, which is the whole
+population as it stood, not evidence about tiers that did not yet exist. Anyone re-running this count
+must query **eight** roles and expect eight rows. §9.1 describes the current ladder.
 
 ### 2.3 Media
 
@@ -758,28 +760,44 @@ from keyterm boosting would be unsupported and should not appear in a paper base
 
 ## 9. Result 5 — access control and a regulated national identifier
 
-### 9.1 A seven-tier ladder, mirrored exactly in three clients
+### 9.1 An eight-tier ladder, mirrored exactly in three clients
 
 ```mermaid
 flowchart LR
-  v["CROWDSOURCE_VOLUNTEER<br/>10"] --> f["FIELD_CONTRIBUTOR<br/>20"] --> r["RESEARCHER<br/>30"] --> d["DESIGNER<br/>35"] --> p["PROFESSOR<br/>40"] --> a["ADMIN<br/>50"] --> m["MASTER_ADMIN<br/>60"]
+  v["CROWDSOURCE_VOLUNTEER<br/>10"] --> f["FIELD_CONTRIBUTOR<br/>20"] --> r["RESEARCHER<br/>30"] --> d["DESIGNER<br/>35"] --> i["INSPECTOR<br/>37"] --> p["PROFESSOR<br/>40"] --> a["ADMIN<br/>50"] --> m["MASTER_ADMIN<br/>60"]
 ```
 
 Higher rank inherits every power below it; grantable capability booleans (`canReview`,
 `canDownloadDataset`, `canManageWorkshops`, …) can additionally lift one specific power for one
 lower-tier account without promoting them.
 
-**SEVEN, AND THIS SECTION SAID SIX — dated, because it is a correction to a DERIVED figure and not a
-re-measurement.** `DESIGNER` was added at rank 35 on 2026-08-07 (§2.2), which is after this
-document's pinned snapshot `a0fa3a85`; the diagram and the count above were re-derived from the
-working tree on **2026-08-22** by reading `ROLE_RANK` in `backend/app/core/deps.py` and in
-`frontend/lib/permissions.ts`. The insertion at 35 rather than a renumbering is the point of the
-ten-spacing noted below, and is the first time the design was exercised. Nothing in §2.2 was
-re-measured; the account counts there remain the 2026-07-27 snapshot.
+**EIGHT, AND THIS SECTION SAID SIX AND THEN SEVEN — dated each time, because these are corrections
+to a DERIVED figure and not re-measurements.** `DESIGNER` was added at rank 35 on 2026-08-07 (§2.2),
+which is after this document's pinned snapshot `a0fa3a85`; the diagram and the count were re-derived
+from the working tree on **2026-08-22** by reading `ROLE_RANK` in `backend/app/core/deps.py` and in
+`frontend/lib/permissions.ts`. `INSPECTOR` was added at rank 37 on **2026-08-27**, in the same gap
+and by the same rule. The insertion at 35 rather than a renumbering is the point of the ten-spacing
+noted below; the insertion at 37 is the second time the design was exercised, and 36, 38 and 39
+remain free. Nothing in §2.2 was re-measured; the account counts there remain the 2026-07-27
+snapshot.
+
+**Two tiers, two different KINDS of insertion, which is the part worth a paper's attention.**
+`DESIGNER` added a tier that *does more* than the tier below it. `INSPECTOR` added one that does
+**less** inside the system's main workflow and *more* only in judging it: it outranks a designer,
+holds no design-workshop authority whatsoever by rank, and reaches a workshop only through a
+read-only per-workshop grant — a fifth scoping system beside the four this product already had.
+What its rank *does* buy is `can_review_record`'s "strictly below me", which hands it every
+designer's repository records.
+A strictly ordered ladder therefore encodes two independent things at once — how much an account may
+do, and whose work it may judge — and inserting a tier moves both. That is the general finding, and
+it is stated as a claim about this system rather than about role ladders at large. See
+[PERMISSIONS.md](PERMISSIONS.md) §1, §2 and §4.5. DERIVED 2026-08-27 from the decision record and
+`ROLE_RANK`; re-check with `grep -rn "INSPECTOR" backend/app/core/deps.py frontend/lib/permissions.ts`.
 
 **One predicate in this system is not a threshold, and it is the interesting one for a paper about
 role ladders.** `can_run_design_workshops` is a **SET** — `{DESIGNER, ADMIN, MASTER_ADMIN}` — so a
-`PROFESSOR` at rank 40 outranks a `DESIGNER` at 35 and is still refused. The ladder answers "how much
+`PROFESSOR` at rank 40 and an `INSPECTOR` at 37 both outrank a `DESIGNER` at 35 and are still
+refused. The ladder answers "how much
 may this account do to the repository"; running a design & prototype workshop is a job an institution
 empanels a named person for, ending in a document submitted under that person's name, and seniority
 is not a substitute for having been named. A non-monotonic rule inside an otherwise strictly ordered
@@ -1395,7 +1413,8 @@ Stated plainly, because a paper that does not raise these will have them raised 
    than aggregated: Aadhaar validation and masking (0 of 16 artisans populated, §9.4); Unicode path
    segmentation (0 of 925 filenames non-ASCII, 0 of 16 artisans with Devanagari names, §10.2); the
    structured questionnaire write path (0 answers stored, §2.1); two of the six RBAC tiers that
-   existed at the 2026-07-27 snapshot, and the seventh added after it (§2.2, §9.1).
+   existed at the 2026-07-27 snapshot, and the two added after it — `DESIGNER` and `INSPECTOR`
+   (§2.2, §9.1).
    These are verified by tests and by reading, not by production traffic.
 
 7. **No user study, no comparison system, no WER baseline.** None was conducted. Any claim about

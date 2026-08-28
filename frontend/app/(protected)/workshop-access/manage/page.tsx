@@ -6,6 +6,7 @@ import { UsersRound } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
 import { useAuth } from "@/components/AuthProvider";
+import { DesignWorkshopInspectorsPanel } from "@/components/settings/DesignWorkshopInspectorsPanel";
 import { DesignWorkshopViewersPanel } from "@/components/settings/DesignWorkshopViewersPanel";
 import { WorkshopAccessQueuePanel } from "@/components/settings/WorkshopAccessQueuePanel";
 import { WorkshopRosterPanel } from "@/components/settings/WorkshopRosterPanel";
@@ -28,6 +29,19 @@ import { routeRedirectFor } from "@/lib/permissions";
  * below-admin to the request page, and the ADMIN_CHROME_ROUTES rule that gives an admin with admin
  * view off a panel instead of a redirect). A second route would have been a second copy of both.
  * `refreshToken` reaches it too, so a reload of the page's other halves reloads its lists as well.
+ *
+ * THE FOURTH PANEL ANSWERS THE OPPOSITE QUESTION ABOUT THE SAME RECORD, and it belongs beside the
+ * third rather than anywhere else because the two are one decision taken twice. `DesignWorkshopViewer`
+ * says who may WORK on a design workshop — that grant reaches the stage writes, because
+ * `load_workshop_or_404(for_edit=True)` performs no role check at all. `DesignWorkshopInspector` says
+ * who may READ one in order to examine it, and reaches nothing else: every route on its prefix is a
+ * GET. The two sets are disjoint by construction and the server refuses an overlap by name — an
+ * independent review by somebody who worked on it is not a review — so an admin needs to see both
+ * lists for one workshop in one place, or they will assign an inspector who is already a co-designer
+ * and meet the refusal with no idea where it came from.
+ *
+ * The inspector's own surface is NOT on this page and cannot be: `assert_inspection_surface` 403s an
+ * admin, deliberately. This panel is the whole of what an admin does with the feature.
  *
  * Two gates, and they answer differently on purpose:
  *
@@ -65,13 +79,14 @@ export default function WorkshopAccessManagePage() {
     <>
       <PageHeader
         title="Manage workshop access"
-        description="Approve or decline requests to work in a workshop, manage each workshop's roster and access levels, and choose which designers may see a design & prototype workshop."
+        description="Approve or decline requests to work in a workshop, manage each workshop's roster and access levels, choose which designers may see a design & prototype workshop, and choose who inspects one."
         icon={<UsersRound className="h-5 w-5" aria-hidden />}
       />
       <div className="grid gap-4">
         <WorkshopAccessQueuePanel onChanged={bump} refreshToken={refreshToken} />
         <WorkshopRosterPanel onChanged={bump} refreshToken={refreshToken} />
         <DesignWorkshopViewersPanel refreshToken={refreshToken} />
+        <DesignWorkshopInspectorsPanel refreshToken={refreshToken} />
       </div>
     </>
   );

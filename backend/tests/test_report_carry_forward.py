@@ -506,19 +506,31 @@ def _source_rows() -> dict[str, _SourceRow]:
             recordedAt="2025-03-13T08:05:00+05:30",
             lengthInches="96.00",
             breadthInches="48.00",
+            # THE THIRD UNIT-DECLARED COLUMN, ADDED TO THIS FIXTURE 2026-08-27. Without it every
+            # test in this module failed at `_SourceRow.__getattr__` with "REFERENCE_MODELS read
+            # the column 'heightInches', which this fixture does not set" — because the tool's
+            # `data` lambda in `design_workshops` reads it for `heightCm`. Note that a tool now
+            # carries TWO heights and they are different columns: this one states inches and is
+            # converted, `height` below states no unit at all and is copied as it stands.
+            heightInches="30.00",
             height="150.00",
             width="120.00",
             thickness="6.50",
             weight="88.00",
             radius="14.00",
-            # THE METHOD FOR THE TWO COLUMNS THAT CAN CARRY ONE, AND FOR NO OTHERS. Both were
+            # THE METHOD FOR THE THREE COLUMNS THAT CAN CARRY ONE, AND FOR NO OTHERS. All three were
             # computed from marks a person placed on a photograph — deterministic, re-derivable, and
             # printed as "photo measurement" on every record surface, so the workshop prints the same
             # phrase. The five unit-less columns above (`height`, `width`, `thickness`, `weight`,
             # `radius`) get NO stamp and cannot: `measurement_provenance.DIMENSION_FIELDS` is
             # `{lengthInches, breadthInches, heightInches}` and `method_stamps` drops any marker
-            # naming a column outside it. So this row is the honest state of a measured tool: two
+            # naming a column outside it. So this row is the honest state of a measured tool: three
             # dimensions that state both their unit and their method, five that state neither.
+            #
+            # THIS BLOCK SAID TWO UNTIL 2026-08-27, and it was right until `ToolDocumentation`
+            # gained `heightInches`. The stamp below is what makes the new column carry a METHOD
+            # and not merely a number: `DIMENSION_FIELDS` already named it, so a marker for it was
+            # always going to be kept rather than dropped.
             extraMetadata={
                 "fieldProvenance": {
                     "lengthInches": {"by": "usr_4", "byName": "S. Bal",
@@ -527,6 +539,9 @@ def _source_rows() -> dict[str, _SourceRow]:
                     "breadthInches": {"by": "usr_4", "byName": "S. Bal",
                                       "at": "2025-03-13T08:05:00+05:30",
                                       "method": "PHOTO_GEOMETRY", "methodTechnique": "SCALE"},
+                    "heightInches": {"by": "usr_4", "byName": "S. Bal",
+                                     "at": "2025-03-13T08:05:00+05:30",
+                                     "method": "PHOTO_GEOMETRY", "methodTechnique": "SCALE"},
                 },
             },
             location=_SourceRow(

@@ -159,7 +159,7 @@ def many(key: str, name: str, title: str, fields: tuple[FieldSpec, ...],
 # caption under every one of them.
 def photos(key: str = "photos", label: str = "Photographs", tier: Tier = B,
            caption_label: str = "Photograph caption", max_items: int = 0,
-           help: str = "") -> tuple[FieldSpec, FieldSpec]:
+           min_items: int = 0, help: str = "") -> tuple[FieldSpec, FieldSpec]:
     """A gallery and the caption printed under it.
 
     ``max_items`` DEFAULTS TO 0, WHICH MEANS ``DEFAULT_MAX_ITEMS``, and that default is deliberate
@@ -171,10 +171,19 @@ def photos(key: str = "photos", label: str = "Photographs", tier: Tier = B,
     it, and a refusal a designer meets after attaching twenty-five photographs is a refusal they
     meet too late.
 
+    ``min_items`` DEFAULTS TO 0 FOR THE SAME REASON AND WITH A SHARPER EDGE. A ceiling that leaked
+    out of this helper refuses a designer's twenty-first photograph on a stage nobody asked about;
+    a FLOOR that leaked would make fifteen stages permanently incomplete — the readiness screen of
+    every workshop in the country listing photographs nobody ever asked for, with no way out of it
+    from the app. It is scored and never validated (``FieldSpec.min_items``), so nothing refuses,
+    logs or 422s: the symptom is simply that no workshop can ever be finished. Two galleries
+    declare one. ``tests/test_stage_schema.py`` asserts the set by equality, in both directions.
+
     ``help`` lands on the gallery and not on the caption. The caption's own guidance is its label.
     """
     return (
-        f(key, label, IMGS, tier, report_role=GALLERY, max_items=max_items, help=help),
+        f(key, label, IMGS, tier, report_role=GALLERY, max_items=max_items,
+          min_items=min_items, help=help),
         f(f"{key}Caption", caption_label, T, tier, caption_for=key, report_role=CAP),
     )
 
@@ -1101,23 +1110,61 @@ STAGE_4 = StageSpec(
             f("clusterLocation", "Cluster location", GEO, A,
               phase_note="Reviewer: “Phase 3 work” (GIS integration)."),
             *photos("clusterPhotos", "Cluster photographs", S, "Cluster photograph caption"),
-            # TWENTY, STATED, AND ENFORCED BEFORE THE PICKER RATHER THAN AT THE SAVE.
+            # TWENTY-FIVE, EXACTLY, AND THE TWO HALVES OF THAT NUMBER TRAVEL BY DIFFERENT ROADS.
             #
-            # `motifPhotos` keeps its key and becomes the TRADITIONAL gallery, which is what it has
+            # `motifPhotos` keeps its key and is the TRADITIONAL gallery, which is what it has
             # always held — every answer already in it is a photograph of a traditional motif, so
-            # relabelling is honest and re-keying would not be. Its ceiling was the unstated
-            # `DEFAULT_MAX_ITEMS` of 200; the owner's number is 20, and because `coerce_value`
-            # REFUSES an over-long array rather than trimming it, a cap that only the server knows
-            # about is a cap a designer discovers after attaching the twenty-first photograph. Both
-            # clients now read `maxItems` off the published registry and stop at it, saying so on
-            # screen — see `photos()` above.
+            # relabelling is honest and re-keying would not be.
+            #
+            # ── THE CEILING (25, WAS 20) ────────────────────────────────────────────────────────
+            #
+            # A WIDENING, AND A WIDENING IS SAFE FOR EVERY SHIPPED CLIENT. `coerce_value` refuses an
+            # array longer than the cap rather than trimming it, so raising the number can only turn
+            # a refusal into an acceptance: nothing that saved before stops saving. A client still
+            # reading `maxItems: 20` off a stale registry simply stops its picker five short — it
+            # under-offers, it never over-posts — and the honest statement of that cost is that such
+            # a designer cannot fill the gallery until their app refetches. Both clients read
+            # `maxItems` off the published registry and stop the picker at it, saying so on screen.
+            #
+            # ── THE FLOOR (25, NEW) ─────────────────────────────────────────────────────────────
+            #
+            # The owner's instruction is that all twenty-five are REQUIRED, in both galleries. It is
+            # declared as `min_items` rather than `required=True` for a reason that is not a
+            # nicety: `required` is enforced by `validate_entry`, which runs on EVERY save, and
+            # `save_stage` restores a rejected key from `previous` — so a floor on that path would
+            # answer 422 to a designer submitting twenty photographs AND revert the gallery to what
+            # it held yesterday. `min_items` is scored in `stage_completeness` and nowhere else. A
+            # partial save is always accepted; what a short gallery costs is that the stage is not
+            # COMPLETE and the workshop is not ready to submit. See `FieldSpec.min_items`.
+            #
+            # ── WHAT THE HELP TEXT MAY AND MAY NOT PROMISE ──────────────────────────────────────
+            #
+            # The quality gate is a REFUSAL at capture, before the eager pre-upload starts, so a
+            # poor photograph never reaches the server. What it can honestly refuse ON is what the
+            # detector actually MEASURES: `DwImageQuality.findQualityIssues` emits BLUR (variance of
+            # the Laplacian against `BLUR_VARIANCE_FLOOR`), LOW_RESOLUTION (long edge against
+            # `MIN_LONG_EDGE_PX`) and DUPLICATE. OVEREXPOSED, UNDEREXPOSED and WRONG_SUBJECT are
+            # tokens in the stage-21 enum that NO MEASUREMENT IN THIS PRODUCT MAKES — see the note
+            # on STAGE_21, which is the sentence this help text is kept consistent with. So the help
+            # names the three that are checked and names the two that are not, in the same breath,
+            # rather than letting a designer read "quality checked" and assume a dark photograph was
+            # judged. The numbers themselves are deliberately NOT printed here: the floors are client
+            # constants, and a help string repeating them goes stale silently the day they move. The
+            # refusal on screen prints the reading and the floor it was measured against.
             *photos("motifPhotos", "Traditional motif photographs", S,
-                    "Traditional motif caption", max_items=20,
-                    help="Up to 20 photographs of the cluster's traditional motifs."),
+                    "Traditional motif caption", max_items=25, min_items=25,
+                    help="All 25 are required. Photographs of the cluster's traditional motifs — "
+                         "the contemporary ones have their own gallery. Each photograph is checked "
+                         "on this device before it uploads, for blur, low resolution and "
+                         "duplicates, and one that fails is not sent. Exposure and subject are not "
+                         "checked — judge those by eye."),
             *photos("contemporaryMotifPhotos", "Contemporary motif photographs", S,
-                    "Contemporary motif caption", max_items=20,
-                    help="Up to 20 photographs of the contemporary motifs the cluster works "
-                         "today."),
+                    "Contemporary motif caption", max_items=25, min_items=25,
+                    help="All 25 are required. Photographs of the contemporary motifs the cluster "
+                         "works today — the traditional ones have their own gallery. Each "
+                         "photograph is checked on this device before it uploads, for blur, low "
+                         "resolution and duplicates, and one that fails is not sent. Exposure and "
+                         "subject are not checked — judge those by eye."),
         )),
     ),
 )
@@ -1524,15 +1571,23 @@ STAGE_5 = StageSpec(
             # designer's own editor, on both surfaces, which is the requirement-(b) defect.
             fromref("improvements", "Improvements suggested", RICH, S),
             fromref("remarks", "Remarks on the tool record", RICH, S),
-            # ── SEVEN MEASUREMENTS, TWO DIFFERENT STATES OF KNOWLEDGE ────────────────────────
+            # ── EIGHT MEASUREMENT BOXES, TWO DIFFERENT STATES OF KNOWLEDGE ────────────────
             #
-            # `lengthCm`/`breadthCm` are converted from `lengthInches`/`breadthInches`, which
-            # declare their unit in the column name and in the record form's labels. See
-            # `_inches_to_cm` for why a straight copy into a box labelled "cm" would put a wrong
-            # measurement into a ministry report that the only-fill-blanks rule then makes
-            # permanent. BREADTH keeps its own word here — unlike the product's, which maps
-            # breadth onto width — because `ToolDocumentation` also has a separate unitless
-            # `width` column and collapsing the two would merge two different measurements.
+            # THIS HEADING SAID SEVEN. Count the boxes where they are declared below — `lengthCm`,
+            # `breadthCm`, `heightCm`, and the five "(as recorded)" ones — and the answer is eight,
+            # and has been since `heightCm` was added; the heading was not rewritten with it.
+            #
+            # `lengthCm`/`breadthCm`/`heightCm` are converted from
+            # `lengthInches`/`breadthInches`/`heightInches`, which declare their unit in the column
+            # name and in the record form's labels. See `_inches_to_cm` for why a straight copy
+            # into a box labelled "cm" would put a wrong measurement into a ministry report that
+            # the only-fill-blanks rule then makes permanent. BREADTH keeps its own word here —
+            # unlike the product's, which maps breadth onto width — because `ToolDocumentation`
+            # also has a separate unitless `width` column and collapsing the two would merge two
+            # different measurements. `heightInches` joined its two siblings on 2026-08-27;
+            # `heightCm` stays declared below `measurementMethodNote` rather than beside them
+            # because that is where the box was first written, and moving a field reorders it on
+            # both clients.
             #
             # The five "(as recorded)" fields DECLARE NO UNIT, and that is the honest declaration.
             # Their source columns carry no unit suffix, the tool form labels them with the bare
@@ -1543,48 +1598,70 @@ STAGE_5 = StageSpec(
             # ordinary converted fields and these five can be deprecated with `replaced_by`.
             fromref("lengthCm", "Length", DEC, S, unit="cm", min_value=0),
             fromref("breadthCm", "Breadth", DEC, S, unit="cm", min_value=0),
-            # ── WHO OR WHAT MEASURED THE TWO NUMBERS ABOVE ────────────────────────────────────
+            # ── WHO OR WHAT MEASURED THE THREE CONVERTED FIGURES ──────────────────────
             #
             # The same box as `existingProduct.measurementMethodNote`, for the same reason and with
             # the same wording rule — read that field's note and
             # `design_workshops._measurement_method_note` before changing either.
             #
-            # IT COVERS THE TWO CONVERTED FIGURES AND NOTHING ELSE, which is a fact about the record
-            # rather than a decision made here: `measurement_provenance.DIMENSION_FIELDS` is
+            # IT COVERS THE THREE CONVERTED FIGURES AND NOTHING ELSE — `lengthCm` and `breadthCm`
+            # above, `heightCm` below — which is a fact about the record rather than a decision
+            # made here: `measurement_provenance.DIMENSION_FIELDS` is
             # `{lengthInches, breadthInches, heightInches}`, so no stamp is ever written for the
             # `height`, `width`, `thickness`, `weight` and `radius` columns behind the five
-            # "(as recorded)" boxes below. Those five state neither their unit nor their method, and
-            # both silences are the tool record's. `heightCm` above it is measured AT the workshop by
-            # the designer, so it needs no clause from the record at all.
+            # "(as recorded)" boxes below. Those five state neither their unit nor their method,
+            # and both silences are the tool record's.
+            #
+            # THIS SAID TWO, AND SAID `heightCm` IS "measured AT the workshop by the designer, so
+            # it needs no clause from the record at all", UNTIL 2026-08-27.
+            # `ToolDocumentation.heightInches` landed that day, the tool half of
+            # `design_workshops._METHOD_CARRIED_DIMENSIONS` gained its third pair, and the sentence
+            # this box hydrates can now name height. The wording had to follow: this help text is
+            # what a designer reads while deciding whether the sentence is about the number in
+            # front of them, and a note naming a dimension the help says it does not cover is worse
+            # than no note. Both clients render this string — the browser off the wire, the handset
+            # off the bundled asset — so it is corrected here and the asset regenerated with it.
             fromref("measurementMethodNote", "How the record's measurements were taken", T, S,
                     max_length=200,
-                    help="How the tool record's own length and breadth were arrived at — a tape "
-                         "reading, marks on a photograph, or a vision model's estimate. It "
+                    help="How the tool record's own length, breadth and height were arrived at — a "
+                         "tape reading, marks on a photograph, or a vision model's estimate. It "
                          "describes the record, not a number you type here. The five "
                          "“(as recorded)” measurements below carry no method: the record does not "
                          "store one for them."),
-            # ── THE THIRD DIMENSION A PHOTOGRAPH CAN READ, WHICH HAD NOWHERE TO LAND ─────────────
+            # ── THE THIRD DIMENSION A PHOTOGRAPH CAN READ, WHICH ONCE HAD NOWHERE TO LAND ─────
             #
-            # `measurableLengthFields` qualifies a field off its DECLARED length unit, so the
-            # photo-measure panel on `photo` below can propose into `lengthCm` and `breadthCm` and
-            # cannot see `heightAsRecorded` — correctly, because that box says only what the record
-            # said and the record states no unit. But the record page's grid capture DOES measure a
-            # height ("Side-on photo of the object against the grid — fills height"), so the
-            # affordance existed for two of the tool's dimensions and was missing for the third one a
-            # camera can read: at the workshop, height had to be eyeballed and typed.
+            # `measurableLengthFields` qualifies a field off its DECLARED length unit. Before this
+            # box existed the photo-measure panel on `photo` below could propose into `lengthCm` and
+            # `breadthCm` and could not see `heightAsRecorded` — correctly, because that box says
+            # only what the record said and the record states no unit. But the record page's grid
+            # capture DOES measure a height ("Side-on photo of the object against the grid — fills
+            # height"), so the affordance existed for two of the tool's dimensions and was missing
+            # for the third one a camera can read: at the workshop, height had to be eyeballed and
+            # typed.
             #
             # A UNIT-DECLARED TWIN AND NOT A RETYPE, which is invariant 6 read the right way round:
-            # giving `heightAsRecorded` a unit would turn an unknown into a stated wrong answer. It is
-            # `f()` and not `fromref()` for the same reason — nothing may map into it, because the
-            # source column's unit is unknown and a mapping would invent one. Same pairing, same
-            # argument, as `toolType` beside `toolFamily`.
+            # giving `heightAsRecorded` a unit would turn an unknown into a stated wrong answer.
+            # Same pairing, same argument, as `toolType` beside `toolFamily`.
+            #
+            # IT WAS `f()` AND NOT `fromref()` UNTIL 2026-08-27, and the reason recorded here was
+            # "nothing may map into it, because the source column's unit is unknown and a mapping
+            # would invent one". That reason was about the plain `height` column, which is still the
+            # only source `heightAsRecorded` below is copied from and still states no unit. It
+            # stopped being the whole story when `ToolDocumentation.heightInches` landed: that
+            # column states its unit in its own name exactly as `lengthInches` and `breadthInches`
+            # do, so a mapping converts rather than invents, and `design_workshops`'s tool carry
+            # produces `heightCm` from it. Without this `fromref()` and the pair in
+            # `stage_schema.REFERENCE_HYDRATION["tool.toolRef"]` the converted height was computed
+            # on every picker call and landed nowhere, while `measurementMethodNote` above hydrated
+            # a sentence naming a height the entry did not show.
             #
             # NOT extended to width/thickness/radius: the record page's grid offers no reading for
             # those three, so twins there would be three new boxes buying nothing — and
             # `weightAsRecorded` must never get one, because a photograph cannot weigh anything.
-            f("heightCm", "Height (measured)", DEC, S, unit="cm", min_value=0,
-              help="Measured at the workshop. The tool record’s own height is below, in whatever "
-                   "unit it was recorded in."),
+            fromref("heightCm", "Height (measured)", DEC, S, unit="cm", min_value=0,
+                    help="The tool's height with its unit stated — measured at the workshop, or "
+                         "converted from the height in inches on the tool record. The record's "
+                         "other height, the one whose unit it does not state, is below."),
             fromref("heightAsRecorded", "Height (as recorded)", DEC, S, min_value=0,
                     help="Copied from the tool record, which does not state the unit it was "
                          "measured in."),
@@ -2358,13 +2435,62 @@ STAGE_11 = StageSpec(
     title="Sketch Development",
     purpose="The design sketches produced during the workshop, each with its intent.",
     # Source document: the Standard tier was marked “optional fields”, and the Advanced
-    # image-processing tier was pointed at another team's existing app. The slots such a tool
-    # would fill are declared (`lineArtFile`, carrying the remark on its `phase_note`); the
-    # processing is not claimed. The note says the same thing to the designer without the history,
-    # because a designer WILL go looking for a vectorise button.
+    # image-processing tier was pointed at another team's existing app. That remark survives
+    # verbatim on `lineArtFile`'s `phase_note`, which is where deferred provenance belongs — and it
+    # is now provenance ONLY, because the processing landed in this repository instead.
+    #
+    # THE NOTE BELOW USED TO DENY THE FEATURE, AND THAT WAS THE DEFECT. It read "Line-art and
+    # vector files can be attached to a sketch here. The app stores them; it does not produce them
+    # from the sketch itself" — true when it was written, and shipped unchanged past the releases
+    # that gave BOTH clients a tracer. `notes` is serialised by `stage_to_dict`, printed under the
+    # stage header on the web and under the sync line on the handset, and carried in the bundled
+    # asset a phone renders from with no signal. So the one sentence a designer reads before
+    # filling this stage in told them the app could not do the thing whose button was on the
+    # screen in front of them, in the field, where there is nothing else to check it against.
+    #
+    # WHAT THE CLIENTS ACTUALLY DO, checked on 2026-08-28 rather than assumed:
+    #   web       `components/designworkshop/FieldInput.tsx` mounts `SketchTraceField` — and
+    #             `SketchRectifyField` beside it — inside the stage form's media block, gated on
+    #             `stageFieldRoles.offersSketchRectify`: a FILE field whose key reads like a
+    #             plate's, on an entity that also has an image field. In this registry that is
+    #             `sketch.lineArtFile` and nothing else. It runs in a Web Worker, on the device,
+    #             and uploads nothing.
+    #   handset   the same panel, mounted from the same field:
+    #             `ui/designworkshop/DwSketchTracePanel.kt`, beside `DwSketchTraceEngine.kt`,
+    #             `DwSketchTraceParams.kt` and the rest of that family. `FieldInput.tsx`'s own
+    #             comment records where the arrangement came from — "`dwOffersSketchTrace` IS
+    #             `dwOffersSketchRectify`", one predicate for two panels — and says the web copied
+    #             it from the handset rather than the other way round.
+    #   re-check  `grep -rn "SketchTraceField" frontend/components` and
+    #             `ls android/.../ui/designworkshop/ | grep Trace`.
+    #
+    # THE NOTE NAMES NO ENGINE, DELIBERATELY, AND THAT DECISION HAS NOW PAID FOR ITSELF.
+    # When this comment was written the handset's JavaScript-bundle path was staged for deletion in
+    # favour of the native `DwTraceKotlin*` runtime, and the note was written to name neither. On
+    # 2026-08-28 the deletion happened: `assets/dw-trace-engine.js`, the `frontend/lib/trace/android/`
+    # bridge, `frontend/scripts/build-trace-bundle.mjs` and `ANDROID-BUNDLE.md` are gone, and the
+    # handset runs the Kotlin engine. The note below did not change a word. WHICH engine runs is not
+    # a fact a designer in a courtyard can use, and it is the half that moves; where the plate goes,
+    # and what is never overwritten, is the half that does not.
+    #
+    # (`docs/SKETCHES-PROTOTYPES-PARITY.md` still records the tracer as absent from the handset and
+    # quotes the old note as its evidence. It is dated 2026-08-27 and it was already wrong before the
+    # engine swap — the whole `DwSketchTrace*` family was in the tree. That document is not this
+    # lane's to edit; it is named here so the next reader does not take it as the newer fact.)
+    #
+    # WHAT THE REPLACEMENT SAYS, AND WHY THOSE THINGS. Not "the app can trace" on its own, which a
+    # designer can see: where the two artefacts go, and that one never overwrites the other.
+    # `sketch.image` is a single IMAGE field and a single IMAGE field REPLACES its value when a
+    # file is attached, which is the whole reason the plate has a field of its own — the one fact
+    # here that cannot be deduced from the screen, and the one that costs a photograph when it is
+    # got wrong.
     notes=(
-        "Line-art and vector files can be attached to a sketch here. The app stores them; it does "
-        "not produce them from the sketch itself."
+        "“Sketch image” holds the photograph of the sheet and “Line art / vector file” holds the "
+        "drawing made from it — two fields, so tracing never replaces the photograph. On the "
+        "line-art field this device can straighten a photographed sheet and trace it into line "
+        "art with no connection, and shows the result before anything is attached, so keeping the "
+        "sheet exactly as photographed costs one press. A vector file made elsewhere goes in the "
+        "same field."
     ),
     entities=(
         many("sketch", "DwSketch", "Sketches", (
@@ -2393,9 +2519,16 @@ STAGE_11 = StageSpec(
             f("expectedPrice", "Expected price", MONEY, S, unit="INR", min_value=0,
               report_role=COL, column_width_pct=16.0),
             f("designerNotes", "Designer’s notes", RICH, S, report_role=NARR),
+            # THE FIELD THE TRACING AND STRAIGHTENING PANELS MOUNT ON, on both clients — see the
+            # stage note above. `phase_note` is history and is not serialised; the `help` is what a
+            # designer reads, so it has to say that this device can fill the field as well as
+            # accept a file. Its first sentence is unchanged deliberately:
+            # `frontend/components/designworkshop/stageFieldRoles.ts` quotes it verbatim to explain
+            # which pairing `offersSketchRectify` is looking for.
             f("lineArtFile", "Line art / vector file", FILE, A,
               phase_note="Reviewer: “May be Deepika app for now”.",
-              help="An SVG or vector export, if one was produced."),
+              help="An SVG or vector export, if one was produced. The panel on this field can "
+                   "trace one from the sketch photograph, on this device."),
             f("annotations", "Annotations", RICH, A, report_role=NARR),
             # ── THE OVERRIDE MARKER, AND WHY THE ROW ORDER ALONE CANNOT BE IT ────────────────
             #

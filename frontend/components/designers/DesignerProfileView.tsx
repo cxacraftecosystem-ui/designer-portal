@@ -18,6 +18,7 @@ import { DocumentPreview } from "@/components/media/DocumentPreview";
 import {
   DESIGNER_PROFILE_GROUPS,
   DESIGNER_PROFILE_LABELS,
+  isDesignerProfileFieldRequired,
   type DesignerProfileGroup
 } from "@/components/designers/profileCopy";
 import { formatDate } from "@/lib/format";
@@ -44,7 +45,19 @@ function GroupPanel({ group, profile }: { group: DesignerProfileGroup; profile: 
       <dl className="mt-3 grid gap-4 md:grid-cols-2">
         {group.fields.map((field) => (
           <div key={field} className={wide(field) ? "min-w-0 md:col-span-2" : "min-w-0"}>
-            <dt className="field-label">{DESIGNER_PROFILE_LABELS[field]}</dt>
+            {/*
+              THE SAME ASTERISK THE EDITOR DRAWS, FROM THE SAME BOOLEAN. This screen exists to answer
+              "will the cover of this person's report have a blank line on it", and four of these
+              boxes are now the ones that stop a save outright — so an admin reading a colleague's
+              profile can see WHICH of the blanks below is the one to chase. Marking them here and
+              nowhere else would be two screens disagreeing about one record, which is exactly what
+              `profileCopy` exists to prevent; `Blank`'s single wording is untouched, because "there
+              is nothing in this box" is one fact however important the box is.
+            */}
+            <dt className="field-label">
+              {DESIGNER_PROFILE_LABELS[field]}
+              {isDesignerProfileFieldRequired(field) ? " *" : ""}
+            </dt>
             <dd className="mt-1 text-sm leading-6 text-ink-900">
               <FieldValue field={field} profile={profile} />
             </dd>

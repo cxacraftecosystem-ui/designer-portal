@@ -20,7 +20,19 @@
  * placeholder, the figure toggle — uses the themed token ladders as usual.
  */
 
-import { createContext, useContext, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction
+} from "react";
 import { ImageOff, Map as MapIcon, Table2 } from "lucide-react";
 
 import { IndiaMap } from "@/components/map/IndiaMap";
@@ -42,6 +54,67 @@ import {
 } from "@/components/designworkshop/report/previewModel";
 
 export { countCodeSpans };
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The one piece of block state that changes a block's HEIGHT
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The map figure's live-map / printed-figure choice, held OUTSIDE the block where a paginator
+ * needs to know about it.
+ *
+ * `ReportSheets` lays every block out once off-screen, measures it, and draws fixed-height pages
+ * from those measurements. Exactly one control inside a block can change a block's height after
+ * that: `ReportMapFigure`'s toggle, because the hoverable `IndiaMap` and the rasterised figure the
+ * file will contain are not the same size. Left as local state, the drawn copy would grow while
+ * the measured copy did not, and the fixed page would CLIP the difference — a silent truncation,
+ * on the one screen whose entire job is showing what is on the page.
+ *
+ * So the state is lifted through a context the paginator provides and re-measures on. Optional by
+ * design: with no provider — `StageDocumentPreview`, or anything rendering a bare block list —
+ * each figure keeps its own state and behaves exactly as it did before.
+ */
+export type ReportFigureModes = {
+  modes: Record<string, boolean>;
+  setMode: (key: string, value: boolean) => void;
+};
+
+const FigureModeContext = createContext<ReportFigureModes | null>(null);
+
+export function ReportFigureModeProvider({
+  value,
+  children
+}: {
+  value: ReportFigureModes;
+  children: ReactNode;
+}) {
+  return <FigureModeContext.Provider value={value}>{children}</FigureModeContext.Provider>;
+}
+
+/**
+ * `useState`, unless a host is holding this piece of state for everybody — then it is the host's.
+ *
+ * Both hooks run on every render and the choice is made in the RETURN, never around a hook call:
+ * a provider that appeared or vanished between renders must not change the hook order.
+ */
+function useShared(
+  key: string | undefined,
+  fallback: boolean
+): [boolean, Dispatch<SetStateAction<boolean>>] {
+  const shared = useContext(FigureModeContext);
+  const [local, setLocal] = useState(fallback);
+  const hosted = shared !== null && key !== undefined;
+  const current = hosted ? shared.modes[key] ?? fallback : local;
+  const set = useCallback<Dispatch<SetStateAction<boolean>>>(
+    (value) => {
+      const next = typeof value === "function" ? value(current) : value;
+      if (hosted) shared.setMode(key, next);
+      else setLocal(next);
+    },
+    [hosted, shared, key, current]
+  );
+  return [current, set];
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Inline content
@@ -391,13 +464,20 @@ function toMapPoints(pins: DwMapPin[]): MapPoint[] {
  * the PNG whenever there is one. A designer approving a document must be able to see the picture
  * the document contains, not an approximation of it that happens to be nicer to use.
  */
-function ReportMapFigure({ block }: { block: DwMapBlock }) {
+function ReportMapFigure({ block, modeKey }: { block: DwMapBlock; modeKey?: string }) {
   const raster = rasterSource(block);
   const points = useMemo(() => toMapPoints(block.points ?? []), [block.points]);
   const hasLive = points.length > 0;
   // Falls back to the raster with no toggle when there are no points to draw: an empty outline of
   // India beside a picture full of pins is not a preview, it is a second, wrong answer.
-  const [showRaster, setShowRaster] = useState(!hasLive);
+  //
+  // THE STATE IS SHARED WITH THE PAGINATOR WHERE ONE IS MOUNTED. The two drawings are different
+  // HEIGHTS, so on a paginated sheet this toggle moves a page break; `ReportSheets` measures its
+  // blocks off-screen and would then be sizing a page for the drawing that is no longer on it,
+  // and the fixed sheet would clip the difference. Through the context both copies read one
+  // answer and the measurement re-runs. With no provider — `StageDocumentPreview`, or any caller
+  // rendering a bare block list — it is ordinary local state and behaves exactly as it did.
+  const [showRaster, setShowRaster] = useShared(modeKey, !hasLive);
   const [hovered, setHovered] = useState<string | null>(null);
   const captionId = useId();
 
@@ -735,7 +815,7 @@ const CALLOUT_CLASS: Record<string, string> = {
   SUCCESS: "rp-callout rp-callout-success"
 };
 
-export function ReportBlock({ block }: { block: PreviewBlock }) {
+export function ReportBlock({ block, blockKey }: { block: PreviewBlock; blockKey?: string }) {
   switch (block.type) {
     case "COVER":
       return (
@@ -971,7 +1051,7 @@ export function ReportBlock({ block }: { block: PreviewBlock }) {
       );
 
     case "MAP":
-      return <ReportMapFigure block={block} />;
+      return <ReportMapFigure block={block} modeKey={blockKey} />;
 
     case "CHART":
       return <ReportChartFigure block={block} />;
@@ -989,9 +1069,11 @@ export function ReportBlock({ block }: { block: PreviewBlock }) {
       );
 
     case "PAGEBREAK":
-      // Consumed by `splitIntoSheets`, which turns it into the boundary between two sheets. It
-      // can still reach here if a caller renders a raw block list, so it draws nothing rather
-      // than falling through to an unhandled type.
+      // Consumed by `ReportSheet.planFlow`, which folds it onto the following block as
+      // `breakBefore` so that the paginator acts on an instruction rather than on a block with no
+      // drawing. It can still reach here where a caller renders a raw block list —
+      // `StageDocumentPreview` does — so it draws nothing rather than falling through to an
+      // unhandled type.
       return null;
   }
 }

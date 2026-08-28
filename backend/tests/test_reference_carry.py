@@ -408,11 +408,16 @@ TOOL_CARRIED = {
     "remarks": "tool.remarks",
     "lengthInches": "tool.lengthCm (x2.54)",
     "breadthInches": "tool.breadthCm (x2.54)",
+    # THE THIRD INCH COLUMN, ADDED 2026-08-27. Until that day `ToolDocumentation` had two, and
+    # `tool.heightCm` was a workshop-only box nothing mapped into. The column landed, the carry
+    # converts it like its two siblings, and `tool.heightAsRecorded` below is unaffected: it is the
+    # OLD unit-less `height`, a different column, which is why the tool carries two heights.
+    "heightInches": "tool.heightCm (x2.54)",
     # MOVED HERE FROM NOT_CARRIED, where it read "bookkeeping". Same reason as the product's, and
-    # sharper here: five of this model's seven measurements state no unit either, so the tool table
+    # sharper here: five of this model's eight measurements state no unit either, so the tool table
     # was the one place a reader had nothing at all to go on. Only `fieldProvenance.method` crosses,
-    # and only for the two INCH columns — `measurement_provenance.DIMENSION_FIELDS` never stamps the
-    # five unit-less ones. See `design_workshops._measurement_method_note`.
+    # and only for the three INCH columns — `measurement_provenance.DIMENSION_FIELDS` never stamps
+    # the five unit-less ones. See `design_workshops._measurement_method_note`.
     "extraMetadata": "tool.measurementMethodNote (fieldProvenance.method only)",
     "height": "tool.heightAsRecorded (source states no unit)",
     "width": "tool.widthAsRecorded (source states no unit)",
@@ -1028,10 +1033,12 @@ def test_the_source_columns_say_inches_and_the_target_fields_say_centimetres():
     for model in ("ProductDocumentation", "ToolDocumentation"):
         assert "lengthInches" in _columns(model)
         assert "breadthInches" in _columns(model)
+        # The tool gained its third on 2026-08-27, so both models now declare the same triple.
+        assert "heightInches" in _columns(model)
 
     for entity_key, field_keys in (
         ("existingProduct", ("lengthCm", "widthCm", "heightCm")),
-        ("tool", ("lengthCm", "breadthCm")),
+        ("tool", ("lengthCm", "breadthCm", "heightCm")),
     ):
         for field_key in field_keys:
             spec = _field(entity_key, field_key)
@@ -1707,7 +1714,10 @@ def _tool_row(**overrides):
         id="tul_1", craftName="Sambalpuri Ikat", place="Barpali", artisanName="Latha Devi",
         toolkitName="Pit loom", localName="ଖଡ଼ି", englishName="Pit treadle loom",
         processUsedIn="Weaving", material="Teak and bamboo", yearsInUse=18,
-        height=180, width=120, lengthInches=96, breadthInches=48,
+        # TWO HEIGHTS, AND THEY ARE DIFFERENT COLUMNS. `heightInches` is the documented one,
+        # added 2026-08-27 and converted into `tool.heightCm`; the bare `height` is the old
+        # column whose unit nothing records, and it lands in `tool.heightAsRecorded`.
+        height=180, width=120, lengthInches=96, breadthInches=48, heightInches=30,
         thickness=4.5, weight=95, radius=6,
         maker="CARPENTER", traditionType="HYBRID", replacementCost=12000,
         suggestionsForToolImprovement="A higher bench would ease the back.",
@@ -2463,6 +2473,9 @@ async def test_a_fully_documented_tool_arrives_whole(monkeypatch):
     assert data["traditionType"] == "TRANSITIONAL", "HYBRID must be translated, not dropped"
     assert data["lengthCm"] == pytest.approx(243.84)
     assert data["breadthCm"] == pytest.approx(121.92)
+    # The tool's two heights, side by side, which is the whole point of keeping both: 30 in
+    # converted, and the unit-less 180 copied across as the record stated it.
+    assert data["heightCm"] == pytest.approx(76.2)
     assert data["heightAsRecorded"] == 180 and data["weightAsRecorded"] == 95
     assert data["yearsInUse"] == 18
     assert data["photoCaption"] == "The loom in the shed"
@@ -2592,10 +2605,20 @@ def test_the_method_carry_covers_exactly_the_columns_a_method_can_be_stamped_on(
     `measurement_provenance.method_stamps` drops a marker naming anything outside
     `DIMENSION_FIELDS`, and that set is `{lengthInches, breadthInches, heightInches}`. So the tool's
     five unit-less columns (`height`, `width`, `thickness`, `weight`, `radius`) can never carry a
-    method — that module says so itself under WHAT THE RECORD HALF STILL CANNOT REACH, and names the
-    tool's missing `heightInches` column as the reason an accepted vision-model tool height is
-    recorded as nothing. This is the assertion that keeps `_METHOD_CARRIED_DIMENSIONS` honest in both
+    method. This is the assertion that keeps `_METHOD_CARRIED_DIMENSIONS` honest in both
     directions: nothing outside the stampable set, and every payload key it names is really hydrated.
+
+    THIS TEST WAS A PIN ON THE OLD SHAPE AND IT WENT RED WHEN THE SHAPE CHANGED — CORRECTED
+    2026-08-27. Its last line read `assert "heightInches" not in tool_columns` with the message
+    "ToolDocumentation has no heightInches column", and the paragraph above it cited
+    `measurement_provenance`'s section WHAT THE RECORD HALF STILL CANNOT REACH, which named
+    "the tool's missing `heightInches` column as the reason an accepted vision-model tool height
+    is recorded as nothing". Both have expired in the same change: the column landed (additive,
+    nullable, `20260827120000_tool_height_inches`), `_METHOD_CARRIED_DIMENSIONS` gained its third
+    tool pair, and that section is now WHAT THE RECORD HALF CAN NOW REACH, AND THE PARAGRAPH THAT
+    USED TO SAY OTHERWISE. The pin is INVERTED rather than deleted, because the property it was
+    really guarding — that the tool carries the same stampable triple the product does — is worth
+    asserting in the new direction too, and a deleted assertion guards nothing.
     """
     table = dw._METHOD_CARRIED_DIMENSIONS
     assert set(table) <= set(dw.REFERENCE_MODELS)
@@ -2622,7 +2645,12 @@ def test_the_method_carry_covers_exactly_the_columns_a_method_can_be_stamped_on(
     # The five unit-less tool columns are named here so that adding one is a deliberate act.
     tool_columns = {column for _payload, column in table["ToolDocumentation"]}
     assert tool_columns.isdisjoint({"height", "width", "thickness", "weight", "radius"})
-    assert "heightInches" not in tool_columns, "ToolDocumentation has no heightInches column"
+    # And the triple is COMPLETE, which is the half this line used to assert the opposite of.
+    # Narrowing it back to two would silently stop carrying a measured tool height that the
+    # record now holds in a column that states its unit.
+    assert tool_columns == {"lengthInches", "breadthInches", "heightInches"}, (
+        "the tool's method carry is the same stampable triple as the product's"
+    )
 
 
 async def test_the_method_note_is_recomputable_by_the_divergence_path(monkeypatch):

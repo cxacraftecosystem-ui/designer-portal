@@ -10,7 +10,7 @@ import type { UserRole } from "@/lib/types";
  * THE ROLE LADDER, PROVED EQUAL TO THE SERVER'S — labels and key order included.
  *
  * WHY THIS SPEC EXISTS. `frontend/lib/permissions.ts` opens by claiming it mirrors
- * `backend/app/core/deps.py` "exactly": the same seven keys, at the same numbers, with the same
+ * `backend/app/core/deps.py` "exactly": the same eight keys, at the same numbers, with the same
  * labels, in the same declaration order. Two of those four were already mechanical —
  * `docs/tools/check-docs.mjs::checkRoleParity` parses `ROLE_RANK` out of both files and diffs the
  * KEYS and the NUMBERS in both directions. Nothing compared the LABELS or the ORDER, so the header
@@ -71,7 +71,7 @@ function pythonKeys(body: string): string[] {
 const RANK_BODY = pythonDict("ROLE_RANK");
 const LABEL_BODY = pythonDict("ROLE_LABELS");
 
-test("the seven keys are the server's seven keys, in the server's order", () => {
+test("the eight keys are the server's eight keys, in the server's order", () => {
   /*
     ORDER-SENSITIVE ON PURPOSE — `toEqual` on arrays, not on sets. The keys agreeing as a set is
     what `checkRoleParity` already proves; this test exists for the other half of the header's
@@ -115,7 +115,7 @@ test("ROLES_BY_RANK is decided by the numbers alone, so declaration order cannot
   /*
     THE CLAIM IN `permissions.ts`' HEADER, PROVED RATHER THAN ASSERTED. An earlier version of that
     header said the declaration order mattered "because ROLES_BY_RANK sorts on the values" — which
-    is precisely the reason it does NOT matter. All seven ranks are distinct, so the sort is total
+    is precisely the reason it does NOT matter. All eight ranks are distinct, so the sort is total
     and its result is independent of the order the keys were written in.
 
     Shuffling deterministically rather than randomly: a flaky ordering would make this test's own
@@ -130,5 +130,8 @@ test("ROLES_BY_RANK is decided by the numbers alone, so declaration order cannot
 
   expect(fromShuffled).toEqual(ROLES_BY_RANK);
   // And it really is the ladder, highest first — otherwise the two could agree while both were wrong.
-  expect(ROLES_BY_RANK.map((role) => ROLE_RANK[role])).toEqual([60, 50, 40, 35, 30, 20, 10]);
+  // INSPECTOR's 37 sits between DESIGNER's 35 and PROFESSOR's 40, added 2026-08-27. The literal is
+  // spelled out rather than derived on purpose: a test that computed this from ROLE_RANK would agree
+  // with any ladder at all, including one a bad edit had reordered.
+  expect(ROLES_BY_RANK.map((role) => ROLE_RANK[role])).toEqual([60, 50, 40, 37, 35, 30, 20, 10]);
 });

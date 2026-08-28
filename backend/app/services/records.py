@@ -9,6 +9,12 @@ from fastapi.encoders import jsonable_encoder
 from app.core.db import db
 from app.services.artisan_identity import mask_aadhaar
 from app.services.concurrency import gather_reads
+
+# The tag every design-workshop upload carries in ``linkedRecordType``. Imported at module level
+# rather than inside the two functions that read it because ``_redact_sensitive`` runs per NODE of
+# every encoded payload, and ``services/dictation_consent`` imports only ``app.core.db`` — there is
+# no cycle to defer around, unlike ``design_workshop_viewers`` below.
+from app.services.dictation_consent import MEDIA_TAG
 from app.services.measurement_provenance import MARKER_BODY_KEY, method_stamps
 from app.services.rich_text import search_needles
 from app.services.text_format import title_case_fields
@@ -338,6 +344,7 @@ def _redact_sensitive(
     viewer_id: str | None,
     unmasked: bool,
     media_urls: set[str] | None = None,
+    media_workshops: frozenset[str] = frozenset(),
 ) -> Any:
     """Recursively scrub an already-encoded payload of everything that must not leave the API.
 
@@ -379,22 +386,46 @@ def _redact_sensitive(
         # which is a real state (an upload that never completed) and must stay distinguishable
         # from "you may not have it". An absent key is the honest third answer, and a client that
         # renders a play button only when a URL is present degrades correctly on its own.
+        # A THIRD ARM, AND IT READS THE FILE'S OWN TAG RATHER THAN ITS UPLOADER. A design-workshop
+        # upload carries ``linkedRecordType="designWorkshop"`` and ``linkedRecordId=<workshop id>``
+        # (``dictation_consent.MEDIA_TAG``), and a co-designer on that workshop may already take those
+        # bytes on FIVE other surfaces — the transcripts endpoint, ``_readable_media_ids``, ``/export``,
+        # ``/data`` and the generated report's own images — through ``owned_or_granted_where``'s
+        # matching arm. This gate was the one that still keyed on uploader identity, so ``GET /media``
+        # withheld the ``url`` for a photograph the same account could obtain by generating the report.
+        # Widening the TEST is what closes that; widening ``media_urls`` — the uploader SET — would
+        # have meant "this co-designer may take that uploader's data EVERYWHERE", on every surface the
+        # set is applied to, which is a different and much larger claim.
+        #
+        # FAIL-CLOSED BY CONSTRUCTION: a node that does not carry both tag columns simply falls through
+        # to the uploader test above, and ``media_workshops`` defaults to the empty set, so a caller
+        # that has not thought about this arm withholds exactly as much as it did before.
         if (
             media_urls is not None
             and _MEDIA_MARKER in value
             and value.get("uploadedById") not in media_urls
+            and not (
+                value.get("linkedRecordType") == MEDIA_TAG
+                and value.get("linkedRecordId") in media_workshops
+            )
         ):
             for key in _MEDIA_TAKEABLE_KEYS:
                 value.pop(key, None)
         for nested in value.values():
-            _redact_sensitive(nested, viewer_id, unmasked, media_urls)
+            _redact_sensitive(nested, viewer_id, unmasked, media_urls, media_workshops)
     elif isinstance(value, list):
         for item in value:
-            _redact_sensitive(item, viewer_id, unmasked, media_urls)
+            _redact_sensitive(item, viewer_id, unmasked, media_urls, media_workshops)
     return value
 
 
-def public_encode(obj: Any, viewer: Any = None, *, media_urls: Any = _UNSET) -> Any:
+def public_encode(
+    obj: Any,
+    viewer: Any = None,
+    *,
+    media_urls: Any = _UNSET,
+    media_workshops: frozenset[str] = frozenset(),
+) -> Any:
     """``jsonable_encoder`` plus a recursive scrub of everything that must not leave the API.
 
     Three jobs, all performed on the ENCODED structure so none depends on how the row was loaded:
@@ -435,7 +466,13 @@ def public_encode(obj: Any, viewer: Any = None, *, media_urls: Any = _UNSET) -> 
         # No viewer named: mask everything and withhold every URL. `set()` rather than None, because
         # None means "all allowed" and this is the path a route reaches by NOT thinking about it.
         allowed: set[str] | None = set() if media_urls is _UNSET else media_urls
-        return _redact_sensitive(encoded, viewer_id=None, unmasked=False, media_urls=allowed)
+        return _redact_sensitive(
+            encoded,
+            viewer_id=None,
+            unmasked=False,
+            media_urls=allowed,
+            media_workshops=media_workshops,
+        )
 
     viewer_id = get_value(viewer, "id")
     if media_urls is _UNSET:
@@ -453,7 +490,49 @@ def public_encode(obj: Any, viewer: Any = None, *, media_urls: Any = _UNSET) -> 
         viewer_id=viewer_id,
         unmasked=has_rank(viewer, "PROFESSOR"),
         media_urls=allowed,
+        media_workshops=media_workshops,
     )
+
+
+async def media_url_scope(viewer: Any) -> tuple[set[str] | None, frozenset[str]]:
+    """Both halves of "whose media bytes may travel to ``viewer``", resolved together.
+
+    Returns ``(uploader ids, workshop ids)``. The first is what :func:`media_url_owners` has always
+    answered — the viewer's own uploads plus every uploader who has GRANTED them a data-access grant.
+    The second is new and is the TAG half: the design workshops this account may open, whose files
+    carry ``linkedRecordType="designWorkshop"`` and that workshop's id.
+
+    WHY TWO ANSWERS RATHER THAN ONE WIDER SET. A co-designer's entitlement is to THIS WORKSHOP'S
+    files, not to that uploader's data at large, and the uploader set cannot express the difference:
+    it is applied at ``search``, ``products``, ``tools``, ``processes`` and the consolidated
+    questionnaire, none of which has a workshop in it. Folding the co-designer's uploader id into the
+    set would hand over every file they have ever uploaded, everywhere. Keeping the two apart lets
+    :func:`_redact_sensitive` ask the narrower question against the FILE's own columns.
+
+    IT IS THE SAME PAIR ``owned_or_granted_where`` ALREADY USES on the download surfaces — the grant
+    branch and :func:`_design_workshop_media_branches` — and both now read the workshop half through
+    :func:`_design_workshop_media_ids`, so the URL gate and the download gate cannot drift apart. That
+    they HAD drifted is the defect this function exists to close: transcripts, ``/export``, ``/data``,
+    the AI-layer reader and the generated report's images all served a co-designer, while
+    ``GET /media`` withheld the ``url`` for the same bytes.
+
+    Professor and above short-circuit to ``(ALL_MEDIA_URLS, frozenset())`` with NO query, exactly as
+    before — the workshop half is redundant when every URL already travels.
+
+    COMPOSED FROM :func:`media_url_owners` RATHER THAN REPLACING IT, so the call sites that want only
+    the uploader half keep paying for exactly one query — eight of them as of 2026-08-27, check
+    `grep -rn 'media_url_owners(' backend/app`. A route opts into the second query by asking for the
+    pair; nothing is added to a surface that has not asked.
+    """
+    from app.core.deps import get_value
+
+    uploaders = await media_url_owners(viewer)
+    if uploaders is ALL_MEDIA_URLS:
+        return ALL_MEDIA_URLS, frozenset()
+    viewer_id = get_value(viewer, "id")
+    if not viewer_id:
+        return uploaders, frozenset()
+    return uploaders, frozenset(await _design_workshop_media_ids(viewer_id))
 
 
 async def media_url_owners(viewer: Any) -> set[str] | None:
@@ -1047,21 +1126,41 @@ async def _design_workshop_media_branches(user_id: str) -> list[dict[str, Any]]:
     account is on no workshop" — a wrong, silent refusal on exactly the surface the grant exists
     to serve. Let it raise; a 500 is recoverable and a lie is not.
     """
-    from app.services.design_workshop_viewers import visible_to_clause
-    from app.services.dictation_consent import MEDIA_TAG
-
-    if not user_id:
-        return []
-    # ``deletedAt: None`` because a soft-deleted workshop is a 404 for everyone but an admin, and an
-    # admin is a professor-and-above who never reaches this branch. Leaving it out would let a
-    # grant on a deleted workshop keep handing over its recordings after the record itself is gone.
-    rows = await db.designworkshop.find_many(
-        where={"deletedAt": None, **visible_to_clause(user_id)}
-    )
-    ids = [row.id for row in rows]
+    ids = await _design_workshop_media_ids(user_id)
     if not ids:
         return []
     return [{"linkedRecordType": MEDIA_TAG, "linkedRecordId": {"in": ids}}]
+
+
+async def _design_workshop_media_ids(user_id: str) -> list[str]:
+    """The design workshops this account may open. THE ONE PLACE that lookup is spelled.
+
+    Split out of :func:`_design_workshop_media_branches` when :func:`media_url_scope` needed the same
+    answer in a different shape — a set of ids to test a file's tag against, rather than a Prisma
+    branch. Two spellings of "a workshop this account may open" is precisely the drift that produced
+    the defect both now close: the download surfaces admitted a co-designer and the URL gate did not.
+
+    ``visible_to_clause`` is the same expression ``GET /design-workshops`` scopes its list with and
+    ``load_workshop_or_404`` admits on, imported rather than re-spelled, so the day it widens again
+    (it already widened once, from creator-only) both gates widen with it. Imported inside the
+    function because ``services/design_workshop_viewers`` imports this module.
+
+    ``deletedAt: None`` because a soft-deleted workshop is a 404 for everyone but an admin, and an
+    admin is a professor-and-above who never reaches either caller. Leaving it out would let a grant
+    on a deleted workshop keep handing over its files after the record itself is gone.
+
+    Failure is NOT swallowed, for the reason :func:`_design_workshop_media_branches` gives: an empty
+    list means "this account is on no workshop", and a silent [] on error is a wrong refusal on the
+    exact surface the grant exists to serve.
+    """
+    from app.services.design_workshop_viewers import visible_to_clause
+
+    if not user_id:
+        return []
+    rows = await db.designworkshop.find_many(
+        where={"deletedAt": None, **visible_to_clause(user_id)}
+    )
+    return [row.id for row in rows]
 
 
 async def own_rows_where(user: Any, owner_field: str = "createdById") -> dict[str, Any]:

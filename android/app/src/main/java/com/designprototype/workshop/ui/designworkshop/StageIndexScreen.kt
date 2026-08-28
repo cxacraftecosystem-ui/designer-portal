@@ -20,7 +20,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
@@ -65,6 +67,7 @@ import com.designprototype.workshop.data.DW_CONSENT_YES_LABEL
 import com.designprototype.workshop.data.DW_MAX_HITS
 import com.designprototype.workshop.data.DW_MIN_QUERY_CHARS
 import com.designprototype.workshop.data.DW_PROVENANCE_TITLE
+import com.designprototype.workshop.data.DW_REPORT_HISTORY_TITLE
 import com.designprototype.workshop.data.DraftConsent
 import com.designprototype.workshop.data.DwConsentMerge
 import com.designprototype.workshop.data.DwDictationRun
@@ -152,6 +155,20 @@ fun StageIndexScreen(
     onOpenStage: (stageKey: String, focus: DwStageFocus?) -> Unit,
     onOpenReport: () -> Unit,
     /**
+     * Open the log of every file already generated, and the diff between any two of them.
+     *
+     * A SIBLING OF [onOpenReport] AND NOT PART OF IT. That button makes the NEXT file; this one is
+     * about the files already produced and, in the cases that matter, already handed to an office.
+     * The two are read at different moments by people asking different questions, which is the same
+     * argument [DwReportHistoryScreen] makes for not folding itself into [ReportScreen].
+     *
+     * NULL MEANS THE HOST OFFERS NO ROUTE TO IT, and then no control is drawn at all. A button that
+     * looks live and dead-ends a tap is the failure this screen argues against a few rows down,
+     * where a decision the reader may not make is a SENTENCE rather than a disabled control; an
+     * absent destination is a different thing again and takes the control with it.
+     */
+    onOpenReportHistory: (() -> Unit)? = null,
+    /**
      * Open the artisan cards and prototype tags for this workshop.
      *
      * It hangs off the INDEX rather than off stage 13, and that is the point of putting it here: the
@@ -178,6 +195,19 @@ fun StageIndexScreen(
      * moment a second designer is standing next to them unable to open the record.
      */
     onOpenViewers: () -> Unit,
+    /**
+     * Open "who inspects this workshop" - the appointment screen for the fifth scope.
+     *
+     * Offered only to an ADMIN, and only for a workshop the server has, exactly like [onOpenViewers].
+     * It hangs off the index for the same reason the report and the viewer roster do: it is a fact
+     * about the WORKSHOP rather than about any one of its 22 stages.
+     *
+     * NOT THE SAME QUESTION AS [onOpenViewers], and the two rows sit apart on this screen for that
+     * reason. That one decides who may WORK on this record - a viewer row admits its holder to all
+     * 22 stages and every write on them. This one decides who may EXAMINE it, read-only, and the
+     * server refuses at import time to let one account hold both on one workshop.
+     */
+    onOpenInspectors: () -> Unit,
     /**
      * Open the admin authorship & divergence view for this workshop.
      *
@@ -409,6 +439,29 @@ fun StageIndexScreen(
             Text("Generate the report")
         }
 
+        /*
+         * THE FILES ALREADY GENERATED — and what changed in the record between any two of them.
+         *
+         * OUTLINED, directly under the filled report button, for the reason the two controls below it
+         * are outlined: the report is what the workshop is FOR, and this is a record OF the reports.
+         *
+         * NOT HIDDEN FOR A LOCAL-ONLY WORKSHOP, unlike the provenance row further down. That row is
+         * hidden because it has nothing to say until the server has the workshop; this screen has
+         * something to say precisely then — `DW_REPORT_HISTORY_LOCAL_ONLY` explains that a file
+         * generated before the workshop reaches the server is never logged at all — and that is a
+         * live problem, which silence would leave a designer to discover from a ministry.
+         *
+         * The label is [DW_REPORT_HISTORY_TITLE] and not a literal, the rule the provenance row
+         * already follows, so the control and the heading it opens cannot drift apart.
+         */
+        onOpenReportHistory?.let { openHistory ->
+            OutlinedButton(onClick = openHistory, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(DW_REPORT_HISTORY_TITLE)
+            }
+        }
+
         // OUTLINED, under the filled report button, because the report is what the workshop is FOR and
         // the cards are a tool used along the way — two filled buttons of equal weight would make a
         // designer choose between them at the moment they are looking for the report.
@@ -469,6 +522,43 @@ fun StageIndexScreen(
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
+        }
+
+        /*
+         * WHO INSPECTS THIS WORKSHOP - the fifth scope, and a DIFFERENT question from the row above.
+         *
+         * The gate is `require_admin` again, on both routes in
+         * `api/routes/design_workshop_inspections.py` - but the ARGUMENT for it is stronger here than
+         * the handover argument that makes the viewers screen admin-only:
+         *
+         *     THE INSPECTED MUST NOT CHOOSE THE INSPECTOR.
+         *
+         * If a designer could put somebody on their own workshop as its inspector, or take somebody
+         * off it, the inspection is worth nothing. There is deliberately no "suggest an inspector"
+         * route either, because a suggestion an admin rubber-stamps is the same thing wearing a queue.
+         *
+         * HIDDEN FROM A NON-ADMIN RATHER THAN EXPLAINED, which is the OPPOSITE treatment from the
+         * viewer row directly above and the same treatment as the provenance row directly below. The
+         * split follows the position the refusal leaves a designer in, not the rule. A designer
+         * refused the viewer roster still HAS the question it answers - their co-designer is standing
+         * next to them unable to open the record - so silence there leaves a live problem with no
+         * answer anywhere on the phone. A designer refused THIS has no question at all, and the
+         * honest reason is uncomfortable enough to be worth writing down: whether their work is being
+         * examined, and by whom, is not their business to arrange. An explained-but-refused control
+         * would invite exactly the conversation the tier exists to prevent.
+         *
+         * AND ONLY FOR A WORKSHOP THE SERVER HAS. There is nothing to inspect in a workshop that has
+         * never left this phone, and no row for an assignment to point at.
+         */
+        if (mayAdminister && onServer) {
+            OutlinedButton(onClick = onOpenInspectors, modifier = Modifier.fillMaxWidth()) {
+                // `FindInPage` is the same glyph the menu row for the inspector's own list carries,
+                // which is the point: an admin appointing an inspector and the inspector reading the
+                // result are two halves of one feature, and one glyph is what says so.
+                Icon(Icons.Filled.FindInPage, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Who inspects this workshop")
+            }
         }
 
         /*

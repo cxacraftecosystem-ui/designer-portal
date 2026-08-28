@@ -39,10 +39,27 @@ import kotlin.math.sqrt
  * ── A FINDING IS ADVICE, NEVER A REFUSAL ──────────────────────────────────────────────────────
  *
  * Every function returns descriptions. None of them can stop an import, delete a file or swap one
- * out, and the surfacing must keep it that way. A designer may have deliberately photographed
- * something blurred (a loom in motion), or may be holding the ONLY photograph that will ever exist of
- * an object that is about to leave. Blocking that is a worse failure than every problem this file can
- * detect, put together.
+ * out. A designer may have deliberately photographed something blurred (a loom in motion), or may be
+ * holding the ONLY photograph that will ever exist of an object that is about to leave. Blocking
+ * that is a worse failure than every problem this file can detect, put together.
+ *
+ * **AND ON 2026-08-28 THE SURFACING STOPPED KEEPING IT THAT WAY, ON AN OWNER'S INSTRUCTION.** This
+ * paragraph used to end "and the surfacing must keep it that way"; it no longer can.
+ * [DwPhotoGate] refuses a photograph outright for blur, for low resolution and for being byte-identical
+ * to one already attached, before [WorkshopDraftStore.importMedia] copies anything — the owner's
+ * decision that a shaky or poor photograph must not reach the server, which is theirs to make. THE
+ * ARGUMENT ABOVE SURVIVES EVERYWHERE ELSE and the gate is narrow because of it: a near-duplicate is
+ * still only warned about, an image this device cannot measure is admitted rather than refused, and
+ * nothing in this file gained the power to stop anything. Read DwPhotoGate.kt's header before
+ * widening either side of that line — including the loom-in-motion case, which is now the strongest
+ * argument for an override that does not exist yet.
+ *
+ * ONE CONSEQUENCE FOR THE SENTENCES BELOW. [findQualityIssues] still says "If it is meant to be soft,
+ * or it is the only shot you have, keep it", and that stays true because of WHERE it runs: the
+ * advisory card reads photographs that are ALREADY attached — imported by an older build, attached in
+ * the browser and synced down, or produced by a panel that derives its own file — and for those there
+ * is genuinely nothing to do but keep them. A blurred photograph a designer picks today never gets
+ * that far.
  *
  * ── WHY THE PORT IS PINNED BY VALUE ───────────────────────────────────────────────────────────
  *
@@ -233,12 +250,17 @@ object DwImageQuality {
     /**
      * JavaScript's `Math.round` — floor(x + 0.5), i.e. half rounds UP rather than away from zero.
      *
-     * Used only where the web uses `Math.round`: the sharpness score printed in the warning. It is a
-     * different rule from [clampToByte] on purpose, because the two are different rules in the source
-     * being ported, and quietly unifying them would put a different number in front of the designer
-     * than the web shows for the same photograph.
+     * Used only where the web uses `Math.round`: the sharpness score printed in the warning, and —
+     * since 2026-08-28 — the same score printed in [DwPhotoGate]'s refusal. It is a different rule
+     * from [clampToByte] on purpose, because the two are different rules in the source being ported,
+     * and quietly unifying them would put a different number in front of the designer than the web
+     * shows for the same photograph.
+     *
+     * `internal` rather than private for that second caller alone. The gate is the surface that now
+     * PRINTS this number where a designer can act on it, and a second rounding rule written out
+     * there would be two answers to "what was the sharpness reading" on one screen.
      */
-    private fun jsRound(value: Double): Long = floor(value + 0.5).toLong()
+    internal fun jsRound(value: Double): Long = floor(value + 0.5).toLong()
 
     /**
      * The exact plane size a photograph of [width] x [height] must be measured at.

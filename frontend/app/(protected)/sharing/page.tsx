@@ -10,14 +10,30 @@ import { PageHeader } from "@/components/PageHeader";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { useAuth } from "@/components/AuthProvider";
 import { SearchableMultiSelect, type SelectOption } from "@/components/ui/SearchableSelect";
+import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { apiFetch, listResource } from "@/lib/api";
 import { runPerPerson, type BatchOutcome, type BatchTarget } from "@/lib/sharingBatch";
+import {
+  TIER_RANK,
+  classifyChange,
+  nameList,
+  plural,
+  scopeKey,
+  scopeRemoval,
+  scopeWords,
+  splitScopeKey,
+  standingsBy,
+  type Scope,
+  type Standing
+} from "@/lib/sharingScope";
 import type {
   Artisan,
+  Craft,
   DataAccessGrant,
-  DataAccessStatus,
   DataAccessTier,
+  MediaFile,
   MyGrants,
+  PageResult,
   ProductDocumentation,
   QuestionnaireInterview,
   TierInfo,
@@ -26,26 +42,118 @@ import type {
   Workshop
 } from "@/lib/types";
 
-type OwnRecord = { recordType: string; recordId: string; label: string };
-
 const TIER_LABEL: Record<DataAccessTier, string> = {
   DOWNLOAD: "Download (minimum)",
   COMMENT: "Comment (medium)",
   EDIT: "Edit (maximum)"
 };
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * The record types a subset grant can name
+ * ──────────────────────────────────────────────────────────────────────────── */
+
 /**
- * The tier ladder as ranks, mirroring `TIER_ORDER` in `backend/app/services/access.py`.
+ * The API's page ceiling, which is also this picker's.
  *
- * This is why the two tier pickers on this page stay SINGLE-select while the two people pickers
- * became multi. The tiers are cumulative, not a set of independent permissions: the backend compares
- * them with `tier_at_least`, a `>=` against these ranks, and its own catalogue text says so outright
- * — COMMENT is "everything in Download, plus…", EDIT is "everything in Comment, plus…". A person
- * holds exactly one rung. So a multi-select of "DOWNLOAD and EDIT" would have no meaning to express;
+ * Every one of these list routes declares `pageSize: int = Query(20, ge=1, le=100)`, so 100 is not a
+ * number chosen here — it is the largest page the server will answer, and asking for more is a 422.
+ * That makes truncation a certainty rather than a risk on a full deployment (measured against the
+ * running API: 431 artisans, 613 products), which is why `RecordGroup.total` is carried and printed
+ * beside every heading. See the note under the list for why a capped list is dangerous HERE
+ * specifically and not merely inconvenient.
+ */
+const PICKER_PAGE_SIZE = 100;
+
+/**
+ * One record offered for a subset grant. `recordType` is the string the API stores in
+ * `DataAccessScopeItem.recordType` and looks up in `RECORD_DELEGATES` — lowercase, always.
+ */
+type OwnRecord = { recordType: string; recordId: string; name: string };
+
+/** One type's rows, how many exist, and whether the list arrived at all. */
+type RecordGroup = {
+  recordType: string;
+  /** The heading over these rows. */
+  heading: string;
+  /** The type read out in prose, e.g. in a removal warning: "Product · Blue lassi jar". */
+  noun: string;
+  /**
+   * What a grant on THIS type actually reaches, where that is narrower than the tier implies. Null
+   * for the five types every tier honours end to end. See {@link RECORD_REACH}.
+   */
+  reach: string | null;
+  /** The rows that can actually be ticked. */
+  records: OwnRecord[];
+  /**
+   * How many rows the query matched, as the API counted them. Null when the list did not load.
+   *
+   * COMPARED AGAINST {@link fetched}, NOT AGAINST `records.length`. The two differ when a deployment
+   * ignores the `createdBy` parameter and the client-side owner filter does the narrowing instead —
+   * and in that case `total` is a count of the whole table, so `total > records.length` would print
+   * a truncation that is really an ownership filter. `total > fetched` is true of the page and only
+   * of the page, on both kinds of deployment.
+   */
+  total: number | null;
+  /** How many rows this page of the API actually returned, before the owner filter. */
+  fetched: number;
+  /** The reason this type's list is missing, when it is. */
+  failed: string | null;
+};
+
+/**
+ * WHAT A SUBSET GRANT ON EACH TYPE ACTUALLY REACHES — read off the backend, not assumed from the
+ * fact that the type is accepted.
+ *
+ * `RECORD_DELEGATES` in `backend/app/api/routes/data_access.py:33-43` accepts eight record types
+ * (nine names — `questionnaireinterview` is an alias of `questionnaire`), and `_scope_create` stores
+ * whatever it is given. But "the scope item is stored" and "the scope item changes what a colleague
+ * can do" are two different claims, and they come apart for three of the eight. Traced 2026-08-28:
+ *
+ *  * COMMENT is uniform. `POST /data-access/comments` resolves the record's owner through
+ *    `RECORD_DELEGATES` and asks `effective_tier_for_record`, whose `_grant_covers` matches a scope
+ *    item by `(recordType, recordId)` with no per-type knowledge at all. All eight work.
+ *  * EDIT is seven of the eight. `guard_record_edit(..., record_type)` is called from `artisans.py`,
+ *    `crafts.py`, `processes.py`, `products.py`, `questionnaire.py`, `tools.py` and `workshops.py`.
+ *    There is no such call anywhere in `media.py`, so an EDIT-tier scope item on a media file
+ *    confers commenting and nothing more.
+ *  * DOWNLOAD is five of the eight, and this is the one worth printing. `GET /export/dataset` reads
+ *    six tables and filters exactly five of them against the grant
+ *    (`export.py:280-284` — workshop, artisan, product, tool, questionnaire). Crafts are never read
+ *    as records at all; they appear only as folder names built from the workshops and artisans in
+ *    the archive. Processes ARE in the archive, emitted under their PRODUCT
+ *    (`processes_by_product`, `export.py:437-465`), so a process arrives when its product is granted
+ *    and not otherwise. Media is fetched by the records that survive the filter, and unclaimed files
+ *    are deliberately dropped under a subset grant so a grantee holding two of fifty artisans does
+ *    not receive the photography of the other forty-eight.
+ *
+ * So the three types this picker gained are real and worth having — commenting on a colleague's
+ * process is exactly the collaboration this page is for — and printing them without saying where
+ * they stop would be the worse half of adding them. `designWorkshop` and `prototype` are absent on
+ * purpose and must stay absent: a design workshop is shared through `DesignWorkshopViewer`, which is
+ * a different table with a different rulebook.
+ */
+const RECORD_REACH = {
+  full: null,
+  craft:
+    "Comment and edit. Crafts are not separately downloadable — the archive builds its craft folders " +
+    "from the artisans and workshops already in it.",
+  process:
+    "Comment and edit. A process reaches a download with its PRODUCT, so share the product too if the " +
+    "archive is what your colleague needs.",
+  media:
+    "Comment only — media has no edit route to grant. A file reaches a download with the record it " +
+    "hangs off."
+} as const;
+
+/**
+ * WHY THE TWO TIER PICKERS STAY SINGLE-SELECT while the two people pickers became multi.
+ *
+ * The tiers are cumulative, not a set of independent permissions — see `TIER_RANK` in
+ * `lib/sharingScope.ts`, which mirrors `TIER_ORDER` in `backend/app/services/access.py`. A person
+ * holds exactly one rung, so a multi-select of "DOWNLOAD and EDIT" would have no meaning to express;
  * it is just EDIT, and offering it would invite an owner to think they had granted something
  * narrower than they had.
  */
-const TIER_RANK: Record<DataAccessTier, number> = { DOWNLOAD: 1, COMMENT: 2, EDIT: 3 };
 
 /** What a tier lets someone actually DO, for the one sentence in the confirm dialog. */
 const TIER_CONSEQUENCE: Record<DataAccessTier, string> = {
@@ -59,14 +167,28 @@ const TIER_CONSEQUENCE: Record<DataAccessTier, string> = {
  *
  * Two, not one. Granting a single colleague has never asked for confirmation and must not start:
  * this is the everyday act the page exists for, it is visible in the table underneath the moment it
- * lands, and one Revoke click undoes it. What is new — and what earns the interruption — is that a
- * single "Select all" can now widen access to nineteen people's worth of someone else's unpublished
- * fieldwork in one press, which is not a mistake anyone notices from a green banner.
+ * lands, and one Revoke click undoes it. What earns the interruption is that a single "Select all"
+ * can widen access to nineteen people's worth of someone else's unpublished fieldwork in one press,
+ * which is not a mistake anyone notices from a green banner.
+ *
+ * IT IS NOT THE ONLY TRIGGER, AND THE OTHER ONE IGNORES THE COUNT ENTIRELY. `submitGrant` also
+ * confirms whenever the action would REMOVE access somebody already holds, one colleague or twenty
+ * — see `reductions`. The paragraph above argues that a grant to one person is cheap because Revoke
+ * undoes it, and that argument holds only for a grant that ADDS: `_upsert_grant` reconciles the
+ * scope to exactly what was sent, so a one-person save that drops eleven records from a colleague's
+ * subset has destroyed a list the owner would have to rebuild by hand, and there is no undo for it.
  */
 const BULK_CONFIRM_AT = 2;
 
-/** Names read out in full in a dialog before the tail collapses to a count. */
-const NAMES_IN_PROSE = 6;
+/**
+ * How many records a removal warning names before it collapses to a count.
+ *
+ * Deliberately not the six `nameList` defaults to for PEOPLE (`NAMES_IN_PROSE` in
+ * `lib/sharingScope.ts`): a person's name is short, and a record's label carries its type as well
+ * ("Product · Blue lassi jar"), so six of those in one sentence is a paragraph. Four is enough to
+ * recognise the list; the count that follows is what makes the rest of it honest.
+ */
+const REMOVALS_IN_PROSE = 4;
 
 const STATUS_STYLE: Record<string, string> = {
   PENDING: "bg-amber-100 text-amber-800",
@@ -83,73 +205,15 @@ function tierAtLeast(tier: DataAccessTier, min: DataAccessTier) {
   return TIER_RANK[tier] >= TIER_RANK[min];
 }
 
-function plural(count: number, noun: string) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
-
-function nameList(names: string[], max = NAMES_IN_PROSE) {
-  if (names.length <= max) return names.join(", ");
-  return `${names.slice(0, max).join(", ")} and ${plural(names.length - max, "other")}`;
-}
-
 // --------------------------------------------------------------------------- existing standing
 //
-// "Do not offer a person who already holds a grant as though they were new." Everything below turns
-// the grant rows the page already loads into a one-line statement of where each person stands, so an
-// owner reading the picker can see what they are CHANGING rather than only what they are choosing.
+// "Do not offer a person who already holds a grant as though they were new." The picker suffixes
+// below turn the grant rows the page already loads into a one-line statement of where each person
+// stands, so an owner reading the picker can see what they are CHANGING rather than only what they
+// are choosing. The arithmetic behind them — `covers`, `classifyChange`, `scopeRemoval` — lives in
+// `lib/sharingScope.ts` so it can be tested without a browser; only the wording is here.
 
-/** One person's existing relationship, flattened out of their single (owner, grantee) grant row. */
-type Standing = { status: DataAccessStatus; tier: DataAccessTier; allData: boolean; keys: Set<string> };
-
-/** A reach over records: everything, or an explicit set of `type::id` keys. */
-type Scope = { allData: boolean; keys: Set<string> };
-
-function scopeKeysOf(grant: DataAccessGrant) {
-  return new Set((grant.scopeItems ?? []).map((item) => `${item.recordType}::${item.recordId}`));
-}
-
-/**
- * People indexed by id. Safe as a plain overwrite: the grant table is uniquely keyed on
- * (ownerId, granteeId), so a person can appear at most once on either side.
- */
-function standingsBy(rows: DataAccessGrant[], personField: "granteeId" | "ownerId") {
-  const map = new Map<string, Standing>();
-  rows.forEach((row) =>
-    map.set(row[personField], { status: row.status, tier: row.tier, allData: row.allData, keys: scopeKeysOf(row) })
-  );
-  return map;
-}
-
-/** Does `wider` reach every record `narrower` reaches? */
-function covers(wider: Scope, narrower: Scope) {
-  if (wider.allData) return true;
-  if (narrower.allData) return false;
-  for (const key of narrower.keys) if (!wider.keys.has(key)) return false;
-  return true;
-}
-
-type Change = "new" | "same" | "raise" | "reduce";
-
-/**
- * What pressing Grant would do to one person who already holds something.
- *
- * `reduce` is the case worth the trouble. The server's `_upsert_grant` writes the single
- * (owner, grantee) row in place and DELETES its scope items before rebuilding them, so a grant is a
- * replacement and not an addition: including a colleague who holds EDIT on everything in a bulk
- * "DOWNLOAD on 3 records" action silently strips the access they had. That is invisible from a
- * picker that only shows names, and it is the one outcome on this screen that destroys something.
- */
-function classifyChange(standing: Standing | undefined, next: Scope & { tier: DataAccessTier }): Change {
-  if (!standing || standing.status !== "GRANTED") return "new";
-  const held: Scope = { allData: standing.allData, keys: standing.keys };
-  if (TIER_RANK[next.tier] < TIER_RANK[standing.tier] || !covers(next, held)) return "reduce";
-  if (TIER_RANK[next.tier] === TIER_RANK[standing.tier] && covers(held, next)) return "same";
-  return "raise";
-}
-
-function scopeWords(standing: Standing) {
-  return standing.allData ? "all data" : plural(standing.keys.size, "record");
-}
+type Change = ReturnType<typeof classifyChange>;
 
 /**
  * The tail of a picker row, for people I might grant access to.
@@ -302,53 +366,122 @@ export default function SharingPage() {
   const [grantGranteeIds, setGrantGranteeIds] = useState<string[]>([]);
   const [grantTier, setGrantTier] = useState<DataAccessTier>("DOWNLOAD");
   const [grantScopeAll, setGrantScopeAll] = useState(true);
-  const [myRecords, setMyRecords] = useState<OwnRecord[] | null>(null);
+  const [myRecords, setMyRecords] = useState<RecordGroup[] | null>(null);
   const [loadingRecords, setLoadingRecords] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
   async function loadMyRecords() {
     if (myRecords || loadingRecords || !currentUser?.id) return;
     setLoadingRecords(true);
-    try {
-      const mine = currentUser.id;
-      /*
-        OWNERSHIP IS ASKED FOR, NOT SIFTED FOR — the same rule /activity already documents.
+    const mine = currentUser.id;
+    /*
+      OWNERSHIP IS ASKED FOR, NOT SIFTED FOR — the same rule /activity already documents.
 
-        This used to fetch page one of every list and filter it on `createdById`. Reading the
-        repository is open (`services/records.viewable_where` returns {}), so page one is the newest
-        hundred rows of the WHOLE archive: MEASURED against the running API there are 431 artisans and
-        613 products, with page one of /artisans spanning 34 distinct creators. An owner could
-        therefore only ever offer the records that happened to sit in that hundred, so a subset grant
-        over their older work was impossible to build and nothing on screen said why.
+      This used to fetch page one of every list and filter it on `createdById`. Reading the
+      repository is open (`services/records.viewable_where` returns {}), so page one is the newest
+      hundred rows of the WHOLE archive: MEASURED against the running API there are 431 artisans and
+      613 products, with page one of /artisans spanning 34 distinct creators. An owner could
+      therefore only ever offer the records that happened to sit in that hundred, so a subset grant
+      over their older work was impossible to build and nothing on screen said why.
 
-        The symptom that makes it concrete, measured against the same API: page one of each list held
-        NONE of the signed-in user's records, so the picker read "You have no records to share" to a
-        designer who owned plenty.
+      The symptom that makes it concrete, measured against the same API: page one of each list held
+      NONE of the signed-in user's records, so the picker read "You have no records to share" to a
+      designer who owned plenty.
 
-        The client-side filter below is kept as well: it costs nothing, and against a deployment that
-        ignores the parameter it is the difference between an over-long list and a wrong one.
-      */
-      const owned = { pageSize: 100, createdBy: mine };
-      const [a, p, t, w, q] = await Promise.all([
-        listResource<Artisan>("/artisans", owned),
-        listResource<ProductDocumentation>("/products", owned),
-        listResource<ToolDocumentation>("/tools", owned),
-        listResource<Workshop>("/workshops", owned),
-        listResource<QuestionnaireInterview>("/questionnaire/interviews", owned)
-      ]);
-      const recs: OwnRecord[] = [
-        ...a.items.filter((x) => x.createdById === mine).map((x) => ({ recordType: "artisan", recordId: x.id, label: `Artisan · ${x.name}` })),
-        ...p.items.filter((x) => x.createdById === mine).map((x) => ({ recordType: "product", recordId: x.id, label: `Product · ${x.productName}` })),
-        ...t.items.filter((x) => x.createdById === mine).map((x) => ({ recordType: "tool", recordId: x.id, label: `Tool · ${x.toolkitName}` })),
-        ...w.items.filter((x) => x.createdById === mine).map((x) => ({ recordType: "workshop", recordId: x.id, label: `Workshop · ${x.title}` })),
-        ...q.items.filter((x) => x.createdById === mine).map((x) => ({ recordType: "questionnaire", recordId: x.id, label: `Interview · ${x.title}` }))
-      ];
-      setMyRecords(recs);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load your records");
-    } finally {
-      setLoadingRecords(false);
+      The client-side filter below is kept as well: it costs nothing, and against a deployment that
+      ignores the parameter it is the difference between an over-long list and a wrong one.
+
+      MEDIA IS ASKED THE SAME QUESTION UNDER A DIFFERENT NAME. `MediaFile` owns its rows through
+      `uploadedById`, not `createdById`, and `GET /media` spells the parameter `uploadedBy` to match
+      — the query key follows the column on both sides of the wire, exactly as /activity does it.
+
+      `allSettled`, NOT `all`. Eight lists now, and `Promise.all` rejects on the first failure: one
+      list refusing took the whole picker down and reported "Unable to load your records", which on
+      this screen reads as "you have none". Each type now stands or falls alone and says which.
+    */
+    const owned = { pageSize: PICKER_PAGE_SIZE, createdBy: mine };
+    const [a, p, t, w, q, c, pr, m] = await Promise.allSettled([
+      listResource<Artisan>("/artisans", owned),
+      listResource<ProductDocumentation>("/products", owned),
+      listResource<ToolDocumentation>("/tools", owned),
+      listResource<Workshop>("/workshops", owned),
+      listResource<QuestionnaireInterview>("/questionnaire/interviews", owned),
+      listResource<Craft & { createdById?: string | null }>("/crafts", owned),
+      listResource<ProcessRecord>("/processes", owned),
+      listResource<MediaFile & { uploadedById?: string | null }>("/media", {
+        pageSize: PICKER_PAGE_SIZE,
+        uploadedBy: mine
+      })
+    ]);
+
+    /**
+     * One type's rows, its true count, and its failure — all three, because leaving any one of them
+     * out turns this list into the "quietly stopped" shape rule 10 is about.
+     */
+    function group<T extends { id: string }>(
+      recordType: string,
+      heading: string,
+      noun: string,
+      reach: string | null,
+      result: PromiseSettledResult<PageResult<T>>,
+      isMine: (row: T) => boolean,
+      name: (row: T) => string
+    ): RecordGroup {
+      if (result.status === "rejected") {
+        const reason = result.reason;
+        return {
+          recordType,
+          heading,
+          noun,
+          reach,
+          records: [],
+          total: null,
+          fetched: 0,
+          failed: reason instanceof Error ? reason.message : "could not be loaded"
+        };
+      }
+      const page = result.value;
+      // `apiFetch` casts a non-JSON body to the caller's type, so a proxy's HTML error page arrives
+      // here typed as a `PageResult` with no `items` at all. Treated as an empty, UNCOUNTED page
+      // rather than allowed to throw: a throw out of this loop would leave the picker on "Loading
+      // your records…" for the rest of the session, which is the one state that says nothing.
+      const items = Array.isArray(page?.items) ? page.items : [];
+      return {
+        recordType,
+        heading,
+        noun,
+        reach,
+        records: items.filter(isMine).map((row) => ({ recordType, recordId: row.id, name: name(row) || row.id })),
+        total: typeof page?.total === "number" ? page.total : null,
+        fetched: items.length,
+        failed: null
+      };
     }
+
+    setMyRecords([
+      // The five the download filter honours first, then the three it does not — so the note under
+      // the list about where each type stops reads in the same order as the list itself.
+      group("artisan", "Artisans", "Artisan", RECORD_REACH.full, a, (x) => x.createdById === mine, (x) => x.name),
+      group("product", "Products", "Product", RECORD_REACH.full, p, (x) => x.createdById === mine, (x) => x.productName),
+      group("tool", "Tools", "Tool", RECORD_REACH.full, t, (x) => x.createdById === mine, (x) => x.toolkitName),
+      group("workshop", "Workshops", "Workshop", RECORD_REACH.full, w, (x) => x.createdById === mine, (x) => x.title),
+      // "questionnaire", not "questionnaireinterview": both resolve through `RECORD_DELEGATES`, but
+      // `export.py`'s subset filter tests the short spelling, so the long one would store a scope
+      // item that grants comment and edit and is invisible to the download.
+      group("questionnaire", "Interviews", "Interview", RECORD_REACH.full, q, (x) => x.createdById === mine, (x) => x.title),
+      group("craft", "Crafts", "Craft", RECORD_REACH.craft, c, (x) => x.createdById === mine, (x) => x.name),
+      group("process", "Processes", "Process", RECORD_REACH.process, pr, (x) => x.createdById === mine, (x) => x.name),
+      group(
+        "media",
+        "Files",
+        "File",
+        RECORD_REACH.media,
+        m,
+        (x) => (x.uploadedById ?? x.uploadedBy?.id) === mine,
+        (x) => x.caption?.trim() || x.originalFilename
+      )
+    ]);
+    setLoadingRecords(false);
   }
 
   function toggleRecord(key: string) {
@@ -447,7 +580,52 @@ export default function SharingPage() {
     [users, ownerStandings]
   );
 
-  /** Colleagues in the current selection whose existing access this action would cut back. */
+  /**
+   * Every record this picker can put a NAME to, keyed exactly as a scope item is.
+   *
+   * Built from the loaded groups, so it holds only what the picker actually fetched — which is the
+   * point: a scope item this map cannot resolve is a record the owner is about to remove and cannot
+   * see, and `reductions` counts those separately rather than pretending they are not there.
+   */
+  const recordNameByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    (myRecords ?? []).forEach((group) =>
+      group.records.forEach((record) =>
+        map.set(scopeKey(record.recordType, record.recordId), `${group.noun} · ${record.name}`)
+      )
+    );
+    return map;
+  }, [myRecords]);
+
+  /**
+   * WHAT THIS PICKER IS NOT SHOWING — the two ways a subset grant built here can be short.
+   *
+   * RULE 10, AND ON THIS SCREEN IT IS NOT MERELY A DISPLAY RULE. A record the picker cannot show is
+   * a record that cannot be ticked; and because `_upsert_grant` reconciles a grant's scope to
+   * exactly what is sent, an untickable record that is already in a colleague's grant is REMOVED by
+   * the next save. So a list that quietly stopped at a hundred rows would not just under-offer —
+   * it would silently destroy the part of somebody's access that lives past the cap.
+   */
+  const recordShortfalls = useMemo(() => {
+    const groups = myRecords ?? [];
+    return {
+      capped: groups.filter((group) => group.total !== null && group.total > group.fetched),
+      failed: groups.filter((group) => group.failed)
+    };
+  }, [myRecords]);
+
+  /**
+   * Colleagues in the current selection whose existing access this action would cut back — AND WHAT
+   * EXACTLY IT WOULD TAKE FROM EACH OF THEM.
+   *
+   * The warning used to say only that access would be lowered and how much of it there was ("EDIT,
+   * 12 records"), which an owner cannot check anything against. `_upsert_grant` reconciles the scope
+   * to exactly what is sent, so the honest question is "which twelve", and it is answerable: the
+   * held keys minus the ticked ones. What is not always answerable is their NAMES — a record beyond
+   * this picker's 100-row page, or one of a type this picker does not list, has a key and no label —
+   * so those are COUNTED, never dropped. See {@link ScopeRemoval} for the all-data case, which has
+   * no list to give at all.
+   */
   const reductions = useMemo(
     () =>
       grantGranteeIds
@@ -456,13 +634,49 @@ export default function SharingPage() {
           (entry): entry is { id: string; standing: Standing } =>
             Boolean(entry.standing) && classifyChange(entry.standing, { ...nextScope, tier: grantTier }) === "reduce"
         )
-        .map(({ id, standing }) => ({
-          id,
-          name: plainNameById.get(id) ?? id,
-          held: `${standing.tier}, ${scopeWords(standing)}`
-        })),
-    [grantGranteeIds, granteeStandings, nextScope, grantTier, plainNameById]
+        .map(({ id, standing }) => {
+          const removal = scopeRemoval(standing, nextScope);
+          const removedKeys = removal.kind === "records" ? removal.keys : [];
+          const named = removedKeys.map((key) => recordNameByKey.get(key)).filter((label): label is string => Boolean(label));
+          return {
+            id,
+            name: plainNameById.get(id) ?? id,
+            held: `${standing.tier}, ${scopeWords(standing)}`,
+            /** Set when the TIER itself drops, which is a reduction even when the scope is unchanged. */
+            tierFrom: TIER_RANK[grantTier] < TIER_RANK[standing.tier] ? standing.tier : null,
+            /** They hold everything and the new scope is a subset — see {@link ScopeRemoval}. */
+            losesAllData: removal.kind === "allData",
+            named,
+            /** Removed records this page cannot name. Counted so the sentence is not short by them. */
+            unnamed: removedKeys.length - named.length
+          };
+        }),
+    [grantGranteeIds, granteeStandings, nextScope, grantTier, plainNameById, recordNameByKey]
   );
+
+  /**
+   * One reduction as a sentence. Kept out of JSX because it is a judgement about truncation, and the
+   * banner and the confirm dialog must not be able to describe one save two different ways.
+   */
+  function removalSentence(entry: (typeof reductions)[number]): string {
+    const parts: string[] = [];
+    if (entry.tierFrom) parts.push(`drops from ${entry.tierFrom} to ${grantTier}`);
+    if (entry.losesAllData) {
+      parts.push(`loses everything except the ${plural(selectedKeys.size, "record")} you ticked`);
+    } else if (entry.named.length || entry.unnamed) {
+      // "; plus", not a second "and": `nameList` may already have spent one collapsing its own tail,
+      // and "…and 2 others and 3 records this page cannot list" reads as one list, not two facts.
+      const list = nameList(entry.named, REMOVALS_IN_PROSE);
+      const tail = entry.unnamed
+        ? `${entry.named.length ? "; plus " : ""}${plural(entry.unnamed, "record")} this page cannot list`
+        : "";
+      parts.push(`loses ${list}${tail}`);
+    }
+    // A reduce with neither half can only mean a tier drop the branch above already caught; say
+    // something rather than print a name followed by nothing.
+    if (!parts.length) parts.push("has their grant replaced");
+    return `${entry.name} (has ${entry.held}) ${parts.join(", and ")}.`;
+  }
 
   const grantScopePhrase = grantScopeAll ? "all your data" : `${plural(selectedKeys.size, "selected record")}`;
 
@@ -606,18 +820,24 @@ export default function SharingPage() {
       setError("Choose at least one colleague to grant access to.");
       return;
     }
-    const scopeItems = grantScopeAll
-      ? []
-      : Array.from(selectedKeys).map((k) => {
-          const [recordType, recordId] = k.split("::");
-          return { recordType, recordId };
-        });
+    // `splitScopeKey` and not `k.split("::")`: a cuid never contains the separator, but a two-part
+    // destructure of a three-part split drops the tail silently, and the thing being dropped here is
+    // half of a record's identity.
+    const scopeItems = grantScopeAll ? [] : Array.from(selectedKeys).map(splitScopeKey);
     if (!grantScopeAll && scopeItems.length === 0) {
       setError("Pick at least one record to share, or choose All my data.");
       return;
     }
     const names = grantGranteeIds.map((id) => plainNameById.get(id) ?? id);
-    if (grantGranteeIds.length >= BULK_CONFIRM_AT) {
+    /*
+      TWO TRIGGERS, AND THE SECOND ONE IGNORES THE COUNT. `BULK_CONFIRM_AT` is about breadth — one
+      press reaching many people. This second clause is about DESTRUCTION, which one colleague is
+      quite enough for: `_upsert_grant` reconciles the scope to exactly what is sent, so a save that
+      drops eleven records out of somebody's subset has destroyed a list the owner would have to
+      rebuild by hand, and no Revoke undoes that. The banner above the button already says so while
+      the selection is being built; this is the last place it can be said before it happens.
+    */
+    if (grantGranteeIds.length >= BULK_CONFIRM_AT || reductions.length > 0) {
       // Red, not amber, in the two cases that are not merely consequential: handing several people
       // the maximum tier over everything, and any action that destroys access somebody already has.
       const severe = reductions.length > 0 || (grantTier === "EDIT" && grantScopeAll);
@@ -633,11 +853,20 @@ export default function SharingPage() {
         note: (
           <>
             {reductions.length ? (
+              // NAMED, ONE PERSON PER LINE, and the records they lose spelled out. A comma-run of
+              // "Priya (EDIT, 12 records), Anil (COMMENT, 4 records)" told an owner that something
+              // was being taken and never what — which is not a fact anyone can check in the two
+              // seconds a confirm dialog is open.
               <span className="block font-medium text-ink-900">
-                This LOWERS access {reductions.length === 1 ? "someone" : `${reductions.length} of them`} already{" "}
-                {reductions.length === 1 ? "holds" : "hold"}:{" "}
-                {reductions.map((r) => `${r.name} (${r.held})`).join(", ")}. One tier and one scope apply to everyone
-                chosen, so their existing grant is replaced, not kept.
+                This TAKES ACCESS AWAY from {reductions.length === 1 ? "someone" : `${reductions.length} of them`}. One
+                tier and one scope apply to everyone chosen, so an existing grant is replaced, not added to:
+                <span className="mt-1 block font-normal">
+                  {reductions.map((r) => (
+                    <span key={r.id} className="block">
+                      {removalSentence(r)}
+                    </span>
+                  ))}
+                </span>
               </span>
             ) : null}
             <span className="block">You can revoke any of them individually from the list below at any time.</span>
@@ -903,10 +1132,24 @@ export default function SharingPage() {
         {reductions.length ? (
           <p className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/15 dark:text-amber-100">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            {/*
+              WHAT WOULD GO, NOT JUST THAT SOMETHING WOULD. This banner is on screen while the
+              selection is still being built, which is the only moment an owner can still change
+              their mind cheaply — so it names the records, and where it cannot name them it says how
+              many it could not. A save REPLACES a grant's scope; this is the sentence that makes
+              that fact checkable rather than merely stated.
+            */}
             <span>
-              This would LOWER access {reductions.length === 1 ? "one of them" : `${reductions.length} of them`} already{" "}
-              {reductions.length === 1 ? "holds" : "hold"}: {reductions.map((r) => `${r.name} (${r.held})`).join(", ")}. A
-              grant replaces their existing one rather than adding to it.
+              This would TAKE ACCESS AWAY from{" "}
+              {reductions.length === 1 ? "one of them" : `${reductions.length} of them`}. A grant replaces an existing one
+              rather than adding to it:
+              <span className="mt-1 block">
+                {reductions.map((r) => (
+                  <span key={r.id} className="block">
+                    {removalSentence(r)}
+                  </span>
+                ))}
+              </span>
             </span>
           </p>
         ) : null}
@@ -934,23 +1177,98 @@ export default function SharingPage() {
           </label>
         </div>
         {!grantScopeAll ? (
-          <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-line-200 bg-field-50 p-2">
-            {loadingRecords ? (
-              <p className="px-2 py-1 text-sm text-ink-muted">Loading your records…</p>
-            ) : (myRecords ?? []).length === 0 ? (
-              <p className="px-2 py-1 text-sm text-ink-muted">You have no records to share.</p>
-            ) : (
-              (myRecords ?? []).map((r) => {
-                const key = `${r.recordType}::${r.recordId}`;
-                return (
-                  <label key={key} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-field-100">
-                    <input type="checkbox" checked={selectedKeys.has(key)} onChange={() => toggleRecord(key)} />
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{r.label}</span>
-                  </label>
-                );
-              })
-            )}
-          </div>
+          <>
+            {/*
+              GROUPED BY TYPE, because eight types at up to a hundred rows apiece is eight hundred
+              checkboxes in one scroll box and there is no filter over it — deliberately: these lists
+              are SERVER-TRUNCATED at the API's largest page, and a client-side filter over a
+              truncated list answers "no matches" about records that exist, which is rule 10 wearing
+              a search box (SKILL.md §11.5). The heading is what makes each type findable, and it is
+              also where that type's real numbers go.
+            */}
+            <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-line-200 bg-field-50 p-2">
+              {loadingRecords || !myRecords ? (
+                <p className="px-2 py-1 text-sm text-ink-muted">Loading your records…</p>
+              ) : myRecords.every((group) => !group.records.length && !group.failed) ? (
+                <p className="px-2 py-1 text-sm text-ink-muted">You have no records to share.</p>
+              ) : (
+                myRecords.map((group) => {
+                  // A type with nothing in it and no failure has nothing to say; a type that FAILED
+                  // is rendered precisely because it has something to say.
+                  if (!group.records.length && !group.failed) return null;
+                  const capped = group.total !== null && group.total > group.fetched;
+                  return (
+                    <div key={group.recordType} className="mb-2 last:mb-0">
+                      <p className="px-2 pb-1 pt-1 text-xs font-semibold uppercase tracking-wide text-ink-500">
+                        {/*
+                          THE TICKABLE COUNT FIRST, THE TRUE COUNT AFTER IT. "100 shown" is a fact
+                          about the rows under this heading and "431 in all" is a fact about the
+                          query, and they are printed as two numbers rather than one ratio because
+                          on a deployment that ignores `createdBy` the client filter narrows the
+                          first and not the second — a single "100 of 431" would then be describing
+                          two different populations in one phrase.
+                        */}
+                        {group.heading}
+                        {group.failed
+                          ? " · list unavailable"
+                          : capped
+                            ? ` · ${group.records.length} shown, ${group.total} in all`
+                            : ` · ${group.records.length}`}
+                      </p>
+                      {group.failed ? (
+                        <p className="px-2 pb-1 text-xs text-amber-800 dark:text-amber-100">
+                          {group.failed} — records of this type cannot be ticked, and any already in a colleague&apos;s
+                          grant will be removed by a save made from here.
+                        </p>
+                      ) : null}
+                      {group.reach ? <p className="px-2 pb-1 text-xs text-ink-muted">{group.reach}</p> : null}
+                      {group.records.map((record) => {
+                        const key = scopeKey(record.recordType, record.recordId);
+                        return (
+                          <label key={key} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-field-100">
+                            <input type="checkbox" checked={selectedKeys.has(key)} onChange={() => toggleRecord(key)} />
+                            <span className="min-w-0 flex-1 truncate text-sm text-ink">{record.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            {/*
+              THE CAP, SAID ONCE MORE OUTSIDE THE SCROLL BOX — because the headings inside it scroll
+              away, and this is the sentence that connects the cap to the damage rather than merely
+              reporting it.
+            */}
+            {recordShortfalls.capped.length || recordShortfalls.failed.length ? (
+              <p className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800 dark:bg-amber-500/15 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <span>
+                  {recordShortfalls.capped.length ? (
+                    <span className="block">
+                      This list stops at the first {PICKER_PAGE_SIZE} rows per type — the largest page the API answers.
+                      Not shown:{" "}
+                      {recordShortfalls.capped
+                        .map((group) => `${(group.total ?? 0) - group.fetched} more ${group.heading.toLowerCase()}`)
+                        .join(", ")}
+                      .
+                    </span>
+                  ) : null}
+                  {recordShortfalls.failed.length ? (
+                    <span className="block">
+                      {nameList(recordShortfalls.failed.map((group) => group.heading))} could not be listed at all.
+                    </span>
+                  ) : null}
+                  <span className="block font-medium">
+                    A record that is not on this list cannot be ticked — and a save REPLACES a colleague&apos;s whole
+                    scope, so anything of theirs that lives past the cap is removed by it. Use{" "}
+                    <span className="font-semibold">All my data</span> if you cannot see everything you mean to keep.
+                  </span>
+                </span>
+              </p>
+            ) : null}
+          </>
         ) : null}
         <p className="mt-2 text-xs text-ink-muted">
           Granted immediately. One tier and one scope apply to every colleague chosen — the recipients can download

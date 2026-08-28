@@ -16,6 +16,7 @@ import {
   DraftingCompass,
   Eye,
   EyeOff,
+  FileSearch,
   FileSpreadsheet,
   FolderTree,
   Gauge,
@@ -43,12 +44,15 @@ import {
 
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
+import { useOpenTaskCount } from "@/components/hooks/useOpenTaskCount";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
+import { OPEN_TASK_BADGE_HREF, openTaskBadgeSentence } from "@/components/tasks/openTaskCount";
 import { HoveredLink, MenuItem } from "@/components/ui/navbar-menu";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import {
   canCreateRecords,
   canDownloadDataset,
+  canInspectDesignWorkshops,
   canManageAccessRoster,
   canManageCrafts,
   canManageDesignerRoster,
@@ -100,6 +104,40 @@ function PendingAccessBadge({ count }: { count: number }) {
       {count}
       <span className="font-medium">waiting</span>
       <span className="sr-only">to be approved to sign in</span>
+    </span>
+  );
+}
+
+/**
+ * HOW MUCH WORK IS WAITING FOR YOU — the badge on "Tasks".
+ *
+ * ── WHY PURPLE WHERE THE ACCESS BADGE IS AMBER ──────────────────────────────────────────────────
+ * Amber means one thing everywhere in this app: something is waiting on a DECISION somebody has to
+ * make — `StatusBadge`'s PENDING, and the access queue above. An open task is not a decision and it
+ * is not somebody else's; it is the reader's own work, and it is reached by pressing the entry it
+ * sits on. Purple is this app's single action colour, so the pill reads as "there is something here
+ * to do" rather than "there is something here to adjudicate". Both are literal brand rungs and
+ * neither inverts, so the two badges stay legible against each other in both themes.
+ *
+ * ── WHY THE WHOLE SENTENCE IS THE SCREEN-READER TEXT ────────────────────────────────────────────
+ * The one above splits its sentence between visible text and an `sr-only` tail, which puts its
+ * plural rule inside JSX where nothing can call it. This one hides the digits from assistive tech
+ * and reads out `openTaskBadgeSentence` entire — one rule, in a module a test does call. Sighted
+ * readers still get the count and the word, never a bare digit.
+ */
+function OpenTaskBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const sentence = openTaskBadgeSentence(count);
+  return (
+    <span
+      title={sentence}
+      className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-semibold text-purple-800"
+    >
+      <span aria-hidden>{count}</span>
+      <span aria-hidden className="font-medium">
+        open
+      </span>
+      <span className="sr-only">{sentence}</span>
     </span>
   );
 }
@@ -301,6 +339,61 @@ export const NAV_ITEMS: NavItem[] = [
   // Linking a tool to an artisan needs a tool or an artisan of your own — both need record creation.
   // The endpoint itself only requires a login and then checks ownership per artisan, so this is the
   // closest STATIC mirror of a dynamic rule: nobody below Field Contributor owns either side.
+  // THE INSPECTOR'S OWN READ SURFACE — the workshops an admin has assigned this account to inspect.
+  //
+  // `canInspectDesignWorkshops` AND NOT `canRunDesignWorkshops`, and this is the one entry in the
+  // design-workshop family where the two are not merely different sets but OPPOSITE ones. INSPECTOR
+  // is deliberately outside `DESIGN_WORKSHOP_ROLES` — a frozenset, not a rank floor — so every
+  // `/design-workshops`-family route refuses it exactly as it refuses a professor, and gating this
+  // row on that predicate would hide the only surface the tier exists for from the only tier that
+  // can use it. The reverse is true too: a designer, an admin and a master admin all see the four
+  // rows above and none of them sees this one.
+  //
+  // AN ADMIN DOES NOT SEE IT, WHICH LOOKS LIKE A BUG AND IS THE SERVER'S OWN RULE.
+  // `assert_inspection_surface` answers an admin a 403 by name — scoped by their own inspection rows
+  // an admin sees an empty page and reads it as a broken feature, and scoped by "everything, because
+  // they are an admin" this becomes a second full read of every workshop in the repository. What an
+  // admin gets is the other half of the feature: choosing who inspects what, on Manage workshop
+  // access. So this is a MIRROR of the API's refusal, not a narrowing of it, and drawing the row for
+  // an admin would put a padlock behind a menu entry.
+  //
+  // THE `ROUTE_GUARDS` ROW EXISTS and was written in the same change as this entry rather than owed
+  // afterwards: `/design-workshop-inspections` in `lib/permissions.ts`, with its twin row in
+  // `docs/PERMISSIONS.md` §5. The three pages before it in this family each shipped with the entry
+  // hidden and the URL open, and a hidden nav entry has never been a guard.
+  //
+  // THE LABEL IS THE HANDSET'S, AND THE DOCSTRING'S CLAIM NOW HOLDS FOR THIS ROW TOO — corrected
+  // later on 2026-08-27, on the same day it was written. It read: "THE LABEL IS NOT AN ANDROID
+  // `actionTitle`, and this list's docstring above claims that labels are. Android has no inspection
+  // screen in the working tree as of 2026-08-27 … so there was nothing to copy and nothing to
+  // check." That was true when the web half landed first and is now false. The handset grew the
+  // screen the same day: `grep -rl INSPECTOR android/app/src/main` finds ELEVEN files, three of them
+  // inspection screens (`InspectionListScreen.kt`, `InspectionDetailScreen.kt`,
+  // `WorkshopInspectorsScreen.kt`) beside `data/DesignWorkshopInspections.kt`. Its
+  // `FIELD_NAV_ITEMS` row in `ui/AppNavigation.kt` carries "Workshops to inspect" — the string
+  // below, character for character — so the two clients agree by adoption rather than by luck, and
+  // the ordinary rule applies again: the handset owns this wording and the web copies it.
+  //
+  // FOUR SENTENCES IN THIS FAMILY ARE DELIBERATELY *NOT* SHARED, and a parity pass must not "fix"
+  // them into agreement. Each names WHERE AN ADMIN APPOINTS AN INSPECTOR, and that place differs by
+  // client on purpose: the web says "on Manage workshop access" (the panel is mounted on
+  // `/workshop-access/manage`), the handset says "from that workshop's own stage index" (its control
+  // hangs off `StageIndexScreen`, so the workshop is already in hand and there is no hundred-title
+  // dropdown on the one screen where the wrong row misassigns an examination). The four are every
+  // hit of `grep -c "Manage workshop access"` across this feature's web files: the route guard's
+  // message in `lib/permissions.ts`, two on the list page (its description and its empty state) and
+  // the detail page's 404. Where the handset has the counterpart sentence — the refusal and the
+  // empty state — the two agree word for word up to that final clause and differ only in it, which
+  // is the shape to preserve. Unifying that clause would send an admin to a screen their client
+  // does not have.
+  {
+    href: "/design-workshop-inspections",
+    label: "Workshops to inspect",
+    icon: FileSearch,
+    group: "Browse",
+    can: canInspectDesignWorkshops,
+    gate: "assert_inspection_surface (INSPECTION_ROLES, services/design_workshop_inspectors.py)"
+  },
   { href: "/tools?assign=1", label: "Assign tools to artisans", icon: Wrench, group: "Browse", can: canCreateRecords, gate: "get_current_user + owner/EDIT-grant/admin per artisan" },
 
   // Admin — capability holders below admin (professors, grantees) keep these permanently; admins,
@@ -505,6 +598,28 @@ export function DynamicIslandNav() {
   const pendingAccess = usePendingAccessCount(hubEntryVisible && canManageAccessRoster(user));
   const pendingAccessCount = pendingAccess?.pending ?? 0;
 
+  /**
+   * HOW MUCH DOCUMENTATION WORK HAS BEEN ASSIGNED TO THE READER — the badge on "Tasks".
+   *
+   * Same argument as the count above and the same shared store behind it, for a different audience:
+   * a designer had no way to learn they had been given work except to open /tasks and look, so the
+   * count rides on the entry that opens it.
+   *
+   * `enabled` is "the Tasks entry is actually on screen", NOT a permission test — `/tasks` with the
+   * default `view=assigned` is hard-pinned to the caller and the entry is `can: everyone`, so there
+   * is no predicate to mirror and inventing one would be inventing a permission. It is still gated
+   * on visibility rather than hardcoded true so that the request follows what is rendered: a nav
+   * entry is not a guard, and if this destination is ever narrowed the fetch narrows with it in the
+   * same expression.
+   *
+   * Nothing here touches the pill. "Tasks" is `group: "Browse"`, so both badges are drawn inside a
+   * dropdown panel or the sheet — never among `rootItems`, which are the only entries whose width
+   * the compact/expanded `layout` projection measures. A pill that changed width the moment a task
+   * was assigned would animate on a schedule nobody could explain.
+   */
+  const tasksEntryVisible = visibleItems.some((item) => item.href === OPEN_TASK_BADGE_HREF);
+  const openTaskCount = useOpenTaskCount(tasksEntryVisible) ?? 0;
+
   if (!user) return null;
 
   async function handleLogout() {
@@ -592,6 +707,7 @@ export function DynamicIslandNav() {
                             {item.href === PENDING_ACCESS_BADGE_HREF ? (
                               <PendingAccessBadge count={pendingAccessCount} />
                             ) : null}
+                            {item.href === OPEN_TASK_BADGE_HREF ? <OpenTaskBadge count={openTaskCount} /> : null}
                           </span>
                         </HoveredLink>
                       ))}
@@ -694,6 +810,7 @@ export function DynamicIslandNav() {
                         be here as well as in the desktop dropdown — a notification that only exists
                         on a pointer-driven hover menu does not reach an admin on a tablet. */}
                     {item.href === PENDING_ACCESS_BADGE_HREF ? <PendingAccessBadge count={pendingAccessCount} /> : null}
+                    {item.href === OPEN_TASK_BADGE_HREF ? <OpenTaskBadge count={openTaskCount} /> : null}
                   </Link>
                 ))}
               </div>

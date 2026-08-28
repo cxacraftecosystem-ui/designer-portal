@@ -362,13 +362,55 @@ class FieldSpec:
     max_length: int = 0
     #: For a multi-valued type (IMAGE_LIST, TAGS, MULTI_ENUM): how many entries it may hold.
     #: 0 means ``DEFAULT_MAX_ITEMS``, which is what 35 of the registry's 37 multi-valued fields
-    #: still use; the two exceptions are stage 4's motif galleries, which declare 20. (This line
+    #: still use; the two exceptions are stage 4's motif galleries, which declare 25. (This line
     #: read "which is what every field in the registry uses today" until those two arrived — the
     #: count is stated so the next reader can re-measure it instead of trusting it.) See that
     #: constant for why an unbounded array is a permanent write amplified on every later read of
     #: the stage. On a scalar field it is inert; ``max_length`` is that field's bound. On a multi
     #: field ``max_length`` bounds ONE ENTRY, not the joined string.
     max_items: int = 0
+    #: For a multi-valued type: how many entries it must hold before the stage counts as COMPLETE.
+    #: 0 — every field in the registry but stage 4's two motif galleries — means no minimum.
+    #:
+    #: ── WHERE IT IS ENFORCED, AND THE THREE PLACES IT DELIBERATELY IS NOT ───────────────────────
+    #:
+    #: A minimum is scored in :func:`stage_completeness` and NOWHERE ELSE. It is not in
+    #: :func:`coerce_value`, not in :func:`validate_entry`, and therefore not on any save path —
+    #: which is the opposite of how ``max_items`` works one line up, and the asymmetry is the whole
+    #: design rather than an omission.
+    #:
+    #: A CEILING CAN REFUSE A SAVE BECAUSE THE DESIGNER CAN ALWAYS COMPLY WITH IT — they hold 21
+    #: photographs and the field takes 20, so there is a body the server will accept. A FLOOR
+    #: CANNOT: a designer with twenty photographs and five still to shoot has no body that
+    #: satisfies a minimum of twenty-five, so a floor on the write path is not a validation rule,
+    #: it is an instruction to lose the twenty. And it would be lost, twice over:
+    #:
+    #:   * Android's ``saveOrQueue`` does not queue a 4xx. A body the server refuses is a record
+    #:     DROPPED, not retried, so a designer in a village with no signal loses the stage.
+    #:   * On the ``submit=true`` path the loss is silent even with a connection. ``validate_entry``
+    #:     omits a field it errored on, and ``design_workshops.save_stage`` then restores that key
+    #:     from ``previous`` ("a rejected field must not destroy the value already stored under
+    #:     it") — so a minimum enforced there would REVERT the gallery to its last-saved contents
+    #:     and answer 422 after the transaction had already committed.
+    #:
+    #: Stage 4 is the fourth of twenty-two stages, so either failure blocks the whole workshop from
+    #: ever being saved. "Required" therefore means what it means everywhere else in this file: the
+    #: stage is not COMPLETE, the field is named in ``missing`` with its shortfall, the readiness
+    #: screen lists it and the report warns about it. Work in progress is never at risk.
+    #:
+    #: ── IT MAKES THE FIELD COUNT AS REQUIRED AT WHATEVER TIER IT SITS ───────────────────────────
+    #:
+    #: :func:`stage_completeness` counts a field declaring a minimum toward ``required_total``, so
+    #: ``is_complete`` goes false at 24 of 25. That is a DELIBERATE, NARROW EXCEPTION to
+    #: :func:`validate_registry`'s Rule 3 ("only BASIC fields may be required, or a workshop
+    #: without facilities can never complete"): the two galleries that declare one are STANDARD
+    #: tier and stay STANDARD, because promoting them would move the digest AND splice fifty
+    #: photographs into COMPACT_SUMMARY, whose whole description is "Basic-tier fields only". The
+    #: exception is safe only because a minimum is an owner's instruction about ONE NAMED GALLERY
+    #: rather than a tier-wide capture expectation — see ``validate_registry``, which refuses a
+    #: minimum it cannot satisfy, and ``StageCompleteness.percent``, whose docstring records that
+    #: the count is no longer BASIC-only.
+    min_items: int = 0
     min_value: float | None = None
     max_value: float | None = None
     report_role: ReportRole = ReportRole.KEY_VALUE
@@ -1027,7 +1069,9 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     # Six of twenty-six. What a documented tool actually holds and this mapping used to drop: its
     # English name, how many years it has been in use, who made it, whether it is traditional or
     # modern, the improvements the artisan suggested for it, the remarks, the craft and place and
-    # artisan it was documented against, and all seven of its measurements.
+    # artisan it was documented against, and every one of its measurements — eight of them since
+    # 2026-08-27, counted off the targets below: three converted from inch columns
+    # (`lengthCm`/`breadthCm`/`heightCm`) and five the record states no unit for.
     #
     # `source` ("Where obtained") is NOT in this mapping and must not be added to it. It used to be
     # declared with `fromref()`, whose help text promises the designer it will be filled in from
@@ -1052,7 +1096,16 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "remarks": "remarks",
         "lengthCm": "lengthCm",
         "breadthCm": "breadthCm",
-        # HOW THE TWO CONVERTED FIGURES ABOVE WERE ARRIVED AT. A sentence about the RECORD's own
+        # THE THIRD CONVERTED FIGURE, 2026-08-27, AND THE PAIR WITHOUT WHICH IT IS COMPUTED AND
+        # THROWN AWAY. `ToolDocumentation.heightInches` did not exist until that day, so `heightCm`
+        # on this entity was a workshop-only box and this mapping stopped at two. The column landed
+        # (additive migration `20260827120000_tool_height_inches`) and `design_workshops`'s tool
+        # carry converts it; a produced key that no mapping consumes is exactly the orphan
+        # `validate_reference_carry` reports — "computed on every picker call and lands nowhere".
+        # `heightAsRecorded` below is a DIFFERENT column, the old unit-less `height`, which is why
+        # the tool has two heights here and the product has one.
+        "heightCm": "heightCm",
+        # HOW THE THREE CONVERTED FIGURES ABOVE WERE ARRIVED AT. A sentence about the RECORD's own
         # columns, not a label on the boxes — see `design_workshops._measurement_method_note` for why
         # only that claim survives the only-fill-blanks rule, and `record_fields.METHOD_CLAUSES` for
         # the two phrases it may use. Without it a vision model's estimate of a tool's length arrived
@@ -1588,6 +1641,42 @@ def validate_registry() -> list[str]:
                             f"field {where} captions {f.caption_for!r}, which is not a media "
                             "field"
                         )
+                # ── A MINIMUM MUST BE SATISFIABLE, OR THE STAGE CAN NEVER BE COMPLETE ──────────
+                #
+                # THE COST OF GETTING THIS WRONG IS UNBOUNDED AND HAS NO ERROR PATH. A minimum is
+                # scored in `stage_completeness` and refuses no save (see `FieldSpec.min_items`),
+                # so a floor nothing can reach does not fail, log or 422 anywhere: it makes
+                # `is_complete` permanently false for every workshop that will ever exist, the
+                # readiness screen permanently lists an item the designer cannot clear, and the
+                # report warns for ever. There is no way out of it from the app — only a deploy.
+                #
+                # Two shapes are refused, and both are one keyword away from each other:
+                #
+                #   * ON A SCALAR FIELD IT IS INERT. `_meets_minimum` tests `len(value)`, so a
+                #     minimum on a TEXT or INT box would be published to both clients, counted as
+                #     required by nothing, and would draw a "0 of 25" progress bar under a
+                #     one-line input. The mirror of the `max_items` note above it.
+                #   * ABOVE THE CEILING IT IS UNREACHABLE. `coerce_value` REFUSES an array longer
+                #     than `max_items` (or `DEFAULT_MAX_ITEMS` when none is declared) rather than
+                #     trimming it, so a floor above that ceiling asks the designer for a body the
+                #     save path will not accept. The ceiling is compared against its EFFECTIVE
+                #     value, not against `f.max_items`, because 0 there means 200 and not
+                #     "unbounded" — reading it as unbounded is what would let a min of 500 past.
+                if f.min_items:
+                    if not f.type.is_multi:
+                        problems.append(
+                            f"field {where} declares min_items={f.min_items} but is "
+                            f"{f.type.value}; a minimum counts entries in a list, so on a scalar "
+                            "it would be published to both clients and enforced by nothing"
+                        )
+                    else:
+                        ceiling = f.max_items or DEFAULT_MAX_ITEMS
+                        if f.min_items > ceiling:
+                            problems.append(
+                                f"field {where} declares min_items={f.min_items} above its "
+                                f"ceiling of {ceiling}; coerce_value refuses an array longer "
+                                "than the ceiling, so the stage could never be completed"
+                            )
                 # A `store_masked` FLAG THAT NOTHING APPLIES IS THE SILENT FAILURE THIS WHOLE
                 # FEATURE EXISTS TO END, so the registry refuses to carry one.
                 #
@@ -1758,9 +1847,13 @@ _MAX_ACCURACY_M = 20_037_508.0
 #: next reader who needs to know whether it is a live measurement or an old one.
 #:
 #: A field that needs a DIFFERENT ceiling, in either direction, says so with ``max_items`` on its
-#: own ``FieldSpec``. Two do, and both go DOWN rather than up: stage 4's motif galleries cap at 20
-#: because the owner asked for 20, which is the case this constant is a fallback for and not an
-#: override of.
+#: own ``FieldSpec``. Two do, and both go DOWN rather than up: stage 4's motif galleries cap at 25
+#: because the owner asked for 25, which is the case this constant is a fallback for and not an
+#: override of. (They were 20 until 2026-08-28. Raising a cap is a WIDENING and cannot break a
+#: shipped client — ``coerce_value`` refuses rather than trims, so a higher ceiling only turns
+#: refusals into acceptances.) Those same two are the only fields declaring a ``min_items`` floor,
+#: which this constant deliberately has no counterpart for: there is no default minimum, because a
+#: floor nobody asked for makes a stage permanently incomplete with no error anywhere.
 DEFAULT_MAX_ITEMS = 200
 
 #: How long ONE entry of a multi-valued field may be when the field declares no ``max_length``.
@@ -2140,11 +2233,23 @@ class StageCompleteness:
     optional_total: int
     optional_filled: int
     collection_counts: dict[str, int]
-    missing: tuple[str, ...]      # labels of unfilled required fields
+    #: Labels of unfilled required fields — and of any field short of its declared ``min_items``,
+    #: which carries its count ("Traditional motif photographs (20 of 25)") because "not recorded"
+    #: about a gallery holding twenty photographs reads as data loss. See ``_shortfall_label``.
+    missing: tuple[str, ...]
 
     @property
     def percent(self) -> int:
-        """Progress across BASIC-tier fields only — the tier the report actually needs.
+        """Progress across the required fields — BASIC tier, PLUS any field declaring a floor.
+
+        THE SECOND CLAUSE IS NEW AND THIS LINE USED TO READ "BASIC-tier fields only", which was
+        true because ``validate_registry``'s Rule 3 refuses ``required`` on anything but BASIC, so
+        the two sets were the same set. ``min_items`` breaks that identity on purpose: stage 4's
+        two motif galleries are STANDARD tier, the owner made all twenty-five of each mandatory,
+        and promoting their tier to keep the sentence true would have moved fifty photographs into
+        COMPACT_SUMMARY — a template whose entire description is "Basic-tier fields only". So the
+        exception is taken here, in the arithmetic, rather than hidden in a tier change nobody
+        asked for. See ``FieldSpec.min_items``.
 
         A stage with no required fields at all (stage 22 follow-up, for instance) reads as
         complete rather than as 0%, because dividing by zero to decide whether a designer may
@@ -2179,6 +2284,49 @@ def _is_filled(value: Any) -> bool:
     return True
 
 
+def _meets_minimum(spec: FieldSpec, value: Any) -> bool:
+    """Whether a declared ``min_items`` floor is reached. True for every field that declares none.
+
+    A NON-LIST IS SHORT, NOT EXEMPT. A gallery holding a single bare media id rather than a list
+    is a client bug, and answering True for it would report a stage of one photograph as twenty-five
+    complete — the one wrong answer this predicate must never give. ``_is_filled`` is asked
+    separately and first, so "empty" and "short" stay distinguishable to the caller.
+    """
+    if not spec.min_items:
+        return True
+    if not isinstance(value, (list, tuple)):
+        return False
+    return len(value) >= spec.min_items
+
+
+def _shortfall_label(spec: FieldSpec, value: Any) -> str:
+    """The name this field goes into ``missing`` under — with its count, when it declares a floor.
+
+    "Traditional motif photographs (20 of 25)" and not the bare label, because the bare label is a
+    lie by omission here: every other entry in ``missing`` means "nothing was recorded", and a
+    designer reading that sentence about a gallery holding twenty photographs concludes the app has
+    lost them. This is the string the report's warning prints, the completeness annexure's
+    Outstanding column prints and both readiness screens list, so it is the only place the number
+    can be said.
+
+    TWO CONSEQUENCES THE CLIENT PORTS INHERIT, both of which are the reason this is a named function
+    rather than an f-string at two call sites:
+
+      * ``missing`` IS DE-DUPLICATED BY LABEL. A collection field declaring a floor would file one
+        entry per DISTINCT count rather than one per field, so eleven rows at eleven different
+        counts are eleven items. No collection field declares one today — both are singleton
+        galleries — and the count is worth more than the collapsing when one does, but a future
+        floor on a repeating row should read this before assuming the old shape.
+      * THE READINESS ADDRESS WALK MATCHES BY THIS EXACT STRING. ``scoreStageData`` and
+        ``computeStageCompleteness`` must decorate identically, or their address lookup misses and
+        the item degrades to a stage-level link instead of scrolling to the gallery.
+    """
+    if not spec.min_items:
+        return spec.label
+    held = len(value) if isinstance(value, (list, tuple)) else 0
+    return f"{spec.label} ({held} of {spec.min_items})"
+
+
 def stage_completeness(
     spec: StageSpec,
     singleton: dict[str, Any],
@@ -2193,6 +2341,13 @@ def stage_completeness(
     A COLLECTION entity contributes its required fields once per existing row, and contributes
     nothing when it is empty *unless* the entity itself sits behind a required singleton field —
     an empty sketch list is a legitimate state on day one of a workshop, not an error.
+
+    **THIS IS THE ONLY PLACE A ``min_items`` FLOOR IS ENFORCED, AND THAT IS THE FEATURE.** A
+    gallery declaring one counts as required here and is not "filled" until it holds that many, so
+    the stage is not complete, the readiness screens list it and the report warns — while every
+    save path stays exactly as forgiving as it was. A designer with twenty of twenty-five
+    photographs and no signal saves twenty. See ``FieldSpec.min_items`` for the two ways a floor on
+    the write path would have destroyed that work instead.
 
     ``custom_fields`` AND ``custom_values`` ARE THE DESIGNER-DEFINED FIELDS OF THIS STAGE, AND
     THIS IS THE ONE PLACE THEY ARE SCORED. Every other reader — the readiness screen, the stage
@@ -2233,22 +2388,42 @@ def stage_completeness(
     def _counts_as_filled(f: FieldSpec, value: Any) -> bool:
         if not _is_filled(value):
             return False
+        # A GALLERY BELOW ITS DECLARED FLOOR IS NOT FILLED, and this is the ONLY place in the
+        # codebase where that sentence is true — a minimum is scored and never validated, so
+        # nothing on any save path can refuse the twenty photographs a designer has so far. See
+        # `FieldSpec.min_items` for why a floor on the write path would drop the stage on Android
+        # and revert the gallery on a `submit=true`.
+        if not _meets_minimum(f, value):
+            return False
         if f.type is not FieldType.REF or ref_resolves is None:
             return True
         return bool(ref_resolves(value))
+
+    # A DECLARED FLOOR MAKES THE FIELD REQUIRED, WHATEVER TIER IT SITS AT.
+    #
+    # Without this the whole feature scores nothing: both motif galleries are optional fields, so a
+    # minimum would only move `optional_filled` and `is_complete` — which is `required_filled >=
+    # required_total` and nothing else — would stay true at twenty-four of twenty-five.
+    #
+    # `or` AND NOT A SEPARATE COUNTER, so a field that is both `required` and floored is counted
+    # ONCE. Neither of the two is today; a future one counted twice would make its stage report
+    # 49/50 with one box outstanding.
+    def _is_required(f: FieldSpec) -> bool:
+        return f.required or bool(f.min_items)
 
     single = spec.singleton
     if single is not None:
         for f in single.fields:
             if f.deprecated:
                 continue
-            filled = _counts_as_filled(f, singleton.get(f.key))
-            if f.required:
+            value = singleton.get(f.key)
+            filled = _counts_as_filled(f, value)
+            if _is_required(f):
                 required_total += 1
                 if filled:
                     required_filled += 1
                 else:
-                    missing.append(f.label)
+                    missing.append(_shortfall_label(f, value))
             else:
                 optional_total += 1
                 optional_filled += int(filled)
@@ -2293,13 +2468,14 @@ def stage_completeness(
             for f in entity.fields:
                 if f.deprecated:
                     continue
-                filled = _counts_as_filled(f, row.get(f.key))
-                if f.required:
+                value = row.get(f.key)
+                filled = _counts_as_filled(f, value)
+                if _is_required(f):
                     required_total += 1
                     if filled:
                         required_filled += 1
                     else:
-                        missing.append(f"{entity.title}: {f.label}")
+                        missing.append(f"{entity.title}: {_shortfall_label(f, value)}")
                 else:
                     optional_total += 1
                     optional_filled += int(filled)
@@ -2397,7 +2573,7 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
     # right about both halves. It used to say that no field in today's registry emitted the key, so
     # neither the bundled asset nor `registry_version()` moved for it. That was true when written
     # and is now false in its first two clauses: stage 4's two motif galleries declare
-    # `max_items=20` (`stage_definitions.py`, `motifPhotos` and `contemporaryMotifPhotos`), so
+    # `max_items=25` (`stage_definitions.py`, `motifPhotos` and `contemporaryMotifPhotos`), so
     # `maxItems` crosses the wire twice and appears twice in the bundled asset. The third clause is
     # the load-bearing one and is still true.
     #
@@ -2406,7 +2582,14 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
     #     copy disagreeing with the server until somebody re-dumps it.
     #   * THE VERSION DOES NOT. `registry_version()` below digests key, type, tier, required, enum,
     #     deprecated, derivation, hydration, `store_masked` and `text_format` — and NOT
-    #     `max_items`. A cap change leaves that digest character for character identical.
+    #     `max_items`. A cap change leaves that digest character for character identical. THE FLOOR
+    #     BESIDE IT IS THE OPPOSITE — `min_items` IS digested — so do not read this bullet as
+    #     covering both bounds; see the note under `minItems` below for why they differ.
+    #
+    #     (Which is what made the 20 → 25 widening of 2026-08-28 a good measurement of this note:
+    #     the cap moved and the digest did not, and it was the FLOOR declared in the same edit that
+    #     moved it. Had that edit raised the cap alone, the version test would have gone on
+    #     reporting agreement over a stale asset, exactly as this note warns.)
     #
     # Which is why `tests/test_controlled_vocabularies.py` carries TWO asset tests and not one: on
     # a cap change the version test (`..._matches_the_registry_it_was_dumped_from`) reports
@@ -2421,6 +2604,23 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
     # fetched it; it is the BUNDLED copy of the build being cut that has to be re-dumped.
     if f.max_items:
         out["maxItems"] = f.max_items
+    # THE FLOOR, PUBLISHED SO THE NUMBER LIVES IN ONE PLACE INSTEAD OF THREE.
+    #
+    # Emitted only where declared, exactly as ``maxItems`` above is, and read by both clients for
+    # two things they would otherwise each hard-code: the "20 of 25" progress bar under the picker,
+    # and their own ports of ``stage_completeness`` (``scoreStageData``,
+    # ``computeStageCompleteness``), which must count this field as required or a stage reads 100%
+    # on the phone and incomplete on the server.
+    #
+    # UNLIKE ``maxItems``, THIS ONE IS IN ``registry_version()``. A cap is advice a client renders;
+    # a floor decides whether a stage is COMPLETE, and a handset that has never fetched since the
+    # floor was declared scores the stage green at twenty photographs, tells the designer they are
+    # finished, and lets them leave the cluster. That is the same class of silent disagreement as
+    # ``storeMasked`` and ``format``, both of which were put in the digest for it — see
+    # ``registry_version``. So the version moves, the refetch fires, and the bundled asset owes a
+    # re-dump.
+    if f.min_items:
+        out["minItems"] = f.min_items
     if f.min_value is not None:
         out["minValue"] = f.min_value
     if f.max_value is not None:
@@ -2550,6 +2750,27 @@ def registry_version() -> str:
     reporting agreement (it compares the version, not the content), and a handset that has never
     reached the network would go on hydrating by the mapping the correction was written to end.
     Pinned by ``test_the_version_changes_when_a_hydration_mapping_changes``.
+
+    ``min_items`` IS HERE FOR THE SAME REASON, ONE FEATURE LATER AGAIN — AND ITS TWIN IS NOT, WHICH
+    IS THE PART WORTH READING. ``max_items`` is deliberately OUT of this digest: a ceiling is advice
+    a picker renders, and a client that has not heard about it still saves a legal body, because
+    ``coerce_value`` refuses the over-long array on the server either way. A MINIMUM HAS NO SUCH
+    BACKSTOP. It is scored in ``stage_completeness`` and nowhere else — deliberately, so a partial
+    save is never refused (see ``FieldSpec.min_items``) — so the only thing that makes it true on a
+    handset is the handset knowing about it. A phone that has never fetched since the floor was
+    declared scores stage 4 complete at twenty photographs, its readiness screen lists nothing, and
+    the designer leaves the cluster believing the gallery is finished; the server disagrees silently
+    until a report is built. Labels and help text stay out; behaviour goes in, and "is this stage
+    complete" is the most behavioural answer this registry gives.
+
+    THE COST IS PAID, AND IT WAS MEASURED RATHER THAN ASSUMED. Moving this digest does not
+    invalidate a draft on either client. On Android nothing compares it to anything (``cachedVersion``
+    has no callers and a ``WorkshopDraft`` names no registry), measured on an SM-M325F on 2026-08-13
+    by swapping the cached digest for a bogus one: the draft was byte-for-byte identical afterwards.
+    In the browser it is a KEY into the IndexedDB registry store, so a stage captured before the
+    deploy is still sent under the field list it was captured with, and ``stageSpecFor`` falls back
+    to the registry this browser holds when that document is gone. What a moved version actually
+    costs is a re-dump of the bundled Android asset and a re-cut APK — see ``field_to_dict``.
     """
 
     _ensure_installed()
@@ -2568,7 +2789,7 @@ def registry_version() -> str:
                 parts.append(f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
                              f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
                              f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}:"
-                             f"{int(f.store_masked)}:{f.text_format.value}")
+                             f"{int(f.store_masked)}:{f.text_format.value}:{f.min_items}")
     digest = hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
     return digest[:16]
 

@@ -17,6 +17,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { apiFetch, listResource } from "@/lib/api";
 import { requiredText } from "@/lib/forms";
 import {
+  ROLES_BY_RANK,
   assignableRoles,
   canManageDesignerRoster,
   canManageUser,
@@ -283,12 +284,16 @@ export default function UsersPage() {
       </form>
       ) : null}
       <p className="mb-4 text-xs text-ink-muted">
-        {/* SEVEN, not six. Designer was added at rank 35, in the gap the original tens left, so it
-            sits between Researcher and Professor — and this sentence is the one place in the app
-            that spells the ladder out in prose rather than deriving it from ROLE_RANK, which is
-            exactly why it was left saying "six" and listing one tier too few. */}
-        Seven tiers: Master Admin → Admin → Professor → Designer → Researcher → Field Contributor →
-        Crowdsource Volunteer. You can promote users to your own tier and below, and manage only users
+        {/* DERIVED, AND IT USED TO BE TYPED OUT. This was the one place in the app that spelled the
+            ladder out in prose rather than reading ROLE_RANK — so it shipped saying "six" with one
+            tier too few, was corrected by hand to "Seven tiers: … → Designer → …", and would have
+            been wrong again the day INSPECTOR landed. A hand-written enumeration of an
+            access-control ladder is a fact with no owner: nothing renders it wrong, there is simply
+            one fewer name than there are roles. The count is `.length` and the names come from
+            `ROLES_BY_RANK` (already highest-first) through `roleLabel`, so this sentence cannot
+            disagree with the picker three lines below it that is built from the same array. */}
+        {ROLES_BY_RANK.length} tiers: {ROLES_BY_RANK.map(roleLabel).join(" → ")}. You can promote
+        users to your own tier and below, and manage only users
         beneath your tier. Professors hold promotion rights only: they may change the role of anyone ranked
         beneath them (up to Professor) but cannot create or delete accounts or grant capabilities —
         those remain admin actions. Professors and above hold every capability implicitly; the

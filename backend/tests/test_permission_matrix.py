@@ -61,8 +61,8 @@ from app.services.artisan_identity import verhoeff_ok
 #: here — the ``BELOW_ADMIN`` block further down has always driven it — but the tests that iterate
 #: the ladder itself could not see it.
 ALL_ROLES = (
-    "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "PROFESSOR", "ADMIN",
-    "MASTER_ADMIN",
+    "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "INSPECTOR",
+    "PROFESSOR", "ADMIN", "MASTER_ADMIN",
 )
 LOWER_TIERS = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR")
 #: The tiers that may OPEN a record but may not touch the TAXONOMY — everything at or above the
@@ -70,7 +70,14 @@ LOWER_TIERS = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR")
 #: because a parametrisation has to be, and tied back to those two predicates in
 #: ``test_this_matrix_still_covers_every_tier_that_exists`` so a new tier landing in the gap cannot
 #: quietly miss both halves of the rule this tuple exists to pin.
-RECORD_CREATORS = ("RESEARCHER", "DESIGNER")
+#:
+#: INSPECTOR (37) JOINED THIS TUPLE THE DAY THE TIER LANDED, and the assertion below is what made
+#: that a decision rather than an accident: the tier is between the two floors, so `can_create_records`
+#: (Researcher and above) already said yes and `can_manage_crafts` (Professor and above) already said
+#: no. An inspector may therefore open an artisan or a product. That is the ladder being inclusive
+#: rather than a power granted to inspectors on purpose — but it is what the code does, so it is
+#: written down here rather than discovered later.
+RECORD_CREATORS = ("RESEARCHER", "DESIGNER", "INSPECTOR")
 
 
 def _user(role: str, user_id: str = "u1", **grants: Any) -> SimpleNamespace:
@@ -506,7 +513,9 @@ def test_a_volunteer_still_comments_on_an_existing_record(
 # workshop — but it removes every rank for whom the consent gate is a refusal that means something.
 
 TRANSCRIBE_CLIP = {"file": ("dictation.webm", b"\x00" * 32, "audio/webm")}
-BELOW_ADMIN = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "PROFESSOR")
+BELOW_ADMIN = (
+    "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "INSPECTOR", "PROFESSOR",
+)
 
 
 @pytest.fixture
@@ -636,7 +645,13 @@ def test_the_craft_and_workshop_predicates_read_rank_alone() -> None:
 # decision reached is the GATE's rather than a 422's.
 
 DESIGNER_SET = ("DESIGNER", "ADMIN", "MASTER_ADMIN")
-OUTSIDE_DESIGNER_SET = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "PROFESSOR")
+# INSPECTOR is OUTSIDE, beside PROFESSOR and for the same reason: this block is about who may WRITE
+# inside a workshop, and an inspector inspects the result rather than producing it. Both tiers
+# outrank a designer and both are refused here, which is the clearest statement in this file that the
+# design-workshop gate is set membership and not a rank floor.
+OUTSIDE_DESIGNER_SET = (
+    "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "INSPECTOR", "PROFESSOR",
+)
 WORKSHOP_WRITES = [
     ("PATCH", "/design-workshops/w1", {"title": "Renamed in the field"}),
     ("PUT", "/design-workshops/w1/stages/WORKSHOP_SETUP", {"entries": []}),

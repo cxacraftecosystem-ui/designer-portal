@@ -117,6 +117,32 @@ async def _hydrate(process: Any, viewer: Any) -> dict[str, Any]:
     "all allowed" for professor and above without touching the database), and it is what lets a
     colleague who holds a data-access grant actually OPEN the photograph of a step somebody else
     photographed — the cheap ``viewer``-derived default would hand them the row and withhold the file.
+
+    THE UPLOADER HALF ALONE, AND THIS ROUTE HAS TO ARGUE IT DIFFERENTLY FROM ITS SIBLINGS.
+    ``records.media_url_scope`` answers "whose media bytes may travel" in two halves — the uploaders,
+    and the design workshops this account may open, whose files are entitled to by the TAG
+    ``linkedRecordType="designWorkshop"`` plus the workshop id (``dictation_consent.MEDIA_TAG``). The
+    call below asks for the uploader half only and leaves ``public_encode``'s ``media_workshops`` at
+    its empty default. That is a DECISION and not an omission; the banner in ``records.py`` records
+    what omission cost the transcripts surface once.
+
+    products.py and tools.py settle the same question by their FOREIGN KEY — a row reaches them
+    through ``MediaFile.productId``/``toolId``, which ``records.media_relation_data`` writes FROM the
+    link type, so the tag on anything they return is the parent's own. **THIS QUERY HAS NO SUCH
+    NARROWING AND A READER MUST NOT ASSUME IT DOES**: the statement below filters on ``linkedRecordId``
+    ALONE, with no ``linkedRecordType`` clause at all, because a process and its steps are linked
+    purely by the tag pair and the ids are already unique. What keeps a workshop attachment out is
+    therefore the ID and nothing else — ``lookup_ids`` holds this process's id and its steps', both
+    ``@default(cuid())`` on their own tables, and a design-workshop upload carries the
+    ``DesignWorkshop``'s id in that column. Two cuids from two tables do not collide, so no row this
+    query can return carries the workshop tag, and ``media_workshops`` would be a set nothing here
+    could ever be tested against — bought with a second round trip on a link where one hop is ~750ms.
+
+    THAT IS A NARROWER GUARANTEE THAN THE SIBLINGS' AND IT IS WORTH KNOWING WHICH ONE YOU ARE HOLDING.
+    It rests on the id, so it survives an unrelated tag being added to MediaFile — but if this
+    ``where`` ever grows a ``linkedRecordType`` clause, or ``lookup_ids`` ever admits an id from
+    another table, re-derive it before trusting it. Compare ``search.py``, which reads the
+    ``MediaFile`` table itself and does need the second half.
     """
     encoded = _encode_light(process, viewer)
     step_ids = [s["id"] for s in encoded["steps"]]
@@ -125,6 +151,8 @@ async def _hydrate(process: Any, viewer: Any) -> dict[str, Any]:
         where={"linkedRecordId": {"in": lookup_ids}},
         order={"createdAt": "asc"},
     )
+    # The uploader half only; ``media_workshops`` stays at its empty default by decision — see "THE
+    # UPLOADER HALF ALONE" in the docstring for why no row this query returns can carry the tag.
     media_encoded = public_encode(media, viewer, media_urls=await media_url_owners(viewer))
     by_record: dict[str, list[dict[str, Any]]] = {}
     for item in media_encoded:

@@ -448,7 +448,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
       {/* ── The pilot collection, on cloth ───────────────────────────────── */}
       <PrintingBed census={census} />
 
-      {/* ── The seven-tier access ladder ─────────────────────────────────── */}
+      {/* ── The access ladder (its row count and heading derive from ROLE_RANK) ── */}
       <AccessLadder />
 
       {/* ── Built for the whole team ─────────────────────────────────────── */}

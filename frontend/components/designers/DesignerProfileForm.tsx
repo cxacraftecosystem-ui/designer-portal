@@ -42,7 +42,7 @@
  * — a second Save there POSTs a second record — which is why their wording differs.)
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IdCard, Trash2 } from "lucide-react";
 
@@ -52,9 +52,11 @@ import {
   DESIGNER_PROFILE_GROUPS,
   DESIGNER_PROFILE_HELP,
   DESIGNER_PROFILE_LABELS,
+  isDesignerProfileFieldRequired,
   type DesignerProfileGroupKey
 } from "@/components/designers/profileCopy";
-import { Field, Select, TextArea, TextInput } from "@/components/FormControls";
+import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
+import { Field, Select, TextInput } from "@/components/FormControls";
 import { DateField } from "@/components/forms/DateTimeField";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
@@ -204,18 +206,32 @@ export function DesignerProfileForm({
       let strandedSignatures: File[] = [];
       let strandedCvs: File[] = [];
 
+      // The second string is the mid-sentence phrase, not a lower-cased copy of the first: "CV" is
+      // an acronym and keeps its case wherever it appears. See {@link uploadOne}.
       if (photoFiles.length) {
-        const attempt = await uploadOne(photoFiles, profile.userId, "Designer photograph", troubles);
+        const attempt = await uploadOne(
+          photoFiles,
+          profile.userId,
+          "Designer photograph",
+          "designer photograph",
+          troubles
+        );
         if (attempt.mediaId) nextPhotoId = attempt.mediaId;
         strandedPhotos = attempt.stranded;
       }
       if (signatureFiles.length) {
-        const attempt = await uploadOne(signatureFiles, profile.userId, "Designer signature", troubles);
+        const attempt = await uploadOne(
+          signatureFiles,
+          profile.userId,
+          "Designer signature",
+          "designer signature",
+          troubles
+        );
         if (attempt.mediaId) nextSignatureId = attempt.mediaId;
         strandedSignatures = attempt.stranded;
       }
       if (cvFiles.length) {
-        const attempt = await uploadOne(cvFiles, profile.userId, "Designer CV", troubles);
+        const attempt = await uploadOne(cvFiles, profile.userId, "Designer CV", "designer CV", troubles);
         if (attempt.mediaId) nextCvId = attempt.mediaId;
         strandedCvs = attempt.stranded;
       }
@@ -323,8 +339,22 @@ export function DesignerProfileForm({
   const groupBody: Record<DesignerProfileGroupKey, React.ReactNode> = {
     identity: (
       <>
-        <Field label={DESIGNER_PROFILE_LABELS.displayName}>
-          <TextInput name="displayName" defaultValue={profile.displayName ?? ""} maxLength={MAX.displayName} />
+        {/*
+          REQUIRED, NATIVELY, ON A PLAIN TEXT INPUT — which is the one control on this form where
+          `required` needs no argument at all. It is a real `<input>` inside the `<form>`, so the
+          browser refuses the submit and anchors its own bubble to the box that is empty. The three
+          other mandatory answers each sit on a themed control and each carries its own note.
+
+          `Field` prints the asterisk from the same boolean, so the mark a reader sees and the rule
+          the browser enforces cannot drift apart.
+        */}
+        <Field label={DESIGNER_PROFILE_LABELS.displayName} required={isDesignerProfileFieldRequired("displayName")}>
+          <TextInput
+            name="displayName"
+            defaultValue={profile.displayName ?? ""}
+            maxLength={MAX.displayName}
+            required={isDesignerProfileFieldRequired("displayName")}
+          />
         </Field>
         <Field label={DESIGNER_PROFILE_LABELS.localName}>
           <TextInput name="localName" defaultValue={profile.localName ?? ""} maxLength={MAX.localName} />
@@ -346,8 +376,13 @@ export function DesignerProfileForm({
     ),
     qualifications: (
       <>
-        <Field label={DESIGNER_PROFILE_LABELS.qualification}>
-          <TextInput name="qualification" defaultValue={profile.qualification ?? ""} maxLength={MAX.qualification} />
+        <Field label={DESIGNER_PROFILE_LABELS.qualification} required={isDesignerProfileFieldRequired("qualification")}>
+          <TextInput
+            name="qualification"
+            defaultValue={profile.qualification ?? ""}
+            maxLength={MAX.qualification}
+            required={isDesignerProfileFieldRequired("qualification")}
+          />
         </Field>
         <Field label={DESIGNER_PROFILE_LABELS.specialisation}>
           <TextInput name="specialisation" defaultValue={profile.specialisation ?? ""} maxLength={MAX.specialisation} />
@@ -370,28 +405,66 @@ export function DesignerProfileForm({
     ),
     biography: (
       <div className="md:col-span-2">
-        <Field label={DESIGNER_PROFILE_LABELS.biography}>
-          <TextArea
-            name="biography"
-            rows={8}
-            defaultValue={profile.biography ?? ""}
-            maxLength={MAX.biography}
-            className="min-h-40"
-          />
-        </Field>
+        {/*
+          THE ONE NARRATIVE BOX ON THIS FORM, AND THEREFORE THE FIRST OF THE TWO THAT GETS A
+          MICROPHONE. See `DictatedField` below for the whole argument about which boxes do and do
+          not, and why the button cannot live inside `Field`.
+        */}
+        <DictatedField
+          name="biography"
+          label={DESIGNER_PROFILE_LABELS.biography}
+          defaultValue={profile.biography ?? ""}
+          maxLength={MAX.biography}
+          rows={8}
+          onDirty={markDirty}
+        />
       </div>
     ),
     contact: (
       <>
         {/* FieldBlock, not Field: PhoneField contains a themed dropdown, and a <label> wrapped
             around one forwards a stray click into the menu and slams it shut after one pick. */}
-        <FieldBlock label={DESIGNER_PROFILE_LABELS.phone}>
-          <PhoneField name="phone" defaultValue={profile.phone} onValueChange={markDirty} />
+        <FieldBlock label={DESIGNER_PROFILE_LABELS.phone} required={isDesignerProfileFieldRequired("phone")}>
+          {/*
+            `required` LANDS ON THE VISIBLE NUMBER BOX, NEVER ON THE MIRROR — see `PhoneField`'s own
+            note on the prop. The mirror is `h-0 w-0 opacity-0`, so a refusal anchored there is a
+            validation bubble pointing at a box nobody can see; the visible input is an ordinary
+            `<input>` in this same form and enforces the identical rule where the answer goes.
+          */}
+          <PhoneField
+            name="phone"
+            defaultValue={profile.phone}
+            onValueChange={markDirty}
+            required={isDesignerProfileFieldRequired("phone")}
+          />
         </FieldBlock>
-        <Field label={DESIGNER_PROFILE_LABELS.email}>
-          {/* type="email" gives the browser its own inline validation, which matters here: the
-              column is an EmailStr and a malformed address 422s the whole twenty-one-field body. */}
-          <TextInput name="email" type="email" defaultValue={profile.email ?? ""} />
+        <Field label={DESIGNER_PROFILE_LABELS.email} required={isDesignerProfileFieldRequired("email")}>
+          {/*
+            THE PLATFORM'S EMAIL RULE AND NOTHING ELSE, WHICH IS HOW THE CLIENT AGREES WITH THE
+            SERVER RATHER THAN INVENTING A SECOND OPINION.
+
+            The column is `EmailStr` (`backend/app/schemas/designers.py`), so a malformed address
+            422s the whole twenty-one-field body and takes twenty correct answers down with it.
+            `type="email"` is what catches that before the round trip — it is the WHATWG rule, so an
+            address bearing an `@` and a domain that the server would accept is not refused here, and
+            one with no `@` at all never leaves the browser.
+
+            NO `setCustomValidity` ON THIS BOX, DELIBERATELY, and that is §12.8's Aadhaar trap read
+            the right way round: with BOTH a native `required` and a custom validity message set, it
+            is up to the browser which of the two sentences it shows, so the field would sometimes
+            report the wrong fault. The box is required, so `required` is the attribute that stands
+            and the type mismatch is left to the platform's own wording.
+
+            AND NO HAND-WRITTEN REGEX ANYWHERE IN THIS FILE. A second email rule is a rule that can
+            disagree with `EmailStr`, and the direction it disagrees in — refusing an address the
+            server would have stored — is the one a designer cannot work around.
+          */}
+          <TextInput
+            name="email"
+            type="email"
+            defaultValue={profile.email ?? ""}
+            required={isDesignerProfileFieldRequired("email")}
+          />
         </Field>
         <Field label={DESIGNER_PROFILE_LABELS.website}>
           <TextInput name="website" type="url" defaultValue={profile.website ?? ""} maxLength={MAX.website} />
@@ -401,9 +474,26 @@ export function DesignerProfileForm({
     address: (
       <>
         <div className="md:col-span-2">
-          <Field label={DESIGNER_PROFILE_LABELS.addressLine}>
-            <TextInput name="addressLine" defaultValue={profile.addressLine ?? ""} maxLength={MAX.addressLine} />
-          </Field>
+          {/*
+            THE SECOND MICROPHONE, AND IT IS THE SAME BOX `/artisans/new` PUTS ONE ON. `ArtisanForm`
+            mounts `DictatedTextArea` on its address for a reason that holds identically here: an
+            address is the one multi-part answer somebody standing in a courtyard would rather speak
+            than thumb in, and a formatting toolbar on it would be an invitation to store a document
+            in a column four exports print as a delivery address.
+
+            SINGLE-LINE, THOUGH, WHERE THE ARTISAN'S IS A TEXTAREA. `Artisan.address` has always held
+            newlines; `DesignerProfile.addressLine` has not, and it is copied into a registry field
+            and typeset on a report cover. Changing the shape of what is stored is not what the
+            owner asked for and is not something this form can verify downstream, so the box stays as
+            it was and only gains the button. `rows` is therefore not passed.
+          */}
+          <DictatedField
+            name="addressLine"
+            label={DESIGNER_PROFILE_LABELS.addressLine}
+            defaultValue={profile.addressLine ?? ""}
+            maxLength={MAX.addressLine}
+            onDirty={markDirty}
+          />
         </div>
         <Field label={DESIGNER_PROFILE_LABELS.city}>
           <TextInput name="city" defaultValue={profile.city ?? ""} maxLength={MAX.city} />
@@ -485,7 +575,43 @@ export function DesignerProfileForm({
     ),
     images: (
       <>
-        <div className="md:col-span-2">
+        {/*
+          ── EVERY WRAPPER IN THIS GROUP SPANS `md:col-span-2`, WHICH IS THE WHOLE OF THE GRID ──────
+
+          THE DEFECT THIS REPLACES, because it is the least obvious grid bug in the app and it made
+          the photograph, the signature and the CV cards unusable at once.
+
+          The section's grid is `grid gap-3 md:grid-cols-2` — TWO tracks, `repeat(2, minmax(0, 1fr))`.
+          The CV wrapper used to be `md:col-span-4`. A grid item may not span past the explicit grid
+          and simply be clamped: CSS Grid auto-placement ADDS IMPLICIT COLUMNS to accommodate the
+          largest span, and an implicit column is sized by `grid-auto-columns`, which is `auto`. So
+          the one `col-span-4` silently turned a two-column grid into FOUR tracks —
+          `minmax(0,1fr) minmax(0,1fr) auto auto` — and two things went wrong together:
+
+            1. AUTO-PLACEMENT PUT THE SIGNATURE CARD IN THE IMPLICIT PAIR. With four tracks, the
+               photograph took columns 1–2 and the signature no longer needed a new row: it fitted
+               beside it in columns 3–4. Measured in Chromium at a 1280px viewport against the real
+               card markup, the tracks resolved to `482px 482px 107px 107px` — a photograph card
+               976px wide and a signature card 226px wide, two things that are meant to be identical
+               full-width rows.
+            2. THE `1fr` TRACKS LOSE TO THE `auto` ONES. `fr` distributes only the FREE space left
+               after intrinsic tracks are sized, and a spanning item's intrinsic contribution is
+               distributed to the non-flexible tracks — so as the implicit pair grew, tracks 1–2
+               shrank towards nothing. At the point they reach 0 the item spanning them measures
+               exactly one `gap-3`: 12px, holding 127px of content. That is the 12px column reported
+               on the live page, reproduced to the pixel.
+
+          `min-w-0` IS NOT WHAT WAS WRONG HERE, and reaching for it is the trap. It stops an item
+          refusing to shrink below its content; it cannot stop a track from being created, and a
+          zero-width track is already as shrunk as it gets. It is added below as an ordinary belt
+          — a `MediaCaptureField` and a rendered PDF are wide content in a grid item — but the CAUSE
+          was the span, and only changing the span fixes it.
+
+          THE CV IS STILL FULL WIDTH. It always wanted the whole row and it still gets it: on this
+          grid the whole row IS `col-span-2`. A PDF preview at half a row is a thumbnail of a page of
+          text, which answers nothing.
+        */}
+        <div className="min-w-0 md:col-span-2">
           <MediaSlot
             label={DESIGNER_PROFILE_LABELS.photoMediaId}
             help={DESIGNER_PROFILE_HELP.photoMediaId}
@@ -507,7 +633,7 @@ export function DesignerProfileForm({
             }}
           />
         </div>
-        <div className="md:col-span-2">
+        <div className="min-w-0 md:col-span-2">
           <MediaSlot
             label={DESIGNER_PROFILE_LABELS.signatureMediaId}
             help={DESIGNER_PROFILE_HELP.signatureMediaId}
@@ -532,11 +658,12 @@ export function DesignerProfileForm({
           the same three lines the two slots above use, deliberately, because a second upload path
           for one column is a second thing to keep working offline.
 
-          FULL WIDTH. A PDF preview at `h-32 w-32` is a thumbnail of a page of text, which answers
-          nothing; the whole point of rendering it is that the designer can read it and see it is
-          the right document and the right version.
+          FULL WIDTH, WHICH ON THIS GRID IS `col-span-2` AND NOT `col-span-4` — the block comment at
+          the top of this group has the measurements and the reason. A PDF preview at `h-32 w-32` is
+          a thumbnail of a page of text, which answers nothing; the whole point of rendering it is
+          that the designer can read it and see it is the right document and the right version.
         */}
-        <div className="md:col-span-4">
+        <div className="min-w-0 md:col-span-2">
           <DocumentSlot
             label={DESIGNER_PROFILE_LABELS.cvMediaId}
             help={DESIGNER_PROFILE_HELP.cvMediaId}
@@ -648,6 +775,163 @@ export function DesignerProfileForm({
         }}
       />
     </>
+  );
+}
+
+/**
+ * A free-text box with a microphone under it — the designer profile's half of the control
+ * `/artisans/new` calls `DictatedTextArea`.
+ *
+ * ── WHY THIS PAGE HAD NO MICROPHONE AT ALL, AND WHAT IT IS COPYING ──────────────────────────────
+ *
+ * Dictation reached the record forms (`DictatedTextArea`, `RichTextField`) and the design-workshop
+ * stage forms (`FieldInput`'s `DictationButton`), and this screen — twenty-one columns, several of
+ * them prose, typed by somebody who is usually not at a desk — was simply never given one. The
+ * owner reported it as the page being the odd one out, and it was. `OnDeviceDictationButton` is the
+ * exact control the artisan form mounts: on-device recognition, no `MediaRecorder`, no network, no
+ * consent model to answer to, and its own sentence on a browser that cannot dictate rather than a
+ * control that silently is not there.
+ *
+ * ── WHY IT IS NOT `DictatedTextArea` ITSELF ─────────────────────────────────────────────────────
+ *
+ * That component is a `<textarea>` and nothing else, and one of the two boxes here is single-line
+ * (the address — see its call site for why the stored shape is not being changed). It also takes no
+ * `maxLength`, and every text column on this profile is bounded by the backend schema, which the
+ * `MAX` table at the top of this file mirrors precisely so a designer meets the ceiling in the box
+ * rather than as a 422 that discards the other twenty answers. So this renders the same three parts
+ * in the same order and keeps the props this form needs.
+ *
+ * ── AND IT IS NOT A `Field` ────────────────────────────────────────────────────────────────────
+ *
+ * `Field` is a `<label>`, and a `<label>` forwards a stray click to the first labelable control
+ * inside it. With the microphone under the box, clicking "Dictate" would ALSO focus the textarea —
+ * which on a phone throws the on-screen keyboard up over the readout the designer is watching. It
+ * is the same reason `DictatedTextArea` writes its own `<label htmlFor>`, and the same reason the
+ * empanelment date above this does.
+ *
+ * ── WHY TWO BOXES AND NOT TWENTY-THREE ─────────────────────────────────────────────────────────
+ *
+ * Dictation is offered where the answer is PROSE — the biography paragraph and the address — and
+ * nowhere else, which is exactly the split `/artisans/new` makes (address and notes get one; name,
+ * phone and email do not). A recogniser writes "at" for `@`, spells digits out in words and
+ * punctuates a URL, so a microphone under the e-mail, phone, pincode, website and date boxes would
+ * be a control that reliably produces a value the field then refuses. And a form whose every row
+ * carries a button is a form where the button stops being noticed.
+ */
+function DictatedField({
+  name,
+  label,
+  defaultValue,
+  maxLength,
+  rows,
+  onDirty
+}: {
+  name: string;
+  label: string;
+  defaultValue: string;
+  maxLength: number;
+  /** Omit for a single-line box. A `rows` of 1 is still a textarea, and an address is not one. */
+  rows?: number;
+  /** The form's `markDirty`. A dictated phrase is a React state write, not a typed `input` event. */
+  onDirty: () => void;
+}) {
+  const reactId = useId();
+  const boxId = `${reactId}-box`;
+  const fullId = `${reactId}-full`;
+
+  /*
+    CONTROLLED, which the rest of this form's text boxes deliberately are not.
+
+    Dictation writes into the box from OUTSIDE the keyboard, and an uncontrolled input would need a
+    ref plus a hand-dispatched `input` event to keep React and the DOM agreeing about what is in it.
+    `submit` reads `FormData` off the form element, so nothing downstream can tell the difference —
+    and the save path's note about not re-seeding the uncontrolled boxes is unaffected for the same
+    reason: the server normalises nothing here beyond a trim.
+  */
+  const [value, setValue] = useState(defaultValue);
+  const full = value.length >= maxLength;
+
+  /*
+    `onDirty` FIRES FROM THE TWO PLACES THAT CHANGE THE VALUE, never from an effect watching it. An
+    effect would fire once on mount, when the box is seeded from the stored profile, and every visit
+    to this page would then pop the unsaved-changes dialog on the way out of a record nobody touched.
+    Designers learn to click through that dialog, and then it stops protecting anything.
+
+    ── AND THE CEILING IS ENFORCED HERE, NOT ONLY BY THE `maxLength` ATTRIBUTE ────────────────────
+
+    A DOM `maxLength` bounds TYPING and PASTING and has no opinion at all about a value written into
+    React state, which is exactly what a committed phrase is. So dictation was the one path that
+    could carry the address past its column's 300 characters, and an over-long value 422s the WHOLE
+    twenty-one-key body — the designer loses twenty correct answers because they spoke one sentence
+    too many, with the refusal naming a box that looks fine on screen.
+
+    IT IS CLAMPED AND THEN SAID, never clamped quietly: a box that silently stops accepting words is
+    indistinguishable from a microphone that stopped working, which is rule 10 wearing a headset.
+  */
+  function update(next: string) {
+    setValue(next.slice(0, maxLength));
+    onDirty();
+  }
+
+  return (
+    // `min-w-0` for the reason `Field` carries it: a grid item will not shrink below its content's
+    // intrinsic width unless told to, and both of these boxes sit in a `md:col-span-2` cell.
+    <div className="grid min-w-0 gap-1">
+      <label className="field-label" htmlFor={boxId}>
+        {label}
+      </label>
+      {rows === undefined ? (
+        <input
+          id={boxId}
+          name={name}
+          type="text"
+          maxLength={maxLength}
+          value={value}
+          aria-describedby={full ? fullId : undefined}
+          className="field-input"
+          onChange={(event) => update(event.target.value)}
+        />
+      ) : (
+        <textarea
+          id={boxId}
+          name={name}
+          rows={rows}
+          maxLength={maxLength}
+          value={value}
+          aria-describedby={full ? fullId : undefined}
+          className="field-input min-h-40"
+          onChange={(event) => update(event.target.value)}
+        />
+      )}
+      {/*
+        COMMITTING APPENDS, NEVER REPLACES — the recogniser is stopped and started many times across
+        a long answer, and a commit that overwrote the box would delete everything already in it the
+        moment somebody paused for breath. The join is a single space unless the box already ends in
+        whitespace, or a paragraph dictated in five goes comes out as "…the warpis sized…". Copied
+        from `DictatedTextArea` because it is the same rule and it must not be re-derived.
+      */}
+      <OnDeviceDictationButton
+        fieldLabel={label}
+        onCommit={(phrase) => {
+          const joiner = !value || /\s$/.test(value) ? "" : " ";
+          update(`${value}${joiner}${phrase}`);
+        }}
+      />
+      {/*
+        THE CEILING, SAID ON SCREEN WHEN IT IS REACHED — see `update`. Mounted only when it is true
+        rather than swapped to `sr-only`: this is not a live region reporting the outcome of an
+        action a reader is waiting on (which is why the save's two answer boxes are), it is a
+        description of the box, so it is bound with `aria-describedby` and read when the box is
+        focused. `ink-500`, not `error-600`: nothing is wrong and nothing was lost — the value in the
+        box is exactly what will be saved.
+      */}
+      {full ? (
+        <p id={fullId} className="text-xs leading-5 text-ink-500">
+          This box is full — it holds {maxLength.toLocaleString("en-IN")} characters, which is what the
+          column stores. Anything spoken or typed beyond that is not added.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -790,15 +1074,27 @@ function DocumentSlot({
         did not produce, which is worse than no comment: it is what stops the next reader looking.
 
         It is still deliberately the SAME word the label uses — a page that calls it "CV" above the
-        box and "curriculum vitae" inside it is a page with two names for one thing. The `title`
-        below builds its own phrase from the same label and is composed here rather than interpolated
-        into somebody else's sentence, which is why the two treat the case differently.
+        box and "curriculum vitae" inside it is a page with two names for one thing.
       */}
       <DocumentPreview mediaId={mediaId} noun={label} className="h-[30rem]" />
       <MediaCaptureField
         files={files}
         onFilesChange={onFilesChange}
-        title={mediaId ? `Replace ${label.toLowerCase()}` : `Attach ${label.toLowerCase()}`}
+        /*
+          THE LABEL VERBATIM HERE TOO — `.toLowerCase()` PRINTED `<h3>Attach cv</h3>`.
+
+          It read as a sentence-cased phrase and it is not one: this slot's label is an ACRONYM, and
+          lower-casing an acronym does not make it read naturally, it makes it read as a typo. The
+          owner reported exactly this ("cv is written instead of CV"), and it was the single place on
+          the page that disagreed — five other labels say "CV" correctly, including the group heading
+          and the `DocumentPreview` line four lines above, whose comment had already worked this out
+          for the same reason and stopped one call short.
+
+          `MediaSlot`'s twin still lower-cases, and correctly: "Attach photograph" and "Attach
+          signature" are ordinary nouns. The rule is about the WORD, not about the position, which is
+          why the two components differ rather than sharing a helper that would have to guess.
+        */
+        title={mediaId ? `Replace ${label}` : `Attach ${label}`}
         description={
           help ??
           "One document. It uploads as soon as it is attached; saving the profile then links it to this column."
@@ -893,8 +1189,23 @@ type OneUpload = {
  * NAME, and a name cannot be matched back to an input file — two photographs off one handset are
  * routinely both IMG_0001.jpg. `outcomes` carries the object, so the caller can re-seed the capture
  * card with exactly the bytes that still have to go somewhere.
+ *
+ * ── `caption` AND `subject` ARE TWO STRINGS BECAUSE THEY ARE TWO JOBS ────────────────────────────
+ *
+ * `caption` is STORED, on the `MediaFile` row, and reads as a title: "Designer CV". `subject` is
+ * READ, in the middle of the sentence below: "The designer CV did not upload…". This used to be one
+ * argument lower-cased at the point of use, which is fine for "Designer photograph" and prints
+ * "the designer cv did not upload" for the acronym — the same defect, in a sentence, that the CV
+ * card's own `title` shipped as a heading. Composing the phrase at the call site is what lets each
+ * word keep the case it is supposed to have; a `.toLowerCase()` cannot know which words are names.
  */
-async function uploadOne(files: File[], userId: string, caption: string, troubles: string[]): Promise<OneUpload> {
+async function uploadOne(
+  files: File[],
+  userId: string,
+  caption: string,
+  subject: string,
+  troubles: string[]
+): Promise<OneUpload> {
   try {
     const { outcomes } = await uploadMediaBatch({
       files,
@@ -908,7 +1219,7 @@ async function uploadOne(files: File[], userId: string, caption: string, trouble
     const stranded = outcomes.filter((outcome) => outcome.failure !== null);
     if (stranded.length) {
       troubles.push(
-        `The ${caption.toLowerCase()} did not upload (${stranded
+        `The ${subject} did not upload (${stranded
           .map((outcome) => outcome.file.name)
           .join(", ")}), so the one already on file was kept and the new one is still attached below.`
       );
@@ -919,7 +1230,7 @@ async function uploadOne(files: File[], userId: string, caption: string, trouble
     };
   } catch (err) {
     troubles.push(
-      `The ${caption.toLowerCase()} did not upload (${err instanceof Error ? err.message : "the transfer failed"}), so the one already on file was kept and the new one is still attached below.`
+      `The ${subject} did not upload (${err instanceof Error ? err.message : "the transfer failed"}), so the one already on file was kept and the new one is still attached below.`
     );
     // A THROW FROM `uploadMediaBatch` MEANS NOTHING LANDED, so every file handed in is still owed a
     // retry and every one of them goes back to the caller.

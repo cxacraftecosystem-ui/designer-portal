@@ -514,17 +514,30 @@ data class DwAiLayerDecisionBody(
  *
  * ── AND THE ONE PLACE THIS PHONE IS BLINDER THAN THE BROWSER, SAID PLAINLY ───────────────────────
  *
- * **THERE IS NO PRE-FLIGHT ROUTE. `GET /design-workshops/ai-verb-allowance` DOES NOT EXIST** — the
- * string `ai-verb-allowance` does not occur anywhere under `backend/app/`; there is no route, no
- * handler and no mention. The browser calls it anyway, documents that every deployment answers 404,
- * and degrades. Dictation HAS such a route (`GET /design-workshops/dictation-allowance`) and
- * [WorkshopRepository.refreshDictationAllowance] uses it. The consequence for the verbs, which is not
- * hidden: **a handset that has learned nothing yet cannot refuse the FIRST run of a day before making
- * it.** It learns the numbers from that run's own 201, or from the 429 that refuses it, and every
- * press after that is decided here without a request. That is one round trip per designer per day,
- * not one per press, and it is bounded and self-clearing — which is the shape of failure to prefer
- * over inventing an allowance nobody was told. When the route lands, one method beside
- * `refreshDictationAllowance` is the whole client change.
+ * **THE PRE-FLIGHT ROUTE EXISTS. THIS HANDSET SIMPLY DOES NOT CALL IT.** What stood here said the
+ * opposite in capitals — that `GET /design-workshops/ai-verb-allowance` DID NOT EXIST, that the
+ * string did not occur anywhere under `backend/app/`, and that the browser's calls all answered 404.
+ * That was true when it was written and it is not true now: the route is declared in
+ * `backend/app/api/routes/design_workshops.py`, above `GET /{workshop_id}` with the other literal
+ * paths, gated on `_require_designer`, and it answers `ai_verb_cap.allowance_payload` off two
+ * primary-key reads with no provider call and nothing spent. It shipped; this paragraph did not get
+ * deleted with it, and a reader who trusted it would have gone looking for a backend lane to wait on
+ * instead of writing the twenty lines that are actually missing.
+ * True as of «2026-08-27»; re-check with
+ * «grep -rn "ai-verb-allowance" backend/app/api/routes/design_workshops.py».
+ *
+ * SO THE GAP IS ON THIS SIDE, AND IT IS STILL A REAL ONE. There is no `refreshAiVerbAllowance` beside
+ * [WorkshopRepository.refreshDictationAllowance] — nothing under `android/` sends that GET — so the
+ * consequence described below is unchanged in effect and changed in cause: **a handset that has
+ * learned nothing yet cannot refuse the FIRST run of a day before making it.** It learns the numbers
+ * from that run's own 201, or from the 429 that refuses it, and every press after that is decided
+ * here without a request. That is one round trip per designer per day, not one per press, and it is
+ * bounded and self-clearing — which is the shape of failure to prefer over inventing an allowance
+ * nobody was told, and it is why this is a gap worth closing rather than a bug to hotfix. Closing it
+ * is one method beside `refreshDictationAllowance` writing its answer into
+ * [DwAiVerbAllowanceStore]; it is deliberately NOT done in this change, because it lands in
+ * `WorkshopRepository` and `WorkshopRepositoryApi` and a handset change costs a tagged release to a
+ * fleet that may be offline for a fortnight.
  *
  * ── THE DAY BOUNDARY, AND WHY THIS FAILS OPEN WHERE CONSENT FAILS CLOSED ───────────────────────
  *

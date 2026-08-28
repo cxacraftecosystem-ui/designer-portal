@@ -2,13 +2,17 @@ package com.designprototype.workshop.ui.designworkshop
 
 import android.content.Context
 import android.net.Uri
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.CardDefaults
@@ -39,19 +44,31 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import com.designprototype.workshop.data.DwStageProvenanceDto
 import com.designprototype.workshop.data.DwFieldStampDto
 import com.designprototype.workshop.data.AppScope
@@ -94,6 +111,7 @@ import com.designprototype.workshop.data.liveFields
 import com.designprototype.workshop.data.rowTitleField
 import com.designprototype.workshop.data.rowsFor
 import com.designprototype.workshop.data.singleton
+import com.designprototype.workshop.ui.LocalAppPreferences
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
@@ -1153,8 +1171,26 @@ fun StageScreen(
     }
 
     // ── Media ────────────────────────────────────────────────────────────────────────────────────
-    val media = remember(workshopId, stageKey, mediaIndex) {
+
+    /**
+     * The screening desk every media field on this stage shares.
+     *
+     * REMEMBERED HERE AND NOT INSIDE THE BRIDGE, even though it is handed over on the bridge. The
+     * bridge is `remember(workshopId, stageKey, mediaIndex)`, so it is rebuilt every time an
+     * attachment lands — a store constructed in there would be thrown away and replaced mid-check,
+     * taking the in-flight screening and the refusal notice with it on the very import that caused
+     * it. This one is keyed on the stage alone and lives exactly as long as the screen does.
+     *
+     * It is given the STAGE's scope for the reason DwPhotoScreening.kt's header sets out: a
+     * collection row collapsing must not cancel the measurement of photographs a designer has
+     * already chosen.
+     */
+    val screeningStore = remember(workshopId, stageKey) { DwScreeningStore(scope) }
+
+    val media = remember(workshopId, stageKey, mediaIndex, screeningStore) {
         DwMediaBridge(
+            workshopId = workshopId,
+            screening = screeningStore,
             resolve = { id ->
                 mediaIndex[id]?.let { descriptor ->
                     DwMediaItem(
@@ -1936,14 +1972,76 @@ private fun DisclosureHeader(label: String, expanded: Boolean, onToggle: () -> U
 /**
  * One COLLECTION entity as an add / edit / reorder / delete list.
  *
- * Reorder is two arrow buttons rather than a drag handle, and that is a dependency decision as much
- * as an ergonomic one: a reorderable LazyColumn means either a third-party library or a hand-rolled
- * drag detector, and this module has neither. Arrows also work with TalkBack, which a drag gesture
- * does not without a custom accessibility action nobody would remember to add.
- *
  * ORDER IS THE ORDINAL. The list's position is what is sent as `ordinal`, so what the designer sees
  * on the phone is the order the rows print in the report — a costing table whose lines reshuffle
  * between the screen and the .docx is a table an officer will send back.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * REORDERING: TWO ARROWS AND A GRIP, AND ONE COMMIT BEHIND BOTH — AND WHY THIS USED TO SAY OTHERWISE
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * This comment used to read: *"Reorder is two arrow buttons rather than a drag handle, and that is a
+ * dependency decision as much as an ergonomic one: a reorderable LazyColumn means either a
+ * third-party library or a hand-rolled drag detector, and this module has neither."*
+ *
+ * **Every clause of that was out of date by the time it was read, and it is recorded here rather than
+ * quietly deleted because it is the shape of stale premise that keeps a gap open for months.** It is
+ * wrong three times over:
+ *
+ *  * *"a reorderable LazyColumn"* — this list is not a LazyColumn and never was. It is a plain
+ *    `Column` inside the host's scrolling column (a lazy list measured inside a parent that scrolls
+ *    the same axis is measured with an infinite height budget and throws at layout), so the library
+ *    that the sentence weighs up was never the thing standing in the way.
+ *  * *"this module has neither"* — as of 2026-08-27 it has the second one. `DwRankableList.kt`, in
+ *    THIS package, IS a hand-rolled drag detector over `detectDragGestures`, and `DwMarkHandle` in
+ *    `DwPhotoMeasureField.kt` is a second one. Re-check with
+ *    `grep -rln "detectDragGestures" android/app/src/main/java`, which should name those two files
+ *    and this one.
+ *  * *"Arrows also work with TalkBack, which a drag gesture does not"* — true of the gesture, and not
+ *    an argument for having only the gesture's alternative. The answer both clients settled on is to
+ *    keep the arrows as the primary, always-enabled, assistive path and add the grip beside them, so
+ *    a designer who reaches for the affordance that LOOKS like reordering finds one.
+ *
+ * The grip is therefore here now, and the web's `components/designworkshop/EntityForm.tsx` — the
+ * same collection form, one client over — carries a paragraph headed "ANDROID DELIBERATELY HAS NO
+ * GRIP" that quotes the sentence above. That paragraph is now stale in the same way this one was;
+ * see the followup filed with this change.
+ *
+ * ── THE FIVE RULES, AND WHERE THEY CAME FROM ──────────────────────────────────────────────────────
+ *
+ * The gesture obeys the same five rules as [DwRankableList] and as the web's
+ * `components/hooks/useDragReorder.ts`, and each of them is a defect already paid for once. Read
+ * `DwRankableList.kt`'s header for the full argument; in short:
+ *
+ *  1. the row geometry is snapshotted ONCE at drag start, and the rows move by a draw-time
+ *     `graphicsLayer` translation so nothing is re-measured under the thumb;
+ *  2. the ARRANGEMENT is snapshotted with it, and a gesture whose list changed underneath it is
+ *     ABANDONED and said to have been abandoned, never guessed at — a reorder carries a designer's
+ *     name into the report and must not be stamped against rows they were not looking at;
+ *  3. nothing is committed until the pointer is released, and a cancelled drag commits nothing;
+ *  4. every move is announced in words, through a live region present from the first composition —
+ *     and the arrows announce through the SAME sentence, so the two controls cannot drift;
+ *  5. a drag cannot outlive its list. [key] binds each row's whole subtree — its detector included —
+ *     to the ROW rather than to the slot, which is what stops a reorder tearing down a live
+ *     `pointerInput` (a cancelled detector coroutine runs neither `onDragEnd` nor `onDragCancel`,
+ *     which would leave a lifted card on screen with nothing moving it).
+ *
+ * ── AND THE TWO CONTROLS WRITE ONE MOVE ───────────────────────────────────────────────────────────
+ *
+ * Both go through `commitMove` → [dwMovedTo], which has the semantics of `dwMoveTo` to the clamp —
+ * pinned by `DwCollectionDragTest`. An arrow that swapped while a drag moved would mean the two
+ * disagreed about what "put this third" means, which is precisely the divergence the web's
+ * `EntityForm` had to correct on itself in the other direction.
+ *
+ * ── WHAT IS **NOT** REUSED, AND WHY ───────────────────────────────────────────────────────────────
+ *
+ * [DwRankableList] is not called here even though it is in the same package and already does all of
+ * this, because it renders a fixed leading RAIL — a position badge, both arrows and the grip stacked
+ * vertically, ~162dp of it. That is right for the review cards it was built for, which are hundreds
+ * of dp tall. A COLLAPSED collection row is one header line of about 68dp, and nine of them is the
+ * ordinary way this list is read, so the rail would multiply the scroll length of every costing
+ * table by about two and a half and print the row number twice. The drag ARITHMETIC is what wants
+ * sharing, and it is `private` to `DwRankableList.kt`; see the followup filed with this change.
  */
 @Composable
 private fun CollectionSection(
@@ -1988,7 +2086,84 @@ private fun CollectionSection(
     }
     val titleField = remember(entity) { entity.rowTitleField }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    /* ──────────────────────────────────────────────────────────────────────────────────────────────
+       THE DRAG, ITS STATE AND ITS ANNOUNCEMENT. All of it belongs to the LIST and not to a row: a
+       row cannot know where the thumb has got to relative to its neighbours, and only the list can
+       hold the arrangement a gesture was measured against.
+       ────────────────────────────────────────────────────────────────────────────────────────────── */
+
+    val reduceMotion = LocalAppPreferences.current.reducedMotion
+    val gapPx = with(LocalDensity.current) { COLLECTION_ROW_GAP.toPx() }
+
+    /*
+      EVERY ROW'S MEASURED HEIGHT, KEYED BY ID AND NOT BY POSITION. Keyed by position it would be
+      wrong for exactly one frame after every reorder — the frame in which the cards have swapped and
+      the heights have not — and this list is the worst possible place for that: one row is usually
+      EXPANDED and hundreds of dp tall while the rest are collapsed header strips, so a stale height
+      is not a rounding error, it is the wrong card by four positions.
+
+      Ids of deleted rows linger in here. That is deliberate and costs a Float each: the map is only
+      ever read for ids that are in the current snapshot, and clearing it per row would need a
+      per-row `DisposableEffect` that runs during the very reorder the heights are needed for.
+    */
+    val heights = remember { mutableStateMapOf<String, Float>() }
+    var drag by remember { mutableStateOf<DwCollectionDrag?>(null) }
+    var announcement by remember(entity.key) { mutableStateOf("") }
+
+    /*
+      READ THROUGH `rememberUpdatedState` SO THE GESTURE NEVER SEES A STALE LIST. The detector below
+      is keyed on the row id and on whether the list can be reordered at all — deliberately NOT on
+      `rows`, which changes on every keystroke into any row of this collection and would tear the
+      detector down mid-gesture (rule 5). These hold the current values for a lambda that outlives
+      the composition it was written in.
+    */
+    val currentRows by rememberUpdatedState(rows)
+    val currentChange by rememberUpdatedState(onRowsChange)
+
+    /**
+     * A row's title, looked up BY ID rather than by an index the caller happened to hold.
+     *
+     * The web says why in as many words at the same place: an announcement is composed around a
+     * commit, when the list to hand still describes the OLD arrangement, and an index would name the
+     * row this one swapped with — announcing the wrong title for the move a designer just made.
+     */
+    fun labelFor(rowId: String): String {
+        val index = currentRows.indexOfFirst { it.rowId == rowId }
+        val row = currentRows.getOrNull(index) ?: return entity.title
+        return dwCollectionRowTitle(entity, titleField, row, index)
+    }
+
+    /**
+     * THE ONE COMMIT BOTH THE ARROWS AND THE GRIP GO THROUGH — rule 4's other half.
+     *
+     * The label is read BEFORE the write, from the arrangement the move was decided against, and the
+     * landed position AFTER it, from the arrangement that was actually written. Taking both from the
+     * same side would name one of them wrongly.
+     *
+     * THE ORDINAL IS NOT STAMPED ONTO THE ROW HERE, and that is not an omission. It is rewritten from
+     * the array order on the way out (see the stage payload's `_ordinal` handling, which strips it),
+     * so a row carrying a stale `_ordinal` after a move would be sorted straight back to where it
+     * came from on the next read and the reorder would look like it had not taken.
+     */
+    fun commitMove(rowId: String, from: Int, to: Int) {
+        val before = currentRows
+        val next = dwMovedTo(before, from, to)
+        if (next == before) return
+        val label = labelFor(rowId)
+        currentChange(next)
+        val landed = next.indexOfFirst { it.rowId == rowId }
+        if (landed >= 0) announcement = dwRowMovedSentence(label, landed, next.size)
+    }
+
+    // NOTHING TO REORDER IN A LIST OF ONE, so the grip is inert there — the same condition the two
+    // arrows are already disabled by at the ends of the list, and the same one the web disables its
+    // grip on (`disabled || rows.length < 2`).
+    val reorderable = rows.size > 1
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(COLLECTION_ROW_GAP),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         HorizontalDivider()
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
@@ -2019,70 +2194,247 @@ private fun CollectionSection(
             Text(entity.description, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
 
+        /*
+          RULE 4's HOST. THE LIVE REGION IS COMPOSED WHETHER OR NOT THERE IS ANYTHING IN IT: assistive
+          technology announces a CHANGE inside a region that already existed, so a region created in
+          the same breath as its first sentence is a region whose first sentence is never announced.
+          The same rule the web's `aria-live` paragraph follows and the same one [DwRankableList]
+          follows.
+
+          `mergeDescendants` IS WHAT MAKES IT WORK. A live region announces a change to ITS OWN
+          semantics and this node has no text of its own; merged, the child's text IS this node's
+          text, so replacing it is the change that gets announced.
+
+          AND IT IS VISIBLE, where the web's is `sr-only`. On a laptop the moved row is almost always
+          still on screen. On a phone a collection row can be most of the viewport and a drag across
+          five rows can put it out of sight entirely, so the one line is useful to everybody. It is
+          not furniture: it is empty until something happens.
+        */
+        Box(
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                liveRegion = LiveRegionMode.Polite
+            },
+        ) {
+            if (announcement.isNotEmpty()) {
+                Text(
+                    announcement,
+                    color = MaterialTheme.field.muted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+            }
+        }
+
         rows.forEachIndexed { index, row ->
-            CollectionRowCard(
-                entity = entity,
-                row = row,
-                index = index,
-                total = rows.size,
-                title = titleField
-                    ?.let { DwValues.text(row.values[it.key]) }
-                    ?.takeIf { it.isNotBlank() }
-                    ?: "${entity.title} ${index + 1}",
-                expanded = expanded == row.rowId,
-                media = media,
-                services = services,
-                focusFieldKey = focus?.takeIf { it.rowKey == row.rowId }?.fieldKey,
-                errors = errorsByRow[index].orEmpty(),
-                onToggle = { expanded = if (expanded == row.rowId) null else row.rowId },
-                onMove = { delta ->
-                    val target = index + delta
-                    if (target in rows.indices) {
-                        val reordered = rows.toMutableList()
-                        reordered.add(target, reordered.removeAt(index))
-                        onRowsChange(reordered)
-                    }
-                },
-                onDelete = {
-                    onRowsChange(rows.filterNot { it.rowId == row.rowId })
-                    if (expanded == row.rowId) expanded = null
-                },
-                onValueChange = { key, value ->
-                    onRowsChange(
-                        rows.map { existing ->
-                            if (existing.rowId == row.rowId) {
-                                existing.copy(values = existing.values.put(key, value))
-                            } else {
-                                existing
-                            }
-                        }
-                    )
-                },
-                onPatch = { patch ->
-                    // THE REASON `onPatch` EXISTS AT ALL. `rows` here is the list this composition
-                    // captured; `onRowsChange` replaces it wholesale. Two calls in the same frame
-                    // therefore both map over the SAME captured list, and the second write erases
-                    // the first. A reference hydration writes eight keys, so eight per-key calls
-                    // would land one of them — apparently at random, since which one survives
-                    // depends on iteration order. One call, one map, one write is what makes that
-                    // impossible rather than merely unlikely.
-                    onRowsChange(
-                        rows.map { existing ->
-                            if (existing.rowId == row.rowId) {
-                                existing.copy(values = existing.values.putAll(patch))
-                            } else {
-                                existing
-                            }
-                        }
-                    )
-                },
-                // THIS ROW's stamps, looked up by the entry id the server knows it by. A row the
-                // server has never seen has no entry id and no stamps — correct, since nobody but
-                // the person typing has set anything on it.
-                stamps = (row.values["_entryId"] as? JsonPrimitive)?.content
-                    ?.let { stampsByEntry[it] }
-                    .orEmpty(),
+            val rowId = row.rowId
+            val dragging = drag?.rowId == rowId
+            val rowTitle = dwCollectionRowTitle(entity, titleField, row, index)
+            /*
+              THE SHIFT IS ANIMATED FOR THE NEIGHBOURS AND NOT FOR THE CARD UNDER THE THUMB. A card
+              being dragged has to sit exactly where the finger is — an eased follow reads as lag,
+              not as polish — while the neighbours opening a gap is the one thing the animation is
+              for. 180ms is [DwRankableList]'s, which took it off the ladder's own layout tween.
+
+              ZERO UNDER REDUCED MOTION, where the row jumps straight to its place. The gap still
+              opens — that is the information — it simply does not travel.
+            */
+            val shift by animateFloatAsState(
+                targetValue = drag.dwShiftFor(index, gapPx),
+                animationSpec = if (dragging || reduceMotion) tween(0) else tween(180),
+                label = "dwCollectionRowShift",
             )
+            /*
+              ══════════════════════════════════════════════════════════════════════════════════════
+              `key(rowId)` IS LOAD-BEARING — RULE 5 — AND IT IS WHAT MAKES A DRAG SAFE HERE AT ALL.
+              ══════════════════════════════════════════════════════════════════════════════════════
+
+              This is deliberately not a `LazyColumn` (the host scrolls the same axis), so the rows
+              are an ordinary `forEachIndexed` and Compose identifies each call by its POSITION in
+              the composition. Every `remember` inside a row — the drag detector's `pointerInput`
+              among them — would therefore belong to the SLOT.
+
+              That is survivable for a list that never reorders and it is fatal for one whose whole
+              point is reordering. The detector is keyed on `rowId`, so a slot whose occupant changes
+              REBUILDS it — and a `pointerInput` coroutine cancelled that way runs NEITHER
+              `onDragEnd` NOR `onDragCancel`. A sync fold landing mid-gesture would leave `drag` set
+              with nothing left to clear it: a lifted, outlined card on screen that no finger is
+              touching and no release will put down. `key(rowId)` binds the whole subtree to the ROW,
+              so an arrangement that changes MOVES each row's detector instead of rebuilding it.
+
+              It is also what the field inputs' `resetKey` is a second line of defence for: state
+              now travels with the row rather than being re-seeded into a slot whose occupant
+              changed. DO NOT "SIMPLIFY" THIS AWAY — it reads as a redundant wrapper and it is the
+              only thing making the identity of a row the row.
+            */
+            key(rowId) {
+                CollectionRowCard(
+                    entity = entity,
+                    row = row,
+                    index = index,
+                    total = rows.size,
+                    title = rowTitle,
+                    expanded = expanded == rowId,
+                    media = media,
+                    services = services,
+                    focusFieldKey = focus?.takeIf { it.rowKey == rowId }?.fieldKey,
+                    errors = errorsByRow[index].orEmpty(),
+                    dragging = dragging,
+                    reorderable = reorderable,
+                    modifier = Modifier
+                        // The lifted card draws over its neighbours rather than under them.
+                        .zIndex(if (dragging) 1f else 0f)
+                        // Rule 1: a DRAW-time transform, so nothing in the layout actually moves and no
+                        // row is re-measured because its neighbour is opening a gap.
+                        .graphicsLayer { translationY = shift }
+                        .onSizeChanged { size ->
+                            // Rule 1's raw material. `onSizeChanged` and not `onGloballyPositioned`,
+                            // which fires on every scroll of the page and would rewrite this map
+                            // continuously for no new information.
+                            heights[rowId] = size.height.toFloat()
+                        },
+                    /*
+                      THE GESTURE ITSELF, BUILT HERE AND WORN BY THE ROW. It is bound to a DEDICATED
+                      GRIP, exactly as the web's is and as [DwRankableList]'s is, which is why it needs
+                      no long press to disambiguate: nothing else on that 48dp square does anything, so
+                      there is no tap or scroll to take the pointer from. `detectDragGesturesAfterLongPress`
+                      is the right detector when the draggable target is the ROW — this row is a whole
+                      form with text boxes in it, so making the card itself draggable would mean a thumb
+                      resting on it while reading picks it up, and would put 500ms in front of every
+                      reorder for no gain.
+
+                      AND THE GRIP MUST NOT FIRE WHILE THE STAGE IS BEING SCROLLED, which is three
+                      mechanisms and not one:
+
+                       * `detectDragGestures` waits for TOUCH SLOP before it calls `onDragStart`, and
+                         a pointer event reaches a descendant before its ancestors on the main pass —
+                         so the grip claims the gesture ahead of the host's scroll, and a tap that
+                         never travels claims nothing at all;
+                       * `change.consume()` in `onDrag` is what stops the movement ALSO being read as
+                         a page scroll — the same consume, for the same reason, that `DwMarkHandle`
+                         applies to a mark dragged across a photograph inside a pannable viewport.
+                         Without it the list slides out from under the card being dragged;
+                       * a finger going down during a fling STOPS the fling (the scroll container's
+                         own behaviour), so the drag is measured against a list that has come to
+                         rest — and if the arrangement moves anyway, rule 2 abandons the gesture.
+
+                      Note what is NOT claimed: the `to != from` guard at release is not one of these.
+                      It is the guard against a thumb that rested and jittered, and it would not save
+                      a gesture that really did travel across a moving list.
+                    */
+                    gripModifier = Modifier
+                        .semantics {
+                            /*
+                              ITS DESCRIPTION NAMES THE OTHER ROUTE. A reader who has found the grip —
+                              it is the affordance that LOOKS like reordering — must not have to go back
+                              and find two other buttons, and a handle announcing itself as draggable to
+                              somebody who cannot drag would be an instruction they cannot carry out.
+                            */
+                            contentDescription = if (reorderable) {
+                                "Reorder $rowTitle. Drag this handle, or use the move up and move " +
+                                    "down buttons beside it."
+                            } else {
+                                "Reorder $rowTitle. There is nothing to reorder while this list has " +
+                                    "one entry."
+                            }
+                        }
+                        .pointerInput(rowId, reorderable) {
+                            if (!reorderable) return@pointerInput
+                            detectDragGestures(
+                                onDragStart = {
+                                    // Rules 1 and 2 taken together and in one place: a gesture is
+                                    // measured against the list it started on, or it is not committed
+                                    // at all. A row that is not in the current arrangement starts no
+                                    // drag rather than one anchored at -1.
+                                    val snapshot = currentRows.map { it.rowId }
+                                    val from = snapshot.indexOf(rowId)
+                                    drag = if (from < 0) {
+                                        null
+                                    } else {
+                                        DwCollectionDrag(
+                                            rowId = rowId,
+                                            from = from,
+                                            to = from,
+                                            offset = 0f,
+                                            snapshot = snapshot,
+                                            heights = snapshot.map { heights[it] ?: 0f },
+                                        )
+                                    }
+                                },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    drag = drag?.dwAdvancedBy(amount.y, gapPx)
+                                },
+                                onDragEnd = {
+                                    val current = drag
+                                    drag = null
+                                    // A gesture that ended where it began is not a reorder and must not
+                                    // become one: a thumb resting on the grip while the page settles
+                                    // produces exactly this.
+                                    if (current != null && current.to != current.from) {
+                                        if (current.snapshot != currentRows.map { it.rowId }) {
+                                            // Rule 2, said out loud rather than swallowed. The
+                                            // arrangement this gesture was measured against is gone, so
+                                            // its indices address other rows now; committing them would
+                                            // move the wrong row and then stamp the result — into a
+                                            // report — with this designer's name on it.
+                                            announcement =
+                                                dwRowDragAbandonedSentence(labelFor(current.rowId))
+                                        } else {
+                                            commitMove(current.rowId, current.from, current.to)
+                                        }
+                                    }
+                                },
+                                // Rule 3. Nothing is written by a gesture that was taken away — a phone
+                                // call, the back gesture, a second finger claiming the pointer.
+                                onDragCancel = { drag = null },
+                            )
+                        },
+                    onToggle = { expanded = if (expanded == rowId) null else rowId },
+                    // THE ARROWS AND THE GRIP THROUGH ONE COMMIT. `commitMove` clamps exactly as
+                    // `dwMoveTo` does, so an arrow at the end of the list is a no-op rather than an
+                    // error and the two controls cannot mean two different things by a move.
+                    onMove = { delta -> commitMove(rowId, index, index + delta) },
+                    onDelete = {
+                        onRowsChange(rows.filterNot { it.rowId == rowId })
+                        if (expanded == rowId) expanded = null
+                    },
+                    onValueChange = { fieldKey, value ->
+                        onRowsChange(
+                            rows.map { existing ->
+                                if (existing.rowId == rowId) {
+                                    existing.copy(values = existing.values.put(fieldKey, value))
+                                } else {
+                                    existing
+                                }
+                            }
+                        )
+                    },
+                    onPatch = { patch ->
+                        // THE REASON `onPatch` EXISTS AT ALL. `rows` here is the list this composition
+                        // captured; `onRowsChange` replaces it wholesale. Two calls in the same frame
+                        // therefore both map over the SAME captured list, and the second write erases
+                        // the first. A reference hydration writes eight keys, so eight per-key calls
+                        // would land one of them — apparently at random, since which one survives
+                        // depends on iteration order. One call, one map, one write is what makes that
+                        // impossible rather than merely unlikely.
+                        onRowsChange(
+                            rows.map { existing ->
+                                if (existing.rowId == rowId) {
+                                    existing.copy(values = existing.values.putAll(patch))
+                                } else {
+                                    existing
+                                }
+                            }
+                        )
+                    },
+                    // THIS ROW's stamps, looked up by the entry id the server knows it by. A row the
+                    // server has never seen has no entry id and no stamps — correct, since nobody but
+                    // the person typing has set anything on it.
+                    stamps = (row.values["_entryId"] as? JsonPrimitive)?.content
+                        ?.let { stampsByEntry[it] }
+                        .orEmpty(),
+                )
+            }
         }
     }
 }
@@ -2101,6 +2453,24 @@ private fun CollectionRowCard(
     focusFieldKey: String? = null,
     /** The repository's per-field refusals for THIS row — see [DwStageRefusal]. */
     errors: Map<String, String> = emptyMap(),
+    /**
+     * The list's own decorations for this row: its lift, and the shift a neighbour's drag pushes it
+     * by. Passed in rather than computed here because only the LIST can see where the thumb is.
+     */
+    modifier: Modifier = Modifier,
+    /** True while THIS row is the one under the thumb. */
+    dragging: Boolean = false,
+    /** False when the list is one row long and there is nothing to reorder. */
+    reorderable: Boolean = false,
+    /**
+     * The drag detector and the grip's spoken description, built by `CollectionSection`.
+     *
+     * A MODIFIER RATHER THAN FOUR CALLBACKS. `onDragStart`/`onDrag`/`onDragEnd`/`onDragCancel`
+     * hoisted one at a time would be four more parameters on a function that already has fourteen,
+     * and — worse — the row would then own a `pointerInput` whose KEYS it cannot see. Rule 5 turns on
+     * those keys being narrow and stable, so they are chosen where the arrangement is known.
+     */
+    gripModifier: Modifier = Modifier,
     onToggle: () -> Unit,
     onMove: (Int) -> Unit,
     onDelete: () -> Unit,
@@ -2118,7 +2488,23 @@ private fun CollectionRowCard(
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                // THE LIFTED CARD IS OUTLINED WHILE IT IS HELD. Elevation alone would carry the
+                // whole signal in depth, which is exactly what a forced-colours or high-contrast
+                // reader loses — and this is an ElevatedCard on a tinted surface, where two
+                // shadows a few dp apart are already hard to tell from one.
+                if (dragging) {
+                    Modifier.border(
+                        2.dp,
+                        MaterialTheme.colorScheme.primary,
+                        RoundedCornerShape(12.dp),
+                    )
+                } else {
+                    Modifier
+                }
+            )
     ) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -2129,11 +2515,58 @@ private fun CollectionRowCard(
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f).clickable(onClick = onToggle)
                 )
+                /*
+                  THE GRIP, FIRST OF THE THREE REORDER CONTROLS — the web's own ordering in
+                  `EntityForm.tsx` (grip, up, down), so a designer moving between the two clients
+                  reaches for the same place.
+
+                  A PLAIN Box AND NOT AN IconButton, because an IconButton owns a click and a ripple
+                  and would compete with the drag detector for the same pointer — the shape
+                  `DwMarkHandle` and [DwRankableList] both settled on for the same reason.
+
+                  ITS TOUCH TARGET IS 48dp, this app's floor wherever a control was thought about,
+                  and a control that has to be found and held by a thumb while the eye is on the
+                  list is the last place to make an exception. The glyph is 18dp, matching the
+                  arrows beside it. That is a fourth 48dp control in this header, and it does cost
+                  the title width on a narrow handset; the alternative — shrinking the two arrows to
+                  make room — would take the accessible path below the floor to make room for the
+                  accelerator, which is the wrong way round.
+                */
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(COLLECTION_GRIP_TOUCH_TARGET)
+                        .then(gripModifier),
+                ) {
+                    Icon(
+                        Icons.Filled.DragHandle,
+                        // The Box carries the description; a second one here would be announced
+                        // twice.
+                        contentDescription = null,
+                        tint = if (reorderable) {
+                            MaterialTheme.field.muted
+                        } else {
+                            MaterialTheme.field.placeholder
+                        },
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
                 IconButton(onClick = { onMove(-1) }, enabled = index > 0) {
-                    Icon(Icons.Filled.ArrowUpward, contentDescription = "Move up", tint = MaterialTheme.field.muted)
+                    // NAMING THE ROW AND NOT THE DIRECTION ALONE. A TalkBack user swiping down a
+                    // list of eight rows hears "Move up" eight times otherwise, with nothing saying
+                    // what would move — the web's own aria-label, and [DwRankableList]'s.
+                    Icon(
+                        Icons.Filled.ArrowUpward,
+                        contentDescription = "Move $title up",
+                        tint = MaterialTheme.field.muted,
+                    )
                 }
                 IconButton(onClick = { onMove(1) }, enabled = index < total - 1) {
-                    Icon(Icons.Filled.ArrowDownward, contentDescription = "Move down", tint = MaterialTheme.field.muted)
+                    Icon(
+                        Icons.Filled.ArrowDownward,
+                        contentDescription = "Move $title down",
+                        tint = MaterialTheme.field.muted,
+                    )
                 }
                 IconButton(onClick = onToggle) {
                     Icon(
@@ -2176,6 +2609,214 @@ private fun CollectionRowCard(
         }
     }
 }
+
+// --------------------------------------------------------------------------------------
+// Reordering a collection's rows: the pure half of the gesture
+// --------------------------------------------------------------------------------------
+//
+// EVERYTHING A JVM TEST CAN REACH LIVES HERE, and that is the whole reason this is not written
+// inline in the composable. A unit test cannot compose a `@Composable`, so a drag whose arithmetic
+// and whose sentences were buried in `CollectionSection` would be pinned by nothing at all — and
+// what actually goes wrong in a drag-to-reorder is arithmetic ("which index is the thumb over") and
+// wording ("what did it just say I did"), never the Compose plumbing. `DwCollectionDragTest` covers
+// these; the pointer plumbing is the instrumented suite's ground.
+
+/**
+ * The gap between two rows of a collection.
+ *
+ * READ IN PIXELS BY THE DRAG ARITHMETIC, so it may not be a loose literal in the layout: the tops of
+ * the rows are derived by summing heights and this gap, and a Column spaced by one number while the
+ * gesture measured against another drifts by a gap per row — four rows down the list, a whole row.
+ */
+private val COLLECTION_ROW_GAP = 8.dp
+
+/**
+ * The grip's touch target.
+ *
+ * 48dp, the floor this app applies wherever a control was thought about (see `ISLAND_TOUCH_TARGET`
+ * and [DwRankableList]'s own grip, which is the same size for the same reason).
+ */
+private val COLLECTION_GRIP_TOUCH_TARGET = 48.dp
+
+/**
+ * Move the item at [from] to sit at index [to], clamped — the ONE definition of a move both the
+ * arrows and the grip write through.
+ *
+ * THE SEMANTICS ARE `dwMoveTo`'s, DOWN TO THE CLAMP, and `DwCollectionDragTest` pins the two against
+ * each other over every in-range and out-of-range pair rather than trusting this comment. That is
+ * the property that matters: a client where an arrow SWAPPED and a drag MOVED would mean two
+ * different things by "put this third" — identical for the ±1 an arrow asks for, and a different
+ * list entirely for a drag across five rows. The web's `EntityForm` had to correct itself in exactly
+ * that direction on 2026-08-25.
+ *
+ * Generic rather than over `CollectionRow`, because `CollectionRow` is private to this file and a
+ * rule this important should be testable without widening it.
+ *
+ * CLAMPED RATHER THAN REFUSED, so "move up" on the first row is a no-op instead of an error — the
+ * arrows are disabled at the ends anyway, and a gesture that ends past the edge of the list is an
+ * ordinary thing a thumb does.
+ *
+ * ── AND THE CLAMP IS SAFE HERE, WHICH IS NOT TRUE EVERYWHERE ─────────────────────────────────────
+ *
+ * The web keeps TWO helpers on purpose and its `EntityForm` uses the REFUSING one: a clamp turns an
+ * index from a stale measurement into a plausible-looking move rather than into nothing, which is
+ * the worst of the three outcomes. That objection does not reach this call site, and the reason is
+ * worth writing down rather than re-deriving:
+ *
+ *  * the ARROWS pass `index + delta` for a row this composition is drawing, and are disabled at the
+ *    ends of the list, so the pair is in range by construction;
+ *  * the GRIP passes indices from a snapshot — the stale case exactly — but rule 2 has already
+ *    compared that snapshot against the current arrangement and ABANDONED the gesture if they
+ *    differ. Nothing stale reaches here; a clamp downstream of that check has nothing left to hide.
+ *  * `dwAdvancedBy` chooses `to` from the rows that exist, pinned by
+ *    `DwCollectionDragTest`, so it cannot name an index the list does not have.
+ *
+ * If a third caller is ever added that has NOT verified its arrangement, do not reach for this — the
+ * gesture that could not prove its ground is the one that must do nothing and say so.
+ */
+internal fun <T> dwMovedTo(items: List<T>, from: Int, to: Int): List<T> {
+    if (from < 0 || from >= items.size) return items
+    val target = to.coerceIn(0, items.size - 1)
+    if (target == from) return items
+    val next = items.toMutableList()
+    next.add(target, next.removeAt(from))
+    return next
+}
+
+/**
+ * What a move says out loud — rule 4, in one place so the arrows and the grip cannot come to say two
+ * different things about one act.
+ *
+ * [landed] is 0-based and is PRINTED 1-based, because "position 3 of 9" is what a designer says out
+ * loud, what the report prints and what the provenance page calls "row 3".
+ *
+ * THE WORDING IS [DwRankableList]'s, to the full stop (checked 2026-08-27; re-check with
+ * `grep -rn "moved to position" android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/`).
+ *
+ * (A PATH GLOB IS NOT WRITTEN OUT ANYWHERE IN THIS COMMENT, AND MUST NOT BE. A slash followed by
+ * a star OPENS A NESTED BLOCK COMMENT in Kotlin -- it nests them, unlike C and Java -- so the
+ * single closing marker below does not close it, and every declaration to the end of the file is
+ * swallowed. The compiler then reports one `Unclosed comment` against the LAST line of the file
+ * and `Unresolved reference` for everything it ate, none of which points here.)
+ * Two lists on one handset that describe the same act in two different sentences teach a TalkBack
+ * user two vocabularies for one thing.
+ */
+internal fun dwRowMovedSentence(label: String, landed: Int, total: Int): String =
+    "$label moved to position ${landed + 1} of $total."
+
+/**
+ * What an ABANDONED gesture says out loud — rule 2's other half.
+ *
+ * SAID, NEVER SWALLOWED. The alternative is a drag that visibly lifted a row, visibly opened a gap
+ * and then quietly changed nothing, which a designer reads as "the phone is broken" and repeats. The
+ * tempting repair — re-deriving `from` by id and keeping `to` — is the same guess in a smaller coat:
+ * it keeps half a stale measurement and stamps the result, in a report, with this designer's name.
+ */
+internal fun dwRowDragAbandonedSentence(label: String): String =
+    "$label was not moved: the list changed while it was being dragged. Try again."
+
+/**
+ * One drag in flight — and, deliberately, the ARRANGEMENT IT STARTED ON.
+ *
+ * [snapshot] and [heights] are rules 1 and 2 made into fields. They are what let the release ask a
+ * question no amount of care during the gesture can answer: is the list I measured still the list in
+ * front of me? If it is not, the gesture is abandoned rather than applied to whatever now occupies
+ * index 3.
+ *
+ * NOT `rememberSaveable` ANYWHERE. This is pointer geometry, meaningless after a rotation, and
+ * restoring it is how you get a lifted card nobody is touching.
+ */
+@Immutable
+internal data class DwCollectionDrag(
+    val rowId: String,
+    val from: Int,
+    val to: Int,
+    /** How far the thumb has travelled from where it went down, in pixels. */
+    val offset: Float,
+    /** The row ids as they stood at drag start. */
+    val snapshot: List<String>,
+    /** Every row's measured height at drag start, in [snapshot]'s order. */
+    val heights: List<Float>,
+)
+
+/**
+ * Where the dragged row's centre now is, and which index that puts it at.
+ *
+ * THE TOPS ARE DERIVED FROM THE SNAPSHOTTED HEIGHTS RATHER THAN RE-MEASURED. A measured top is a
+ * moving target while the neighbours are shifting, so re-reading them would feed the neighbours'
+ * shift back into the measurement and the target index would oscillate under the thumb. A cumulative
+ * sum of the snapshotted heights plus the fixed gap is the layout as it stood when the finger went
+ * down, which is the only frame of reference in which [DwCollectionDrag.from] and
+ * [DwCollectionDrag.to] mean anything.
+ *
+ * A ROW ABOVE THE DRAGGED ONE TAKES THE TARGET WHEN THE DRAGGED CENTRE PASSES ITS CENTRE, and a row
+ * below does the same in the other direction — the web hook's comparison, clause for clause.
+ * Comparing CENTRES rather than edges is what stops the target flipping back and forth while a tall
+ * card is half-way past a short one, and this list is where that matters most: one row is usually
+ * expanded to a whole form while its neighbours are 68dp header strips.
+ */
+internal fun DwCollectionDrag.dwAdvancedBy(delta: Float, gap: Float): DwCollectionDrag {
+    val moved = offset + delta
+    val tops = ArrayList<Float>(heights.size)
+    var running = 0f
+    for (height in heights) {
+        tops.add(running)
+        running += height + gap
+    }
+    val ownHeight = heights.getOrNull(from) ?: return copy(offset = moved)
+    val ownTop = tops.getOrNull(from) ?: return copy(offset = moved)
+    val centre = ownTop + ownHeight / 2f + moved
+    var next = from
+    heights.indices.forEach { index ->
+        if (index == from) return@forEach
+        val otherCentre = tops[index] + heights[index] / 2f
+        if (index < from && centre < otherCentre) next = minOf(next, index)
+        if (index > from && centre > otherCentre) next = maxOf(next, index)
+    }
+    return copy(offset = moved, to = next)
+}
+
+/**
+ * How far the row at [index] is pushed while a drag is in flight, in pixels.
+ *
+ * The dragged row follows the thumb; every row between where it came from and where it is going
+ * moves by one dragged-row height, in the direction that opens the gap. Nothing else moves.
+ *
+ * AN EXTENSION ON THE NULLABLE STATE so the call site reads as one expression and cannot forget the
+ * at-rest case — a `shiftFor` that had to be guarded by its caller is a `shiftFor` that will one day
+ * be called unguarded, and the symptom is every row of the stage drawn 200px up.
+ */
+internal fun DwCollectionDrag?.dwShiftFor(index: Int, gap: Float): Float {
+    val drag = this ?: return 0f
+    val ownHeight = drag.heights.getOrNull(drag.from) ?: return 0f
+    // The gap travels with the row: a card sliding past its neighbour has to clear the neighbour AND
+    // the space between them, or the two overlap by a gap at every swap.
+    val step = ownHeight + gap
+    return when {
+        index == drag.from -> drag.offset
+        index > drag.from && index <= drag.to -> -step
+        index < drag.from && index >= drag.to -> step
+        else -> 0f
+    }
+}
+
+/**
+ * How a row of [entity] is titled in the list.
+ *
+ * Lifted out of the row loop so that the ANNOUNCEMENT and the CARD name the same row the same way.
+ * They used to be one expression in one place, which is fine until a second reader appears — and the
+ * second reader here is the sentence a TalkBack user hears after a move, where naming the row
+ * differently from the card would be indistinguishable from having moved a different row.
+ */
+private fun dwCollectionRowTitle(
+    entity: EntityDto,
+    titleField: FieldDto?,
+    row: CollectionRow,
+    index: Int,
+): String = titleField
+    ?.let { DwValues.text(row.values[it.key]) }
+    ?.takeIf { it.isNotBlank() }
+    ?: "${entity.title} ${index + 1}"
 
 // --------------------------------------------------------------------------------------
 // State <-> storage

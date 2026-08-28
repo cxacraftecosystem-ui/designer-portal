@@ -73,6 +73,13 @@ android/.kotlin/
 android/.idea/
 android/app/build/
 android/build/
+# The four vendored trace-engine modules, added 2026-08-27. Named one by one rather than as
+# `android/*/build/` so that a future module has to be added here deliberately — the same reason
+# `android/app/libs/` above is scoped to a directory instead of matching `*.aar` everywhere.
+android/core-imaging/build/
+android/core-vector/build/
+android/core-pipeline/build/
+android/core-export/build/
 local.properties
 
 # Local-only transcription implementation reference (do not commit)

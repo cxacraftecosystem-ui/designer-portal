@@ -289,11 +289,19 @@ async def build_record_wheres(
 ) -> dict[str, dict[str, Any]]:
     """One Prisma ``where`` per bucket, row visibility already folded in.
 
-    Row visibility is resolved ONCE per owner column rather than once per bucket. It reads the grant
-    table for anyone below professor, and the four record buckets all key off ``createdById``, so
-    resolving it bucket by bucket issued the same query five times before the caller had asked for
-    anything. The two remaining lookups are independent, so they go out together: free for a
-    professor and above, one round trip instead of two for everybody else.
+    Row visibility is resolved ONCE per owner column rather than once per bucket, and the four record
+    buckets all key off ``createdById``, so resolving it bucket by bucket restated the same predicate
+    five times before the caller had asked for anything.
+
+    IT COSTS NO ROUND TRIP AT ALL, FOR ANYBODY, and this paragraph used to say it read the grant
+    table for anyone below professor. It does not: ``records.viewable_where`` returns ``{}``
+    unconditionally — reading the repository is open to every signed-in account, and that function's
+    own docstring says so — so the gather below is two awaits of a constant and the "one round trip
+    instead of two" it used to promise was two round trips that were never issued. The gather stays
+    because ``viewable_where`` is the hook where a future read policy lands, and on the day it starts
+    querying this is already the right shape. The grant table IS read below professor, but by
+    ``owned_or_granted_where`` on the DOWNLOAD paths, which is a different function and is not on
+    this one.
     """
     record_visibility, media_visibility = await gather_reads(
         viewable_where(user, owner_field="createdById"),

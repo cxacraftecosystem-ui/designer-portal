@@ -1,4 +1,57 @@
-# Scanning a QR code on the handset: ZXing, not ML Kit — and in the end, neither, and now ZXing after all
+# Scanning a QR code on the handset: ZXing, not ML Kit — and in the end, neither, then ZXing after all, and now BOTH
+
+> ## STATUS, 2026-08-28: THE LIVE CAMERA IS ML KIT. ZXING STAYS, AND IS NO LONGER THE ONLY READER.
+>
+> This supersedes the 2026-08-22 banner below, which is kept for the reason every earlier banner in
+> this file is kept: the shape of the history is most of what makes the file useful.
+>
+> **What changed and who changed it.** The owner reported on 2026-08-27: *"QR scan on android devices
+> does not pick up the region of interest and scan while the camera is on, that was supposed to be
+> fixed as well by now"*, and *"I do not mind MLKit, use it if it guarantees the behaviour."* This
+> document's own **"The honest trade"** section had already written down that ML Kit reads a bent,
+> angled or glared live frame better than ZXing and had accepted that as a regression. The accepted
+> regression became the reported defect, so it was re-traded.
+>
+> **What ships now, per door.** Four ways a code gets in and they no longer share one decoder:
+>
+> * **Live camera** — `com.google.mlkit:barcode-scanning` (BUNDLED model), QR format only, reading
+>   the whole frame; `data/DwQrFrameReader.kt`, class `MlKitQrFrameReader`.
+> * **A photograph this app took** — ZXing, `ZxingQrImageDecoder`, walking `DW_QR_SAMPLE_LADDER`.
+>   Unchanged.
+> * **A picture the designer already had** — the same ZXing decoder. Unchanged.
+> * **Characters typed by hand** — no decoder at all. Unchanged, and still never hidden anywhere.
+>
+> **What it cost, measured.** Two real `:app:packageRelease` runs on this machine differing only by
+> this change: **77,009,672 bytes with it, 67,738,370 without — a delta of +9,271,302.** It
+> reconciles entry by entry: 8,191,160 of `libbarhopper_v3.so` for the two shipped ABIs, 880,888 of
+> `.tflite` models, 169,955 of dex after R8, and 29,299 of zip overhead. **R8 cannot shrink 96% of
+> that** — the native library and the models are STORED entries. `android/app/build.gradle.kts` has
+> the table and the two conclusions that follow from it, including the one that surprises: restricting
+> the detector to QR saves inference time, not bytes, because two of the three packaged models are
+> one-dimensional barcode models that ship regardless.
+>
+> **The unbundled variant is still disqualified, and the owner's words reinforce the reason rather
+> than weakening it.** `play-services-mlkit-barcode-scanning` downloads its model on first use, and
+> first use is a courtyard with no signal. A model that must be fetched cannot "guarantee the
+> behaviour". §*Why the small ML Kit is disqualified* below stands entirely.
+>
+> **ZXing was NOT deleted, and that is the design constraint that shaped the change.** ZXing is pure
+> Java, so `DwQrLiveFrameTest` runs the real shipping decoder on a desktop over symbols this app's own
+> `DwQrEncode` produced. ML Kit cannot run in a JVM test at all. Deleting ZXing would have traded the
+> only accuracy evidence this repository can produce for accuracy nobody here can measure. It is
+> retained as `ReferenceQrFrameReader` — the live path's fallback on a device where ML Kit cannot
+> start, said on screen when it engages — and it is still the decoder for both picture routes.
+>
+> **The region of interest is honoured by REFUSING, not by cropping.** ML Kit takes no crop parameter.
+> It is given the whole frame and a sighting whose bounding-box centre falls outside the reticle is
+> refused, with a sentence on screen saying so. Cropping was the other option and was rejected because
+> the reported defect is a FALSE NEGATIVE and cropping is what manufactures false negatives.
+>
+> **A fourth mount was added at the same time and it may have been half the complaint.**
+> `DwReferenceField.DwReferenceScanPanel` — the reference picker inside a stage — had the still
+> control only, so its one camera route handed off to the SYSTEM camera app: no reticle, no region of
+> interest, no live detection. `ui/DwQrLiveScanner.kt`'s own header had named that gap and called the
+> mount "the next wave's one-line change". It stayed that way. It is mounted now.
 
 > ## STATUS, 2026-08-22: BUILT. ZXing SHIPS, AND EVERY CODE SURFACE SCANS AND ACCEPTS A PICTURE.
 >
@@ -112,6 +165,16 @@ against the bundled option and it is accepted deliberately, because:
 - a photograph can be re-taken and re-read, so a failed live scan is not a dead end;
 - and a scanner that is 9 MB smaller and cannot fail for want of a download is worth more here than
   one that reads a bent card on the first pass.
+
+> **THIS IS THE PARAGRAPH THAT CAME BACK, 2026-08-28.** It named the regression correctly and the
+> regression was reported as a defect on 2026-08-27, by the person the trade was made on behalf of.
+> The three bullets all remain true and none of them turned out to be enough: the typed box is still
+> there, a photograph can still be retaken, and both are extra work at the moment somebody is
+> standing in a courtyard with a card in their hand. **The last bullet is the one that was wrong —
+> not in its arithmetic, but in its weighting.** Nine megabytes is a real cost and it has now been
+> paid; see the top banner and `android/app/build.gradle.kts` for the measured figures. What survived
+> the reversal intact is the *first* half of the same reasoning: the download-on-first-use variant is
+> still refused, because "cannot fail for want of a download" was never the weak clause.
 
 ## The larger optimisation this surfaced, which is NOT done
 
@@ -227,18 +290,63 @@ kept because it is the reasoning that led to the work.
 | "The typed code remains on every surface and is the guaranteed path" | `frontend/components/designworkshop/WorkshopCodeScanner.tsx`, `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/WorkshopCodesScreen.kt`, `android/app/src/main/java/com/designprototype/workshop/ui/RecordCodeLookup.kt`, and — since 2026-08-22 — `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwReferenceField.kt` (`DwReferenceScanPanel`, where a code links a record onto a stage row rather than opening it). **This list is the evidence and it has to grow with the mounts**; it was written when there were two and stayed at two through a third, which is the same rot as §1 one size down. A surface that ever hides the typed field invalidates the decision rather than merely degrading it. |
 
 **Review triggers:** ~~any barcode or QR dependency appearing in `android/app/build.gradle.kts`~~
-— *this one fired on 2026-08-16 and the document was updated rather than left to rot; it stands for
-any FURTHER change to that dependency*; **a NEW MOUNT of `DwQrScanControl`** — this one fired on
-2026-08-22 and the mount list, the "how many surfaces" phrasing and the evidence row above all had to
-move together, which is why it is written down as a trigger rather than left to be noticed; a change
-to any scanner header above; the arrival of
-CameraX or any live-preview scanning, which is the one capability deliberately not built here;
-a change to `DW_QR_SAMPLE_LADDER`, whose rungs depend on the 2-pixels-per-module floor measured in
-`DwQrDecodeTest`.
+— *this one fired on 2026-08-16, and again on 2026-08-28 when `com.google.mlkit:barcode-scanning`
+was added; the document was updated both times rather than left to rot, and it stands for any
+FURTHER change to those dependencies*; **a NEW MOUNT of `DwQrScanControl`** — fired on 2026-08-22,
+and **a new mount of `DwQrLiveScanControl`**, which fired on 2026-08-28 when the reference picker
+finally got the live scanner; ~~the arrival of CameraX or any live-preview scanning, which is the one
+capability deliberately not built here~~ — *both arrived; that clause is spent*; a change to any
+scanner header above; a change to `DW_QR_SAMPLE_LADDER`, whose rungs depend on the
+2-pixels-per-module floor measured in `DwQrDecodeTest`; **and one new one: any change to which
+reader the live camera uses, or to how the reticle is applied to it.** That last is written down
+because the two readers apply the reticle in OPPOSITE directions — ML Kit reads everything and
+refuses a sighting outside the box, ZXing is shown only the box — and somebody making them agree
+without reading `data/DwQrFrameReader.kt` would reintroduce the 2026-08-27 defect.
+
+### What the reference decoder actually stops reading at — measured on this machine, 2026-08-28
+
+Before ML Kit was added, a throwaway JVM harness pushed a real `DwQrEncode` symbol (`DPW1:G:` plus a
+25-character cuid and a check, 29 modules, level Q) through the shipping live decoder over a
+516×516 synthetic frame — the crop a 1080-wide portrait viewfinder produces from a 1280×720 analysis
+buffer — with one degradation applied at a time. **This says nothing whatsoever about ML Kit**, which
+cannot run here. It says what the reader that was in the live path could and could not do.
+
+| Degradation | Reads | Stops reading |
+|---|---|---|
+| Pixels per module, clean and flat-on | down to **2.0** | at **1.5** |
+| Box blur at 6 px per module | radius **3** | radius **4** — about ⅔ of a module |
+| Box blur at 3 px per module | radius **1** | radius **2** |
+| Perspective tilt, sharp, 6 px per module | up to **0.3** | at **0.4** |
+| Tilt with a little blur (radius 2) | up to **0.3** | at **0.4** |
+| Glare: a saturating light ramp across the symbol | up to **0.8** | never, in range |
+| Contrast squeezed about mid-grey | down to **0.3** | at **0.2** |
+
+Three things follow, and the third is the useful one.
+
+1. **Blur is what kills it.** Two-thirds of a module of defocus or hand-shake is enough, and that is
+   an ordinary hand-held frame in courtyard light. The 2-pixels-per-module floor `DwQrDecodeTest`
+   records is a *clean-image* floor and is not the binding constraint in the field.
+2. **Glare is not the problem it was assumed to be.** `HybridBinarizer`'s local thresholding handled
+   every ramp tested. The phrase "bent, angled or glared" in this file overstated one third of itself.
+3. **`TRY_HARDER` made no difference on any row.** The live path drops that hint for the frame budget
+   and `DwQrDecode.kt` describes it as the one place the two paths diverge in capability — on these
+   degradations it does not diverge at all. Nothing was being given up.
+
+**The fixture's limits, stated because the table would otherwise be over-read:** these are rendered
+pixels with a synthetic box blur and a projective warp, one degradation at a time; a real lens
+compounds them, and a real card curves. The numbers bound the decoder, not the courtyard. The harness
+was deleted rather than kept, because a test that prints and asserts nothing is noise in a suite —
+the method is written here so it can be re-run rather than re-invented.
 
 **Known unverified:** "ML Kit is genuinely better at live-frame detection" is received wisdom about
 the libraries, not a measurement made here. Nobody has run the two side by side on a bent card in
 courtyard light. ~~and with no decoder in the build there is nothing on the handset to run~~ — that
 half is now false: there IS a decoder on the handset, so the comparison has become possible for the
-first time. Nobody has run it. Nothing about the camera path has been exercised on real hardware at
-all; every claim in `DwQrDecodeTest` is about rendered pixels, and the file says so.
+first time. **AND AS OF 2026-08-28 BOTH LIBRARIES ARE IN THE APK, so the comparison needs no new
+build at all — and it is still nobody's measurement.** The premise was acted on because the owner
+reported the symptom it predicts, which is evidence of a different and weaker kind, and this file
+should say so rather than promote it. Nothing about the camera path has been exercised on real
+hardware here; every claim in `DwQrDecodeTest` and `DwQrLiveFrameTest` is about rendered pixels, and
+both files say so. **What a build CAN still check, and does:** the crop arithmetic, the row-stride
+handling, both reticle maps, the acceptance test, and a full round trip from this app's own encoder
+through the ZXing reference decoder. None of that covers ML Kit, and no test pretends it does.

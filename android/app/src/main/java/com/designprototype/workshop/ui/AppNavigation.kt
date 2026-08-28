@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DesignServices
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.Inventory2
@@ -139,7 +140,10 @@ import com.designprototype.workshop.data.UserDto
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The six-tier ladder and the capability predicates the nav gates on.
+ * The EIGHT-tier ladder and the capability predicates the nav gates on.
+ *
+ * It said "six-tier" through the whole life of DESIGNER and until INSPECTOR landed on 2026-08-27.
+ * Nothing counts a comment; `backend/tests/test_role_ladder_parity.py` counts the two maps below.
  *
  * Wrapped in an object rather than left as top-level functions on purpose: `MainActivity.kt` already
  * declares file-private `roleRank`/`isAdminUser`/`canCreateRecords` helpers, and top-level twins here
@@ -164,6 +168,23 @@ object FieldPermissions {
      * open a screen they opened yesterday.
      */
     const val RANK_DESIGNER = 35
+
+    /**
+     * 37 — the INSPECTOR tier, added 2026-08-27. Inspects and reviews a designer's work without
+     * running workshops.
+     *
+     * THE MIDDLE OF THE FREE BAND, not the bottom of it. 36-39 were all unused; 37 leaves a gap on
+     * both sides so a later tier can be inserted either between designer and inspector or between
+     * inspector and professor without renumbering — the same reasoning that put [RANK_DESIGNER] at
+     * 35. `deps.ROLE_RANK` and `lib/permissions.ts` both say 37, and this constant exists so the
+     * phone agrees rather than approximates.
+     *
+     * WHAT IT CHANGES ON THIS SCREEN, AND WHAT IT DOES NOT. Nothing about design workshops:
+     * [canRunDesignWorkshops] is set membership and INSPECTOR is not in the set, deliberately — an
+     * inspector does not sign a report. What 37 DOES do is put an inspector above a designer in the
+     * review ladder, which is the reason the tier exists at all.
+     */
+    const val RANK_INSPECTOR = 37
     const val RANK_PROFESSOR = 40
     const val RANK_ADMIN = 50
     const val RANK_MASTER_ADMIN = 60
@@ -173,6 +194,7 @@ object FieldPermissions {
         "FIELD_CONTRIBUTOR" to RANK_FIELD_CONTRIBUTOR,
         "RESEARCHER" to RANK_RESEARCHER,
         "DESIGNER" to RANK_DESIGNER,
+        "INSPECTOR" to RANK_INSPECTOR,
         "PROFESSOR" to RANK_PROFESSOR,
         "ADMIN" to RANK_ADMIN,
         "MASTER_ADMIN" to RANK_MASTER_ADMIN
@@ -192,6 +214,9 @@ object FieldPermissions {
         "FIELD_CONTRIBUTOR" to "Field Contributor",
         "RESEARCHER" to "Researcher",
         "DESIGNER" to "Designer",
+        // Both words: the stored token is INSPECTOR because `canReview` already owns "review" in
+        // its relational sense. Byte for byte the server's ROLE_LABELS["INSPECTOR"].
+        "INSPECTOR" to "Inspector / Reviewer",
         "PROFESSOR" to "Professor",
         "ADMIN" to "Admin",
         "MASTER_ADMIN" to "Master Admin"
@@ -252,7 +277,11 @@ object FieldPermissions {
      * their name, and being senior to a designer is not the same thing as being one.
      *
      * IT WAS WRITTEN HERE AS `rank(user.role) >= RANK_DESIGNER`, which is the same answer for six of
-     * the seven roles and the wrong one for the seventh. A professor signing in on the phone was
+     * the EIGHT roles in [RANKS] and the wrong one for TWO of them: INSPECTOR (37) and PROFESSOR
+     * (40) both clear the 35 threshold and are both outside [DESIGN_WORKSHOP_ROLES]. Counted
+     * 2026-08-27 by evaluating `rank(role) >= RANK_DESIGNER` and `role in DESIGN_WORKSHOP_ROLES`
+     * over every key of [RANKS]; it said "six of the seven" while the ladder was seven tiers and
+     * PROFESSOR was the only wrong cell. A professor signing in on the phone was
      * offered "Questionnaires" and "My designer profile" in the drawer, and both 403 the instant they
      * open; the profile screen went further and enabled the EDIT form, so a professor could fill in
      * the display name, designation, institution and biography a report is signed with, press save,
@@ -285,6 +314,40 @@ object FieldPermissions {
      */
     fun canCreateDesignWorkshops(user: UserDto): Boolean =
         com.designprototype.workshop.data.canCreateDesignWorkshops(user.role)
+
+    /**
+     * `assert_inspection_surface` — READ a design & prototype workshop in order to inspect and
+     * review it. **THE INSPECTOR / REVIEWER TIER, AND NOBODY ELSE — ADMINS INCLUDED.**
+     *
+     * ── THIS IS THE ONE PREDICATE IN THIS OBJECT WHOSE REFUSAL IS NOT MONOTONIC IN RANK ──────────
+     *
+     * [canRunDesignWorkshops] is already a set rather than a floor, but its set still contains both
+     * admin tiers, so every one of these predicates has so far had the property that a
+     * MASTER_ADMIN passes whatever a lesser tier passes. This one breaks that outright: a
+     * MASTER_ADMIN at rank 60 is REFUSED where an INSPECTOR at 37 is admitted, and the server does it
+     * by name. `INSPECTION_ROLES = frozenset({"INSPECTOR"})`, and `assert_inspection_surface`'s own
+     * docstring argues why admitting an admin would be worse than refusing them: scoped by THEIR OWN
+     * inspection rows an admin sees an empty page and reads it as a broken feature, and scoped by
+     * "everything, because they are an admin" this surface silently becomes a second full read of
+     * every workshop in the repository — a second place to look when somebody has access they should
+     * not.
+     *
+     * So reading the ladder for this row gives the wrong answer every time, and `rank(user.role) >=
+     * RANK_INSPECTOR` would be wrong for THREE of the eight tiers in [RANKS] — PROFESSOR, ADMIN and
+     * MASTER_ADMIN all clear 37 and are all refused. Getting it wrong that way would offer the menu
+     * entry to every admin in the repository and land all of them on a 403; the web hit the same
+     * fork and made the same call, and `docs/PERMISSIONS.md` §5 says so explicitly because §2's
+     * ladder gives the wrong answer for this row.
+     *
+     * WHAT AN ADMIN GETS INSTEAD is the screen that appoints inspectors, which hangs off a workshop's
+     * stage index — and the refusal an inspector-less account meets names it.
+     *
+     * The rule itself lives in the DATA layer, matching [canCreateDesignWorkshops], because the
+     * inspection screens have to ask it from a place that must not import a UI type. This is the
+     * typed front door for the nav, and it adds nothing.
+     */
+    fun canInspectDesignWorkshops(user: UserDto): Boolean =
+        com.designprototype.workshop.data.canInspectDesignWorkshops(user.role)
 
     /**
      * `can_manage_designer_roster` — add, suspend and restore designers on the roster that gates
@@ -443,6 +506,32 @@ enum class NavDestination {
      */
     DESIGN_REVIEW,
     /**
+     * WORKSHOPS TO INSPECT — the Inspector / Reviewer tier's whole surface on this handset.
+     *
+     * ── WHY IT IS ITS OWN DESTINATION AND NOT A MODE OF [DESIGN_WORKSHOPS] ───────────────────────
+     *
+     * A permission fact, and a sharper one than the fact that separated [DESIGN_REVIEW]. That row's
+     * argument is that `load_workshop_or_404` turns a POOL reviewer away, so the round needed a
+     * second, narrow door. Here the account cannot pass ANY door in the `/design-workshops` family:
+     * INSPECTOR is not in `DESIGN_WORKSHOP_ROLES`, which is a frozenset and not a rank floor, so
+     * every route in that family refuses an inspector exactly as it refuses a professor. Their
+     * access comes ONLY from a row in the fifth scope, `DesignWorkshopInspector`, served on its own
+     * prefix. Folding this into the designer's list would mean widening a loader that also carries
+     * all 22 stage WRITES — which is precisely the "fix" the server's own module is built to prevent.
+     *
+     * ── AND IT IS OFFERED TO A SET OF ONE, WHICH IS WHY THE GATE IS NOT A RANK ───────────────────
+     *
+     * [FieldPermissions.canInspectDesignWorkshops] — INSPECTOR alone. An ADMIN and a MASTER_ADMIN
+     * are REFUSED this surface by name, which makes this the only row in [FIELD_NAV_ITEMS] a master
+     * admin cannot reach. Read the predicate's own note before touching it.
+     *
+     * BROWSE, matching the web's group for the same row: what an inspector opens this for is finding
+     * and reading work that already exists. Nothing on the far side of it records anything.
+     *
+     * LABEL IS THE WEB'S, VERBATIM: "Workshops to inspect".
+     */
+    DESIGN_WORKSHOP_INSPECTIONS,
+    /**
      * The questionnaires a designer AUTHORED THEMSELVES — `/api/questionnaires`, plural.
      *
      * Its own destination and not a mode of [TAKE_INTERVIEW], for the same reason [DESIGN_WORKSHOPS]
@@ -582,6 +671,24 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // for is finding the sketch work they or a colleague already did, and the recording of a new one
     // happens inside the stage this hands over to.
     NavEntry(NavDestination.SKETCHES_AND_PROTOTYPES, "Sketches & prototypes", Icons.Filled.Brush, NavGroup.BROWSE, FieldPermissions::canRunDesignWorkshops, "can_run_design_workshops (load_workshop_or_404 on the chosen workshop; get_current_user + visible_to_clause on the picker's list)"),
+    // WORKSHOPS TO INSPECT — the fifth scope, and THE ONE ROW IN THIS LIST A MASTER ADMIN CANNOT
+    // REACH. `assert_inspection_surface` is set membership on {INSPECTOR} and 403s an ADMIN and a
+    // MASTER_ADMIN by name, so the predicate is deliberately NOT a rank floor: `>= RANK_INSPECTOR`
+    // would be the wrong answer for THREE of the eight tiers (professor, admin, master admin all
+    // clear 37 and are all refused) and would put this entry in every admin's menu in front of a
+    // 403. What an admin gets instead is the appointment screen off a workshop's stage index.
+    //
+    // `Icons.Filled.FindInPage` appears nowhere else in this list, so the one-glyph-per-meaning rule
+    // holds: Visibility belongs to Review, Star to Design review, Brush to Craft and to Sketches.
+    //
+    // NOT `adminSurface`. That flag hides admin chrome from an admin browsing as an ordinary user,
+    // and there is no admin here to hide it from — the predicate has already refused them.
+    //
+    // LABEL IS THE WEB'S, VERBATIM. The web wrote these strings first because there was no handset
+    // surface to copy from when it shipped, which inverts §1 of the frontend contract for this one
+    // wave; the words are the web's and this row is where the two are pinned together, exactly as
+    // the Sketches & prototypes row above records the same trade in the other direction.
+    NavEntry(NavDestination.DESIGN_WORKSHOP_INSPECTIONS, "Workshops to inspect", Icons.Filled.FindInPage, NavGroup.BROWSE, FieldPermissions::canInspectDesignWorkshops, "assert_inspection_surface (INSPECTION_ROLES = {INSPECTOR}; GET /design-workshop-inspections and /{id})"),
     // `can_run_design_workshops` and NOT `canCreateRecords`, unlike the row above it: every route
     // under /api/questionnaires runs `_require_designer` first, READS included. Gating this on the
     // looser predicate would put the entry in a researcher's menu and answer them with a 403 on the

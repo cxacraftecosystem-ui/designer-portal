@@ -55,6 +55,7 @@ class WorkshopViewerAdminGateTest {
         "FIELD_CONTRIBUTOR",
         "RESEARCHER",
         "DESIGNER",
+        "INSPECTOR",
         "PROFESSOR",
         "ADMIN",
         "MASTER_ADMIN",

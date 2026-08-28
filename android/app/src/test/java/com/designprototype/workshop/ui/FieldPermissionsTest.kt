@@ -11,10 +11,14 @@ import org.junit.Test
  *
  * WHY THIS FILE EXISTS. [FieldPermissions.canRunDesignWorkshops] is the ONE rule in `deps.py` that is
  * not a rank threshold — it is the set {DESIGNER, ADMIN, MASTER_ADMIN}, so a PROFESSOR is outside it
- * despite outranking a designer. Written on the phone as `rank(role) >= RANK_DESIGNER` it gave the
- * same answer for six of the seven roles, which is precisely why nobody caught it by reading: the
- * ladder and the set differ in exactly one cell of a seven-row table. A test that walks every role is
- * the only form of verification a non-monotonic rule admits.
+ * despite outranking a designer. Written on the phone as `rank(role) >= RANK_DESIGNER` it gives the
+ * same answer for six of the eight roles in [everyRole], which is precisely why nobody caught it by
+ * reading. Counted by evaluating both spellings over [everyRole]: the six that AGREE are
+ * CROWDSOURCE_VOLUNTEER, FIELD_CONTRIBUTOR, RESEARCHER (both say no), DESIGNER, ADMIN, MASTER_ADMIN
+ * (both say yes). When the ladder was seven tiers the two differed in exactly ONE cell, PROFESSOR,
+ * which is what made it invisible; INSPECTOR at rank 37 (added 2026-08-27) made it TWO, because
+ * 37 >= 35 admits an inspector as well and an inspector does not sign a report either. A test that
+ * walks every role is the only form of verification a non-monotonic rule admits.
  *
  * Every expectation below was reproduced against the running API before it was written down:
  *
@@ -36,6 +40,7 @@ class FieldPermissionsTest {
         "FIELD_CONTRIBUTOR",
         "RESEARCHER",
         "DESIGNER",
+        "INSPECTOR",
         "PROFESSOR",
         "ADMIN",
         "MASTER_ADMIN",
@@ -86,10 +91,21 @@ class FieldPermissionsTest {
     fun `every design-workshop nav entry is gated on the design-workshop predicate`() {
         // The nav table's own contract: "When it returns false the entry is NOT RENDERED … so the
         // menu only ever offers what the API would actually allow." These three destinations are the
-        // ones whose every route runs `require_designer` on the server.
+        // ones whose EVERY route runs `require_designer` on the server. DESIGNER_PROFILE was missing
+        // from this set while the comment already said "three", so the drawer entry the header of
+        // this file reproduces a 403 against (PROFESSOR GET/PUT /api/designers/me/profile) was the
+        // one entry nothing checked. Five `FIELD_NAV_ITEMS` rows gate on `canRunDesignWorkshops`
+        // (counted 2026-08-27 with `grep -c "FieldPermissions::canRunDesignWorkshops"` over
+        // AppNavigation.kt, which answers 5 — by COUNT and not by line number, because the first
+        // draft of this comment listed five line numbers and every one of them was already four
+        // lines stale by the time the same session finished editing that file);
+        // the other two — DESIGN_REVIEW and SKETCHES_AND_PROTOTYPES — are excluded here because
+        // their own audit keys say their picker lists run `get_current_user + visible_to_clause`
+        // rather than `require_designer`, so "every route" is not true of them.
         val designWorkshopDestinations = setOf(
             NavDestination.DESIGN_WORKSHOPS,
             NavDestination.CUSTOM_QUESTIONNAIRES,
+            NavDestination.DESIGNER_PROFILE,
         )
         val offending = FIELD_NAV_ITEMS
             .filter { it.destination in designWorkshopDestinations }
@@ -102,19 +118,28 @@ class FieldPermissionsTest {
     @Test
     fun `a designer is offered every design-workshop destination`() {
         // The failure in the other direction is just as real: a predicate stricter than the backend
-        // hides a screen from the one tier the feature was built for.
+        // hides a screen from the one tier the feature was built for. Same three destinations the
+        // test above refuses to a professor — including DESIGNER_PROFILE, which is the screen the
+        // header's `DESIGNER GET /api/designers/me/profile -> 200` row was reproduced against.
         val designer = user("DESIGNER")
         val offered = FIELD_NAV_ITEMS
-            .filter { it.destination == NavDestination.DESIGN_WORKSHOPS || it.destination == NavDestination.CUSTOM_QUESTIONNAIRES }
+            .filter {
+                it.destination == NavDestination.DESIGN_WORKSHOPS ||
+                    it.destination == NavDestination.CUSTOM_QUESTIONNAIRES ||
+                    it.destination == NavDestination.DESIGNER_PROFILE
+            }
             .filter { it.can(designer) }
-        assertEquals(2, offered.size)
+        assertEquals(3, offered.size)
     }
 
     @Test
     fun `the ladder itself still matches the server for the monotonic rules`() {
         // Guards the constants the rest of the table is built on. A role missing from RANKS scores 0,
         // which is below a crowdsource volunteer, and the menu then hides every destination from it.
-        assertEquals(listOf(10, 20, 30, 35, 40, 50, 60), everyRole.map { FieldPermissions.rank(it) })
+        assertEquals(
+            listOf(10, 20, 30, 35, 37, 40, 50, 60),
+            everyRole.map { FieldPermissions.rank(it) }
+        )
         assertEquals(0, FieldPermissions.rank("SOMETHING_NEW"))
 
         assertFalse(FieldPermissions.canCreateRecords(user("FIELD_CONTRIBUTOR")))

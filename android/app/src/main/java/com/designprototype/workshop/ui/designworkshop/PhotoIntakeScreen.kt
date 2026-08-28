@@ -50,7 +50,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.designprototype.workshop.data.DwImageDecode
 import com.designprototype.workshop.data.DwIntakePhoto
+import com.designprototype.workshop.data.DwPhotoGate
 import com.designprototype.workshop.data.DwPhotoIntake
 import com.designprototype.workshop.data.DwPhotoIntakeRow
 import com.designprototype.workshop.data.DwStageData
@@ -927,6 +929,36 @@ private suspend fun dwConfirmIntake(
      * same branch; until it does, this client says more than its laptop does and never less.
      */
     val unplaceable = ArrayList<String>()
+
+    /**
+     * Turned away by [DwPhotoGate] — BEFORE the copy, exactly as the capture card does it.
+     *
+     * ── WHY THE BULK PATH IS GATED TOO, WHICH IS NOT AN OBVIOUS CALL ─────────────────────────
+     *
+     * This is the OTHER door into a workshop's galleries, and until it was gated it was the wider
+     * one: the capture card takes photographs one and five at a time, while this takes two hundred
+     * off a camera dump in one confirmation. Leaving it open would have made the registry's own help
+     * text — "Each photograph is checked on this device before it uploads … and one that fails is
+     * not sent" — false for the path a designer is most likely to fill a motif gallery through. A
+     * sentence on screen that is true of one route and not the other is worse than no sentence.
+     *
+     * ── WHAT IT COSTS, STATED RATHER THAN DISCOVERED ─────────────────────────────────────────
+     *
+     * A measurement is a few hundred milliseconds and sometimes approaches a second (see
+     * [DwImageDecode]'s measured budget), so a two-hundred-photograph confirmation now takes roughly
+     * twice as long as it did — it was already copying two hundred files byte by byte with an
+     * `fd.sync()` each. It runs inside the same `Dispatchers.IO` block and the same `confirming`
+     * flag, so nothing about the screen's shape changes; what changes is the wait. If that wait ever
+     * needs a counter, the loop is already sequential for the reason the reading pass above is.
+     *
+     * ── AND THE ORDER IS GATE FIRST, IMPORT SECOND ───────────────────────────────────────────
+     *
+     * A refused photograph is never copied, so it consumes no storage on a phone that is about to
+     * receive a hundred and ninety more, gets no descriptor, and reaches no field. It stays in the
+     * list below with its chosen destination intact — the same treatment as a row whose destination
+     * vanished — so a designer can retake it and confirm again.
+     */
+    val refusedByGate = ArrayList<DwPhotoGate.RefusedPhoto>()
     var reused = 0
 
     for (line in chosen) {
@@ -936,6 +968,29 @@ private suspend fun dwConfirmIntake(
             unresolved.add(line.uri)
             continue
         }
+        val screened = DwImageDecode.screen(context.contentResolver, line.uri)
+        if (screened != null) {
+            /*
+              JUDGED AGAINST NOTHING, AND THAT IS DELIBERATE HERE.
+
+              `attached` is left empty, so the duplicate arm never fires on this path. Two reasons,
+              and neither is laziness. This screen already has a BETTER duplicate rule than the gate
+              does — it reuses the descriptor of any photograph whose SHA-256 the device already
+              holds, anywhere in the workshop, rather than making a second copy — so refusing a
+              duplicate here would replace a saving with a refusal. And the gate's rule is
+              per-FIELD, while a camera dump is spread across a dozen fields at once; a photograph
+              legitimately headed for two different stages would be turned away on the second.
+              Blur and resolution are properties of the file alone and need no context at all.
+            */
+            val verdict = DwPhotoGate.judge(measurement = screened.measurement)
+            if (!verdict.admitted) {
+                refusedByGate.add(DwPhotoGate.RefusedPhoto(line.row.fileName, verdict.faults))
+                unresolved.add(line.uri)
+                continue
+            }
+        }
+        // A photograph this device cannot measure is admitted, with no finding and no refusal — the
+        // same fail-open [DwPhotoGate]'s header requires, reached here by the null check above.
         val imported = runCatching {
             WorkshopDraftStore.importMedia(
                 context = context,
@@ -1156,6 +1211,22 @@ private suspend fun dwConfirmIntake(
                 "${unreadable.size} could not be read and ${if (unreadable.size == 1) "was" else "were"} " +
                     "not attached: ${unreadable.joinToString(", ").take(200)}."
             )
+        }
+        /*
+          WHAT THE QUALITY GATE TURNED AWAY, NAMED FILE BY FILE AND REASON BY REASON.
+
+          NOT TRUNCATED at 200 characters as its neighbours are, and the difference is deliberate:
+          the sentences beside it name a list of FILES, where the head of the list is a fair sample
+          of the whole, and one of them is joined from up to two hundred names. Each line here is a
+          different photograph with a different measured reading, and cutting the list mid-sentence
+          would leave a designer holding a receipt that names four soft photographs and stops in the
+          middle of the fifth. The heading counts them all either way, so nothing is hidden by
+          keeping the lines whole.
+        */
+        if (refusedByGate.isNotEmpty()) {
+            add(DwPhotoGate.refusalHeading(refusedByGate.size))
+            addAll(DwPhotoGate.refusalLines(refusedByGate))
+            add(DwPhotoGate.scopeSentence())
         }
     }.joinToString(" ").ifBlank { null }
 

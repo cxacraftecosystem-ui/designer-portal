@@ -64,10 +64,10 @@ _SETTLED_TRANSCRIPT_STATUSES = frozenset({"COMPLETED", "EMPTY"})
 
 # QUEUED AND PROCESSING ARE NOT SETTLED, THEY ARE A CLAIM THAT A JOB EXISTS — AND THE CLAIM CAN BE
 # FALSE. This list used to be folded into the set above, and that is what stranded recordings.
-# ``MediaFile.transcriptStatus`` is written QUEUED at enqueue time (``media_queue`` :220) and is
+# ``MediaFile.transcriptStatus`` is written QUEUED at enqueue time (``media_queue`` :305) and is
 # written back ONLY by ``_apply_transcription_result``, which is reached only once a provider has
-# ANSWERED. Every exception raised before the answer — the consent re-read, ``get_object_bytes`` on
-# an object key that no longer resolves, the provider call itself, ``load_app_settings`` — lands in
+# ANSWERED. Every exception raised before the answer — the consent re-read, ``s3.download_to_temp``
+# on an object key that no longer resolves, the provider call itself, ``load_app_settings`` — lands in
 # ``_handle_job_failure``, which updates the JOB row and nothing else. So at ``attempts >=
 # maxAttempts`` the job is FAILED and the clip still reads QUEUED with no error on it, for ever:
 # every later stage save skipped it as "one is on its way", ``/media/complete`` would not re-enqueue
@@ -228,7 +228,7 @@ async def enqueue_stage_transcriptions(
     # THIS READ IS NOW THE ARBITER OF QUEUED/PROCESSING, so a failure of it can no longer be waved
     # through the way it was. The old comment here said an empty set means "ask the queue, never skip
     # the clip", on the grounds that `enqueue_media_processing_jobs` is idempotent — it is not: that
-    # function calls `db.mediaprocessingjob.create` unconditionally (media_queue.py:203-217), so an
+    # function calls `db.mediaprocessingjob.create` unconditionally (media_queue.py:291-301), so an
     # empty set genuinely does buy a second job and a second provider bill. That was harmless only
     # because a clip whose status said QUEUED had already been filtered out above. It is not harmless
     # now. So on a failed read we fall back to believing the column: an in-flight-looking clip is

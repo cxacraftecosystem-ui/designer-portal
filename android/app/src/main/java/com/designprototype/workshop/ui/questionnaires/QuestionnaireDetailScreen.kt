@@ -113,6 +113,15 @@ fun QuestionnaireDetailScreen(
     var savedWorkbookTo by remember(questionnaireId) { mutableStateOf<String?>(null) }
     var uploadReport by remember(questionnaireId) { mutableStateOf<QFormChangeReportDto?>(null) }
 
+    // ── Reuse ────────────────────────────────────────────────────────────────────────────────────
+    // A SERVER-SIDE COPY AND NOT A FILE, which is why it keeps its own busy flag rather than sharing
+    // `interchangeBusy`. That flag exists because the three controls above it all end in
+    // `persistFileToDownloads` and two of those racing truncates a file; nothing here touches disk,
+    // so borrowing it would disable a spreadsheet download during a copy for no reason at all.
+    var reusing by remember { mutableStateOf(false) }
+    var reuseBusy by remember { mutableStateOf(false) }
+    var reuseReport by remember(questionnaireId) { mutableStateOf<QFormChangeReportDto?>(null) }
+
     /**
      * Set when the questionnaire on screen came off this device's disk.
      *
@@ -347,8 +356,34 @@ fun QuestionnaireDetailScreen(
                     onError = onError,
                 )
 
+                /*
+                 * USE THIS QUESTIONNAIRE AGAIN — the client half of `POST /questionnaires/{id}/reuse`,
+                 * which shipped with no caller on any handset.
+                 *
+                 * UNGATED, on both counts, and both are argued at length in QuestionnaireReuseUi.kt:
+                 * `mayEdit` is not consulted, because reuse edits nothing and the route is not
+                 * owner-gated; and a DEACTIVATED source still offers it, because `isActive: false` is
+                 * this API's stand-in for a delete and a retired instrument is exactly the thing a
+                 * designer lifts for a new round.
+                 */
+                ReuseCard(busy = reuseBusy, onOpen = { reusing = true })
+
                 uploadReport?.let { report ->
                     UploadReportPanel(report = report, onDismiss = { uploadReport = null })
+                }
+
+                reuseReport?.let { report ->
+                    // The SAME panel, deliberately — the reuse response is the upload response's
+                    // shape key for key so that this component renders both — with the one line that
+                    // would otherwise claim a file was read replaced. `qFormProvenanceNotice` handles
+                    // the other half: `action: "reused"` has a branch of its own there, so the block
+                    // under this heading says the questions were copied rather than that answers were
+                    // imported.
+                    UploadReportPanel(
+                        report = report,
+                        onDismiss = { reuseReport = null },
+                        heading = "What the copy did",
+                    )
                 }
 
                 SittingsCard(
@@ -371,6 +406,58 @@ fun QuestionnaireDetailScreen(
             }
         }
         Spacer(Modifier.padding(bottom = 8.dp))
+    }
+
+    if (reusing && loaded != null) {
+        ReuseQuestionnaireDialog(
+            source = loaded,
+            // The SAME list the attach control above uses — `designWorkshopOptions`, which walks
+            // every page rather than the first hundred. The server 404s a workshop it has not shown
+            // this account, so offering one that is merely known to exist would produce a refusal
+            // the designer cannot act on.
+            workshops = workshops,
+            busy = reuseBusy,
+            onDismiss = { if (!reuseBusy) reusing = false },
+            onCopy = { targetWorkshopId, newTitle, newDescription, changeDescription ->
+                if (!reuseBusy) {
+                    reuseBusy = true
+                    reuseReport = null
+                    scope.launch {
+                        runCatching {
+                            repository.reuseQuestionnaire(
+                                id = questionnaireId,
+                                designWorkshopId = targetWorkshopId,
+                                title = newTitle,
+                                description = newDescription,
+                                changeDescription = changeDescription,
+                            )
+                        }
+                            .onSuccess { result ->
+                                reusing = false
+                                reuseReport = result.report
+                                // NAMED, because this screen does not move. The copy is a different
+                                // questionnaire and nothing here navigates to it, so the one thing a
+                                // designer needs is what to look for in the list — and the title is
+                                // the server's, counted up if it collided, not the one they typed.
+                                onMessage(
+                                    "Copied. The new questionnaire is " +
+                                        "“${result.questionnaire.title.ifBlank { "untitled" }}”."
+                                )
+                            }
+                            .onFailure { error ->
+                                if (error !is CancellationException) {
+                                    // The server's own sentence, kept. A 404 here means the chosen
+                                    // workshop is one this account cannot see and a 409 that it has
+                                    // been soft-deleted; both are answers a designer can act on, and
+                                    // "the copy could not be made" is neither.
+                                    onError(error.apiErrorMessage("That questionnaire could not be copied."))
+                                }
+                            }
+                        reuseBusy = false
+                    }
+                }
+            },
+        )
     }
 
     if (renaming && loaded != null) {

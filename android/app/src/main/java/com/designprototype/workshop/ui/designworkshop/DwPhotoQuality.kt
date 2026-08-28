@@ -63,6 +63,22 @@ import kotlinx.coroutines.withContext
  * loom in motion, or may be holding the only photograph that will ever exist of an object about to
  * leave the village. Blocking that is a worse failure than every problem this can detect, together.
  *
+ * ── AND SINCE 2026-08-28 SOMETHING UPSTREAM CAN ──────────────────────────────────────────────
+ *
+ * [DwPhotoGate] refuses a blurred, under-resolution or byte-identical photograph BEFORE the import
+ * copies anything, on an owner's instruction. That does not change a line of this file, but it
+ * changes what this file has left to say, so it is worth knowing which photographs still reach it:
+ *
+ *  * the NEAR-DUPLICATE the gate admits deliberately — which, in practice, is now most of what this
+ *    card reports;
+ *  * anything that never passed the gate at all: imported by an older build, attached in the
+ *    browser and synced down, or written by a panel that derives its own file (a rectified sketch,
+ *    a traced export).
+ *
+ * For every one of those the card's "keep it" advice is not a hedge, it is the only correct answer
+ * — the photograph is here, it is referenced, and there is nothing to do but decide. The paragraph
+ * above therefore still holds in full for everything this composable will ever be shown.
+ *
  * ── BIAS TOWARD SILENCE ───────────────────────────────────────────────────────────────────────
  *
  * A designer wrongly warned twice stops reading warnings, and then the real one goes past unread too.
@@ -151,6 +167,31 @@ internal fun DwPhotoQualityAdvisories(
             if (measured.containsKey(id) || unmeasurable.containsKey(id)) continue
             val item = media.resolve(id) ?: continue
             if (!item.mediaType.equals("IMAGE", ignoreCase = true)) continue
+            /*
+              THE READING TAKEN AT THE DOOR, WHERE THERE IS ONE — SO THIS DECODES NOTHING TWICE.
+
+              [DwPhotoGate] measured every photograph a designer chose today, before it was imported,
+              and [DwScreeningStore] banked the result against the id the import issued. Re-decoding
+              here would cost a few hundred milliseconds per photograph on a handset that has just
+              spent the same again — twenty-five 12 MP frames measured twice is a real wait for
+              nothing. The web's own residual names this exact double decode as a cost it cannot
+              avoid, because its capture card has no way to be handed a measurement.
+
+              THE STRONGER REASON IS AGREEMENT, NOT SPEED. Two decodes of one file on one device do
+              produce the same numbers — the arithmetic is deterministic — but only while both paths
+              stay identical, and one of them subsamples from a content stream while the other reads
+              a file. Consulting the reading the gate acted on means the sentence under the
+              photograph can never disagree with the decision that let it in.
+
+              A MISS SIMPLY MEASURES, which is what always happened: a photograph from an older
+              build, one attached in the browser, or one whose import lost its position mapping (see
+              [DwScreeningStore.bankMeasurements]) has nothing banked and takes the path below.
+            */
+            val banked = media.screening.measurementFor(id)
+            if (banked != null) {
+                measured[id] = banked
+                continue
+            }
             val measurement = withContext(Dispatchers.Default) { DwImageDecode.measure(item.absolutePath) }
             if (measurement == null) unmeasurable[id] = true else measured[id] = measurement
         }

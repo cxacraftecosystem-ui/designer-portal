@@ -655,8 +655,21 @@ async def test_a_file_name_the_artifact_does_not_have_is_a_404_and_never_a_path(
 # Who may have it
 # =================================================================================================
 
+#: The two halves of the ladder for this route, DERIVED from ``deps.py`` and not typed out.
+#:
+#: They were two hand-kept tuples, and a hand-kept tuple stops covering the ladder the moment a tier
+#: is added without anything going red. It did exactly that: INSPECTOR (rank 37) landed on
+#: 2026-08-27 and was in NEITHER list, so for as long as that stood nothing here asked whether an
+#: inspector may download the model — while ``docs/ASR-MODEL-HOSTING.md``'s "How this document is
+#: kept true" table told a reader this parametrisation covered every role on the ladder.
+#: Split on ``DESIGN_WORKSHOP_ROLES`` because that set — not a rank floor — is what the route gates
+#: on, so together they are every key in ``ROLE_RANK`` exactly once, by construction. Sorted only so
+#: the pytest ids are stable.
+_MAY_DOWNLOAD = sorted(deps.DESIGN_WORKSHOP_ROLES)
+_MAY_NOT_DOWNLOAD = sorted(set(deps.ROLE_RANK) - set(deps.DESIGN_WORKSHOP_ROLES))
 
-@pytest.mark.parametrize("role", ["DESIGNER", "ADMIN", "MASTER_ADMIN"])
+
+@pytest.mark.parametrize("role", _MAY_DOWNLOAD)
 async def test_the_accounts_that_run_design_workshops_may_download_the_model(
     client: httpx.AsyncClient, published: AsrArtifact, caller: dict[str, Any], role: str
 ):
@@ -669,19 +682,18 @@ async def test_the_accounts_that_run_design_workshops_may_download_the_model(
     assert download.content == MODEL_BYTES
 
 
-@pytest.mark.parametrize(
-    "role", ["CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "PROFESSOR"]
-)
+@pytest.mark.parametrize("role", _MAY_NOT_DOWNLOAD)
 async def test_an_account_that_cannot_run_a_workshop_is_refused_the_model(
     client: httpx.AsyncClient, published: AsrArtifact, caller: dict[str, Any], role: str
 ):
-    """PROFESSOR is in this list on purpose, and it is the interesting case.
+    """PROFESSOR and INSPECTOR are in this list on purpose, and they are the interesting cases.
 
     ``can_run_design_workshops`` is the one capability in ``deps.py`` that is a SET and not a rank
-    threshold, so a professor outranks a designer and still cannot run a workshop. The model is a
-    workshop capture aid, so it follows the same rule rather than inventing a laxer one — and the
-    refusal covers the manifest as well as the bytes, because a list of artifacts with their sizes is
-    still an answer about a capability this account does not have.
+    threshold, so a professor (40) and an inspector (37) both outrank a designer (35) and still
+    cannot run a workshop. The model is a workshop capture aid, so it follows the same rule rather
+    than inventing a laxer one — and the refusal covers the manifest as well as the bytes, because a
+    list of artifacts with their sizes is still an answer about a capability this account does not
+    have. Neither role is typed in here: both fall out of ``_MAY_NOT_DOWNLOAD`` above.
     """
     caller["user"] = _person(role)
     async with client as c:

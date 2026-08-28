@@ -437,7 +437,23 @@ data class AnalyzeMeasurementResponse(
     val available: Boolean = false,
     val status: String? = null,
     val analysis: MeasurementAnalysisDto? = null,
-    val message: String? = null
+    val message: String? = null,
+    /**
+     * The marker to send back with whatever the designer accepts — `MeasurementProvenance.marker()`,
+     * spliced in at the TOP LEVEL of this response beside [analysis] rather than inside it.
+     *
+     * A RAW [JsonObject] SO IT CAN BE ECHOED VERBATIM, which is what the server asks for: it
+     * documents this as "what a client echoes back, unchanged, when it saves the value it was given",
+     * and deliberately leaves a marker's key set open so a handset relaying a NEWER server's extra
+     * key is not refused mid-deploy. Modelling it as a data class would close that set and turn a
+     * server-side addition into a 422 on every save from a handset a fortnight behind.
+     *
+     * Null on an older deployment — `ignoreUnknownKeys` meant this key was silently dropped here
+     * until 2026-08-27 — and [dwVisionMarker] supplies the bare `VISION_MODEL` marker for that case.
+     * The sibling `provider` / `modelId` / `selfReportedConfidence` / `requiresAcceptance` keys are
+     * deliberately NOT modelled: everything this client does with them, it does through this one.
+     */
+    val methodMarker: JsonObject? = null
 )
 
 @Serializable
@@ -547,10 +563,42 @@ data class PendingReviewDto(
     val needsAdminApproval: Boolean = false
 )
 
+/**
+ * The review queue, WITH THE SERVER'S ACCOUNT OF ITS OWN ANSWER.
+ *
+ * `GET /review/pending` reads at most [cap] rows of each of six record types, newest first, so when
+ * a type overflows the rows that fall off are the OLDEST — the most overdue work is exactly what
+ * disappears. There is no page 2 to ask for: that route takes no `page`, `pageSize` or search
+ * parameter, which is why [truncated] is the whole of what a screen can say about the cut and why
+ * saying it is not optional (non-negotiable 10 of the frontend contract, ported here by
+ * [com.designprototype.workshop.ui.reviewQueueCutNotice]).
+ *
+ * [shown] is the length of [items]; [total] is how many rows the same filter actually matches
+ * across all six types, counted for real by the server for the types that overflowed. They differ
+ * exactly when [truncated] is true, so a screen that prints [shown] where it means [total] reports
+ * 200 of 340 as "200 of 200". This DTO carried only `items` and `total` until 2026-08-27 and the
+ * repository then discarded even `total`, so the handset could not say the queue had been cut.
+ *
+ * THE FLAG IS EXACT, NOT GUESSED: the server reads one row beyond the cap and trims, so a queue
+ * holding exactly [cap] of a type reports `false` honestly and `items.size == cap` is NOT the test
+ * to write instead.
+ *
+ * Every field is defaulted, so this stays wire-backward-compatible in BOTH directions: a handset a
+ * fortnight behind a server that gained these keys ignores them, and a handset carrying this DTO
+ * against a server that predates them decodes "nothing was cut" — which is what that server meant —
+ * rather than failing the call over an absent flag.
+ */
 @Serializable
 data class PendingReviewListDto(
     val items: List<PendingReviewDto> = emptyList(),
-    val total: Int = 0
+    /** How many rows arrived. Equal to `items.size`; sent so the two clients agree on the word. */
+    val shown: Int = 0,
+    /** How many rows the same filter matches across the six record types. */
+    val total: Int = 0,
+    /** The per-record-type ceiling the server applied. */
+    val cap: Int = 0,
+    /** True when at least one record type overflowed [cap] and its oldest rows were not sent. */
+    val truncated: Boolean = false
 )
 
 /** Optional reviewer notes sent with approve/reject; MANDATORY on "send for revision" (422 without). */
@@ -734,6 +782,22 @@ data class ProductCreateRequest(
     val lengthInches: Double? = null,
     val breadthInches: Double? = null,
     val heightInches: Double? = null,
+    /**
+     * HOW each of the three dimensions above was measured — see [DwMeasurementMarkers], which is
+     * the only thing that builds one, and `services/measurement_provenance.py` for the shape.
+     *
+     * NOT A COLUMN. `records.merge_field_provenance` pops it and merges it into that dimension's
+     * `{by, byName, at}` stamp, so the row says *a vision model estimated this, and R. Menon accepted
+     * it* instead of asserting R. Menon measured it. Omitting it is legal and means `UNRECORDED`; it
+     * never means `TYPED`, so a typed number correctly sends nothing.
+     *
+     * NO [EncodeDefault], UNLIKE THE STATUS/TYPE FIELDS ABOVE, AND THAT IS THE POINT. Those carry it
+     * so an edit BACK to the default still reaches the server. This one must do the OPPOSITE: with
+     * `encodeDefaults = false` on the request converter a null drops the key entirely, which is what
+     * keeps an unmarked save byte-for-byte identical to what this app sent before the key existed.
+     * Adding [EncodeDefault] here would put `"measurementMethods": null` on every product save.
+     */
+    val measurementMethods: JsonObject? = null,
     val costOfMaking: Double? = null,
     val sellingPrice: Double? = null,
     /**
@@ -782,9 +846,29 @@ data class ToolCreateRequest(
     val width: Double? = null,
     val lengthInches: Double? = null,
     val breadthInches: Double? = null,
+    /**
+     * The THIRD of the triple, 2026-08-27. `ToolDocumentation` gained `heightInches` that day;
+     * before it, an accepted height reading had nowhere to go but the unit-less `height` above,
+     * and the server's own carry recorded that a measured tool height "is recorded as nothing".
+     *
+     * `height` above is NOT this and is not being replaced: it holds whatever was typed, in a unit
+     * nothing can name. This one only ever holds inches, which is why the column says so.
+     */
+    val heightInches: Double? = null,
     val thickness: Double? = null,
     val weight: Double? = null,
     val radius: Double? = null,
+    /**
+     * HOW `lengthInches` / `breadthInches` / `heightInches` were measured. Identical in shape and
+     * rules to [ProductCreateRequest.measurementMethods] — read that one for why there is no
+     * [EncodeDefault] on it and why an absent key is the correct answer for a typed number.
+     *
+     * IT MAY NAME ONLY THOSE THREE. The five boxes directly above — [height], [width], [thickness],
+     * [weight], [radius] — are NOT markable, and the server refuses a marker naming one of them by
+     * name rather than dropping it. [height] in particular is the trap: it is a second, unit-less
+     * height that no measurement route writes into, which is exactly why `heightInches` exists.
+     */
+    val measurementMethods: JsonObject? = null,
     /**
      * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
      * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
@@ -1160,6 +1244,9 @@ data class ToolDetailDto(
     val width: String? = null,
     val lengthInches: String? = null,
     val breadthInches: String? = null,
+    // Its two siblings' twin, added with the column on 2026-08-27. `String?` for the same reason
+    // they are: a Decimal arrives as a JSON string and a Double? here fails the whole list parse.
+    val heightInches: String? = null,
     val thickness: String? = null,
     val weight: String? = null,
     val radius: String? = null,
@@ -1677,7 +1764,21 @@ data class EntryCommentBody(
 @Serializable
 data class RevisionChange(
     val old: JsonElement? = null,
-    val new: JsonElement? = null
+    val new: JsonElement? = null,
+    /**
+     * Set by `access._redacted_change` on the five columns logged without their value.
+     *
+     * A CONVENIENCE FOR A RENDERER AND NEVER A SECURITY DECISION — the server's own words. The same
+     * key can appear inside a client-written Json column, which is why `records._mask_identity_node`
+     * refuses to believe it and compares the pair against the closed set
+     * `access.REDACTED_PLACEHOLDER_PAIRS` instead. `RecordRevisionRedaction` in
+     * `ui/RecordEditHistory.kt` does the same thing on this client, for the same reason, and
+     * deliberately does not read this field.
+     *
+     * It is modelled here so the DTO is honest about the wire — `ignoreUnknownKeys` was silently
+     * dropping a key the server has always sent — and not so that anything can start trusting it.
+     */
+    val redacted: Boolean? = null
 )
 
 @Serializable
@@ -1932,6 +2033,37 @@ data class TaskWorkshopOptionDto(
  * [assignees] is already filtered to the people THIS admin may assign to (strictly below their own
  * tier; the master admin sees everyone but themselves), so the client must never widen it.
  * [artisans] narrows to the workshop when `workshopId` was passed.
+ *
+ * ── THREE OF THESE LISTS CAN BE CUT, AND THIS DECODER USED TO THROW THE FLAG AWAY ─────────────
+ *
+ * The server takes 500 assignees, 200 workshops and 500 artisans and says on the wire when it hit
+ * one of those ceilings (`TASK_OPTION_USER_LIMIT` / `_WORKSHOP_LIMIT` / `_ARTISAN_LIMIT`; re-check
+ * with `grep -n "TASK_OPTION_.*_LIMIT = " backend/app/api/routes/tasks.py`, true 2026-08-27). This class declared none of the three booleans, so kotlinx dropped them at
+ * the decoder (`ignoreUnknownKeys = true`, which is what stops an added field crashing an older
+ * handset and is therefore also what makes a missing one silent) — an honest "this list was cut"
+ * arrived and was discarded one layer above the screen that had to say so.
+ *
+ * THAT IS A RULE HERE, NOT A PREFERENCE. Non-negotiable 10 of the frontend contract: "**Truncation,
+ * caps and skipped work must be stated on screen.** A list that quietly stops is indistinguishable
+ * from a place with no records — the single most repeated bug class in this repo." (Quoted from
+ * .claude/skills/field-repo-frontend/SKILL.md on 2026-08-27; re-find it with
+ * `grep -n "must be stated on screen" .claude/skills/field-repo-frontend/SKILL.md` rather than by
+ * line number.) The same document names this exact vocabulary
+ * (`rowsTruncated`, `childrenTruncated`, `captureTruncated`, `anchorsTruncated`) among the flags a
+ * client must render, and the server chose `truncated` here to match the viewer picker and the
+ * reference picker so neither client learns a second word for it.
+ *
+ * THE FLAGS ARE EXACT, NOT GUESSED. The server reads one row more than the cap and trims, so a list
+ * of exactly 500 reports `false` honestly — a screen may state the ceiling as a fact rather than
+ * hedging it, and `assignees.size == 500` is NOT the test to write instead.
+ *
+ * A cut list is narrowed with the `search` parameter on [WorkshopRepositoryApi.taskOptions], which
+ * the server folds into the WHERE, so it reaches past the cap. Pair the notice with the box: a
+ * truncation sentence with no way to act on it is only a better-worded dead end.
+ *
+ * Defaulted to `false` so this DTO stays wire-backward-compatible in BOTH directions — a handset
+ * carrying it against a server that predates the three keys decodes them as "nothing was cut", which
+ * is what that server meant, and cannot fail the call over an absent flag.
  */
 @Serializable
 data class TaskOptionsDto(
@@ -1939,6 +2071,12 @@ data class TaskOptionsDto(
     val assignees: List<TaskUserDto> = emptyList(),
     val workshops: List<TaskWorkshopOptionDto> = emptyList(),
     val artisans: List<TaskArtisanDto> = emptyList(),
+    /** True when more than 500 accounts were assignable and the rest were not sent. */
+    val assigneesTruncated: Boolean = false,
+    /** True when more than 200 workshops matched and the rest were not sent. */
+    val workshopsTruncated: Boolean = false,
+    /** True when more than 500 artisans matched the workshop/term and the rest were not sent. */
+    val artisansTruncated: Boolean = false,
     val sections: List<TaskSectionDto> = emptyList()
 )
 
@@ -3339,6 +3477,91 @@ fun customQuestionnaireUpdateJson(
     if (changeWorkshop) put("designWorkshopId", textOrNull(designWorkshopId))
     isActive?.let { put("isActive", JsonPrimitive(it)) }
 }
+
+/**
+ * The body of `POST /questionnaires/{id}/reuse` — use this questionnaire again, as a template, at
+ * another design workshop.
+ *
+ * ── IT COPIES. THE COPY CARRIES QUESTIONS AND NO FIELDWORK ──────────────────────────────
+ *
+ * A new questionnaire, a new section tree, a new question tree — and ZERO sittings and ZERO answers.
+ * Two rows, two histories: editing the copy does not touch the original and vice versa. The
+ * alternative (one questionnaire attached to several workshops) was rejected on the server for a
+ * reason worth knowing on the handset too — a sitting has no workshop of its own and the report
+ * annexure selects purely on `designWorkshopId`, so it would have printed one workshop's named
+ * respondents inside another workshop's ministry submission.
+ *
+ * ── AN EMPTY BODY IS MEANINGFUL, AND IS THE DEFAULT ─────────────────────────────────
+ *
+ * `{}` makes an UNATTACHED copy the caller owns, visible only under `ownerId = me` — which is what
+ * a designer wants when they are lifting an instrument now and will decide which workshop it serves
+ * later. That is why every argument here is optional.
+ *
+ * [designWorkshopId] OMITTED MEANS "DO NOT ATTACH IT YET"; it does NOT inherit the source's
+ * workshop. That is the one place this departs from [customQuestionnaireUpdateJson]'s convention,
+ * and deliberately: there is no existing attachment on a row that does not exist yet, and inheriting
+ * the source's would make the default outcome "a second copy of this form at the workshop that
+ * already has one" — the least likely thing anybody pressing "Reuse at another workshop" wants.
+ * It is written only when NON-BLANK, because the server puts `min_length=1` on it: an empty string
+ * skipped the route's `if payload.designWorkshopId:` workshop check and travelled on to Prisma as a
+ * foreign key, measured as a 500 that invites a retry which cannot work.
+ *
+ * [title] omitted is filled in by the server as "X (reused)", counted up to "X (reused 2)" against
+ * the titles already at the target, so two copies at one workshop are tellable apart in a list.
+ * Blank is dropped rather than sent for the same `min_length=1` reason as above.
+ *
+ * [description] IS A TRI-STATE ON THE WIRE and the server reads it as one through `exclude_unset`,
+ * which is why this is a JsonObject and not a data class: the converter's `explicitNulls = false`
+ * would drop an explicit null and turn "start it empty" into "carry the source's description
+ * across" — a silent no-op the designer discovers weeks later. Leave [changeDescription] false to
+ * carry it across; set it true to decide the description, blank meaning empty.
+ */
+fun questionnaireReuseJson(
+    designWorkshopId: String? = null,
+    title: String? = null,
+    description: String? = null,
+    changeDescription: Boolean = false,
+): JsonObject = buildJsonObject {
+    designWorkshopId?.trim()?.takeIf { it.isNotEmpty() }?.let { put("designWorkshopId", JsonPrimitive(it)) }
+    title?.trim()?.takeIf { it.isNotEmpty() }?.let { put("title", JsonPrimitive(it)) }
+    if (changeDescription) put("description", textOrNull(description))
+}
+
+/**
+ * What `POST /questionnaires/{id}/reuse` answers: the upload result's shape, plus the id it was
+ * copied FROM.
+ *
+ * DELIBERATELY THE SAME `{questionnaire, report}` SHAPE AS AN UPLOAD, key for key, so
+ * [QFormChangeReportDto] types the report and the existing upload-report panel renders it with no
+ * second component to keep in step. `report.created` and `report.sections` count what came across;
+ * `entriesCreated`, `answersImported` and `answersSkipped` are all 0 and are STATED rather than
+ * omitted, because "no answers were copied" and "this report says nothing about answers" read
+ * identically and only the first is a fact.
+ *
+ * `report.provenance.action` is the string `reused` — a THIRD action beside the upload path's
+ * `answersImported` / `answersNotImported`, and `report.provenance.reason` is a paragraph the server
+ * wrote for a designer to read and must be shown VERBATIM.
+ *
+ * `report.problems` is present even when empty, and on this route it carries exactly one thing worth
+ * catching: an instrument too large to have been copied whole (over the parser's section/question
+ * ceilings), whose tail was left behind. The original keeps all of it. A screen that skips an empty
+ * problems list is fine; one that skips the list entirely is not.
+ *
+ * [sourceQuestionnaireId] IS ALWAYS SENT by this route and by no other — an upload has no single
+ * source to name, which is why this is a separate class rather than an alias of the upload result:
+ * a client cannot then read the id off a response where it does not exist. It is nonetheless
+ * NULLABLE WITH A DEFAULT, and that is a deliberate asymmetry with the frontend's required
+ * `string`: by the time this body is built the copy is already committed, so a decode that failed
+ * over a missing key would show the designer an error for a questionnaire that WAS created, and
+ * their retry would leave them owning "(reused 2)" beside it. A null here is a shape to report, not
+ * a reason to fail the call.
+ */
+@Serializable
+data class QFormReuseResultDto(
+    val questionnaire: CustomQuestionnaireDto,
+    val report: QFormChangeReportDto = QFormChangeReportDto(),
+    val sourceQuestionnaireId: String? = null,
+)
 
 /**
  * The body of `PATCH /questionnaires/{id}/questions/{questionId}`.

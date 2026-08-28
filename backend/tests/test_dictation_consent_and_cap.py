@@ -1926,13 +1926,20 @@ def test_the_queue_reads_consent_again_before_it_fetches_a_single_byte():
     window opens, and ``dictation_consent``'s own docstring names that artisan — agrees on the 3rd,
     changes their mind on the 9th.
 
-    What is pinned here is that the refusal happens BEFORE ``get_object_bytes``. A gate placed after it
-    would still not send, but it would pull the whole recording out of object storage first, on every
-    refused clip, every pass — and on a fleet whose recordings run past an hour that is the difference
-    between a cheap refusal and a bandwidth bill. The tripwire is the byte fetch, so this test fails
-    both if the send happens and if the ordering is reversed.
+    What is pinned here is that the refusal happens BEFORE ANY OF THE OBJECT READS. A gate placed
+    after one would still not send, but it would pull the whole recording out of object storage
+    first, on every refused clip, every pass — and on a fleet whose recordings run past an hour that
+    is the difference between a cheap refusal and a bandwidth bill. The tripwire is the fetch, so
+    this test fails both if the send happens and if the ordering is reversed.
 
-    No database and no network: the verdict, the two writers and the fetch are all replaced.
+    THREE TRIPWIRES, NOT ONE, AND THAT IS DELIBERATE. The transcription path no longer calls
+    ``get_object_bytes`` at all — it streams the object to a temp file through
+    ``s3.download_to_temp`` after sizing it with ``s3.head_object`` — so a test that armed only the
+    old name would have gone on passing while asserting nothing whatsoever. All three are armed, and
+    ``head_object`` is armed too because a HEAD is still a round trip spent on a recording nobody may
+    send.
+
+    No database and no network: the verdict, the two writers and every fetch are replaced.
     """
     import asyncio
 
@@ -1942,7 +1949,7 @@ def test_the_queue_reads_consent_again_before_it_fetches_a_single_byte():
     finalized: list = []
 
     def _never(*args, **kwargs):
-        fetched.append("bytes were read out of object storage for a refused recording")
+        fetched.append("object storage was reached for a refused recording")
         raise AssertionError(fetched[-1])
 
     async def _refuse(media, **kwargs):
@@ -1977,11 +1984,15 @@ def test_the_queue_reads_consent_again_before_it_fetches_a_single_byte():
         media_queue.dictation_consent.transcription_verdict,
         media_queue._finalize_refused_job,
         media_queue.get_object_bytes,
+        media_queue.head_object,
+        media_queue.download_to_temp,
         media_queue.transcribe_audio_bytes,
     )
     media_queue.dictation_consent.transcription_verdict = _refuse
     media_queue._finalize_refused_job = _record
     media_queue.get_object_bytes = _never
+    media_queue.head_object = _never
+    media_queue.download_to_temp = _never
     media_queue.transcribe_audio_bytes = _boom
     try:
         asyncio.run(media_queue._process_job(job, SimpleNamespace()))
@@ -1990,6 +2001,8 @@ def test_the_queue_reads_consent_again_before_it_fetches_a_single_byte():
             media_queue.dictation_consent.transcription_verdict,
             media_queue._finalize_refused_job,
             media_queue.get_object_bytes,
+            media_queue.head_object,
+            media_queue.download_to_temp,
             media_queue.transcribe_audio_bytes,
         ) = original
 
@@ -2005,6 +2018,13 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
 
     Asserted by letting the byte fetch run: if the gate had claimed this job, the fetch would never be
     reached and the recorded call list would be empty.
+
+    MEASUREMENT IS ALSO THE ONE PATH THAT STILL READS THE WHOLE OBJECT, and deliberately: a vision
+    model is sent base64 of the entire image inside a JSON body, so there is nothing to stream into.
+    What it gained is a size gate in front of that read (``media_queue.MAX_MEASUREMENT_BYTES``,
+    lowered by what the box says is free), and ``head_object`` is stubbed here to answer "storage
+    will not say" so this test stays about the consent gate and does not become a test of the
+    ceiling.
     """
     import asyncio
 
@@ -2015,6 +2035,9 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
     def _fetch(key):
         reached.append(key)
         return b"jpegbytes"
+
+    def _unsized(_key):
+        return None
 
     async def _refuse_everything(media, **kwargs):
         raise AssertionError("the consent gate was consulted for a measurement job")
@@ -2039,11 +2062,13 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
     original = (
         media_queue.dictation_consent.transcription_verdict,
         media_queue.get_object_bytes,
+        media_queue.head_object,
         media_queue.analyze_measurement_image_bytes,
         media_queue._apply_measurement_result,
     )
     media_queue.dictation_consent.transcription_verdict = _refuse_everything
     media_queue.get_object_bytes = _fetch
+    media_queue.head_object = _unsized
     media_queue.analyze_measurement_image_bytes = _analysis
     media_queue._apply_measurement_result = _applied
     try:
@@ -2052,6 +2077,7 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
         (
             media_queue.dictation_consent.transcription_verdict,
             media_queue.get_object_bytes,
+            media_queue.head_object,
             media_queue.analyze_measurement_image_bytes,
             media_queue._apply_measurement_result,
         ) = original

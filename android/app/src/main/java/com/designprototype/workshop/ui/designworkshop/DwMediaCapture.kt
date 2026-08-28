@@ -40,6 +40,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,9 +58,14 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.designprototype.workshop.data.AttachedImage
 import com.designprototype.workshop.data.DW_DEFAULT_MAX_ITEMS
 import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.DwPhotoGate
+import com.designprototype.workshop.data.DwQualityFlagLog
 import com.designprototype.workshop.data.FieldDto
+import com.designprototype.workshop.data.WorkshopDraftStore
+import com.designprototype.workshop.data.dwDeclaredMinItems
 import com.designprototype.workshop.data.dwEffectiveMaxItems
 import com.designprototype.workshop.ui.MediaViewerDialog
 import com.designprototype.workshop.ui.RecordingIndicator
@@ -69,7 +75,10 @@ import com.designprototype.workshop.ui.rememberMediaImageLoader
 // sets this card's headings in the body face — the exact failure FieldText.kt exists to prevent.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.io.File
+import java.time.Instant
 
 /**
  * The capture surface a design workshop actually needs: camera, gallery, audio recorder and file
@@ -193,6 +202,15 @@ internal fun DwMediaCaptureCard(
     type: DwFieldType,
     ids: List<String>,
     media: DwMediaBridge,
+    /**
+     * WHICH SCREENING QUEUE AND WHICH REFUSAL NOTICE BELONG TO THIS CARD — this field, in this row.
+     *
+     * Collection rows share composable slots (see [FieldRenderer]'s `resetKey`), so the field key
+     * alone would give nine prototype rows one queue between them and report row 2's refused
+     * photograph under row 7. Supplied by the caller rather than derived here, because only the
+     * caller knows which row it is drawing.
+     */
+    slotKey: String,
     enabled: Boolean,
     onIdsChange: (List<String>) -> Unit,
     onMessage: (String) -> Unit,
@@ -201,6 +219,7 @@ internal fun DwMediaCaptureCard(
     val context = LocalContext.current
     val multiple = type == DwFieldType.IMAGE_LIST
     val routes = remember(type) { routesFor(type) }
+    val logScope = rememberCoroutineScope()
 
     /**
      * THE CEILING THIS FIELD IS HELD TO, AND THE CEILING IT IS ALLOWED TO PRINT — TWO DIFFERENT
@@ -232,8 +251,31 @@ internal fun DwMediaCaptureCard(
     val declaredCap = if (multiple) field.maxItems.takeIf { it > 0 } else null
     val cap = if (multiple) dwEffectiveMaxItems(field.maxItems) else null
 
+    /**
+     * HOW MANY THE REGISTRY SAYS THIS GALLERY MUST HOLD, OR NULL — the ceiling's mirror image, and
+     * the mirroring is not symmetrical.
+     *
+     * An absent CEILING still enforces the server's default; an absent FLOOR is no floor at all, so
+     * this is the one of the pair with no fallback and nothing to enforce. It is drawn and scored
+     * and never validated: see [FieldDto.minItems] for why a floor on the write path would destroy a
+     * village day's work on this client specifically.
+     *
+     * Only meaningful for a multi-valued field. A single IMAGE holds one by construction and a floor
+     * of one would be the `required` flag wearing a different hat.
+     */
+    val declaredFloor = if (multiple) dwDeclaredMinItems(field.minItems) else null
+
     /** Why an import was cut short, when it was. Cleared by the next import that fits. */
     var capNotice by remember(field.key) { mutableStateOf<String?>(null) }
+
+    /**
+     * What the gate is doing for THIS slot, held by the stage rather than by this card.
+     *
+     * Read on every composition rather than remembered: it changes as each photograph is measured,
+     * and the count it carries is drawn in the floor readout beside a number that must never include
+     * it. See DwPhotoScreening.kt for why the state lives a level up.
+     */
+    val screening = media.screening.stateFor(slotKey)
 
     /**
      * The capture currently in flight, kept OUTSIDE the launcher callback.
@@ -250,7 +292,106 @@ internal fun DwMediaCaptureCard(
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var viewing by remember { mutableStateOf<DwMediaItem?>(null) }
 
-    /** Import a finished capture and, only once the bytes are safely copied, drop the staging file. */
+    /**
+     * What a candidate is compared against for duplication: everything this field already holds.
+     *
+     * A FUNCTION AND NOT A REMEMBERED VALUE, because it must be read at the moment the picker
+     * returns rather than at the moment this card last composed — a designer who attached three
+     * photographs and then picked a fourth would otherwise be judged against the gallery as it was
+     * before the first three.
+     *
+     * TWO HANDLES, AND THE SECOND IS OFTEN ABSENT. The SHA-256 is on the descriptor
+     * ([WorkshopDraftStore.importMedia] computed it during the copy), so an EXACT duplicate is a
+     * lookup against data this handset already holds. The perceptual hash exists only for a
+     * photograph something has MEASURED, so it comes from the screening store's bank and is null for
+     * anything imported by an older build or attached in the browser. Null is "unknown" and never
+     * "unique": a missing hash produces no claim in either direction, which is why an unmeasured
+     * neighbour can never be half of a "same shot" warning.
+     *
+     * IT NAMES WHAT IS THERE, and the name is printed in the refusal: "the identical file is already
+     * attached here as …". A designer who cannot see WHICH file they are being told they duplicated
+     * has been given a verdict instead of a reason.
+     */
+    fun attachedForGate(): List<AttachedImage> = ids.mapNotNull { id ->
+        val item = media.resolve(id) ?: return@mapNotNull null
+        if (!item.mediaType.equals("IMAGE", ignoreCase = true)) return@mapNotNull null
+        AttachedImage(
+            label = item.displayName,
+            checksum = item.sha256,
+            perceptualHash = media.screening.measurementFor(id)?.perceptualHash,
+        )
+    }
+
+    /**
+     * Import everything the gate let through, and remember what it still had to say about each.
+     *
+     * ── ONE CALL, ONE CALLBACK, ONE STATE WRITE, exactly as before the gate existed ───────────
+     *
+     * ── AND A FINDING BECOMES A ROW ONLY WHERE THE POSITIONS ARE BEYOND DOUBT ─────────────────
+     *
+     * `media.attach` reports the ids it managed to write and nothing else: one unreadable file out
+     * of five is skipped so the other four survive, and the answer is then four ids for five inputs
+     * with no mapping between them. Lining those up by index would file one photograph's quality
+     * flag against a different photograph's id — a durable wrong answer in a table an officer reads
+     * as an observation, and the same defect the web names by hand as "one identity card's digits
+     * under another card's photograph". So the mapping is taken only when the counts agree, which is
+     * every ordinary import, and a partial one records nothing. What is lost then is a convenience
+     * ([DwQualityFlagLog] is an aid and never a record); what is avoided is a false statement.
+     */
+    fun admit(admitted: List<DwAdmittedPhoto>) {
+        if (admitted.isEmpty()) return
+        media.attach(admitted.map { it.candidate.uri }, field) { newIds ->
+            if (newIds.isEmpty()) return@attach
+            onIdsChange(if (multiple) ids + newIds else listOf(newIds.first()))
+            // The reading taken at the door, banked against the id the import just issued, so the
+            // advisory card below the rows does not decode these same photographs a second time —
+            // and, more importantly, cannot come to a different answer about one of them.
+            media.screening.bankMeasurements(admitted, newIds)
+            if (admitted.size == newIds.size) {
+                val raisedAt = Instant.now().toString()
+                val findings = admitted.flatMapIndexed { index, photo ->
+                    photo.faults.map { fault ->
+                        DwPhotoGate.CapturedFinding(
+                            mediaId = newIds[index],
+                            fileName = photo.candidate.displayName,
+                            flag = fault.flag,
+                            severity = fault.severity,
+                            note = fault.message,
+                            raisedAt = raisedAt,
+                        )
+                    }
+                }
+                if (findings.isNotEmpty()) {
+                    // Off the composition's thread because it touches SharedPreferences, and on a
+                    // scope that dies with this card because losing an aid costs nothing a designer
+                    // typed — see [DwQualityFlagLog]'s header on why every failure here is silent.
+                    logScope.launch(Dispatchers.IO) {
+                        DwQualityFlagLog.record(context, media.workshopId, findings)
+                    }
+                }
+            }
+            // The import made its own durable copy under media/, so the staging file is now a
+            // duplicate of a file the draft owns. Deleting it AFTER the callback and never before is
+            // what stops a failed import from taking the only copy of a photograph with it.
+            admitted.forEach { photo -> photo.candidate.staging?.let { runCatching { it.delete() } } }
+        }
+    }
+
+    /**
+     * [admit], reached through the CURRENT composition's lambda.
+     *
+     * The screening is asynchronous and outlives this card by design, so the store calls back into
+     * whatever composition is standing when the last photograph has been measured. Captured
+     * directly, this lambda would close over the `ids` list this field held when the picker was
+     * launched, and attaching through it would write a stale id list over every attachment made
+     * since — the same lost update the `DisposableEffect` below is wrapped for, arriving by a
+     * different door.
+     */
+    val currentAdmit by rememberUpdatedState<(List<DwAdmittedPhoto>) -> Unit> { admitted ->
+        admit(admitted)
+    }
+
+    /** Judge a finished capture, and import only what the gate lets through. */
     fun adopt(uris: List<Uri>, staging: List<File> = emptyList()) {
         if (uris.isEmpty()) return
         /*
@@ -292,14 +433,98 @@ internal fun DwMediaCaptureCard(
         } else {
             capNotice = null
         }
-        media.attach(trimmed, field) { newIds ->
-            if (newIds.isEmpty()) return@attach
-            onIdsChange(if (multiple) ids + newIds else listOf(newIds.first()))
-            // The import made its own durable copy under media/, so the staging file is now a
-            // duplicate of a file the draft owns. Deleting it AFTER the callback and never before is
-            // what stops a failed import from taking the only copy of a photograph with it.
-            staging.forEach { file -> runCatching { file.delete() } }
+        /*
+         * ════════════════════════════════════════════════════════════════════════════════════════
+         * AND ONLY NOW IS THE PHOTOGRAPH JUDGED — BEFORE `media.attach` COPIES A BYTE
+         * ════════════════════════════════════════════════════════════════════════════════════════
+         *
+         * The owner's instruction of 2026-08-27 is that a shaky or poor-quality photograph must not
+         * reach the server. On this client the only moment that can be made true is here: everything
+         * downstream of `media.attach` is already in the draft, already counted by the field,
+         * already walked by the sync pass. The gate therefore sits exactly where the ceiling trim
+         * above it sits, one step later, and for the reason that comment already gives about
+         * orphaned copies.
+         *
+         * IT IS ASYNCHRONOUS AND THE WAIT IS ON SCREEN. Measuring a 12 MP frame is a few hundred
+         * milliseconds and sometimes approaches a second, so twenty-five of them is a real wait —
+         * the floor readout says how many are still being checked and never counts them in the
+         * gallery total, because a photograph that may yet be refused is not in the gallery.
+         *
+         * WHAT REACHES `media.attach` IS THE ADMITTED LIST, IN ONE CALL. Never one call per file:
+         * this card's callers recompute their row list from a snapshot captured when the lambda was
+         * created, so two writes in one frame both start from the same stale snapshot and the second
+         * erases the first — the defect [DwMediaBridge.attach] is shaped against.
+         */
+        /*
+         * A FIELD THAT CANNOT HOLD A PHOTOGRAPH SKIPS THE GATE ENTIRELY, AND THAT IS TWO SAVINGS.
+         *
+         * [DwImageDecode.screen] fails open for anything it cannot decode, so an audio recording or
+         * a video would be admitted either way — but it would first be OPENED, and the screening
+         * would be an asynchronous hop. Neither is free here. The recorder's own `DisposableEffect`
+         * attaches a part-finished recording as this card is being disposed, and every hop between
+         * that call and `media.attach` is another chance for the stage to go away underneath a file
+         * that exists nowhere else. And a FILE field's picker offers everything, so a 300 MB loom
+         * video handed to the gate would be read for its header before it was declined.
+         *
+         * IMAGE and IMAGE_LIST are gated because that is what they hold. FILE is gated BECAUSE OF
+         * ITS CAMERA ROUTE: half the documents this registry asks for — a sanction order, an
+         * attendance sheet, a signed certificate — exist only as paper in the room, and a photograph
+         * of a sanction order too soft to read is exactly the failure the owner asked about. Nothing
+         * is lost on a PDF or a .docx attached there: no bounds, no measurement, admitted.
+         */
+        val gated = type == DwFieldType.IMAGE || type == DwFieldType.IMAGE_LIST || type == DwFieldType.FILE
+        if (!gated) {
+            currentAdmit(
+                trimmed.mapIndexed { index, uri ->
+                    DwAdmittedPhoto(
+                        // The display name is left blank rather than looked up: it is read only by a
+                        // refusal sentence and by a finding's note, and this branch produces neither.
+                        // Querying the content resolver for a string nothing prints would be a round
+                        // trip per file for nothing.
+                        candidate = DwScreenCandidate(uri, "", staging.getOrNull(index)),
+                        faults = emptyList(),
+                        measurement = null,
+                    )
+                }
+            )
+            return
         }
+
+        val candidates = trimmed.mapIndexed { index, uri ->
+            DwScreenCandidate(
+                uri = uri,
+                /*
+                  WHAT A REFUSAL CALLS IT, AND A CAMERA CAPTURE IS NAMED BY WHERE IT CAME FROM.
+
+                  A gallery pick has a name the designer chose it by. A capture this app just made
+                  has "capture-8f3a1c...-.jpg", which is a UUID with a dot in it and tells nobody
+                  anything — and it is the case that matters most, because a refusal for blur almost
+                  always follows the shutter. "The photograph you just took — the sharpness reading
+                  was 42 against a floor of 60" is a sentence a designer can act on without looking
+                  anything up. The same string goes into the finding's note, so the note says where
+                  the photograph came from rather than repeating a random identifier.
+                */
+                displayName = when {
+                    staging.getOrNull(index) != null -> "The photograph you just took"
+                    else -> WorkshopDraftStore.displayName(context, uri)
+                        ?: uri.lastPathSegment
+                        ?: "The photograph you chose"
+                },
+                // Paired by INDEX, which is safe only because the two lists that carry a staging
+                // file — the camera and the recorder — hand over exactly one Uri each, and the trim
+                // above returns early when it drops that one. A future caller passing several
+                // staging files with several Uris owes this pairing a second look.
+                staging = staging.getOrNull(index),
+            )
+        }
+
+        media.screening.screen(
+            slot = slotKey,
+            resolver = context.contentResolver,
+            candidates = candidates,
+            attached = attachedForGate(),
+            onAdmitted = { admitted -> currentAdmit(admitted) },
+        )
     }
 
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -484,6 +709,46 @@ internal fun DwMediaCaptureCard(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        /*
+         * THE FLOOR, ABOVE THE BUTTONS AND FROM FIRST PAINT — because it is a requirement and not a
+         * result.
+         *
+         * "All 25 are required" is worth nothing to a designer who reads it after the twentieth
+         * photograph, standing in a courtyard they are about to leave. It is the one thing on this
+         * card that has to be on screen BEFORE the first shutter, so it sits above the capture row
+         * where the always-visible ceiling hint sits below it — the ceiling describes a limit you
+         * meet by accident, the floor describes work you have to plan.
+         *
+         * DRAWN ONLY WHERE THE REGISTRY DECLARES ONE, which is two galleries today, and never
+         * derived from a field key. A gallery whose floor somebody bothered to declare is a gallery
+         * with a target; putting the app's behaviour in a `when` on `motifPhotos` instead would mean
+         * the next such gallery silently not getting it — the same argument the carousel below makes
+         * about the declared cap.
+         */
+        if (declaredFloor != null) {
+            DwGalleryFloor(
+                floor = declaredFloor,
+                label = field.label,
+                counts = DwPhotoGate.GalleryCounts(
+                    // THE NUMERATOR IS WHAT THE FIELD HOLDS AND NOTHING IN FLIGHT IS ADDED TO IT. A
+                    // photograph still being measured may yet be refused and the field's value has
+                    // no reference to it; counting it would draw "25 of 25" over a gallery a save
+                    // would post twenty-three of.
+                    held = ids.size,
+                    // ON THIS DEVICE ONLY: a descriptor this handset holds whose bytes the server
+                    // has never been given (`remoteMediaId` is null until `/media/complete`
+                    // answers). An id this device cannot resolve at all is EXCLUDED rather than
+                    // counted — that is a photograph attached in the browser, which is the one case
+                    // where the server certainly does have it.
+                    onDevice = ids.count { id ->
+                        val item = media.resolve(id)
+                        item != null && item.remoteMediaId.isNullOrBlank()
+                    },
+                    screening = screening.screening,
+                ),
+            )
+        }
+
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -553,8 +818,22 @@ internal fun DwMediaCaptureCard(
          * either: the only moment it can bite is an import, and [dwCapNotice] is spoken then, naming
          * the field and what did not land.
          */
-        if (declaredCap != null) {
-            val room = (declaredCap - ids.size).coerceAtLeast(0)
+        /*
+         * AND WHERE A FLOOR IS DECLARED AT THE SAME NUMBER, THIS LINE STANDS DOWN UNTIL IT BITES.
+         *
+         * Both motif galleries declare 25 for BOTH bounds, so drawing the floor block above and
+         * "Up to 25 files — 4 more can be attached" here would say one number twice in two voices,
+         * three lines apart, on the field where the count matters most. The floor block already
+         * states the total, what is left and what falling short costs.
+         *
+         * IT COMES BACK THE MOMENT THE GALLERY IS FULL, because "is full at 25. Remove one to attach
+         * another" is the only actionable sentence of the pair — the floor block says the target is
+         * met and cannot say what to do about a twenty-sixth. And it is drawn unchanged wherever the
+         * two numbers DIFFER, where both are real and separate facts.
+         */
+        val roomToCeiling = declaredCap?.let { (it - ids.size).coerceAtLeast(0) }
+        if (declaredCap != null && (declaredFloor != declaredCap || roomToCeiling == 0)) {
+            val room = roomToCeiling ?: 0
             Text(
                 if (room == 0) {
                     "${field.label} is full at $declaredCap file${if (declaredCap == 1) "" else "s"}. Remove one to attach another."
@@ -614,6 +893,43 @@ internal fun DwMediaCaptureCard(
                     lineHeight = 16.sp,
                 )
             }
+        }
+
+        /*
+         * WHAT THE GATE TURNED AWAY — a SECOND region beside the ceiling's, and deliberately not the
+         * same one.
+         *
+         * They are two different refusals with two different remedies. The ceiling says "this
+         * gallery is full, remove something"; the gate says "this photograph is out of focus, take
+         * it again". One import can produce both — twenty-eight chosen for a gallery of
+         * twenty-five, three of the surviving twenty-five soft — and merging them into one sentence
+         * would tell a designer that eight photographs failed for reasons they would then have to
+         * disentangle. Two regions, each naming its own cause.
+         *
+         * IT SURVIVES THIS CARD LEAVING THE SCREEN, which the cap notice does not and does not need
+         * to: the trim is synchronous and lands before the designer can scroll, while the gate takes
+         * a second per photograph. See DwPhotoScreening.kt for where the state lives.
+         */
+        if (screening.refused.isNotEmpty()) {
+            DwPhotoRefusalNotice(refused = screening.refused)
+        }
+
+        /*
+         * AND WHILE IT IS STILL THINKING, SAY SO — on every gallery, not only a floored one.
+         *
+         * The floor block draws this into its own sentence where there is a floor. Everywhere else
+         * there is no bar and no count, so without this line a designer who picks nine photographs
+         * watches nothing happen for eight seconds: no row, no spinner, no sentence. That is
+         * indistinguishable from the picker having failed, and the reflex it trains is to pick them
+         * all again.
+         */
+        if (declaredFloor == null && screening.screening > 0) {
+            Text(
+                "Checking ${screening.screening} photograph${if (screening.screening == 1) "" else "s"} " +
+                    "before ${if (screening.screening == 1) "it is" else "they are"} attached…",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+            )
         }
 
         if (ids.isEmpty()) {
@@ -791,11 +1107,16 @@ internal fun DwMediaCaptureCard(
             }
         }
 
-        // Blur, resolution and duplicate advice, measured on this device from the bytes that were
-        // just imported. It sits AFTER the rows because it is about them, and it is added here rather
-        // than inside `adopt` because it must be incapable of touching the import: by the time this
-        // composes, the photograph is already copied, hashed and in the draft. See
-        // [DwPhotoQualityAdvisories] for why a finding can never be a refusal.
+        // Blur, resolution and duplicate advice about photographs that are ALREADY here. It sits
+        // AFTER the rows because it is about them, and it is still incapable of touching the import:
+        // by the time this composes, the photograph is copied, hashed and in the draft.
+        //
+        // WHAT IT HAS LEFT TO SAY, NOW THAT THE GATE STANDS UPSTREAM. Nothing a designer picks today
+        // reaches here blurred or under-resolution — the gate refused it at the door. What does
+        // reach here is the near-duplicate the gate admits on purpose, and every photograph that
+        // never passed the gate at all: attached by an older build, attached in the browser and
+        // synced down, or derived by a panel of its own. For those the card's "keep it" advice is
+        // exactly right, because there is genuinely nothing else to do about them.
         DwPhotoQualityAdvisories(ids = ids, media = media)
     }
 

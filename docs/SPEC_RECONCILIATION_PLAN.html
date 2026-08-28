@@ -1,0 +1,419 @@
+<title>Spec Reconciliation Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+  /* Same token set as the audit-closure page: this is its sibling document, for the same team,
+     drawn from the repository's own design system (tailwind.config.ts + globals.css). */
+  :root {
+    --bg:#f7f6fb; --card:#fff; --surface:#faf9fd; --surface-2:#f3f1fa;
+    --line:#e4e2ef; --line-strong:#cfcbe2;
+    --ink:#1e1b2e; --ink-body:#3a3651; --ink-muted:#615d7a;
+    --accent:oklch(0.47 0.198 305); --accent-soft:oklch(0.946 0.03 305); --accent-line:oklch(0.828 0.1 305);
+    --good:#15803d; --good-soft:#dcfce7; --warn:#92400e; --warn-soft:#fef3c7;
+    --bad:#dc2626; --bad-soft:#fee2e2;
+    --shadow:0 1px 2px rgba(46,16,101,.06);
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#110f19; --card:#1a1725; --surface:#201c2d; --surface-2:#262135;
+    --line:#342e47; --line-strong:#453d5e;
+    --ink:#f2f0f9; --ink-body:#d0cbdf; --ink-muted:#9e98b2;
+    --accent:oklch(0.738 0.15 305); --accent-soft:oklch(0.255 0.108 305); --accent-line:oklch(0.4 0.18 305);
+    --good:#4ade80; --good-soft:#14351f; --warn:#fcd34d; --warn-soft:#3a2c0c;
+    --bad:#f87171; --bad-soft:#3d1618;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }}
+  :root[data-theme="dark"]{
+    --bg:#110f19; --card:#1a1725; --surface:#201c2d; --surface-2:#262135;
+    --line:#342e47; --line-strong:#453d5e;
+    --ink:#f2f0f9; --ink-body:#d0cbdf; --ink-muted:#9e98b2;
+    --accent:oklch(0.738 0.15 305); --accent-soft:oklch(0.255 0.108 305); --accent-line:oklch(0.4 0.18 305);
+    --good:#4ade80; --good-soft:#14351f; --warn:#fcd34d; --warn-soft:#3a2c0c;
+    --bad:#f87171; --bad-soft:#3d1618;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink-body);
+    font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:78rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;display:flex;flex-direction:column;gap:3.5rem}
+  h1,h2,h3{font-family:"Plus Jakarta Sans",Inter,sans-serif;color:var(--ink);letter-spacing:-.02em;text-wrap:balance;margin:0}
+  h1{font-size:clamp(1.9rem,1.3rem + 2.4vw,2.9rem);font-weight:800;line-height:1.1}
+  h2{font-size:1.45rem;font-weight:700}
+  h3{font-size:1.02rem;font-weight:700}
+  p{margin:0;max-width:70ch}
+  code,.mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;font-size:.85em}
+  code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:.08em .34em;color:var(--ink);word-break:break-word}
+  .eyebrow{font-family:"Plus Jakarta Sans",Inter,sans-serif;font-size:.7rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:.15em;color:var(--accent);margin:0}
+  section{display:flex;flex-direction:column;gap:1.15rem}
+  .lede{font-size:1.075rem;color:var(--ink-muted)}
+  .note{font-size:.85rem;color:var(--ink-muted)}
+
+  .counts{display:grid;grid-template-columns:repeat(auto-fit,minmax(10.5rem,1fr));gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+  .count{background:var(--card);padding:1.15rem 1.25rem;display:flex;flex-direction:column;gap:.28rem}
+  .count .n{font-family:"Plus Jakarta Sans",Inter,sans-serif;font-size:2rem;font-weight:800;line-height:1;
+    color:var(--ink);font-variant-numeric:tabular-nums}
+  .count .k{font-size:.8rem;color:var(--ink-muted);line-height:1.4}
+  .count.good .n{color:var(--good)}
+
+  /* traps */
+  .traps{display:flex;flex-direction:column;gap:.9rem}
+  .trap{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--bad);
+    border-radius:12px;padding:1.1rem 1.25rem;display:grid;grid-template-columns:auto 1fr;gap:.35rem 1rem;box-shadow:var(--shadow)}
+  .trap .num{font-family:"Plus Jakarta Sans",Inter,sans-serif;font-weight:800;font-size:1.5rem;color:var(--bad);
+    line-height:1;grid-row:span 3;font-variant-numeric:tabular-nums;opacity:.85}
+  .trap h3{margin:0}
+  .trap .says{font-size:.88rem;color:var(--ink-muted)}
+  .trap .truth{font-size:.9rem}
+  .trap .truth b{color:var(--ink)}
+
+  /* phases */
+  .phase{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+  .phase > header{background:var(--surface);border-bottom:1px solid var(--line);padding:.9rem 1.2rem;
+    display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem 1rem}
+  .phase > header h3{font-size:1.05rem}
+  .phase > header .why{font-size:.83rem;color:var(--ink-muted);flex:1;min-width:14rem}
+  .phase ul{margin:0;padding:.9rem 1.2rem .9rem 2.4rem;display:flex;flex-direction:column;gap:.5rem}
+  .phase li{font-size:.9rem}
+  .phase li::marker{color:var(--accent-line)}
+  .phase li b{color:var(--ink)}
+
+  .tag{display:inline-block;border-radius:999px;padding:.05rem .5rem;font-size:.66rem;font-weight:700;
+    font-family:"Plus Jakarta Sans",Inter,sans-serif;letter-spacing:.05em;text-transform:uppercase;
+    white-space:nowrap;border:1px solid transparent;vertical-align:.08em}
+  .t-web{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line)}
+  .t-and{background:var(--warn-soft);color:var(--warn);border-color:currentColor}
+  .t-api{background:var(--good-soft);color:var(--good);border-color:currentColor}
+  .t-all{background:var(--surface-2);color:var(--ink-muted);border-color:var(--line-strong)}
+
+  .decide{background:var(--warn-soft);border:1px solid var(--warn);border-radius:14px;padding:1.3rem 1.4rem;
+    display:flex;flex-direction:column;gap:.9rem;color:var(--ink-body)}
+  .decide h2{color:var(--warn)}
+  .decide ol{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.8rem}
+  .decide li{font-size:.92rem}
+  .decide li b{color:var(--ink)}
+
+  .wont{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:1.3rem 1.4rem}
+  .wont ul{margin:.6rem 0 0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.6rem}
+  .wont li{font-size:.9rem}
+  .wont li b{color:var(--ink)}
+
+  .scroller{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:.87rem}
+  th,td{text-align:left;padding:.6rem .9rem;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:"Plus Jakarta Sans",Inter,sans-serif;font-size:.68rem;text-transform:uppercase;
+    letter-spacing:.09em;color:var(--ink-muted);font-weight:700;background:var(--surface);white-space:nowrap}
+  tbody tr:last-child td{border-bottom:0}
+  td.n{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bar{display:inline-block;height:.55rem;border-radius:2px;vertical-align:.02em}
+  .bar.impl{background:var(--good)} .bar.part{background:var(--warn)} .bar.miss{background:var(--bad)} .bar.na{background:var(--line-strong)}
+
+  footer{border-top:1px solid var(--line);padding-top:1.25rem;font-size:.8rem;color:var(--ink-muted);
+    display:flex;flex-wrap:wrap;gap:.4rem 1.5rem}
+  a{color:var(--accent)}
+  a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  @media (max-width:640px){ .wrap{padding-top:2.25rem;gap:2.5rem} .trap{grid-template-columns:1fr} .trap .num{grid-row:auto} }
+</style>
+
+<div class="wrap">
+
+<header class="masthead" style="display:flex;flex-direction:column;gap:1rem">
+  <p class="eyebrow">Design Prototype Workshop · reconciling a 65-section specification with the code</p>
+  <h1>What to build, what exists, and what not to touch</h1>
+  <p class="lede">
+    A 65-section product specification was written without a view of what is already implemented.
+    Thirteen agents audited the repository domain by domain and resolved every requirement against the
+    code, with citations. This is the reconciliation: <b>482 requirement items</b>, and the seven places
+    where building the spec literally would make the product worse.
+  </p>
+</header>
+
+<section>
+  <div class="counts">
+    <div class="count good"><span class="n">232</span><span class="k">already implemented — 48% of the spec is built</span></div>
+    <div class="count"><span class="n">122</span><span class="k">partial — some layer exists, one is missing</span></div>
+    <div class="count"><span class="n">107</span><span class="k">genuinely missing</span></div>
+    <div class="count"><span class="n">21</span><span class="k">not applicable — the spec assumes a different product</span></div>
+    <div class="count"><span class="n">7</span><span class="k">specified changes that would cause a regression</span></div>
+  </div>
+  <p class="note">
+    Every verdict carries file:line evidence from code the auditor opened. Where a comment in the
+    repository contradicted the code, the code won — two such stale comments are called out below,
+    because both would have sent a planner in the wrong direction.
+  </p>
+</section>
+
+<section>
+  <p class="eyebrow">Read this before anything else</p>
+  <h2>Seven traps: where the spec, followed literally, regresses the product</h2>
+  <p>
+    These are not stylistic disagreements. In each case the repository has already met the requirement
+    by a different route, and in five of the seven the alternative route was chosen <em>after</em> the
+    spec's approach failed — the failures are recorded in the code.
+  </p>
+
+  <div class="traps">
+
+    <article class="trap">
+      <span class="num">1</span>
+      <h3>Rebuilding the QR payload as a deep link</h3>
+      <p class="says">§2, §45 — "QR should encode a share/deep-link URL."</p>
+      <p class="truth">The payload is deliberately <b>not</b> a URL. <code>workshopCodes.ts:28-33</code>:
+        <em>"A card printed at a workshop in 2026 has to scan in 2031, and a hostname is the part of a system
+        most likely to have moved… a QR photographed on a table in a courtyard should do NOTHING in a general
+        scanner app."</em> The letters are stamped on <b>physical tags with a five-year life</b> and pinned
+        across three trees by <code>test_workshop_code_letters.py</code>. <b>Do instead:</b> leave the payload
+        alone and add App Links as a <em>second, parallel</em> entry surface for links shared over chat.</p>
+    </article>
+
+    <article class="trap">
+      <span class="num">2</span>
+      <h3>Inserting the Inspector tier and expecting authority</h3>
+      <p class="says">§26-27 — "Inspector/Reviewer sits above Designer, below Professor."</p>
+      <p class="truth">Design-workshop access is <b>set membership, not rank</b>:
+        <code>DESIGN_WORKSHOP_ROLES = frozenset({"DESIGNER","ADMIN","MASTER_ADMIN"})</code> (<code>deps.py:135</code>)
+        guards eighteen routes. That is why <b>Professor, at rank 40, cannot open a design workshop today.</b>
+        An Inspector at 37 would get <b>zero</b> workshop authority — and simultaneously, silently, gain the power
+        to review and reject every Designer's records, because <code>can_review_record</code> is "strictly below me"
+        and 35 &lt; 37. The naive change does the opposite of the intent at both ends, and no test fails.</p>
+    </article>
+
+    <article class="trap">
+      <span class="num">3</span>
+      <h3>Building device-to-device record transfer</h3>
+      <p class="says">§3-4 — "Nearby / Wi-Fi Direct / Bluetooth transfer of a record."</p>
+      <p class="truth">The product has already answered "two designers, one courtyard, no signal" — and answered it
+        by <b>refusing to copy records between devices</b>. <code>entry_provenance.py:7-11</code> carries the owner's
+        requirement verbatim: <em>"a single canonical copy rather than a duplicate per designer"</em>, and the guide
+        names the failure prevented: colleagues <em>"scan a card to join THE SAME one, which is what stops a team
+        ending the fortnight with four parallel workshops."</em> Building Nearby transfer would manufacture exactly
+        those parallel copies. The printed <b>join card</b> — a 110-bit secret scanned face to face, queued offline,
+        flushed on reconnect — already solves the stated scenario.</p>
+    </article>
+
+    <article class="trap">
+      <span class="num">4</span>
+      <h3>Pre-gating AI controls on "is a provider configured"</h3>
+      <p class="says">§15 — "Disable the AI action when no provider exists."</p>
+      <p class="truth">Considered and <b>rejected in writing</b>, with the failure named
+        (<code>design_workshops.py:911-916</code>): the probe is cached per tab, so a "no" <em>"would survive an
+        administrator pasting an API key: the microphone would stay hidden until every designer reloaded, with nothing
+        on screen to say why."</em> The shipped answer is a <b>503 at the moment it matters</b>, naming the missing
+        setting, not charging the daily allowance, printed verbatim by both clients. Building the pre-gate
+        reintroduces the cached-"no" defect.</p>
+    </article>
+
+    <article class="trap">
+      <span class="num">5</span>
+      <h3>Adding a CONFLICT state to the workshop sync</h3>
+      <p class="says">§42-44 — "LOCAL_ONLY / PENDING_UPLOAD / SYNCING / SYNCED / CONFLICT / FAILED."</p>
+      <p class="truth">In the design-workshop path conflicts are <b>prevented, not detected</b>: field-level merge
+        adds only what a device has never seen and never overwrites what a designer typed. A CONFLICT state requires
+        the client to send a wholesale replacement so the server can detect divergence — which is precisely the
+        behaviour that <b>destroyed office-entered answers three separate documented times</b>. The spec's six-state
+        enum is also a regression: the shipped model distinguishes five kinds of "not synced" that a single
+        <code>FAILED</code> would collapse. (A real conflict path <em>does</em> exist for the standalone record types
+        and is already surfaced.)</p>
+    </article>
+
+    <article class="trap">
+      <span class="num">6</span>
+      <h3>Making task scope an access rule</h3>
+      <p class="says">§29 — "Assignments must respect scope."</p>
+      <p class="truth">Task scope here is <b>descriptive and derivational</b>: it generates the task's title and tells
+        the accountability board what to count. It authorizes nothing, and <code>db.assignedtask</code> is read in
+        exactly one backend file. The real gate is a different table, <code>WorkshopAssignment</code>. Making scope
+        authoritative would duplicate that gate on a different key <em>and</em> break every task created without a
+        scope — which the API still supports — turning "no task" into "no permission".</p>
+    </article>
+
+    <article class="trap">
+      <span class="num">7</span>
+      <h3>Adding Redis, a worker queue, and Nginx</h3>
+      <p class="says">§34-40 — the prescribed infrastructure.</p>
+      <p class="truth">A durable queue already exists with an <b>atomic compare-and-swap claim</b>, attempts/backoff,
+        priority ordering and a covering index, drained by a dedicated systemd process. Two <b>stale comments will
+        actively mislead you</b>: a k8s manifest claims "nothing in the queue claims a job atomically across
+        processes" (false), and <code>SCALABILITY.md</code> claims the <code>app/scale/</code> package is unreachable
+        (false — all fourteen settings exist; it is dormant only because <code>install_rate_limit</code> is never
+        called). <b>Enabling rate limiting is a one-line change in <code>create_app()</code>, not a project.</b></p>
+    </article>
+
+  </div>
+</section>
+
+<section>
+  <p class="eyebrow">The constraint that reorders everything</p>
+  <h2>Android changes are not the same price as web changes</h2>
+  <p>
+    Every domain priced an Android gap as cheap and client-only. The release train makes that backwards.
+    A backend migration is live <b>within one push</b>; the web within <b>two</b>; the handset only after
+    somebody pushes a <code>v*</code> tag, the release is posted, and each device <em>happens to come back
+    into signal</em> — on devices the product's own copy says are expected to run offline for a fortnight.
+  </p>
+  <p>
+    Two consequences the plan below obeys throughout: <b>(a)</b> effort estimates must be read in wall-clock
+    delivery, not lines of code — an Android-only fix costs a tagged release plus fleet propagation;
+    <b>(b)</b> any change the handset must understand has to be <b>backward compatible on the wire</b>, because
+    a fortnight-old APK will be talking to the new server the whole time.
+  </p>
+</section>
+
+<div class="decide">
+  <h2>Phase 0 — three decisions only the owner can make</h2>
+  <p style="font-size:.92rem">No code should be written against §26-30 or §3-4 until these are settled. Each one changes what gets built, not merely how.</p>
+  <ol>
+    <li><b>What may an Inspector actually do with a design workshop?</b> Joining the frozenset makes it meaningless
+      as "the people who sign the report". The alternative is a fifth scope system beside <code>DesignWorkshopViewer</code>
+      — read-only, workshop-scoped. <em>Recommendation: the fifth scope system.</em> An inspector reviews; they do not run workshops.</li>
+    <li><b>Name the tier <code>INSPECTOR</code>, not <code>REVIEWER</code>.</b> "Review" already names a different,
+      relational concept here — <code>canReview</code> is held by everyone at Field Contributor and above, meaning
+      "may review anyone ranked below me". A role called <code>REVIEWER</code> makes that word mean two things at once.
+      §26 explicitly permits an equivalent architecture; the UI label stays <b>"Inspector / Reviewer"</b>.</li>
+    <li><b>Is proximity transfer wanted at all,</b> given the product deliberately keeps one canonical copy and the
+      join card already covers the offline courtyard case? If the answer is yes, it is XL and needs its own design
+      round for provenance and authorization-before-send. <em>Recommendation: no — close the gap the spec was really
+      pointing at, which is that the web has no join-card client at all.</em></li>
+  </ol>
+</div>
+
+<section>
+  <h2>The plan</h2>
+  <p class="note">
+    Ordered by ripple, not by spec section. Everything in Phase 1 is independent and safe to start immediately.
+    <span class="tag t-api">server</span> <span class="tag t-web">web</span>
+    <span class="tag t-and">android</span> <span class="tag t-all">all three</span>
+  </p>
+
+  <div class="phase">
+    <header>
+      <h3>Phase 1 — no ripple, immediate</h3>
+      <span class="why">Config, one-line enables, and gaps with no shared-contract impact. None of these can break another client.</span>
+    </header>
+    <ul>
+      <li><span class="tag t-api">server</span> <b>Enable the rate limiter.</b> Call <code>install_rate_limit</code> in <code>create_app()</code> and set the env vars. The package and all fourteen settings already exist. Closes §39 and the login-brute-force gap in one change.</li>
+      <li><span class="tag t-web">web</span> <b>Disable the admin AI configuration UI</b> (§17), leaving the implementation intact and the disabled state explained.</li>
+      <li><span class="tag t-api">server</span> <b>Restrict BYOK to Designer and above</b> (§16) and audit-log personal-key writes.</li>
+      <li><span class="tag t-web">web</span> <b>Build the <code>MultiEnumField</code> ref branch.</b> <b>This blocks Phase 2's picker work</b> — Android already renders a record-backed multi-select, the web does not, and adding <code>ref_model</code> to a registry field before this exists would render a required field as an empty closed list and make stages 13 and 16 permanently unsubmittable in the browser.</li>
+      <li><span class="tag t-all">all three</span> <b>A machine-checked ladder-parity test</b>, so a future tier cannot land on the server and be silently missing from five hand-kept Kotlin copies and the web mirror.</li>
+      <li><span class="tag t-web">web</span> <span class="tag t-and">android</span> <b>Edge auto-scroll during drag.</b> The grips exist and work on both clients — what is missing is that a drag cannot reach a destination off-screen, which on a 360×640 phone means one position. This, not new handles, is the real §18.</li>
+      <li><span class="tag t-and">android</span> <b>Dashboard card for Sketches &amp; prototypes</b>, plus the tile-registry parity check (§6).</li>
+      <li><span class="tag t-api">server</span> <b>Correct the two stale comments</b> that misstate the queue's atomicity and the scale package's reachability, before they cost somebody a rebuild.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <header>
+      <h3>Phase 2 — real gaps with a clear shape</h3>
+      <span class="why">Each closes a feature the backend or one client already ships. Highest value per unit of risk.</span>
+    </header>
+    <ul>
+      <li><span class="tag t-web">web</span> <b>The join-card / access-request client.</b> The backend and Android ship this in full; the web has no client for it, and <b>nobody can see the queue of requests Android is already filing.</b> Add the request panel and the admin queue screen. This is the honest reading of §2-3.</li>
+      <li><span class="tag t-all">all three</span> <b>Questionnaire sharing with access levels</b> (§20), the <b>"Questionnaire Utilized"</b> field on the workshop record (§22) as a searchable selector, and <b>smart default-selection</b> (§23). Note the name collision the audit found: <code>/questionnaire</code> (singular, the global artisan instrument, already deterministically seeded) and <code>/questionnaires</code> (plural, designer-owned) are two different objects — §19-24 applies to the plural, §21's "default questionnaire" to the singular. Do not unify them.</li>
+      <li><span class="tag t-api">server</span> <span class="tag t-web">web</span> <b>Task assignment for Professor and the new Inspector</b> (§29), plus <b>tasks linked to the design-workshop record</b> so a designer's assigned work reaches the surface they actually use.</li>
+      <li><span class="tag t-all">all three</span> <b>Measurement provenance</b> (§8) — <b>one extra key in the existing <code>fieldProvenance</code> stamp</b>, not the spec's new table. Both clients already hold <code>method: "SCALE" | "RECTIFIED"</code> at the propose button and drop it on the floor. A comment in <code>measurement_provenance.py</code> says this is impossible; it was true on 20 Aug and false three days later.</li>
+      <li><span class="tag t-web">web</span> <span class="tag t-and">android</span> <b>A media picker over design-workshop stage fields</b> (§11) — the narrow, buildable version. The general "attach an existing file to a second record" cannot be built: <code>MediaFile</code> has exactly one parent and no join table, and two components have already fought and documented this.</li>
+      <li><span class="tag t-api">server</span> <b>Registry declarations for the obvious free-text offenders</b> — materials, tools used, stage-1 designer, the survey questionnaire link — <em>after</em> Phase 1's web ref branch lands.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <header>
+      <h3>Phase 3 — structural, gated on Phase 0</h3>
+      <span class="why">Wide blast radius across all three clients. Each needs a design round before code.</span>
+    </header>
+    <ul>
+      <li><span class="tag t-all">all three</span> <b>The Inspector role, end to end</b> — enum + additive migration, three ladder mirrors, the scope system chosen in Phase 0, and tests that <em>fail</em> rather than silently skip when a tier is added. The ladder edit is three lines; the scope decision is the work.</li>
+      <li><span class="tag t-api">server</span> <b>Idempotency keys on the write endpoints the outbox replays</b> (§53), and optimistic concurrency for the six standalone record types (§44) — <b>not</b> for the design-workshop path, where merge already prevents the conflict.</li>
+      <li><span class="tag t-api">server</span> <span class="tag t-web">web</span> <b>Cross-stage carry-forward</b> (§13). The audit names this <b>the single largest source of hand re-entry in the product</b>: reference hydration copies data at save time by design, but no <em>internal</em> cross-stage reference hydrates anything, so stage 16 cannot see the prototype's own materials and dimensions.</li>
+      <li><span class="tag t-and">android</span> <b>Offline task read and queued status updates</b> (§42), remembering the fortnight-offline fleet and wire compatibility.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <header>
+      <h3>Phase 4 — scale, measured rather than assumed</h3>
+      <span class="why">§33's 1,000 concurrent users is a claim to be tested, not a configuration to be installed.</span>
+    </header>
+    <ul>
+      <li><b>Load-test first</b> (§52) with a realistic mixed scenario, and find the actual bottleneck before changing architecture. The queue, the object storage, the health checks and the pooling already exist.</li>
+      <li><b>Offload report generation</b> so a PDF/DOCX build cannot block a request or exceed the gateway timeout — the clearest genuine async candidate in the product.</li>
+      <li><b>Metrics and tracing</b> (§49) — latency, error rate, saturation, queue depth and job age. Nothing exposes these at runtime today.</li>
+      <li><b>Index-backed text search and cursor pagination</b>, replacing multi-column leading-wildcard scans on the paths that will feel it first.</li>
+      <li><b>Horizontal scaling</b> — verify statelessness rather than assume it, and only then decide whether the ingress needs to change. <b>Do not add Nginx</b> without establishing what terminates TLS today.</li>
+    </ul>
+  </div>
+</section>
+
+<div class="wont">
+  <h2>What we will deliberately not build, and why</h2>
+  <p class="note">Recording these is as important as the plan itself: each will otherwise be re-proposed by the next reader of the spec.</p>
+  <ul>
+    <li><b>Device-to-device record transfer over Nearby / Wi-Fi Direct / Bluetooth.</b> Contradicts the single-canonical-copy requirement; the join card already covers the offline case. <span class="note">(≈5 XL items avoided.)</span></li>
+    <li><b>A URL-bearing QR payload.</b> Would invalidate printed cards with a five-year physical life.</li>
+    <li><b>Pre-gated AI controls.</b> Deliberately rejected; reintroduces a cached-"no" defect.</li>
+    <li><b>A CONFLICT state in the design-workshop sync.</b> Would reopen three documented data-loss incidents.</li>
+    <li><b>Task scope as an authorization rule.</b> Duplicates <code>WorkshopAssignment</code> and locks users out of work they can do today.</li>
+    <li><b>A second job queue.</b> One exists, with atomic claiming; two stale comments say otherwise.</li>
+    <li><b>New drag handles.</b> Both clients already render a 48dp grip with correct touch handling; the gap is auto-scroll.</li>
+    <li><b>A general cross-record media attachment.</b> The data model has one parent per file and no join table.</li>
+  </ul>
+</div>
+
+<section>
+  <h2>Where the work sits</h2>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Domain</th><th class="n">Items</th><th>Built · partial · missing · n/a</th><th class="n">To do</th></tr></thead>
+      <tbody id="matrix"></tbody>
+    </table>
+  </div>
+  <p class="note">
+    "To do" counts partial + missing, before the deliberate exclusions above are removed. Proximity transfer's
+    eighteen drop to zero if Phase 0 decision 3 is answered as recommended, which is why that decision is worth
+    making first.
+  </p>
+</section>
+
+<footer>
+  <span>Audited 26–27 August 2026 · 14 agents, 482 requirement items</span>
+  <span>Repository at <code>3cc0f4c</code></span>
+  <span>Companion document: the in-flight lane audit closure</span>
+</footer>
+
+</div>
+
+<script>
+  const M = [
+    ["Reports, audit trail, archive, migrations", 30,16,5,2],
+    ["Scalability &amp; infrastructure", 21,10,11,2],
+    ["Web/Android parity &amp; mobile UI", 12,13,14,3],
+    ["Offline capture, sync, conflicts, idempotency", 24,9,7,1],
+    ["Record sharing, QR, deep links", 17,10,6,2],
+    ["Free-text vs structured selectors", 13,10,9,4],
+    ["Tasks: model, statuses, assignment", 13,8,14,0],
+    ["Media architecture &amp; pickers", 17,8,8,0],
+    ["AI gating &amp; BYOK", 17,7,5,2],
+    ["Measurement &amp; tracing", 18,9,2,1],
+    ["Offline proximity transfer", 10,6,12,2],
+    ["Roles, RBAC, Inspector tier", 15,6,7,0],
+    ["Questionnaires", 14,5,6,0],
+    ["Completeness critic", 11,5,1,2],
+  ];
+  const W = 132;
+  document.getElementById("matrix").innerHTML = M.map(([name,i,p,m,na]) => {
+    const t = i+p+m+na, u = W/t;
+    const seg = (cls,v) => v ? `<span class="bar ${cls}" style="width:${(v*u).toFixed(1)}px" title="${v}"></span>` : "";
+    return `<tr>
+      <td>${name}</td>
+      <td class="n">${t}</td>
+      <td style="white-space:nowrap">${seg("impl",i)}${seg("part",p)}${seg("miss",m)}${seg("na",na)}
+        <span class="note" style="margin-left:.5rem">${i} · ${p} · ${m} · ${na}</span></td>
+      <td class="n"><b>${p+m}</b></td>
+    </tr>`;
+  }).join("");
+</script>

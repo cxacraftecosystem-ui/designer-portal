@@ -133,10 +133,15 @@ fun MyAiKeysScreen(
                 item {
                     Column {
                         Text(
+                            // "summarising" was in this list and is not any more: nothing in this
+                            // app can ask for a summary — see TASKS_NOTHING_CAN_ASK_FOR below.
+                            // Naming a job here that a designer then goes hunting for and cannot
+                            // find is the same lie as printing it on a model's row, told earlier
+                            // and to somebody who has not yet decided whether to hand over a key.
                             "Bring your own key and the AI work you ask for — proofreading, " +
-                                "expanding, summarising, translating, transcribing and photo " +
-                                "descriptions — runs on your account with your provider, at your " +
-                                "choice of model, and is billed to you.",
+                                "expanding, translating, transcribing and photo descriptions — " +
+                                "runs on your account with your provider, at your choice of " +
+                                "model, and is billed to you.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(Modifier.height(8.dp))
@@ -190,7 +195,10 @@ fun MyAiKeysScreen(
 }
 
 /** The designer-facing name of each job. The server sends the enum; this is the only place on the
- *  handset that turns it into words, so the six names read the same on every row. */
+ *  handset that turns it into words, so the names read the same on every row. Deliberately a
+ *  COMPLETE mirror of `ai_providers.AiTask` — what a row is allowed to SAY is decided by
+ *  [TASKS_NOTHING_CAN_ASK_FOR] below and not by leaving a name out of this map, which would print a
+ *  raw "SUMMARISE" at a designer instead of hiding it. */
 private val TASK_LABELS = mapOf(
     "PROOFREAD" to "Proofread",
     "EXPAND" to "Expand",
@@ -199,6 +207,46 @@ private val TASK_LABELS = mapOf(
     "TRANSCRIBE" to "Transcribe audio",
     "CAPTION" to "Describe photos"
 )
+
+/**
+ * JOBS THE SERVER'S CATALOGUE LISTS THAT NOTHING IN THIS PRODUCT CAN ACTUALLY ASK FOR.
+ *
+ * **`SUMMARISE` IS ADVERTISED AND UNREACHABLE, AND THIS SCREEN WAS ONE OF THE TWO PLACES THE CLAIM
+ * WAS MADE.** `AiTask.SUMMARISE` is in the enum and in `TEXT_TASKS`, so every chat model in every
+ * family carries it and every "Used for:" line printed it. There is no way to run one: `ai_verbs.Verb`
+ * has five members — PROOFREAD, EXPAND, TRANSLATE, CAPTION, SUBTITLES — matched one-for-one by five
+ * routes (`POST /{workshop_id}/ai-layers/{proofread,expand,translate,caption,subtitles}`), and
+ * `DwAiVerb` in `data/DwAiVerbs.kt` names exactly the same five. SUMMARISE is in none of the three.
+ * `ai.summarise_text` does exist, with its own system prompt and a `LayerKind.SUMMARY` that has a
+ * placement law — and NOTHING CALLS IT: its only reference anywhere in the repository is the
+ * `summarize_text` alias on the line beneath its own definition.
+ *
+ * So "Used for: … Summarise …" told a designer that their own key and their own money would be spent
+ * on a job they cannot ask this app to do — a small lie in exactly the place a person is deciding
+ * whether to hand over a credential, which is the worst place in the app to keep one.
+ *
+ * **WHY HIDDEN RATHER THAN WIRED, WHICH IS A DECISION AND NOT AN OMISSION.** Wiring it is not one
+ * missing route: a verb here is a `Verb` member, a `LayerKind`, a rung in `ALLOWED_PARENTS`, an
+ * acceptance step, an annexure section in the report, cap accounting, and this whole surface again on
+ * the handset — where a release ships to a fleet that may be offline for a fortnight. Whether a
+ * designer should summarise a transcript, and what a SUMMARY layer means underneath a report somebody
+ * signs, is a product decision with an owner and not something to settle as a side effect of
+ * correcting a caption. Hiding is reversible in one line and can mislead nobody; shipping a
+ * half-wired fifth verb is neither.
+ *
+ * **FILTERED HERE RATHER THAN CUT FROM THE CATALOGUE** because `AiModel.tasks` is an honest statement
+ * about the MODEL — GPT-4o really can summarise — while this line is a statement about what THIS
+ * DEPLOYMENT WILL SPEND YOUR KEY ON. Different claims; only the second was wrong.
+ *
+ * WHEN A SUMMARISE VERB IS WIRED, DELETE THE ENTRY AND NOTHING ELSE — the label above is already
+ * there, and the identical one-line deletion is waiting in the web's `MyAiKeysPanel.tsx`, which
+ * carries the same set for the same reason.
+ *
+ * True as of «2026-08-27»; re-check with
+ * «grep -rn "summarise_text\|summarize_text" backend/app» (only the definition and its alias, both
+ * in `services/ai.py`).
+ */
+private val TASKS_NOTHING_CAN_ASK_FOR = setOf("SUMMARISE")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -331,7 +379,10 @@ private fun ProviderKeyCard(
                 Spacer(Modifier.height(6.dp))
                 Text(chosen.note, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "Used for: " + chosen.tasks.joinToString(" · ") { TASK_LABELS[it] ?: it } + ".",
+                    "Used for: " + chosen.tasks
+                        .filterNot { it in TASKS_NOTHING_CAN_ASK_FOR }
+                        .joinToString(" · ") { TASK_LABELS[it] ?: it }
+                        .plus("."),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

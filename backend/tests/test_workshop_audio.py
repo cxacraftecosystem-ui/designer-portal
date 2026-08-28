@@ -88,9 +88,9 @@ async def env():
             "transcriptText": TRANSCRIPT,
         })
         # A clip STRANDED by a job that died before the provider answered. ``transcriptStatus`` was
-        # written QUEUED by the enqueue (``media_queue`` :220) and never written again, because the
+        # written QUEUED by the enqueue (``media_queue`` :305) and never written again, because the
         # only writer past that point is ``_apply_transcription_result`` and the job never reached
-        # it: ``get_object_bytes`` raised on an object key that no longer resolves, and
+        # it: ``download_to_temp`` raised on an object key that no longer resolves, and
         # ``_handle_job_failure`` updates the JOB row and nothing else. At exhausted attempts the
         # job is FAILED and the column still says a transcript is on its way.
         #

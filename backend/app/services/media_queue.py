@@ -20,7 +20,14 @@ from app.services.app_settings import (
     transcription_mode,
     within_processing_window,
 )
-from app.services.s3 import get_object_bytes
+from app.services.memory_budget import budget_bytes
+from app.services.s3 import (
+    ObjectTooLarge,
+    discard_temp,
+    download_to_temp,
+    get_object_bytes,
+    head_object,
+)
 from prisma import Json
 
 logger = logging.getLogger(__name__)
@@ -35,6 +42,30 @@ UNAVAILABLE = "UNAVAILABLE"
 RATE_LIMITED = "RATE_LIMITED"
 
 STALE_PROCESSING_AFTER = timedelta(minutes=30)
+
+# ── SIZE GATES ON THE TWO OBJECT READS THIS MODULE MAKES ───────────────────────────────────────
+#
+# Neither read had a gate of any kind. Both pulled the whole object into the heap of whichever
+# process ran them — the queue worker for a drained job, the WEB process for "Transcribe now",
+# which bypasses the queue — and the largest live object in this deployment is 668.44 MiB against
+# a 1 GiB box (MEASURED, docs/SCALABILITY.md §5.1). The provider ceilings in `services/ai` were
+# consulted only after `len(content)`, i.e. after the cost they exist to avoid had been paid.
+#
+# THE TWO JOB TYPES GET DIFFERENT NUMBERS BECAUSE THEY HAVE DIFFERENT COSTS.
+#
+# TRANSCRIPTION now streams the object to a temp FILE and hands the provider that path, so what it
+# spends is disk, not RAM. This ceiling is therefore a disk bound: it stops one pathological object
+# filling the box's root volume, and at 1 GiB it admits everything in the archive today. It is
+# deliberately NOT lowered by `budget_bytes`: Deepgram takes the audio as a raw body and `requests`
+# streams a file handle straight through, so a memory-derived cap here would refuse a recording that
+# rung could genuinely have transcribed. The residual RAM cost is the multipart rungs' send-time
+# copy, which `ai._upload_body` documents and which needs a streaming multipart encoder to close.
+#
+# MEASUREMENT genuinely needs every byte in the heap — a vision model is sent base64 of the whole
+# image, and there is no half of a base64 — so its ceiling IS memory-derived, and it is small. A
+# grid-sheet photograph is a phone photograph: p90 across this repository's media is 14.28 MiB.
+MAX_TRANSCRIBE_FETCH_BYTES = 1024 * 1024 * 1024
+MAX_MEASUREMENT_BYTES = 32 * 1024 * 1024
 
 # Rate-limit backoff. When transcription is throttled (HTTP 429/503), we pause transcription for a
 # growing cooldown and requeue the job WITHOUT consuming an attempt — so every clip is transcribed
@@ -475,6 +506,37 @@ async def _park_transcription_jobs_until(until: datetime) -> None:
     )
 
 
+async def _oversize_reason(media: Any, ceiling: int, *, what: str) -> str | None:
+    """Why this object is too big for *what*, or ``None`` to go ahead. Cheap claim, then the fact.
+
+    TWO CHECKS, IN COST ORDER. ``MediaFile.sizeBytes`` is whatever the client declared at
+    ``POST /media/complete`` — bounded only from below by the schema and never reconciled against
+    the stored object — so it is consulted first because it costs nothing at all, and it turns away
+    the honest large recording before anything is asked of storage. ``s3.head_object`` then reads
+    the REAL ``ContentLength`` and no bytes, which is the only number in this system that is a fact.
+
+    ``head_object`` answering ``None`` (storage would not say) is NOT read as "small": the caller
+    still passes the same ceiling to ``download_to_temp``, which counts what actually lands.
+    """
+    declared = 0
+    try:
+        declared = int(_value(media, "sizeBytes") or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    if declared > ceiling:
+        return (
+            f"This file declares {declared} bytes, over the {ceiling}-byte limit this server will "
+            f"{what}. Nothing was fetched and nothing was spent."
+        )
+    head = await asyncio.to_thread(head_object, _value(media, "objectKey"))
+    if head is not None and head.size_bytes > ceiling:
+        return (
+            f"This file is {head.size_bytes} bytes, over the {ceiling}-byte limit this server will "
+            f"{what}. Nothing was fetched and nothing was spent."
+        )
+    return None
+
+
 async def transcribe_media_now(media: Any, settings: Settings | None = None) -> dict[str, Any]:
     """Transcribe one audio media file immediately and store the result, applying the transcription
     mode configured in the settings page (RAW / REFINED / REFINED+TRANSLATED). This is the admin
@@ -505,20 +567,70 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
     if not verdict.may_send:
         raise dictation_consent.SendRefused(verdict)
     media_id = str(_value(media, "id"))
+    # THE SIZE GATE BEFORE THE STATUS WRITE, so a refusal does not leave the row saying PROCESSING
+    # for something this server is never going to process.
+    #
+    # AND IT MATTERS MORE HERE THAN IN THE QUEUE, for the reason this function's docstring gives
+    # about consent: this path bypasses the queue, so it runs in the single-worker WEB process. An
+    # oversized read here does not slow a background drain down — it takes every in-flight request
+    # on the box down with it.
+    oversize = await _oversize_reason(media, MAX_TRANSCRIBE_FETCH_BYTES, what="transcribe")
+    if oversize is not None:
+        await db.mediafile.update(
+            where={"id": media_id},
+            data={"transcriptStatus": UNAVAILABLE, "transcriptError": oversize},
+        )
+        return {
+            "available": False,
+            "status": UNAVAILABLE,
+            "text": None,
+            "formattedTranscript": None,
+            "message": oversize,
+        }
     await db.mediafile.update(where={"id": media_id}, data={"transcriptStatus": PROCESSING})
-    content = await asyncio.to_thread(get_object_bytes, _value(media, "objectKey"))
-    result = await transcribe_audio_bytes(
-        content,
-        _value(media, "originalFilename") or "recording.webm",
-        _value(media, "mimeType") or "audio/webm",
-        settings,
-        # THE UPLOADER, NOT "nobody". This runs in the background, but it is not background
-        # work in the sense that matters for billing: it is one designer's own recording being
-        # transcribed because they uploaded it. Passing None here would mean a designer who
-        # supplied a key had their live dictation billed to them and every uploaded recording
-        # billed to the organisation, which is not a distinction anybody asked for or could see.
-        user_id=_value(media, "uploadedById"),
-    )
+    # STREAMED TO A TEMP FILE, NOT READ INTO THE HEAP. `transcribe_audio_bytes` takes the path and
+    # hands it to whichever provider rung answers, so the recording is never a `bytes` in this
+    # process. See `s3.download_to_temp` and `ai._upload_body`.
+    try:
+        source_path = await asyncio.to_thread(
+            download_to_temp, _value(media, "objectKey"), max_bytes=MAX_TRANSCRIBE_FETCH_BYTES
+        )
+    except ObjectTooLarge as exc:
+        # `head_object` could not size it and the transfer itself hit the bound. Same terminal
+        # answer as the gate above, with the real number in it.
+        message = (
+            f"This file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
+            f"server will transcribe. Nothing was sent to a provider and nothing was spent."
+        )
+        await db.mediafile.update(
+            where={"id": media_id},
+            data={"transcriptStatus": UNAVAILABLE, "transcriptError": message},
+        )
+        return {
+            "available": False,
+            "status": UNAVAILABLE,
+            "text": None,
+            "formattedTranscript": None,
+            "message": message,
+        }
+    try:
+        result = await transcribe_audio_bytes(
+            None,
+            _value(media, "originalFilename") or "recording.webm",
+            _value(media, "mimeType") or "audio/webm",
+            settings,
+            source_path=source_path,
+            # THE UPLOADER, NOT "nobody". This runs in the background, but it is not background
+            # work in the sense that matters for billing: it is one designer's own recording being
+            # transcribed because they uploaded it. Passing None here would mean a designer who
+            # supplied a key had their live dictation billed to them and every uploaded recording
+            # billed to the organisation, which is not a distinction anybody asked for or could see.
+            user_id=_value(media, "uploadedById"),
+        )
+    finally:
+        # The temp file dies with this call whatever happened to the transcript — a failed provider
+        # run that left a copy of every recording on disk would fill the box within a day.
+        discard_temp(source_path)
     mode = transcription_mode(await load_app_settings())
     if result.get("status") == "COMPLETED" and mode in {"REFINED", "REFINED_TRANSLATED"} and result.get("text"):
         refined = await refine_transcript_text(result.get("text"), mode == "REFINED_TRANSLATED", settings)
@@ -643,7 +755,7 @@ async def _process_job(job: Any, settings: Settings) -> None:
         # would leave after the artisan had said stop.
         #
         # It costs one primary-key read per transcription job, on a path that is about to spend a
-        # provider round trip and read the whole file out of object storage — and it is BEFORE the
+        # provider round trip and stream the whole file out of object storage — and it is BEFORE the
         # bytes are fetched, so a refused job does not even pull the audio.
         #
         # ``resolve_from_stages`` BECAUSE A JOB CARRIES NO WORKSHOP AND THE CLIP MAY NOT EITHER, which
@@ -660,18 +772,63 @@ async def _process_job(job: Any, settings: Settings) -> None:
         if not verdict.may_send:
             await _finalize_refused_job(job, verdict)
             return
-    content = await asyncio.to_thread(get_object_bytes, media.objectKey)
-    if job.jobType == TRANSCRIPTION:
-        result = await transcribe_audio_bytes(
-            content,
-            media.originalFilename or "recording.webm",
-            media.mimeType or "audio/webm",
-            settings,
-            # The person who ASKED for this job, which is who the work is for. Falls back to
-            # the uploader for a job created by a sweep rather than by a person, and to None
-            # when neither is recorded — at which point the organisation pays, correctly.
-            user_id=getattr(job, "requestedById", None) or getattr(media, "uploadedById", None),
-        )
+        # THE SIZE GATE, AND THEN A STREAM RATHER THAN A READ. Both are new; this line used to be an
+        # unconditional `get_object_bytes` shared with the MEASUREMENT branch below, which pulled the
+        # whole object — up to the 668.44 MiB one this deployment actually holds — into the worker's
+        # heap before anything had asked how big it was. The refusal is terminal and it is written to
+        # the row where a designer sees it, rather than being retried until the attempts run out.
+        oversize = await _oversize_reason(media, MAX_TRANSCRIBE_FETCH_BYTES, what="transcribe")
+        if oversize is not None:
+            await _apply_transcription_result(
+                job,
+                {
+                    "available": False,
+                    "status": UNAVAILABLE,
+                    "text": None,
+                    "formattedTranscript": None,
+                    "message": oversize,
+                },
+            )
+            return
+        try:
+            source_path = await asyncio.to_thread(
+                download_to_temp, media.objectKey, max_bytes=MAX_TRANSCRIBE_FETCH_BYTES
+            )
+        except ObjectTooLarge as exc:
+            # Storage would not size it and the transfer hit the bound. Terminal, and NOT left to
+            # the ordinary retry: every attempt would re-download the same oversized object over
+            # the same link before failing in the same place.
+            await _apply_transcription_result(
+                job,
+                {
+                    "available": False,
+                    "status": UNAVAILABLE,
+                    "text": None,
+                    "formattedTranscript": None,
+                    "message": (
+                        f"This file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte "
+                        f"limit this server will transcribe. Nothing was sent to a provider."
+                    ),
+                },
+            )
+            return
+        try:
+            result = await transcribe_audio_bytes(
+                None,
+                media.originalFilename or "recording.webm",
+                media.mimeType or "audio/webm",
+                settings,
+                source_path=source_path,
+                # The person who ASKED for this job, which is who the work is for. Falls back to
+                # the uploader for a job created by a sweep rather than by a person, and to None
+                # when neither is recorded — at which point the organisation pays, correctly.
+                user_id=getattr(job, "requestedById", None) or getattr(media, "uploadedById", None),
+            )
+        finally:
+            # Before the refinement hop below, which is a chat call over text and has no use for the
+            # audio: holding the file across it would keep a copy of every recording on disk for the
+            # length of a second provider round trip.
+            discard_temp(source_path)
         # Apply the configured transcription mode: RAW keeps the plain transcript; REFINED rewrites it
         # into a clean interviewer/interviewee dialogue; REFINED_TRANSLATED also translates to English.
         # The refined text is stored as the transcript (raw stays in transcriptSummary) and still lands
@@ -708,6 +865,22 @@ async def _process_job(job: Any, settings: Settings) -> None:
         await _apply_transcription_result(job, result)
         return
     if job.jobType == MEASUREMENT:
+        # STILL A WHOLE READ, AND DELIBERATELY SO — but gated, which it was not. A vision model is
+        # sent base64 of the entire image inside a JSON body, and there is no half of a base64, so
+        # streaming to a temp file would buy nothing here except a second copy on disk beside the
+        # one in the heap. What was missing was any bound at all: `MAX_MEASUREMENT_BYTES` lowered by
+        # what the box says is free (see `services/memory_budget`) is that bound, and the refusal
+        # terminates the job with a message instead of letting an oversized photograph OOM the
+        # worker on every attempt.
+        ceiling = budget_bytes(MAX_MEASUREMENT_BYTES)
+        oversize = await _oversize_reason(media, ceiling, what="analyse in one piece")
+        if oversize is not None:
+            await _apply_measurement_result(
+                job,
+                {"available": False, "status": UNAVAILABLE, "analysis": None, "message": oversize},
+            )
+            return
+        content = await asyncio.to_thread(get_object_bytes, media.objectKey)
         result = await analyze_measurement_image_bytes(
             content,
             media.originalFilename or "measurement.jpg",
@@ -898,7 +1071,7 @@ async def _handle_job_failure(job_id: str, exc: Exception) -> None:
 
     THE CLIP USED TO BE LEFT BEHIND, AND QUEUED IS A TRAP. ``MediaFile.transcriptStatus`` is written
     back only by :func:`_apply_transcription_result`, which is reached only after the provider has
-    answered. Every raise BEFORE that point — the consent read, ``get_object_bytes``,
+    answered. Every raise BEFORE that point — the consent read, the size gate, ``download_to_temp``,
     ``transcribe_audio_bytes`` itself, ``load_app_settings``, ``refine_transcript_text`` — lands here
     instead, and here used to update the job and nothing else. So a clip whose S3 object was briefly
     unreachable overnight ended with the job FAILED and the clip still reading

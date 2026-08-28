@@ -40,6 +40,17 @@
  *    canvas re-encode as the thing that rule exists to stop. Nothing here returns a `File`, and that
  *    is deliberate: `traceExport.ts` is where a `File` is made, and it works from full-resolution
  *    geometry rather than from a display plate.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * AND A THIRD PLATE, BUILT ONLY WHEN IT IS ASKED FOR
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * {@link buildDifferencePlate} subtracts the two — see {@link differenceRgba} for the arithmetic and
+ * for why it is the one definition both clients implement. It is deliberately NOT built by
+ * {@link buildComparisonPlates}, which is the same decision the handset made in the same wave
+ * (`DwSketchTraceCompare.DwTraceCompareMode.DIFFERENCE`): it is the only one of the four views that
+ * costs a third plate, and building it with the other two would add a third PNG encode to every
+ * settled trace — which is once per slider drag, on the page thread.
  */
 
 import { workingSizeFor } from "./decodeToPixels";
@@ -356,4 +367,223 @@ export async function buildComparisonPlates(
   }
 
   return { trace, original, width: box.width, height: box.height, reduced };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The difference plate
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What the panel says about the difference view, once, under the frame.
+ *
+ * COPIED VERBATIM FROM THE HANDSET'S `DW_TRACE_DIFFERENCE_NOTE`, which is where this sentence was
+ * written. Both clients grew this view in the same wave and neither had said any of it before, so the
+ * wording was invented on the Android side and comes across unchanged — the rule this repository runs
+ * on, and the reason a designer moving between the two apps mid-workshop reads one description of one
+ * picture rather than two.
+ */
+export const COMPARISON_DIFFERENCE_NOTE =
+  "Difference subtracts the two pictures from each other: black where they agree, bright where they " +
+  "do not. A line the trace missed and a line it invented both come out bright, and the paper's own " +
+  "tone shows as an even dim grey.";
+
+/**
+ * What the panel says when the third plate could not be made.
+ *
+ * The handset's `DW_TRACE_DIFFERENCE_REFUSAL` with one word changed — it says "This phone" and there
+ * is no phone here. Same class of divergence as "Download" against "Save" in the export row: the
+ * sentence is the handset's, the noun is the platform's. Everything after the first clause is
+ * identical, including the part that matters most, which is that nothing else was lost.
+ */
+export const COMPARISON_DIFFERENCE_REFUSAL =
+  "This browser could not make room for the difference picture. The wipe and the two whole pictures " +
+  "still work, and the drawing is unaffected.";
+
+/**
+ * What the panel says while the third plate is being subtracted.
+ *
+ * THE HANDSET'S SENTENCE, AND IT WAS NOT BEFORE. `DwSketchTracePanel.kt` prints "Working out the
+ * difference picture…" in exactly this slot — the same polite live region, in the same branch, with
+ * the refusal taking precedence over it in the same order. The portal had written its own sentence for
+ * the same state, which is the one thing this repository's wording rule forbids: two apps describing
+ * one wait in two ways, to one designer, about one sheet. This is the handset's, verbatim.
+ *
+ * IT SURVIVES THE PLATFORM SWAP UNCHANGED, unlike {@link COMPARISON_DIFFERENCE_REFUSAL} beside it,
+ * because it names no device — a wait is a wait on both.
+ */
+export const COMPARISON_DIFFERENCE_PENDING = "Working out the difference picture…";
+
+/**
+ * How the difference picture is described to a screen reader.
+ *
+ * THE HANDSET'S, VERBATIM, AND FOR THE SAME ELEMENT. `DwSketchTraceCompare.kt` puts this on the frame
+ * as its `contentDescription` whenever the difference mode is showing, in place of the seam proportion
+ * it reads out otherwise — its own note being that a proportion is meaningless when there is one
+ * picture rather than two laid over each other. The portal reaches the same place from the other side:
+ * the frame's role drops from `slider` to `group`, its name stays put, and what is IN it is named by
+ * this `alt`.
+ *
+ * IT SAYS WHAT THE PICTURE MEANS, NOT WHAT IT IS. "The difference between the traced drawing and the
+ * photograph" — this element's `alt` until a cross-client pass replaced it — names the operation and
+ * leaves a reader who cannot see the plate with no way to interpret it. Dark-is-agreement and
+ * bright-is-disagreement is the whole content of the view, and a sighted designer reads it off the
+ * picture in a second.
+ */
+export const COMPARISON_DIFFERENCE_ALT =
+  "The traced drawing and the photograph subtracted from each other. Dark where they agree, bright " +
+  "where they differ.";
+
+/**
+ * The word on the picture while the difference is showing.
+ *
+ * ONE BADGE, WHERE THE WIPE HAS TWO. The other two name a layer each and are clipped to the half of
+ * the frame that layer occupies; this one names the whole frame, so it is not clipped at all. The
+ * handset draws exactly this, at exactly this corner, and states the reason a chip row does not
+ * already cover: a difference plate of a good trace is very nearly black, and a nearly black frame is
+ * indistinguishable from a plate that failed to draw. The badge is what separates "this worked and
+ * they agree" from "nothing rendered".
+ */
+export const COMPARISON_DIFFERENCE_BADGE = "Difference";
+
+/** The third plate, or a sentence saying why there is not one. */
+export type DifferenceOutcome = { readonly plate: Blob } | ComparisonRefusal;
+
+export function isDifference(outcome: DifferenceOutcome): outcome is { readonly plate: Blob } {
+  return "plate" in outcome;
+}
+
+/**
+ * The two layers subtracted from each other, one RGBA plane in and one out.
+ *
+ * ── THE DEFINITION, WRITTEN DOWN BECAUSE TWO CLIENTS HAVE TO SHARE IT ─────────────────────────
+ *
+ * **ABSOLUTE DIFFERENCE PER CHANNEL.** Red, green and blue are each subtracted independently and the
+ * sign is dropped; alpha is forced opaque. It is NOT a luminance difference, and that is a decision
+ * rather than a convenience: a luminance difference needs a set of weights, there are at least two
+ * standard sets in common use, and the day the two clients picked different ones the difference plate
+ * would disagree between a laptop and a handset with nothing on either screen to say which was right.
+ * An absolute per-channel difference has exactly one definition, needs no colour-space opinion, and is
+ * what every image editor's "difference" blend already means — so a designer who has met one has met
+ * this.
+ *
+ * The handset implements the identical arithmetic at `DwSketchTracePlateMath.dwTraceDifferenceRow`,
+ * against this same paragraph, and the mode is named "Difference" on both clients.
+ *
+ * ── WHY ALPHA IS FORCED RATHER THAN SUBTRACTED ────────────────────────────────────────────────
+ *
+ * Both plates are opaque by construction — the trace plate is painted on white (decision 2 above) and
+ * the photograph is a decode. A subtracted alpha would therefore be zero everywhere, which is an
+ * invisible picture rather than a black one, and the failure would look exactly like a plate that
+ * never got built.
+ *
+ * ── WHAT IT SHOWS ─────────────────────────────────────────────────────────────────────────────
+ *
+ * A stroke the trace reproduced is dark in the photograph and black on the plate, so it comes out near
+ * black: agreement reads as nothing. A stroke the trace MISSED is dark in the photograph and white on
+ * the plate, and a stroke it INVENTED is the reverse; both come out bright. The paper's own tone
+ * becomes an even dim grey, because paper is not quite white and the plate is.
+ *
+ * @returns a new plane the length of the SHORTER of the two, so a caller that hands over mismatched
+ *   planes gets a short answer rather than reading off the end of one of them. The one caller here
+ *   draws both plates to one agreed size first.
+ */
+export function differenceRgba(photograph: Uint8ClampedArray, trace: Uint8ClampedArray): Uint8ClampedArray {
+  const length = Math.min(photograph.length, trace.length);
+  const out = new Uint8ClampedArray(length);
+  for (let i = 0; i + 3 < length; i += 4) {
+    out[i] = Math.abs(photograph[i] - trace[i]);
+    out[i + 1] = Math.abs(photograph[i + 1] - trace[i + 1]);
+    out[i + 2] = Math.abs(photograph[i + 2] - trace[i + 2]);
+    out[i + 3] = 255;
+  }
+  return out;
+}
+
+/**
+ * Decode one plate blob back into pixels at a known size.
+ *
+ * WHY THE PLATES ARE RE-DECODED RATHER THAN THEIR PLANES KEPT. Holding both planes would pin two
+ * whole RGBA planes of `COMPARISON_LONG_EDGE_PX` for as long as the comparator is on screen, per
+ * trace, for a view most designers never open — the same argument that made that cap 1024 rather than
+ * 4096. Two decodes on one button press is the cheaper side of that trade, and it is paid once: the
+ * caller keeps the blob that comes back.
+ */
+async function planeOf(blob: Blob, width: number, height: number): Promise<Uint8ClampedArray | null> {
+  if (typeof createImageBitmap !== "function") return null;
+  const canvas = createCanvas(width, height);
+  if (canvas === null) return null;
+  const context = canvas.getContext("2d") as
+    | CanvasRenderingContext2D
+    | OffscreenCanvasRenderingContext2D
+    | null;
+  if (context === null) return null;
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(blob);
+  } catch {
+    return null;
+  }
+  try {
+    context.drawImage(bitmap, 0, 0, width, height);
+  } finally {
+    // A decoded bitmap holds its pixels until it is closed or collected, and there are two of them per
+    // press. `decodeToPixels`'s header records that three copies of one big buffer is how a 2 GB
+    // handset kills the page.
+    bitmap.close();
+  }
+  try {
+    return context.getImageData(0, 0, width, height).data;
+  } catch {
+    // A surface that will not be read back. Not reachable from a blob this page made itself, and
+    // answered rather than thrown because the caller's only sensible response is the refusal sentence.
+    return null;
+  }
+}
+
+/**
+ * The third plate, from the two the comparator is already holding.
+ *
+ * BUILT ON THE PRESS AND NOT WITH THE OTHER TWO — see the file header. The caller owns the blob and,
+ * as everywhere else in this file, no object URL is created here: a URL is a thing that has to be
+ * revoked and only the component knows when it left the screen.
+ *
+ * @param width the plates' agreed width — {@link ComparisonPlates.width}. Both blobs are drawn to it,
+ *   so a plate that somehow came back at another size is scaled to the frame rather than offset inside
+ *   it, which would subtract a drawing from a shifted copy of itself and light up every edge in it.
+ */
+export async function buildDifferencePlate(
+  photograph: Blob,
+  trace: Blob,
+  width: number,
+  height: number
+): Promise<DifferenceOutcome> {
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+  const photographPlane = await planeOf(photograph, w, h);
+  // SEQUENTIAL, NOT `Promise.all`. Two decodes of a plate this size held at once is exactly the two
+  // simultaneous big buffers the cap above exists to avoid, and the first one's refusal makes the
+  // second one's work pointless anyway.
+  const tracePlane = photographPlane === null ? null : await planeOf(trace, w, h);
+  if (photographPlane === null || tracePlane === null) {
+    return { reason: COMPARISON_DIFFERENCE_REFUSAL };
+  }
+
+  const canvas = createCanvas(w, h);
+  const context =
+    canvas === null
+      ? null
+      : (canvas.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null);
+  if (canvas === null || context === null) return { reason: COMPARISON_DIFFERENCE_REFUSAL };
+
+  const plane = differenceRgba(photographPlane, tracePlane);
+  // `context.createImageData` rather than `new ImageData(...)`, for the reason `buildComparisonPlates`
+  // gives at its own `putImageData`: the constructor's typed-array parameter needs a cast, and the cast
+  // would be over the one thing worth checking.
+  const image = context.createImageData(w, h);
+  image.data.set(plane.subarray(0, Math.min(plane.length, image.data.length)));
+  context.putImageData(image, 0, 0);
+
+  const plate = await canvasToBlob(canvas);
+  if (plate === null) return { reason: COMPARISON_DIFFERENCE_REFUSAL };
+  return { plate };
 }

@@ -326,6 +326,51 @@ interface WorkshopRepositoryApi {
     @GET("media/{id}")
     suspend fun getMedia(@Path("id") id: String): MediaFileDto
 
+    // ONE LIST ROUTE, AND UNTIL NOW THIS CLIENT COULD ONLY PAGE THROUGH IT BLINDLY.
+    //
+    // `list_media` (backend/app/api/routes/media.py, `@router.get("")`) accepts `search`,
+    // `mediaType`, `statusFilter`, `dateFrom` and `dateTo` beside the two link keys below, and this
+    // binding declared none of the five — so the handset asked for page after page of the whole
+    // archive and sifted the answer in memory, while /media on the web debounces a term straight
+    // into the query string (300ms, `frontend/app/(protected)/media/page.tsx`). That is not a
+    // platform difference; it is capability the server already offers being discarded at the
+    // Retrofit interface.
+    //
+    // WHY A SERVER-SIDE TERM AND NOT A `filter {}` OVER THE PAGE. Reading media is OPEN across this
+    // repository, so page one is the newest rows of everything anybody has ever uploaded. A
+    // client-side filter over that answers "nothing found" for a file that exists and sits on page
+    // nine — absence reading as non-existence, which is non-negotiable 10 of the frontend contract:
+    // "Truncation, caps and skipped work must be stated on screen. A list that quietly stops is
+    // indistinguishable from a place with no records — the single most repeated bug class in this
+    // repo." (Quoted from .claude/skills/field-repo-frontend/SKILL.md on 2026-08-27; re-find it with
+    // `grep -n "must be stated on screen" .claude/skills/field-repo-frontend/SKILL.md` rather than
+    // by line number, which moves.) The server folds `search` into the WHERE, ORed across
+    // `originalFilename`, `caption` and `mimeType`, so it reaches past page one — the same argument
+    // the web states in full at /media.
+    //
+    // VISIBILITY IS NOT AT RISK FROM `search`. The route AND-composes its visibility clause with the
+    // search OR precisely so a term can never widen what an account may see, so nothing here needs a
+    // client-side re-check of the rows that come back.
+    //
+    // THE TWO ENUM PARAMETERS ARE SINGLE-VALUED AND STRICT, AND "ALL" IS A 422, NOT "NO FILTER".
+    // Both go through `records.enum_filter_or_422`, which refuses anything outside the enum with a
+    // 422 naming the allowed values — written that way because a value Prisma cannot compare used
+    // to come back as a 500 with a stack trace. So:
+    //   • [mediaType]    IMAGE | VIDEO | AUDIO | PDF | DOCUMENT | OTHER
+    //   • [statusFilter] DRAFT | PENDING | APPROVED | REJECTED | NEEDS_REVISION
+    // Upper case, one value, and `null` — never `""`, never `"ALL"` — is how a picker's empty option
+    // says "no filter". A dropdown labelling its empty row "All" must map it to null before it gets
+    // here. `workshopAccessRequests` further down IS a route where `statusFilter=ALL` widens the
+    // list to full history, and `mediaJobs` immediately below spells its parameter the same way
+    // while checking it against a THIRD enum (`MEDIA_PROCESSING_JOB_STATUSES`, the JOB's status and
+    // not the file's) — three routes, one parameter name, three vocabularies. Do not copy a value
+    // between them: passing `RECORD_STATUSES` to the jobs route is a mistake already made once on
+    // the server, where it 422'd every request the panel makes.
+    //
+    // [dateFrom]/[dateTo] are ISO-8601 and INCLUSIVE AT BOTH ENDS (`records.add_date_range` builds
+    // `gte`/`lte`), compared against `createdAt` — the upload instant, not the day the fieldwork
+    // happened. Spelled String for the reason `search` and `mapPoints` above are: the wire format is
+    // the contract, and a client-side date type would put a formatter between it and this call.
     @GET("media")
     suspend fun media(
         @Query("page") page: Int = 1,
@@ -334,7 +379,15 @@ interface WorkshopRepositoryApi {
         @Query("linkedRecordId") linkedRecordId: String? = null,
         // Server-side ownership filter — see the note on [artisans]. MediaFile owns its rows through
         // `uploadedById`, so this one route spells the parameter `uploadedBy`.
-        @Query("uploadedBy") uploadedBy: String? = null
+        @Query("uploadedBy") uploadedBy: String? = null,
+        // APPENDED rather than slotted in beside `uploadedBy` in the server's own order: every call
+        // site passes these by name, and appending keeps a positional call — if one is ever written
+        // — meaning what it meant before this line existed.
+        @Query("search") search: String? = null,
+        @Query("mediaType") mediaType: String? = null,
+        @Query("statusFilter") statusFilter: String? = null,
+        @Query("dateFrom") dateFrom: String? = null,
+        @Query("dateTo") dateTo: String? = null
     ): PageResponse<MediaFileDto>
 
     // The media processing queue: what became of the transcription job an audio upload enqueued.
@@ -676,8 +729,40 @@ interface WorkshopRepositoryApi {
 
     // --- Task administration (admin; the master admin may assign to anyone but themselves) ---
     // Every picker the assignment builder needs in one call. `workshopId` narrows the artisan list.
+    //
+    // THREE OF THOSE PICKERS ARE CAPPED, AND WITHOUT [search] THE ROWS PAST THE CAP WERE
+    // UNREACHABLE. The server takes 500 assignees, 200 workshops and 500 artisans
+    // (`TASK_OPTION_USER_LIMIT` / `_WORKSHOP_LIMIT` / `_ARTISAN_LIMIT`; re-check with
+    // `grep -n "TASK_OPTION_.*_LIMIT = " backend/app/api/routes/tasks.py`), and the route's own
+    // docstring records that two of those three caps were already live on this deployment's measured
+    // population — 3632 accounts, 731 artisans, docs/OPEN_FINDINGS.md, 2026-08-13.
+    //
+    // A picker that filters IN MEMORY over a capped list therefore shows an admin looking for a
+    // colleague whose name sorts late in the alphabet exactly what it shows them for a colleague who
+    // has no account at all — the "hidden from you vs nobody matched" failure the eligible-viewers
+    // picker was fixed for, reopened in a different endpoint, and non-negotiable 10 of the frontend
+    // contract ("Truncation, caps and skipped work must be stated on screen") wearing a search box.
+    // The server folds the term into the WHERE of all three queries, so it reaches PAST the cap
+    // rather than searching the first 500 names and stopping at the exact ceiling the parameter was
+    // added to get past.
+    //
+    // ONE PARAMETER FOR ALL THREE PICKERS, NOT THREE, and the reason is a silent failure rather than
+    // tidiness: FastAPI DISCARDS a query parameter the route does not declare, so a handset sending
+    // `assigneeSearch` at a server that only knows `search` would draw a search box that narrows
+    // nothing and reports "no matches" — the very defect being closed here, in different clothes.
+    // Send the term of the picker being typed into.
+    //
+    // THE RULE THAT TRAVELS WITH IT, for whoever wires the dialog: never read the absence of an
+    // ALREADY-SELECTED id from a narrowed list as "that record is gone" and clear the selection.
+    // `ProductForm` on the web does exactly that against a capped page and unlinks the artisan.
+    //
+    // 120 CHARACTERS is the server's `max_length`; a longer term is a 422 on a request the admin
+    // reads as a search that failed. Trim and cap before sending, or let the box itself be capped.
     @GET("tasks/options")
-    suspend fun taskOptions(@Query("workshopId") workshopId: String? = null): TaskOptionsDto
+    suspend fun taskOptions(
+        @Query("workshopId") workshopId: String? = null,
+        @Query("search") search: String? = null
+    ): TaskOptionsDto
 
     // THE assignment endpoint: one scope handed to N people writes N rows sharing a batchId.
     // Validated in full before the first row is written, so a bad id can never leave half a batch.
@@ -1488,6 +1573,89 @@ interface WorkshopRepositoryApi {
         @Body body: DwViewersBody
     ): DwViewerListDto
 
+    // --- THE FIFTH SCOPE: who INSPECTS one design workshop, and what an inspector may read -------
+    //
+    // ITS OWN PREFIX, `design-workshop-inspections`, AND THAT IS A GUARD RAIL RATHER THAN A FILING
+    // DECISION. `/design-workshops` already carries `GET /{workshop_id}`, which swallows any literal
+    // path mounted after it — but the deciding reason is stronger than route ordering: the caller of
+    // every route below is, by definition, somebody `load_workshop_or_404` turns away. An inspector
+    // is not in `DESIGN_WORKSHOP_ROLES`, so that loader 404s them, and a route sharing that prefix
+    // invites the next reader to "fix" the inconsistency by widening the shared loader — which
+    // grants STAGE WRITES, because `load_workshop_or_404(..., for_edit=True)` performs no role check
+    // at all. Do not move these five up beside the viewers block.
+    //
+    // TWO DOORS, AND THEY ARE NOT NESTED. The two administration routes are `Depends(require_admin)`
+    // — the inspected must not choose the inspector, so a designer gets no say at all, not even a
+    // "suggest" route. The three read routes are `Depends(require_inspector)`, which is set
+    // membership on {INSPECTOR} and **403s an ADMIN and a MASTER ADMIN by name**. So an account that
+    // may call the first pair may not call the second, and vice versa: this is the one family in
+    // this interface where the two gates are DISJOINT rather than one being a widening of the other.
+    // Nothing here enforces either; the screens do, from `canInspectDesignWorkshops` and
+    // `FieldPermissions.isAdmin`, and the server does again.
+    //
+    // EVERY ROUTE AN INSPECTOR CAN REACH IS A GET, AND THAT IS THE FEATURE. There is no PATCH twin,
+    // no stage save and no report route on this prefix, and `load_inspectable_workshop_or_404` takes
+    // no `for_edit` parameter — so there is no argument a request could carry that turns a read into
+    // a write. Adding a non-GET here is not an extension of this block; it is the end of the scope.
+    // See data/DesignWorkshopInspections.kt, which also records why none of this is cached offline.
+    //
+    // A 404 FROM `eligible-inspectors` MEANS THE DEPLOYMENT PREDATES THE FEATURE, not that a record
+    // is missing: it is the one call in the family carrying no id, so on a server without the route
+    // FastAPI matches it against `GET /{workshop_id}` and answers 404 "Record not found".
+    // `dwInspectionAdministrationMissing` is what tells those apart, and it is pinned to this call
+    // because asking it of `/{id}/inspectors` would be unanswerable.
+
+    // `search` MATCHES NAME OR EMAIL AND IS APPLIED BY THE SERVER, inside the same query as the
+    // eligibility rule — filtering the answer on the phone would search only the part of the
+    // alphabet that fitted under `ELIGIBLE_INSPECTOR_LIMIT`. Over 120 characters the server answers
+    // 422; `dwInspectorSearchTerm` is what keeps this side inside that.
+    @GET("design-workshop-inspections/eligible-inspectors")
+    suspend fun eligibleDesignWorkshopInspectors(
+        @Query("search") search: String? = null
+    ): DwEligibleInspectorListDto
+
+    @GET("design-workshop-inspections/{id}/inspectors")
+    suspend fun designWorkshopInspectors(@Path("id") id: String): DwInspectorListDto
+
+    // REPLACES the whole set, exactly as the viewers PUT does: there is no add route and no remove
+    // route, so a caller that posts only what it just ticked has silently ended everybody else's
+    // inspection. The answer is the set as the SERVER now holds it rather than an echo of what was
+    // sent. An unknown, ineligible, barred or already-on-the-workshop id refuses the ENTIRE call
+    // with a 422 naming the account and the remedy — never a silent skip.
+    @PUT("design-workshop-inspections/{id}/inspectors")
+    suspend fun setDesignWorkshopInspectors(
+        @Path("id") id: String,
+        @Body body: DwInspectorsBody
+    ): DwInspectorListDto
+
+    // THE INSPECTOR'S OWN LIST. Paged like every other list in this API, and answering
+    // `workshop_summary` rows — the same serialiser `GET /design-workshops` uses, which is why it
+    // decodes into [DesignWorkshopPageDto] rather than a type of its own.
+    //
+    // AN INSPECTOR WITH NO INSPECTION ROW SEES AN EMPTY PAGE, AND THAT IS THE WHOLE SCOPE. There is
+    // no "all workshops" arm, no rank fallback and no `createdById` arm — an inspector creates
+    // nothing. So an empty answer here is a fact about assignments and never a failure, which is
+    // why the screen over it keeps "not yet loaded", "loaded and empty" and "failed" as three
+    // distinct states.
+    //
+    // NO `mineOnly`, NO `statusFilter`, NO `craftName`, NO `state`. The route declares none of them:
+    // `APIModel` is not in play for query parameters, but FastAPI ignores unknown ones silently,
+    // which is worse — a filter sent here would appear to work and narrow nothing.
+    @GET("design-workshop-inspections")
+    suspend fun inspectableDesignWorkshops(
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 20,
+        @Query("search") search: String? = null
+    ): DesignWorkshopPageDto
+
+    // ONE WORKSHOP UNDER INSPECTION — the read-only twin of `GET /design-workshops/{id}`, and the
+    // differences are the point rather than an omission: no `transcripts`, no
+    // `dictationConsentByName`, and `readOnly: true` on the wire. Decoded into its OWN type and not
+    // into [DesignWorkshopDetailDto]; see [DwInspectionDetailDto] for why one shared type would make
+    // "is this writable" a question nobody can answer from the payload alone.
+    @GET("design-workshop-inspections/{id}")
+    suspend fun workshopUnderInspection(@Path("id") id: String): DwInspectionDetailDto
+
     // --- The DESIGNER tier: the roster that gates sign-in, and the profile a report prints ---
     //
     // Two groups of routes under one prefix, and they are gated differently on the server: the roster
@@ -1775,6 +1943,46 @@ interface WorkshopRepositoryApi {
         @Path("id") id: String,
         @Body body: JsonObject
     ): CustomQuestionnaireDto
+
+    // Use this questionnaire again, as a template, at ANOTHER design workshop.
+    //
+    // THE OWNER ASKED FOR THIS IN THESE WORDS: questionnaires "would usually be scoped to the
+    // workshops, but the designers would have the permission to use the same questionnaire later on
+    // for a different workshop as well in case they want to reuse the same template." The server
+    // built and tested the route; this client bound eighteen of the module's nineteen
+    // `questionnaires/…` routes and not this one, so a designer standing at the second workshop with
+    // the instrument from the first had no way to lift it from the handset. With it bound the two
+    // sides match route for route (re-check: `grep -c '^@router\.'` in
+    // backend/app/api/routes/questionnaire_forms.py against the `@…("questionnaires…")` count here;
+    // 19 = 19 on 2026-08-27).
+    //
+    // IT COPIES; IT DOES NOT SHARE. Questions and sections come across, sittings and answers do not,
+    // and the original keeps every answer ever recorded against it. See [questionnaireReuseJson] for
+    // the body's three optional fields (an EMPTY body is meaningful: an unattached copy) and
+    // [QFormReuseResultDto] for what comes back.
+    //
+    // NOT OWNER-GATED ON THE SERVER, AND THIS CLIENT MUST NOT GATE IT EITHER. That is argued in the
+    // route's own docstring and it is not an oversight: the QUESTIONS of any questionnaire already
+    // leave this system for any designer through `questionnaires/{id}/question-set.xlsx` bound
+    // above, whose rule is "this file is exactly the openly readable half". Refusing here would
+    // refuse in JSON what the .xlsx door hands over, and be routed around by downloading that file
+    // and re-uploading it — which produces the same row with NO provenance recorded at all. What IS
+    // gated is the TARGET: `_require_attachable_workshop` wants workshop creator, admin or a viewer
+    // grant, so offer only workshops this account can already write to (404 for one it cannot see,
+    // 409 for a soft-deleted one), and ask BEFORE anything is written so a refusal leaves no orphan.
+    //
+    // A DEACTIVATED SOURCE IS STILL REUSABLE and that is deliberate — `isActive: false` is this
+    // API's stand-in for a delete, and a retired instrument is exactly the thing a designer wants to
+    // lift for a new round. Do not filter it out of whatever list offers this.
+    //
+    // JsonObject for the reason [customQuestionnaireUpdateJson] gives, on a different field:
+    // `description` is a tri-state the server reads through `exclude_unset`, and the converter's
+    // `explicitNulls = false` would drop the explicit null that means "start it empty".
+    @POST("questionnaires/{id}/reuse")
+    suspend fun reuseQuestionnaire(
+        @Path("id") id: String,
+        @Body body: JsonObject
+    ): QFormReuseResultDto
 
     @POST("questionnaires/{id}/sections")
     suspend fun createCustomSection(

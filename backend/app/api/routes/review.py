@@ -28,6 +28,7 @@ from app.schemas.records import (
     drop_masked_identity_numbers,
 )
 from app.services.access import record_revision
+from app.services.concurrency import gather_reads
 from app.services.records import (
     clean_data,
     decimal_to_string,
@@ -180,24 +181,58 @@ async def list_pending_reviews(reviewer: Any = Depends(require_reviewer)) -> dic
         where["createdBy"] = {"is": {"role": {"in": roles}}}
 
     items: list[dict[str, Any]] = []
-    truncated = False
     total = 0
-    for record_type, delegate, label_fields in _PENDING_SOURCES:
-        rows = await delegate.find_many(
-            where=where,
-            include={"createdBy": True},
-            order={"createdAt": "desc"},
-            take=PENDING_TAKE + 1,
+
+    # THE SIX READS GO OUT IN ONE WAVE. They do not depend on one another — the same WHERE against
+    # six different tables — and the database is in another AWS region, so what this page costs is
+    # how many round trips wait on each other and almost nothing else. Sequentially, the six reads
+    # behind the one auth read measured 4,958 ms to produce a 22-BYTE answer against an EMPTY queue
+    # (docs/SCALABILITY.md §1.1); gathered, they are a single wave behind auth. ``gather_reads``
+    # bounds the fan-out by the Prisma pool, so one reviewer opening this page cannot drain it, and
+    # it returns results POSITIONALLY — which is why the loop below still walks ``_PENDING_SOURCES``
+    # in order and the response is byte-for-byte what the sequential version produced.
+    #
+    # WHAT IT COSTS THE 1 GiB BOX: the six row sets are alive at the same time now instead of one at
+    # a time, so the peak is the whole capped set — at most 6 × (PENDING_TAKE + 1) = 1,206 rows with
+    # their ``createdBy`` — where it used to be 201. That ceiling is set by the cap and not by the
+    # backlog, it is single-digit MB, and the ``items`` list built from those rows was always held
+    # whole anyway. NOT MEASURED; bounded by arithmetic on ``PENDING_TAKE``.
+    row_sets = await gather_reads(
+        *(
+            delegate.find_many(
+                where=where,
+                include={"createdBy": True},
+                order={"createdAt": "desc"},
+                take=PENDING_TAKE + 1,
+            )
+            for _record_type, delegate, _label_fields in _PENDING_SOURCES
         )
-        if len(rows) > PENDING_TAKE:
-            truncated = True
+    )
+
+    # A SECOND WAVE, AND ONLY FOR THE RECORD TYPES THAT ACTUALLY OVERFLOWED. Where the cap did not
+    # bite, the rows read ARE the whole matching set and their length is the exact count, so a queue
+    # under the cap costs the six reads it has always cost and this wave issues NO coroutines and
+    # therefore no round trip at all. Counting all six unconditionally would read more evenly but
+    # would double the query load of this page to buy five numbers already in hand. Do not
+    # "simplify" this into an unconditional count, and do not fold it into the wave above either —
+    # which of the six need counting is not known until their rows come back.
+    overflowed = [index for index, rows in enumerate(row_sets) if len(rows) > PENDING_TAKE]
+    counted = dict(
+        zip(
+            overflowed,
+            await gather_reads(
+                *(_PENDING_SOURCES[index][1].count(where=where) for index in overflowed)
+            ),
+            strict=True,
+        )
+    )
+    truncated = bool(overflowed)
+
+    for index, (record_type, _delegate, label_fields) in enumerate(_PENDING_SOURCES):
+        rows = row_sets[index]
+        if index in counted:
             rows = rows[:PENDING_TAKE]
-            # AN EXTRA QUERY ONLY FOR A RECORD TYPE THAT ACTUALLY OVERFLOWED. Where the cap did not
-            # bite, the rows read ARE the whole matching set and their length is the exact count, so
-            # a queue under the cap costs the six reads it has always cost. Counting all six
-            # unconditionally would read more evenly but would double the query load of this page to
-            # buy five numbers already in hand. Do not "simplify" this into an unconditional count.
-            total += await delegate.count(where=where)
+            total += counted[index]
         else:
             total += len(rows)
         for row in rows:

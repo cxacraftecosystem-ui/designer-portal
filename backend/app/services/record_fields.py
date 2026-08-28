@@ -513,16 +513,37 @@ TOOL = RecordSpec(
         _f("Usage", lambda t: t.processUsedIn),
         _f("Material", lambda t: t.material),
         _f("Years in use", lambda t: t.yearsInUse),
-        _f("Dimensions (LxB in)", lambda t: dims_with_method(t, "lengthInches", "breadthInches")),
-        # A TOOL'S HEIGHT PRINTS BARE AND CANNOT YET DO OTHERWISE, which matters because the grid
-        # control fills exactly this cell. ``ToolDocumentation`` has no ``heightInches``: the reading
-        # lands in the plain ``height`` column, which is not in
-        # ``measurement_provenance.DIMENSION_FIELDS``, so ``method_stamps`` drops a marker naming it —
-        # silently and by design, since failing somebody's record edit over a stray provenance key
-        # would trade a real loss for a cosmetic one. So an accepted vision-model tool height is gated
-        # by the button on both clients and recorded as nothing. Widening ``DIMENSION_FIELDS`` to
-        # ``height`` is the repo owner's call and is not free: ``width`` beside it is a plain typed
-        # input, so the same widening starts stamping hand-typed widths too.
+        _f(
+            "Dimensions (LxBxH in)",
+            lambda t: dims_with_method(t, "lengthInches", "breadthInches", "heightInches"),
+        ),
+        # THIS CELL WAS "Dimensions (LxB in)" AND THE PARAGRAPH HERE SAID ``ToolDocumentation`` HAS
+        # NO ``heightInches``, UNTIL 2026-08-27. The old text is quoted rather than deleted because
+        # of what it was doing while it stood: it read as a settled limitation of the design, and it
+        # told anybody arriving to finish the tool half that an accepted vision-model tool height
+        # "is recorded as nothing" and that the remedy was an unmade owner decision. It read —
+        #
+        #     *"``ToolDocumentation`` has no ``heightInches``: the reading lands in the plain
+        #     ``height`` column, which is not in ``measurement_provenance.DIMENSION_FIELDS`` …
+        #     Widening ``DIMENSION_FIELDS`` to ``height`` is the repo owner's call and is not free:
+        #     ``width`` beside it is a plain typed input."*
+        #
+        # — and it was the last copy of a sentence the rest of the repository had already retracted
+        # (``routes/tools.py``, ``measurement_provenance``, ``design_workshops``), which is exactly
+        # the trap those retractions were written to close. The owner made the call and it was not a
+        # widening: ``ToolDocumentation.heightInches`` landed beside its two siblings (additive
+        # migration ``20260827120000_tool_height_inches``), ``DIMENSION_FIELDS`` already named all
+        # three, and both clients propose into it — ``ToolForm``'s ``MEASURE_COLUMNS`` and Android's
+        # ``TOOL_MEASURE_DIMENSIONS``. So this cell is the triple the product's has always been.
+        # Re-check with ``grep -n "heightInches" backend/prisma/schema.prisma``: three lines on
+        # 2026-08-27 — the product's column, the tool's, and a doc comment above the tool's.
+        #
+        # THE HEIGHT BELOW IS A DIFFERENT COLUMN FROM THE THIRD NUMBER IN THE CELL ABOVE, which is
+        # why both print and neither is redundant. ``height`` is the OLD unit-less column, kept
+        # because rows already hold values in it and nothing in the database can say what unit those
+        # are in. It is outside ``DIMENSION_FIELDS`` and stays an ordinary typed input, so it prints
+        # bare and carries no method clause, exactly as ``width``/``thickness``/``weight``/``radius``
+        # do.
         _f("Height", lambda t: num(t.height)),
         _f("Width", lambda t: num(t.width)),
         _f("Thickness", lambda t: num(t.thickness)),

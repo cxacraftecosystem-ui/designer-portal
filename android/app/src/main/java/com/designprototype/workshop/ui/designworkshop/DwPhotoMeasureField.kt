@@ -114,7 +114,7 @@ import kotlin.math.roundToInt
  *
  * ── IT NEVER WRITES A DIMENSION BY ITSELF ─────────────────────────────────────────────────────
  *
- * Every path ends at a button the designer presses, exactly as [DwIdentityOcrControl] does and for a
+ * Every path ends at a button the designer presses, exactly as [DwIdentityCardControl] does and for a
  * related reason: the number is a proposal from an inference a person can check against the object in
  * their hands, and the moment it is written into `lengthCm` it loses its error bar for ever — the
  * registry has a column for the dimension and none for the doubt. So the doubt is spent HERE, on
@@ -337,8 +337,17 @@ internal fun DwPhotoMeasurePanel(
     targets: List<DwMeasureTarget>,
     rowValues: Map<String, JsonElement>,
     enabled: Boolean,
-    /** Write ONE registry field. Called only from a button the designer pressed. */
-    onPropose: (String, JsonElement?) -> Unit,
+    /**
+     * Write ONE registry field. Called only from a button the designer pressed.
+     *
+     * The third argument is WHICH GEOMETRY PRODUCED THE NUMBER — `DwPhotoMeasure.METHOD_SCALE` or
+     * `METHOD_RECTIFIED`, straight off the result, null if there somehow was none. Added 2026-08-27
+     * for the record forms, which put it on the wire as a `measurementMethods` marker's `technique`
+     * so a later reader can re-derive the reading; the stage surface has no use for it and ignores
+     * it. It is the RESULT's method and not [DwMeasureMode], which names a screen rather than a
+     * geometry and spells the second one `RECTIFY`.
+     */
+    onPropose: (String, JsonElement?, String?) -> Unit,
 ) {
     if (photos.isEmpty() || targets.isEmpty()) return
     var open by remember { mutableStateOf(false) }
@@ -401,7 +410,7 @@ private fun DwPhotoMeasureOpen(
     rowValues: Map<String, JsonElement>,
     enabled: Boolean,
     onClose: () -> Unit,
-    onPropose: (String, JsonElement?) -> Unit,
+    onPropose: (String, JsonElement?, String?) -> Unit,
 ) {
     var photoId by remember { mutableStateOf(photos.first().id) }
     val photo = photos.firstOrNull { it.id == photoId } ?: photos.first()
@@ -1008,7 +1017,19 @@ private fun DwPhotoMeasureOpen(
                     proposeError = coerced.error
                 } else {
                     proposeError = null
-                    onPropose(target.field.key, coerced.value)
+                    // `result` is the very computation the button is printing, so the technique
+                    // reported is the one that produced THIS number — not the mode the panel happens
+                    // to be showing when the press lands.
+                    //
+                    // NARROWED RATHER THAN ASSERTED. A `DwMeasureResult` is either a Measurement or
+                    // a Refusal, and only the first has a method; the button cannot be reached from
+                    // a Refusal (the readout returns early on one), so `as?` yields null on a state
+                    // that does not occur instead of throwing on a state somebody later makes occur.
+                    onPropose(
+                        target.field.key,
+                        coerced.value,
+                        (result as? DwMeasureResult.Measurement)?.method,
+                    )
                 }
             },
         )

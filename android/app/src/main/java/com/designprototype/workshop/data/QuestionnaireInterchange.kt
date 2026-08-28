@@ -96,10 +96,15 @@ data class QFormDetailDto(
 /**
  * What the server did with the ANSWERS in an uploaded workbook, as opposed to its questions.
  *
- * [action] is `answersImported` or `answersNotImported`. The counts are branch-specific on the
- * server — a skip carries [answersSkipped], an import carries [answersImported] and
- * [entriesCreated] — so every one of them is defaulted here rather than required; a missing count
- * on the branch that does not have it is the shape, not a truncated reply.
+ * [action] is one of THREE words, not two: `answersImported`, `answersNotImported` and `reused`.
+ * The counts are branch-specific on the server — a skip carries [answersSkipped], an import carries
+ * [answersImported] and [entriesCreated], and a reuse carries all three as an explicit zero — so
+ * every one of them is defaulted here rather than required; a missing count on the branch that does
+ * not have it is the shape, not a truncated reply.
+ *
+ * THE THIRD WORD IS NOT AN UPLOAD AT ALL. `POST /questionnaires/{id}/reuse` answers in the upload
+ * response's shape on purpose, so that one panel renders both; the price of that reuse is that a
+ * reader here must not assume a file was involved. See [QFORM_REUSED].
  *
  * [reason] IS THE PAYLOAD. Both branches carry a paragraph written for a designer to read, and
  * neither is a code this client is supposed to translate. [sourceQuestionnaireId] is set only on
@@ -218,6 +223,21 @@ const val QFORM_ANSWERS_NOT_IMPORTED = "answersNotImported"
 const val QFORM_ANSWERS_IMPORTED = "answersImported"
 
 /**
+ * The server's word for "this questionnaire was COPIED from another one; no file was read".
+ *
+ * `POST /questionnaires/{id}/reuse` deliberately answers in the upload response's shape so that the
+ * existing report panel renders it — and that is exactly why this constant has to exist. Without a
+ * branch of its own a reuse falls through to the import arm and the panel announces "The answers in
+ * this file were imported" for an operation that imported nothing and read no file, on the one
+ * screen a designer checks to find out what just happened to their questions.
+ *
+ * The server sends all three counts as an explicit zero here (`questionnaire_forms.py:1193`), which
+ * is a statement rather than an omission: no sitting, no respondent and no answer is copied, and the
+ * original keeps every answer ever recorded against it.
+ */
+const val QFORM_REUSED = "reused"
+
+/**
  * The tally line: what the upload actually did to the questionnaire, counted.
  *
  * ONLY NON-ZERO TERMS. A sentence reading "0 superseded, 0 retired, 0 removed" trains a designer to
@@ -269,6 +289,26 @@ data class QFormProvenanceNotice(
 
 fun qFormProvenanceNotice(report: QFormChangeReportDto): QFormProvenanceNotice? {
     val provenance = report.provenance ?: return null
+
+    // A REUSE IS ANSWERED FIRST, BECAUSE THE TWO BRANCHES BELOW ARE BOTH ABOUT A FILE. Neither
+    // reading is available here — nothing was uploaded and nothing was skipped — and the import arm,
+    // which is the one an unrecognised action falls into, would tell a designer that the answers in
+    // a file they never chose were imported.
+    //
+    // NO TALLY. Every count on a reuse is zero by construction, and `qFormUploadSummary` above
+    // already reports the questions and sections that WERE created. A second line saying "0 answers"
+    // would invite the reader to wonder what went wrong with an operation that went perfectly.
+    if (provenance.action == QFORM_REUSED) {
+        return QFormProvenanceNotice(
+            // Not amber. A reuse copying no answers is the whole point of a reuse, and colouring the
+            // correct outcome as a problem is the same mistake the import branch below avoids.
+            warn = false,
+            heading = "The questions were copied. No sittings and no answers came across.",
+            reason = provenance.reason,
+            tally = null,
+        )
+    }
+
     val skipped = provenance.action == QFORM_ANSWERS_NOT_IMPORTED
     val count = if (skipped) {
         provenance.answersSkipped.takeIf { it > 0 } ?: report.answersSkipped

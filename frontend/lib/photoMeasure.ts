@@ -123,6 +123,74 @@ export type Measurement = {
 export type MeasureResult = Measurement | Refusal;
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * How the answer describes ITSELF to whatever stores it
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What this module is, in the vocabulary the RECORD speaks: `PHOTO_GEOMETRY`.
+ *
+ * ── TWO THINGS ARE CALLED "METHOD" HERE AND THEY ARE DIFFERENT AXES ─────────────────────────────
+ *
+ * {@link MeasurementMethod} above — `"SCALE" | "RECTIFIED"` — is WHICH GEOMETRY was solved, and it
+ * matters only to somebody re-deriving the number. `backend/app/services/measurement_provenance.py`
+ * has an enum of the same name whose members are `TYPED` / `PHOTO_GEOMETRY` / `VISION_MODEL`, and
+ * that is a different question: WHAT KIND OF PROCESS produced the number, which is what decides
+ * whether a later reader may act on it. Everything this module can return is `PHOTO_GEOMETRY` under
+ * that second question, and both of its geometries are — which is exactly why the server keeps them
+ * on a separate `technique` key instead of adding two more enum members. `GEOMETRY_TECHNIQUES` there
+ * is `{"SCALE", "RECTIFIED"}`, and it is this type, spelled in Python.
+ *
+ * The collision is not renamed away because both names are right in their own file and both are
+ * already pinned by tests on both sides. It is written down instead, once, here.
+ */
+export const PHOTO_GEOMETRY = "PHOTO_GEOMETRY";
+
+/**
+ * The one fact a stored dimension needs about where it came from, in the shape the server reads.
+ *
+ * ── WHY THE AUTHORITY FILE OWNS THIS AND NOT THE SCREEN ─────────────────────────────────────────
+ *
+ * WHAT WAS WRONG. Both clients computed a measurement, showed its method on screen, and then dropped
+ * it on the floor at the propose button — the value went into the field alone. So a `lengthCm` of
+ * 24.5 read back a year later was indistinguishable three ways: a number somebody typed off a tape,
+ * a number this module computed from marks on a photograph, and a number a vision model guessed off
+ * a grid sheet. `measurement_provenance.py` names that failure precisely for the record COLUMNS —
+ * "a wrong dimension wearing somebody else's name is a costing error nobody can trace and that
+ * person cannot disown" — and the stage registry had the same hole with the same consequence.
+ *
+ * WHY HERE. The marker is a statement about HOW THIS MODULE WORKS, so it belongs in the module and
+ * not in whichever component happens to render the button this week. Three call sites want it (the
+ * stage field, and the two record forms), the Kotlin twin needs the identical two facts, and a
+ * marker composed at each screen is three chances to spell `PHOTO_GEOMETRY` differently in a string
+ * that a database keeps for the life of the record.
+ *
+ * IT IS A CLAIM, NOT A PROOF, and the server treats it as one — see `provenance_of_marker`, which
+ * degrades anything it cannot read to `UNRECORDED` and never to `TYPED`. Nothing here is trusted
+ * because it is well-formed.
+ */
+export type MeasurementMarker = {
+  method: typeof PHOTO_GEOMETRY;
+  technique: MeasurementMethod;
+};
+
+/**
+ * The marker for a measurement this module produced. Total, pure, and the only place the two axes
+ * above are joined.
+ *
+ * Takes a {@link Measurement} and not a {@link MeasureResult} on purpose: a refusal has no method to
+ * describe, and accepting one here would mean inventing an answer for the case where the module
+ * declined to give one. The type makes that unrepresentable rather than handled — the same
+ * discipline as `Refusal` carrying no `value` property at all.
+ *
+ * Nothing about the ERROR BAR travels with this. `uncertainty` is spent on screen, before the accept,
+ * because the registry has a column for the dimension and none for the doubt. The marker says how the
+ * number was arrived at; it does not say how well.
+ */
+export function methodMarker(measurement: Measurement): MeasurementMarker {
+  return { method: PHOTO_GEOMETRY, technique: measurement.method };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Constants, each of which is an argument rather than a preference
  * ──────────────────────────────────────────────────────────────────────────── */
 

@@ -204,6 +204,66 @@ export function flagCutNotice(truncated: boolean | undefined, noun: string, term
 }
 
 /**
+ * THE SENTENCE FOR A CUT NOTHING ON SCREEN CAN REACH PAST — the review queue, and the third honest
+ * shape a cut comes in.
+ *
+ * WHY NEITHER ARM OF `CutReach` FITS, which is the only reason this is a third function. The
+ * queue at `GET /review/pending` reads at most `cap` rows of each of SIX record types
+ * (`backend/app/api/routes/review.py::PENDING_TAKE`), concatenates them and reports a real `total`
+ * counted for the types that overflowed. So:
+ *
+ * - `"none"` ends "typing here searches only the N shown". There is no box to type in. That route
+ *   takes no search parameter at all, and `list_pending_reviews`' own docstring says why.
+ * - `"pager"` ends "use the pager to reach the rest". The pager on that page walks the rows already
+ *   in the browser, so it reaches none of them. This is the worse of the two errors — it names a
+ *   control that is on screen and does not do what the sentence says it does.
+ *
+ * What IS true there is that the per-source order is `createdAt desc`, so the rows behind the cap
+ * are the OLDEST — the most overdue work is exactly what is missing — and the only thing that
+ * brings them forward is deciding the ones on screen. That is an instruction the reader can act
+ * on, which is the bar `CutReach`'s header sets and the reason the viewer picker's notice was
+ * rewritten on 2026-08-13.
+ *
+ * `cap` is printed because it is the number the reader would otherwise have to infer from a
+ * six-way sum that does not divide evenly, and it is the server's to change: it arrives on the
+ * wire beside `truncated` rather than being repeated here.
+ *
+ * TAKES THE FLAG, LIKE `flagCutNotice` AND UNLIKE `cappedListNotice`, and the difference is not
+ * stylistic. The server's `truncated` is the authority on whether the queue was cut — it is decided
+ * by reading one row beyond the cap, not inferred from the arithmetic — so the flag decides, and
+ * the numbers only decide which sentence. That also makes the call safe to hand straight in without
+ * the caller writing its own `&&`, which is what keeps the decision in this module.
+ *
+ * Its Kotlin twin is `reviewQueueCutNotice` in
+ * `android/app/src/main/java/com/designprototype/workshop/ui/ReviewQueueCopy.kt`, which must be
+ * changed with it — the two clients are looking at one queue.
+ */
+export function queueCutNotice(truncated: boolean | undefined, cut: ListCut | null, cap: number): string {
+  // `undefined` is the wire's shape on an older deployment: `apiFetch` casts, it does not validate.
+  // Same guard, same reason, as `flagCutNotice`'s.
+  if (!truncated) return "";
+  // Arithmetic that would read as a contradiction is not printed. `total <= loaded` (which is what
+  // a null `cut` means here) cannot happen beside a true flag from a server that sends both, and
+  // `cap <= 0` is what a server predating the key sends; in either case the honest fallback is the
+  // fact WITHOUT the numbers. Saying nothing at all would be the one unacceptable answer — the flag
+  // said the list was cut, and an unstated cut is the defect this whole module exists to close.
+  if (!cut || cap <= 0) {
+    return "Some pending records are not shown — the queue holds a limited number of each record type, and the ones behind that limit are the oldest.";
+  }
+  // The server states that a cut answer can never carry an empty `items` — the cut is by count
+  // alone, so a cut answer holds `cap` rows by construction. Handled anyway, and worded as
+  // `cappedListNotice`'s own first arm is, because a reader meeting "Showing 0 of 340" with a cap
+  // sentence after it would be reading a contradiction.
+  if (cut.loaded === 0) {
+    return `None of the ${cut.total} ${cut.noun} could be listed here — this is not an empty queue.`;
+  }
+  return (
+    `Showing ${cut.loaded} of ${cut.total} ${cut.noun} — the queue holds at most ${cap} of each ` +
+    "record type, and the ones behind that limit are the oldest. They appear here as the queue is worked."
+  );
+}
+
+/**
  * Add rows to a picker's option list without ever removing one — the other half of living with a
  * ceiling.
  *

@@ -4,7 +4,8 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { SearchInput } from "@/components/SearchInput";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
-import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
+import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
+import { MAX_NAMED_DESIGNERS, namedDesignerTeam } from "@/lib/designWorkshops";
 import {
   ELIGIBLE_VIEWER_SEARCH_MAX,
   eligibleViewerNotice,
@@ -32,21 +33,43 @@ const SEARCH_DEBOUNCE_MS = 300;
  * fallback then writes `profile.user.name` — so an admin who has never filled anything in still
  * lands their own account name on the promoted `designerName` column.
  *
- * The server grew `designerUserId` for this, with `assert_designer_may_be_named` and
- * `attach_the_named_designer` behind it. **Neither client could send it**, so the repair was
+ * The server grew `designerUserId` for this, with `assert_every_designer_may_be_named` and
+ * `attach_the_named_designers` behind it. **Neither client could send it**, so the repair was
  * unreachable on every real request. This is the web half of reaching it.
  *
- * ── THE SAME ENDPOINT AS THE VIEWERS PANEL, DELIBERATELY ────────────────────────────────────────
- * `GET /design-workshops/eligible-viewers`, not a new eligibility set. `assert_designer_may_be_named`
- * delegates to the same `_assert_every_id_may_be_granted` the viewers PUT uses, so offering an
- * account here that the create would refuse is impossible by construction rather than by agreement.
- * A second endpoint would be a second copy of a rule that spans two rosters — the designer roster is
- * a guest list, the platform allow-list is a cut list — and it would drift within one release.
+ * ── IT IS A MULTI-SELECT, AND THAT IS A SECURITY BOUNDARY RATHER THAN A CONVENIENCE ─────────────
  *
- * Naming somebody here also PUTS THEM ON THE WORKSHOP: the create route grants their viewer row in
- * the same call. That is why the hint says so. The two admin steps this replaces were "create, then
- * remember to add the designer", and forgetting the second is how a designer ends up locked out of
- * the workshop whose stage 1 already carries their name.
+ * A design workshop is visible ONLY to its creator, to admins, and to whoever holds a
+ * `DesignWorkshopViewer` row — enforced IN THE QUERY on the list (`visible_to_clause`) and in the
+ * loader on the single read, which refuses with a 404 identical to a nonexistent id so the refusal
+ * cannot say whether the workshop is there. A DESIGNER cannot create a workshop at all, so
+ * `createdById` never matches for them: the workshops a designer can see are exactly the ones they
+ * hold a row on, and nothing else. Naming somebody here is therefore not a nicety — it is the whole
+ * of how they get in, and the create writes one row per name in the same call.
+ *
+ * A REAL WORKSHOP HAS MORE THAN ONE DESIGNER. It is a fortnight of work by two designers alongside
+ * a master craftsperson and a reviewing officer, and every one of them has to read the same 22
+ * stages. With one name on the create, the second designer had to be added afterwards from
+ * "Designers on a workshop" — and an admin who forgot left a designer who could not open the
+ * workshop their own stage 1 already named. That gap is what this control closes.
+ *
+ * ── AND YET EXACTLY ONE NAME REACHES THE REPORT ─────────────────────────────────────────────────
+ *
+ * Several people may OPEN it; one name is ON it. Stage 1 and stage 3 declare a SINGLE designer
+ * block — one `designerName`, one `designerProfile`, one signature — and `report_meta` feeds that
+ * name into the .docx's `dc:creator`, a single-author field the file format cannot express as a
+ * list. So the picker also resolves a LEAD, and says on screen who it is: whose name lands on a
+ * ministry document must not be decided by a tick order nobody can see. The rule itself is
+ * {@link namedDesignerTeam}, shared with the form's submit so the sentence under the picker and the
+ * body on the wire cannot disagree.
+ *
+ * ── THE SAME ENDPOINT AS THE VIEWERS PANEL, DELIBERATELY ────────────────────────────────────────
+ * `GET /design-workshops/eligible-viewers`, not a new eligibility set. The create's own
+ * `assert_every_designer_may_be_named` delegates to the same `_assert_every_id_may_be_granted` the
+ * viewers PUT uses, so offering an account here that the create would refuse is impossible by
+ * construction rather than by agreement. A second endpoint would be a second copy of a rule that
+ * spans two rosters — the designer roster is a guest list, the platform allow-list is a cut list —
+ * and it would drift within one release.
  *
  * ── THE SEARCH BOX IS THE SERVER'S, AND THE PICKER'S OWN FILTER IS OFF ──────────────────────────
  * The house rule for a server-truncated list (`.claude/skills/field-repo-frontend`, §11.5): the
@@ -54,7 +77,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  * client-side filter box would search only the part of the alphabet that fitted and answer "No
  * matches" for a colleague who is eligible and merely sorts late — absence reading as
  * non-existence. So: one box, above the control, wired to the server, and `searchable={false}` on
- * the `Dropdown` beneath it. `searchable={false}` does NOT switch the render cap off, which is why
+ * the picker beneath it. `searchable={false}` does NOT switch the render cap off, which is why
  * `capHint` names the box that DOES reach the rest rather than letting the default sentence tell an
  * admin to type into a filter that is not on screen.
  *
@@ -65,7 +88,8 @@ const SEARCH_DEBOUNCE_MS = 300;
  * It never writes `designerName`. That column is DENORMALISED from stage 1 by `promoted_values()`
  * and is display-only on both clients; writing it by hand from a picker is how the JSON and the
  * column come to disagree about the same fact, and the name the report prints would then depend on
- * which of the two a screen happened to read.
+ * which of the two a screen happened to read. The lead line below NAMES the designer whose profile
+ * the server will seed; it does not send a name anywhere.
  */
 /**
  * One account as a row.
@@ -82,15 +106,35 @@ function rowFor(person: DwEligibleViewer): DropdownOption {
   };
 }
 
+/** What to call somebody the picker has already served, or the bare id when it has not. */
+function nameOf(seen: Map<string, DwEligibleViewer>, id: string): string {
+  const person = seen.get(id);
+  if (!person) return id;
+  return person.name || person.email;
+}
+
 export function WorkshopDesignerPicker({
-  value,
+  values,
   onChange,
+  lead,
+  onLeadChange,
   disabled,
   offline
 }: {
-  /** The chosen account id, or "" for "not decided yet". */
-  value: string;
-  onChange: (userId: string) => void;
+  /**
+   * The chosen account ids, in the order they were ticked. Empty is "not decided yet" — a real and
+   * common answer, and the reason there is no placeholder row inside the panel offering it: an
+   * empty selection already says it, and a row that also said it would be two controls for one
+   * answer, one of which the reader would have to untick the other to reach.
+   */
+  values: string[];
+  onChange: (userIds: string[]) => void;
+  /**
+   * The designer whose profile is seeded and whose name reaches the report cover, or "" to let it
+   * be derived. Derived means the FIRST TICKED — never the admin who pressed create.
+   */
+  lead: string;
+  onLeadChange: (userId: string) => void;
   disabled?: boolean;
   /**
    * There is no connection, so the eligible set cannot be read.
@@ -110,7 +154,8 @@ export function WorkshopDesignerPicker({
    *
    * MERGED, NEVER REPLACED — see the append in `options` for the defect it closes. It is a mount-life
    * cache of names already served, not a second source of eligibility: nothing is ever OFFERED from
-   * here that the server did not offer first, and the one row it can add is the pick already made.
+   * here that the server did not offer first, and the only rows it can add are the picks already
+   * made. It is also what lets the lead line print a NAME rather than a cuid.
    */
   const [seen, setSeen] = useState<Map<string, DwEligibleViewer>>(() => new Map());
   /** The server's own word for "this answer is not the whole eligible set". Rendered once, when true. */
@@ -179,52 +224,73 @@ export function WorkshopDesignerPicker({
   }, [search, offline]);
 
   const options = useMemo<DropdownOption[]>(() => {
-    /*
-      "" IS A REAL ANSWER AND IT IS THE DEFAULT ONE. The field is optional on the server ("OPTIONAL,
-      AND ABSENT MEANS UNCHANGED" — `DesignWorkshopCreate`), because a workshop is opened in a room
-      on day one and the admin may genuinely not know yet who will run it. The route reads
-      `(payload.designerUserId or "").strip() or None`, so an empty pick is "nobody named" and not
-      an account whose id is the empty string. Offering the row explicitly rather than relying on
-      the placeholder is what lets an admin UNDO a pick without reloading the form.
-    */
-    const rows: DropdownOption[] = [{ value: "", label: "Not decided yet" }];
+    const rows: DropdownOption[] = [];
+    const offered = new Set<string>();
     for (const person of eligible ?? []) {
       rows.push(rowFor(person));
+      offered.add(person.id);
     }
     /*
-      ── AND THE PICK THE CURRENT ANSWER NO LONGER CONTAINS, APPENDED LAST ────────────────────────
+      ── AND EVERY PICK THE CURRENT ANSWER NO LONGER CONTAINS, APPENDED LAST ──────────────────────
 
       THE DEFECT THIS CLOSES. `eligible` is REPLACED by every search, so an admin who searches "kam",
-      picks Kamla, then types a second surname leaves this control holding a `value` no row can
-      resolve. `SearchableSelect` falls back to the placeholder — the trigger reads "Not decided yet"
-      — while `designerUserId` on the page still holds Kamla's id and `submit()` still sends it. The
-      same gap opens with no typing at all: a failed refresh clears `eligible`, and the pick vanishes
-      from the trigger while remaining the thing that gets sent. That is a form that has quietly
-      stopped agreeing with itself, on the one field that decides whose name the report prints.
+      ticks Kamla, then types a second surname leaves this control holding values no row can
+      resolve. `SearchableMultiSelect` counts what it was given, so the trigger would go on reading
+      "2 selected" while the panel showed neither of them — and the ids are still what `submit()`
+      sends. The same gap opens with no typing at all: a failed refresh clears `eligible`, and every
+      tick vanishes from the panel while remaining the thing that gets sent. That is a form that has
+      quietly stopped agreeing with itself, on the one field that decides who may open the workshop.
+
+      EVERY SELECTED ID, NOT JUST ONE. The singular version of this control only ever had to rescue
+      the single `value`; a multi-select can hold ticks from four different searches at once, and
+      rescuing only the newest would be a control that forgets three of them.
 
       A SNAPSHOT OF EVERYONE THIS MOUNT HAS BEEN SHOWN, merged and never replaced — the same device
       Android uses (`seenDesigners` in `WorkshopListScreen.kt`), because the two clients must not
       disagree about whether a pick survives a second search.
 
-      APPENDED LAST rather than merged into place: it is not part of the answer to the term currently
-      typed, and threading it back into the server's order would move a row the admin is looking at.
-      The server's order is `name` then `id` and is never re-sorted here.
+      APPENDED LAST rather than merged into place: they are not part of the answer to the term
+      currently typed, and threading them back into the server's order would move rows the admin is
+      looking at. The server's order is `name` then `id` and is never re-sorted here. (The panel
+      pins ticked rows to the top of what it DRAWS, which is a different mechanism and does not
+      reorder this array.)
     */
-    if (value && !(eligible ?? []).some((person) => person.id === value)) {
-      const remembered = seen.get(value);
+    for (const id of values) {
+      if (!id || offered.has(id)) continue;
+      offered.add(id);
+      const remembered = seen.get(id);
       rows.push(
         remembered
           ? rowFor(remembered)
           : // Never seen by this mount — only reachable if a caller seeds a value the picker did not
-            // hand out. Named as an id rather than dropped, because a silent placeholder is the very
+            // hand out. Named as an id rather than dropped, because a silent absence is the very
             // failure this block exists to stop.
-            { value, label: "The designer already chosen", hint: value }
+            { value: id, label: "A designer already chosen", hint: id }
       );
     }
     return rows;
-  }, [eligible, seen, value]);
+  }, [eligible, seen, values]);
 
   const searchTerm = search.trim();
+
+  /**
+   * THE LEAD, RESOLVED THE SAME WAY THE WIRE RESOLVES IT.
+   *
+   * Read through {@link namedDesignerTeam} rather than from `lead` directly, so the sentence on
+   * screen is produced by the function the submit uses. An admin who names a lead and then unticks
+   * them sees the promotion happen; a picker that kept printing the untucked name would be telling
+   * them one thing while the create did another, on the one field that decides whose name a
+   * ministry reads.
+   */
+  const resolved = useMemo(() => namedDesignerTeam({ chosen: values, lead }), [values, lead]);
+
+  /** The ticked designers, as rows for the lead chooser. Names where known, ids where not. */
+  const leadOptions = useMemo<DropdownOption[]>(
+    () => resolved.team.map((id) => ({ value: id, label: nameOf(seen, id), hint: seen.get(id)?.email })),
+    [resolved.team, seen]
+  );
+
+  const atCap = values.length >= MAX_NAMED_DESIGNERS;
 
   /**
    * AT MOST ONE LINE, EVER: what the search is doing, or the single sentence that says the list is
@@ -232,7 +298,7 @@ export function WorkshopDesignerPicker({
    * about pagination on every visit is padding, and silence is the common and correct answer.
    */
   const notice = offline
-    ? "There is no connection, so the list of designers cannot be read. Start the workshop now and name the designer once this device is back online — nothing is lost by leaving it."
+    ? "There is no connection, so the list of designers cannot be read. Start the workshop now and name its designers once this device is back online — nothing is lost by leaving it."
     : featureMissing
       ? "This server does not offer the designer list yet. The workshop can still be started; stage 1 will carry whoever created it."
       : loadError
@@ -240,19 +306,18 @@ export function WorkshopDesignerPicker({
         : searching && searchTerm
           ? "Searching…"
           : /*
-              THE EMPTY REPOSITORY, SAID HERE AND NOT THROUGH `emptyLabel`.
+              THE EMPTY REPOSITORY, SAID HERE AS WELL AS THROUGH `emptyLabel`.
 
-              `SearchableSelect` draws `emptyLabel` only when it has NO rows to render, and this
-              control always has one — "Not decided yet" is pushed before anything the server sent.
-              So the empty-repository sentence passed as `emptyLabel` is unreachable text, and
-              `eligibleViewerNotice` answers "" for {truncated: false, offered: 0, searched: false}
-              because a complete list has nothing to explain. Between them a repository whose
-              empanelment roster is empty drew a lone "Not decided yet" with NOTHING said — which is
-              indistinguishable from a list that has not loaded, and is exactly the silent-emptiness
-              state rule 10 of the frontend contract forbids. Android says it as a live notice line
-              for the same reason.
+              `emptyLabel` is only drawn inside the panel, i.e. only to somebody who has already
+              opened a control that appears to offer something. This line is on the page. A
+              repository whose empanelment roster is empty would otherwise present a picker that
+              simply never yields anybody — indistinguishable from a list that has not loaded, and
+              exactly the silent-emptiness state rule 10 of the frontend contract forbids. Android
+              says it as a live notice line for the same reason.
 
-              Asked of `eligible` and not of `options`, since `options` is never empty by construction.
+              Asked of `eligible` and not of `options`, because `options` also carries the ticks
+              rescued from earlier searches: with a pick already made, a repository that has since
+              emptied would have a non-empty `options` and nothing to say about it.
             */
             !searchTerm && !truncated && eligible?.length === 0
             ? "No account on this repository may be named as this workshop's designer yet. A designer has to be empanelled on the roster before a workshop can be opened for them; this one can still be started, and stage 1 will carry whoever creates it."
@@ -264,43 +329,64 @@ export function WorkshopDesignerPicker({
 
   return (
     <FieldBlock
-      label="Designer this workshop is for"
+      label="Designers this workshop is for"
       hint={
         <p className="text-xs leading-5 text-ink-500">
-          Their designer profile is copied into stage 1 and stage 3, and they are given access to this workshop in the
-          same step. Leave it as <span className="font-medium text-ink-700">Not decided yet</span> if you do not know —
-          stage 1 then carries whoever creates the workshop, and a designer can be added later from
-          &ldquo;Designers on a workshop&rdquo;.
+          Everybody named here can open this workshop and fill in its stages — a design workshop is
+          visible only to the designers on it, and to admins. One of them, named below, is the one whose
+          designer profile is copied into stage 1 and stage 3 and whose name the report carries. Leave it
+          empty if you do not know yet — stage 1 then carries whoever creates the workshop, and designers
+          can be added later from &ldquo;Designers on a workshop&rdquo;.
         </p>
       }
     >
       <div className="grid gap-2">
-        {/* The one search box, and it asks the SERVER — the only thing that can see past the
-            2000-account ceiling. Capped at the length the endpoint accepts so a long paste narrows
-            the list instead of coming back a 422 the admin can do nothing with. */}
+        {/*
+          The one search box, and it asks the SERVER — the only thing that can see past the
+          2000-account ceiling. Capped at the length the endpoint accepts so a long paste narrows
+          the list instead of coming back a 422 the admin can do nothing with.
+
+          `onInput` IS STOPPED HERE, AND THAT IS NOT TIDINESS. This control sits inside the create
+          form, which arms its unsaved-changes prompt from the form's own `onInput`. A search box is
+          a real text input, so without the firewall merely TYPING to look somebody up would mark the
+          form dirty — and an admin who searched, ticked nothing and pressed Cancel could not leave
+          the page. It is the same firewall `components/forms/WorkshopSelect` puts around its
+          ComboBox, for the same reason.
+        */}
         {offline ? null : (
-          <SearchInput
-            onChange={(next) => setSearch(next.slice(0, ELIGIBLE_VIEWER_SEARCH_MAX))}
-            placeholder="Search designers by name or email"
-            value={search}
-          />
+          <div onInput={(event) => event.stopPropagation()}>
+            <SearchInput
+              onChange={(next) => setSearch(next.slice(0, ELIGIBLE_VIEWER_SEARCH_MAX))}
+              placeholder="Search designers by name or email"
+              value={search}
+            />
+          </div>
         )}
         {notice ? (
           <p className="text-xs leading-5 text-ink-500" id={noticeId}>
             {notice}
           </p>
         ) : null}
-        <Dropdown
-          ariaLabel="Designer this workshop is for"
+        <MultiSelectDropdown
+          ariaLabel="Designers this workshop is for"
+          confirmLabel="Done"
           // Pointed at the notice only while it is on screen: `aria-describedby` naming an id that
           // is not in the document is worse than naming nothing at all.
           describedBy={notice ? noticeId : undefined}
           disabled={disabled || offline}
-          // Kept as a backstop only. It is unreachable today — this control always renders at least
-          // the "Not decided yet" row, so `SearchableSelect` never reaches its empty branch — and the
-          // empty repository is spoken by the notice above instead, where it can actually be read.
           emptyLabel="No account on this repository may be named as this workshop's designer."
-          onChange={onChange}
+          onChange={(next) => {
+            /*
+              TRIMMED HERE, AND SAID ON SCREEN — never silently.
+
+              The server caps a create at `MAX_NAMED_DESIGNERS` and refuses a longer list outright,
+              rather than keeping the first hundred; a cap only the server knows about is a cap an
+              admin meets as a 422 after building a selection by hand. "Select all matching" can
+              cross it in one click, so the trim has to live on the change rather than on the tick.
+              The sentence below fires whenever the cap is reached, on both routes in.
+            */
+            onChange(next.slice(0, MAX_NAMED_DESIGNERS));
+          }}
           options={options}
           placeholder="Not decided yet"
           // OFF, deliberately — see this file's header. The box above is the search and it reaches
@@ -311,8 +397,50 @@ export function WorkshopDesignerPicker({
           // on a real repository the cap notice fires here and its default last clause would tell an
           // admin to type into a filter box this control deliberately does not have.
           capHint="Use the search box above to reach the rest — it asks the repository, so it sees every eligible account."
-          value={value}
+          values={values}
         />
+        {atCap ? (
+          // Tinted rather than bare amber text: `amber-800` is a LITERAL that does not invert, so on
+          // its own over the page canvas it is unreadable in dark mode. §3.5 — inside a tinted card,
+          // `amber-100` with `amber-800`, and the pair travels together.
+          <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+            {MAX_NAMED_DESIGNERS} designers is the most one workshop can be opened for, so nothing further is
+            kept. Anybody else can be added afterwards from &ldquo;Designers on a workshop&rdquo;.
+          </p>
+        ) : null}
+        {/*
+          WHOSE NAME IS ON IT, PRINTED — the half of this control that is not a permission.
+
+          A multi-select renders ticks in the SERVER'S name order, so "the first one you ticked" is
+          invisible to the person ticking, and it is what the server promotes to lead when no lead is
+          sent. Leaving it implicit would let a tick order nobody can see decide which designer's
+          profile is copied into stage 1 and whose name reaches the .docx's `dc:creator`.
+
+          The chooser appears only from two designers upward: with one, there is nothing to choose
+          and a dropdown of one row is a question with a single answer.
+        */}
+        {resolved.lead ? (
+          <div className="grid gap-1 rounded-md border border-line-200 bg-surface-50 px-3 py-2">
+            <p className="text-xs leading-5 text-ink-700">
+              Stage 1, stage 3 and the report will carry{" "}
+              <span className="font-medium text-ink-900">{nameOf(seen, resolved.lead)}</span> — their designer
+              profile is the one copied in. Everyone ticked can open the workshop.
+            </p>
+            {resolved.team.length > 1 ? (
+              <Dropdown
+                ariaLabel="The designer whose name the report carries"
+                disabled={disabled || offline}
+                onChange={onLeadChange}
+                options={leadOptions}
+                // The ticked set is at most `MAX_NAMED_DESIGNERS` rows and every one of them is
+                // already on this screen, so the control's own filter box is the right one here —
+                // unlike the picker above, nothing has been truncated by a server.
+                searchable
+                value={resolved.lead}
+              />
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </FieldBlock>
   );

@@ -418,10 +418,42 @@ never be one** — a "helpful" downscale here is exactly the thing §5 exists to
 through a door marked "quality".
 
 **A finding is advice, never a refusal.** Every function returns descriptions. None can stop an
-upload, delete a file or swap one out, and the surfacing must keep it that way. A designer may have
-deliberately photographed something blurred — a loom in motion — or may be holding the only
-photograph that will ever exist of an object about to leave. Blocking that is a worse failure than
-every problem this module can detect put together.
+upload, delete a file or swap one out. A designer may have deliberately photographed something
+blurred — a loom in motion — or may be holding the only photograph that will ever exist of an object
+about to leave. Blocking that is a worse failure than every problem this module can detect put
+together.
+
+**This rule ended at the surfacing on 2026-08-27, on an owner's instruction, and the exception is
+narrow on purpose.** The paragraph above used to end "and the surfacing must keep it that way"; it no
+longer can. The instruction was that a shaky or poor-quality photograph must not reach the server at
+all, which is the owner's decision to make — what is *not* theirs to make is the claim, so a gate may
+only refuse on something this product actually measures and only where the designer can comply.
+Neither `frontend/lib/imageQuality.ts` nor `android/app/src/main/java/com/designprototype/workshop/data/ImageQuality.kt` changed: both still
+only measure, and both are still incapable of stopping anything. The refusal lives one level up, in
+`frontend/components/media/photoGate.ts` and `android/app/src/main/java/com/designprototype/workshop/data/DwPhotoGate.kt`, which are ports of
+each other and hold the whole of the exception:
+
+| Fault | What happens | Why |
+|---|---|---|
+| `BLUR` | **Refused** | "Shaky", the owner's own first word |
+| `LOW_RESOLUTION` | **Refused** | Provably cannot fill a report plate at `RENDER_DPI`; unarguable |
+| `DUPLICATE`, identical SHA-256 | **Refused** | Complying costs nothing — the bytes are already here |
+| `DUPLICATE`, perceptual hash | **Admitted, warned** | Two exposures of one object seconds apart land *inside* the threshold (§3.2.3), which is how twenty-five motifs on one length of cloth get photographed |
+| `MISSING_VIEW` | Advice, as before | About a row rather than about one file |
+| Anything unmeasurable | **Admitted** | No measurement, therefore no finding, therefore no refusal — it fails open by construction rather than by a branch |
+
+The gate runs **before the upload starts** on each client, which is a different place on each: in the
+browser, before `setPending`, because `useEagerStaging` has already begun streaming anything that
+reaches the capture card; on the handset, before `WorkshopDraftStore.importMedia` copies a byte,
+because from that moment the photograph is in the draft and the sync pass will carry it. On Android
+it also runs in the bulk importer (`PhotoIntakeScreen`), which is the wider of the two doors into a
+gallery.
+
+**Two things it deliberately still cannot do.** There is no override — whether a designer may push a
+refused photograph through is an open question for the owner, and the loom-in-motion case above is
+the strongest argument for one. And there is no server-side re-measurement: a direct API call, a bulk
+import or an older build still uploads whatever it likes, because the check is client-side on both
+clients and the server has no opinion about image quality.
 
 ### 3.2.2 How it stays off the main thread
 

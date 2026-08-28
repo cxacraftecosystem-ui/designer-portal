@@ -876,28 +876,43 @@ def test_max_items_crosses_the_wire_only_once_a_field_declares_one():
 #: computed its expectation from the thing under test would pass for any registry at all, which is
 #: precisely the failure mode here — the whole risk is that the number reached fields nobody chose.
 CAPPED_GALLERIES: dict[str, int] = {
-    "motifPhotos": 20,              # relabelled to "Traditional motif photographs", key KEPT
-    "contemporaryMotifPhotos": 20,  # the new half of the traditional/contemporary pair
+    "motifPhotos": 25,              # relabelled to "Traditional motif photographs", key KEPT
+    "contemporaryMotifPhotos": 25,  # the new half of the traditional/contemporary pair
 }
 
+#: The owner's stated FLOOR of 2026-08-28 — "25 each, and all 25 required" — and the only two
+#: fields it was stated for. Equal to the ceiling above, which is not a coincidence to be factored
+#: out: the owner asked for exactly twenty-five, so the gallery is complete at the moment it is
+#: full. They are declared and asserted separately because they are enforced in DIFFERENT PLACES
+#: (`coerce_value` refuses above the ceiling; `stage_completeness` scores below the floor and
+#: nothing refuses), and a single constant would hide that the day one of them moves.
+FLOORED_GALLERIES: dict[str, int] = dict(CAPPED_GALLERIES)
 
-def test_the_capped_motif_galleries_refuse_the_twenty_first_photograph():
+
+def test_the_capped_motif_galleries_refuse_the_twenty_sixth_photograph():
     """The owner's ceiling is enforced by the SERVER, on the real field, and refuses rather than trims.
 
     THE DEFECT THIS PREVENTS IS NOT AN OVERSIZED ARRAY — `DEFAULT_MAX_ITEMS` already stopped that
     at 200. It is a cap that exists in a picker and nowhere else. Both clients now read `maxItems`
-    off the published registry and stop the picker at twenty, and a designer who believes that IS
-    the rule will hit the server through every other door: an Android draft syncing a gallery
+    off the published registry and stop the picker at twenty-five, and a designer who believes that
+    IS the rule will hit the server through every other door: an Android draft syncing a gallery
     assembled by an older build, a bulk import, a direct API call (`validate_entry`'s docstring is
     explicit that a phone one release ahead is a supported caller), or the same handset after a
     retry loop appends rather than replaces. If the declaration were client-side advice, all four
-    would store twenty-five photographs into a report whose figure list promises twenty.
+    would store thirty photographs into a report whose figure list promises twenty-five.
 
     A REFUSAL, NOT A TRUNCATION, AND THE SECOND HALF IS THE ASSERTION A REFACTOR WOULD LOSE.
-    Silently keeping the first twenty of a twenty-one-photograph array is this repository's most
-    repeated bug class — the designer is told "Stage saved" and one photograph is gone with nothing
-    on screen. So `stored is None` is asserted as well as the message: `save_stage` restores a
-    refused key from `previous`, so nothing is lost either, and the message names the box.
+    Silently keeping the first twenty-five of a twenty-six-photograph array is this repository's
+    most repeated bug class — the designer is told "Stage saved" and one photograph is gone with
+    nothing on screen. So `stored is None` is asserted as well as the message: `save_stage` restores
+    a refused key from `previous`, so nothing is lost either, and the message names the box.
+
+    THE NUMBER WAS 20 UNTIL 2026-08-28 AND THE RAISE WAS SAFE FOR EVERY SHIPPED CLIENT, which is
+    worth stating here because this test is where somebody checks that claim. A ceiling that only
+    ever REFUSES can be widened without breaking a caller: every body that saved at 20 still saves
+    at 25, and a client still reading `maxItems: 20` off a stale registry under-offers its picker
+    rather than over-posting. Narrowing it is the direction that strands stored data, and this
+    assertion is what would catch that being done by accident.
 
     AGAINST THE LIVE FIELD AND NOT A SYNTHESISED ONE, which is the entire point of this test
     existing next to `test_a_declared_bound_on_a_multi_field_is_no_longer_a_silent_no_op`. That one
@@ -923,7 +938,7 @@ def test_the_capped_motif_galleries_refuse_the_twenty_first_photograph():
         stored, error = coerce_value(gallery, ids[:cap])
         assert error is None, f"the {cap}th photograph was refused: {error}"
         assert stored == ids[:cap], (
-            "the ceiling is inclusive — a cap of 20 that refuses the twentieth is an off-by-one "
+            f"the ceiling is inclusive — a cap of {cap} that refuses the {cap}th is an off-by-one "
             "the designer meets as a lost photograph"
         )
 
@@ -979,6 +994,277 @@ def test_exactly_two_fields_in_the_whole_registry_declare_a_cap():
         "nobody asked about; a cap that vanished silently restores DEFAULT_MAX_ITEMS and both "
         "clients stop showing the ceiling."
     )
+
+
+# --------------------------------------------------------------------------------------
+# The two FLOORED galleries — min_items, and the save it must never refuse
+#
+# The owner's instruction of 2026-08-28 was "25 each, and all 25 should be required". The word
+# "required" is the whole risk in this section: this registry already has a `required` flag, it is
+# enforced by `validate_entry` on every save, and using it here would have been the obvious reading
+# and a destructive one. `test_a_short_gallery_still_saves` below is the assertion that pins the
+# reading that was actually taken, and it is the most important test in this file's photo section.
+# --------------------------------------------------------------------------------------
+
+
+def _stage(number: int):
+    return next(s for s in STAGES if s.number == number)
+
+
+def _media_ids(n: int) -> list[str]:
+    """`n` plausible media ids. A cuid is 25 characters, well inside DEFAULT_MAX_ITEM_CHARS, so the
+    per-ITEM bound can never be what these tests are measuring."""
+    return [f"cm{i:023d}" for i in range(n)]
+
+
+def test_exactly_two_fields_in_the_whole_registry_declare_a_floor():
+    """The blast radius of `min_items`, which is strictly worse than `max_items`' and silent.
+
+    A LEAKED CEILING EVENTUALLY REFUSES SOMETHING AND SOMEBODY REPORTS IT. A leaked FLOOR refuses
+    nothing at all — it is scored in `stage_completeness` and validated nowhere — so the symptom is
+    that every workshop in the country is permanently incomplete, its readiness screen lists
+    photographs nobody asked for, and `build_report` warns for ever. There is no error, no log and
+    no way out of it from the app; it takes a deploy. `photos()` is called fifteen times, so one
+    default on that helper would do it to fifteen stages at once.
+
+    SET EQUALITY, IN BOTH DIRECTIONS, for the same reason the cap test uses it: a floor that
+    VANISHED is equally silent — both galleries would go back to reading complete at one
+    photograph, and the owner's requirement would be gone with nothing failing.
+
+    THE WHOLE REGISTRY IS SWEPT, not only the IMAGE_LISTs: `min_items` is legal on any multi-valued
+    type, and a TAGS box that quietly gained one would make its stage uncompletable just as surely.
+    """
+    declared = {
+        f"{entity.key}.{field.key}": field.min_items
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.min_items
+    }
+    assert declared == {
+        f"clusterBackground.{key}": floor for key, floor in FLOORED_GALLERIES.items()
+    }, (
+        f"the set of fields declaring a floor is {declared}, not the two motif galleries the owner "
+        "stated one for. A floor that leaked from photos() makes a stage permanently incomplete "
+        "with no error anywhere; a floor that vanished silently drops the owner's requirement."
+    )
+
+    # AND IT CROSSES THE WIRE, which is the point of declaring it rather than hard-coding 25 in
+    # three codebases. Both clients need it twice over: to draw the "20 of 25" progress bar, and to
+    # score the stage the way the server scores it.
+    background = _entity("clusterBackground")
+    for key, floor in FLOORED_GALLERIES.items():
+        published = field_to_dict(background.field(key), "clusterBackground")
+        assert published["minItems"] == floor, published
+    assert "minItems" not in field_to_dict(background.field("clusterPhotos")), (
+        "an unfloored gallery published a minimum; emission must be conditional on declaration, "
+        "exactly as maxItems' is"
+    )
+
+
+def test_a_short_gallery_still_saves():
+    """**THE ONE THAT MATTERS.** "All 25 required" must never become a refusal on the write path.
+
+    THE FAILURE THIS FORBIDS, END TO END. A designer is in a village with no signal and twenty good
+    photographs. If the server refuses a stage whose gallery holds fewer than twenty-five:
+
+      * Android's `saveOrQueue` does NOT queue a 4xx — a body the server refuses is a record
+        DROPPED, not retried — so the twenty are gone, not deferred; and
+      * on the `submit=true` path the loss happens even WITH a connection, and silently:
+        `validate_entry` omits a field it errored on, and `save_stage` then restores that key from
+        `previous` ("a rejected field must not destroy the value already stored under it"), so the
+        gallery REVERTS to yesterday's contents and the 422 is raised after the transaction has
+        already committed.
+
+    This is stage 4 of 22, so either outcome blocks the entire workshop from ever being saved.
+
+    BOTH ARMS ARE ASSERTED, and the `enforce_required=True` arm is the one a future refactor would
+    lose: it is tempting to read "required" as "enforce it at submit time like every other required
+    field", and that arm is what makes the deliberate difference visible. What a short gallery costs
+    is scored, not refused — see `test_a_gallery_one_short_leaves_the_stage_incomplete`.
+    """
+    entity = _entity("clusterBackground")
+    for key in FLOORED_GALLERIES:
+        for enforce in (False, True):
+            clean, errors = validate_entry(entity, {key: _media_ids(20)},
+                                           enforce_required=enforce)
+            assert key not in errors, (
+                f"{key} was refused with 20 of 25 photographs (enforce_required={enforce}): "
+                f"{errors[key]!r}. On Android that is twenty photographs dropped, not queued."
+            )
+            assert clean[key] == _media_ids(20), (
+                f"{key} stored {len(clean.get(key, []))} of the 20 ids posted — a partial save "
+                "must be kept whole"
+            )
+
+    # AND THE FLOOR IS NOT IN `coerce_value` EITHER, which is the door every other writer comes
+    # through: a bulk import, a direct API call, a phone one release ahead.
+    stored, error = coerce_value(entity.field("motifPhotos"), _media_ids(1))
+    assert error is None and stored == _media_ids(1), (error, stored)
+
+
+def test_a_gallery_one_short_leaves_the_stage_incomplete():
+    """24 is not complete, 25 is, and the outstanding item says which — with its count.
+
+    THE COUNT IN THE LABEL IS AN ASSERTION AND NOT A COSMETIC. Every other string in `missing`
+    means "nothing was recorded", and this list is printed verbatim in three places a designer or a
+    ministry officer reads — the readiness screen, `build_report`'s `X-Report-Warnings`, and the
+    completeness annexure's Outstanding column. "Traditional motif photographs", bare, under the
+    heading "required field(s) not recorded", tells a designer holding twenty-four photographs that
+    the app has lost them.
+
+    24 AND 25 AND NOT 0 AND 25: the interesting boundary is one short, because that is the only one
+    that distinguishes a real floor from `_is_filled`, which any non-empty list already satisfies.
+    """
+    spec = _stage(4)
+    full = {key: _media_ids(25) for key in FLOORED_GALLERIES}
+
+    at_25 = stage_completeness(spec, full, {})
+    short = dict(full, motifPhotos=_media_ids(24))
+    at_24 = stage_completeness(spec, short, {})
+
+    assert at_25.required_total == at_24.required_total, (
+        "the denominator moved between 24 and 25 photographs; a stage whose required_total depends "
+        "on its own answers has a percentage that cannot be reasoned about"
+    )
+    assert at_24.required_filled == at_25.required_filled - 1, (
+        f"24 of 25 scored {at_24.required_filled}, 25 scored {at_25.required_filled}; the floor is "
+        "not being counted"
+    )
+    assert "Traditional motif photographs (24 of 25)" in at_24.missing, at_24.missing
+    assert not [m for m in at_25.missing if "Traditional motif" in m], at_25.missing
+
+    # The other gallery is untouched at 25 in both, so this test cannot pass by scoring the pair
+    # together.
+    assert not [m for m in at_24.missing if "Contemporary motif" in m], at_24.missing
+
+
+def test_the_submit_gate_refuses_a_workshop_whose_gallery_is_one_short():
+    """`is_complete` is what the submit gate reads, and it must be false at 24 of 25.
+
+    WHY THIS IS ASSERTED THROUGH `is_complete` AND NOT THROUGH A 422. In this repository "the
+    workshop cannot be submitted" IS `stage_completeness`: `is_complete` and `missing` are what the
+    readiness screens list, what `build_report` warns on, and what both clients' ports
+    (`scoreStageData`, `computeStageCompleteness`) mirror field for field. Wiring the floor into the
+    422 instead would have reverted the designer's gallery — see `test_a_short_gallery_still_saves`.
+
+    THE STAGE IS FILLED OTHERWISE, deliberately: every other required field of stage 4 is answered,
+    so the only thing standing between this workshop and a complete stage 4 is the twenty-fifth
+    photograph. Without that the test would pass on the four text fields being blank and would
+    still pass if the floor were deleted.
+    """
+    spec = _stage(4)
+    answered = {
+        f.key: "Recorded."
+        for e in spec.entities for f in e.fields if f.required
+    }
+    complete = dict(answered, **{key: _media_ids(25) for key in FLOORED_GALLERIES})
+    assert stage_completeness(spec, complete, {}).is_complete, (
+        "stage 4 is not complete with every required field answered and both galleries full — "
+        f"outstanding: {stage_completeness(spec, complete, {}).missing}"
+    )
+
+    for key in FLOORED_GALLERIES:
+        one_short = dict(complete, **{key: _media_ids(24)})
+        score = stage_completeness(spec, one_short, {})
+        assert not score.is_complete, (
+            f"{key} holding 24 of 25 left stage 4 complete; the workshop could be submitted with "
+            "a gallery the owner required 25 photographs in"
+        )
+        assert score.percent < 100, score.percent
+
+
+def test_a_floor_is_refused_where_it_could_never_be_satisfied():
+    """`validate_registry` catches the two declarations that would make a stage uncompletable.
+
+    NEITHER SHAPE FAILS ANYWHERE ELSE, which is why the registry has to refuse them at definition
+    time. A floor on a scalar box is published to both clients and counted by nothing. A floor above
+    the ceiling asks for a body `coerce_value` will not accept — and because a minimum refuses no
+    save, the only symptom of either is a workshop that can never be finished.
+
+    THE CEILING IS COMPARED AGAINST ITS EFFECTIVE VALUE. `max_items=0` means `DEFAULT_MAX_ITEMS`,
+    never "unbounded", so a floor of 500 on a gallery declaring no cap must still be refused.
+    """
+    gallery = _entity("clusterBackground").field("motifPhotos")
+
+    with _swapped_field(gallery, replace(gallery, type=FieldType.TEXT, max_items=0)):
+        assert any("min_items" in p and "TEXT" in p for p in validate_registry()), \
+            validate_registry()
+
+    with _swapped_field(gallery, replace(gallery, min_items=26)):
+        assert any("above its ceiling" in p for p in validate_registry()), validate_registry()
+
+    with _swapped_field(gallery, replace(gallery, max_items=0, min_items=500)):
+        assert any("above its ceiling" in p for p in validate_registry()), (
+            "a floor of 500 on a gallery with no declared cap was accepted; max_items=0 means "
+            "DEFAULT_MAX_ITEMS, not unbounded"
+        )
+
+    assert validate_registry() == [], "the swaps leaked"
+
+
+def test_the_version_moves_for_a_floor_and_not_for_a_ceiling():
+    """The asymmetry the bundled asset depends on, asserted in both directions.
+
+    `registry_version()` is the refetch signal. A CEILING stays out of it: a client that has not
+    heard about one still posts a legal body, because `coerce_value` refuses the over-long array
+    server-side either way, so re-invalidating every cached draft for a picker hint would be the
+    wrong trade. A FLOOR has no such backstop — it is scored and never validated — so a handset
+    that has never fetched since it was declared scores the stage complete at twenty photographs
+    and tells the designer they may leave the cluster.
+
+    THIS PAIR IS ALSO THE GUARD ON THE ASSET TESTS. `test_the_bundled_android_asset_matches_the_
+    registry_it_was_dumped_from` compares versions, so if this test's first half ever flipped, a
+    cap change would silently pass a staleness check it did not deserve.
+    """
+    gallery = _entity("clusterBackground").field("motifPhotos")
+    before = registry_version()
+
+    with _swapped_field(gallery, replace(gallery, max_items=30)):
+        assert registry_version() == before, (
+            "the digest moved for a cap change; that invalidates every cached draft on every "
+            "phone for a picker hint"
+        )
+
+    with _swapped_field(gallery, replace(gallery, min_items=24)):
+        assert registry_version() != before, (
+            "the digest did NOT move for a floor change, so no client would refetch and a phone "
+            "would go on scoring the stage complete by the old number"
+        )
+
+    assert registry_version() == before, "the swaps leaked"
+
+
+def test_the_motif_help_names_the_faults_that_are_measured_and_the_ones_that_are_not():
+    """A gate that says "quality checked" and cannot judge exposure is the failure this repo hates.
+
+    `DwImageQuality.findQualityIssues` measures BLUR, LOW_RESOLUTION and DUPLICATE. OVEREXPOSED,
+    UNDEREXPOSED and WRONG_SUBJECT are tokens in stage 21's `QUALITY_FLAG` enum that NO measurement
+    in this product makes — STAGE_21's own note says so in the same words, and this help text is the
+    other place a designer reads the claim. A designer who reads "checked before it uploads" and
+    assumes a dark photograph was judged will stop looking at their own screen, which is exactly the
+    check the product does not have.
+
+    THE FLOORS THEMSELVES ARE DELIBERATELY NOT ASSERTED HERE, and must not be added: they are client
+    constants (`BLUR_VARIANCE_FLOOR`, `MIN_LONG_EDGE_PX`), and a registry help string repeating a
+    number that lives in two other codebases goes stale silently the day it moves. The refusal on
+    screen prints the reading and the floor it was measured against; this text names the FAULTS.
+    """
+    background = _entity("clusterBackground")
+    for key, floor in FLOORED_GALLERIES.items():
+        help_text = background.field(key).help
+        assert f"All {floor} are required" in help_text, help_text
+        for measured in ("blur", "low resolution", "duplicates"):
+            assert measured in help_text, (
+                f"{key}'s help does not name {measured!r}, which the detector does measure: "
+                f"{help_text!r}"
+            )
+        assert "Exposure and subject are not checked" in help_text, (
+            f"{key}'s help claims a quality check without naming the two judgements nothing in "
+            f"this product makes: {help_text!r}"
+        )
+        assert not any(str(n) in help_text for n in (60, 20)), (
+            f"{key}'s help prints a threshold that lives in a client constant: {help_text!r}"
+        )
 
 
 def test_the_photos_helper_puts_its_help_on_the_gallery_and_never_on_the_caption():

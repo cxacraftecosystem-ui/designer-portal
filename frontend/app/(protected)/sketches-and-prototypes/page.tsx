@@ -200,6 +200,21 @@ import { getDesignWorkshop, listDesignWorkshops, type DwSummary } from "@/lib/de
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canRunDesignWorkshops, roleLabel } from "@/lib/permissions";
+// THREE STATES, THREE SENTENCES, AND THE RELATIONSHIP BETWEEN THEM IS THE THING WORTH TESTING:
+// only the state that actually got an answer may name an admin. Named in their own module so a
+// unit spec can compare them without mounting React — see its header for the defect this closes
+// on the handset, and for the one place the two clients deliberately say different things.
+import {
+  CHOOSER_NO_WORKSHOPS_BODY,
+  CHOOSER_NO_WORKSHOPS_TITLE,
+  CHOOSER_OFFLINE_BODY,
+  CHOOSER_OFFLINE_ROUTE_LEAD,
+  CHOOSER_OFFLINE_ROUTE_LABEL,
+  CHOOSER_OFFLINE_ROUTE_TAIL,
+  CHOOSER_OFFLINE_TITLE,
+  CHOOSER_REFUSED_FALLBACK,
+  CHOOSER_REFUSED_TITLE
+} from "./chooserSentences";
 
 /**
  * How many workshops the chooser asks for.
@@ -373,9 +388,7 @@ function ChooseWorkshopThenSketches() {
         */
         setOffline(false);
         setProblem(
-          error instanceof Error && error.message
-            ? error.message
-            : "The repository could not list your design workshops."
+          error instanceof Error && error.message ? error.message : CHOOSER_REFUSED_FALLBACK
         );
       }
     })();
@@ -643,19 +656,17 @@ function ChooseWorkshopThenSketches() {
           <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600">
             <CloudOff className="h-5 w-5" aria-hidden />
           </div>
-          <h2 className="text-base font-medium text-ink">The repository could not be reached</h2>
+          <h2 className="text-base font-medium text-ink">{CHOOSER_OFFLINE_TITLE}</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">{CHOOSER_OFFLINE_BODY}</p>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
-            This is not an empty archive — it is a list that could not be loaded. Which workshops you can open is
-            decided by the repository and can change while a browser is away, so this chooser is not offered from a
-            saved copy: an old list would offer a workshop that may no longer be yours, and anything filed against it
-            would be refused when the connection returns.
-          </p>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
-            A workshop you are already inside is unaffected — open it from{" "}
+            {/* The three parts of one sentence, with the real link in the middle. Reading them from
+                the module rather than retyping them is what stops the test's copy and the screen's
+                copy from being two different sentences. */}
+            {CHOOSER_OFFLINE_ROUTE_LEAD}
             <Link href="/design-workshops" className="underline">
-              Design workshops
-            </Link>{" "}
-            and work on its Sketches &amp; prototypes page there.
+              {CHOOSER_OFFLINE_ROUTE_LABEL}
+            </Link>
+            {CHOOSER_OFFLINE_ROUTE_TAIL}
           </p>
           <button type="button" className="field-button-secondary mt-4" onClick={retry}>
             Try again
@@ -675,7 +686,7 @@ function ChooseWorkshopThenSketches() {
       <div>
         {header}
         <section className="panel px-4 py-6" aria-live="polite">
-          <h2 className="text-base font-medium text-ink">Your design workshops could not be listed</h2>
+          <h2 className="text-base font-medium text-ink">{CHOOSER_REFUSED_TITLE}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">{problem}</p>
           <button type="button" className="field-button-secondary mt-4" onClick={retry}>
             Try again
@@ -699,10 +710,7 @@ function ChooseWorkshopThenSketches() {
     return (
       <div>
         {header}
-        <EmptyState
-          title="No design workshops to open yet"
-          body="Sketches and prototypes belong to a workshop, and the workshops you have access to will appear in the chooser here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and give you access, and it will show up ready for all 22 stages."
-        />
+        <EmptyState title={CHOOSER_NO_WORKSHOPS_TITLE} body={CHOOSER_NO_WORKSHOPS_BODY} />
       </div>
     );
   }

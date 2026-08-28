@@ -135,6 +135,33 @@ data class OutboxFailureRow(
     val mediaCount: Int,
     /** True when this entry is waiting on a newer build rather than on a person. See `blocksRetry`. */
     val awaitingUpdate: Boolean,
+    /**
+     * True when the register already holds a record occupying this one's identity — an answered 409
+     * rather than one more anonymous refusal. See `PendingEntry.conflict`.
+     *
+     * ON THE ROW AND NOT IN A SECOND STRUCTURE BESIDE IT. The tray needs the flag everywhere it
+     * draws a row, and a parallel `Set<String>` of ids read alongside this list is one more thing
+     * that can be taken from a different moment than the rows it describes — the argument
+     * [OfflineOutbox.counts] makes about its own two numbers. One projection, one read, one moment.
+     *
+     * MUTUALLY EXCLUSIVE WITH [awaitingUpdate] by construction: one is a 409 and the other a 422
+     * carrying `extra_forbidden`. A skew clears when either build is updated; a clash clears only
+     * when a PERSON resolves it, which is why the tray offers an escape rather than a retry.
+     */
+    val conflict: Boolean,
+    /**
+     * True when the record this entry carries IS ALREADY ON THE SERVER — `PendingEntry.createdId`
+     * set, kind 5 of the six on that field: saved, with files still outstanding.
+     *
+     * ON THE ROW FOR [conflict]'S REASON, and needed for one screen in particular: the discard
+     * dialog. Without it `outboxDiscardConfirmation` promised "nothing about it has reached the
+     * server" over a row whose own reason line reads "It was saved, but 2 file(s) were refused" —
+     * and a designer who believes the dialog re-enters a record the register already holds.
+     *
+     * MUTUALLY EXCLUSIVE WITH [conflict] by construction: `replayEntry`'s 409 leg runs only while
+     * `createdId` is null, because a clash means no record of ours was written.
+     */
+    val savedOnServer: Boolean,
 )
 
 /**
@@ -268,5 +295,15 @@ fun outboxFailureRows(entries: List<PendingEntry>): List<OutboxFailureRow> =
                 reason = entry.failure.orEmpty(),
                 mediaCount = entry.media.size,
                 awaitingUpdate = entry.skewRun != null,
+                // BOTH HALVES, and neither implies the other. `failure` is what stopped the pass and
+                // is already the filter above; `conflict` is what this entry IS. An entry carrying
+                // the flag with no refusal recorded never reaches here at all — it is one a person
+                // has just asked to retry, caught mid-way through `clearFailure`.
+                conflict = entry.conflict,
+                // `createdId` and nothing else. `uploadedMedia` cannot add a case: uploads start
+                // only after the create leg has written this field (`replayEntry`), so a non-empty
+                // one without it is unreachable. A media-only entry has it set to its `targetId`
+                // before any byte moves, which is also correct here — that record exists.
+                savedOnServer = entry.createdId != null,
             )
         }

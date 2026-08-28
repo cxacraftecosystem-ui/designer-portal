@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -118,7 +119,7 @@ import kotlin.math.roundToInt
  *
  * Two buttons, in order: one makes a plate and shows it, the other attaches the plate that is on
  * screen. There is no path from a decode to an attachment that does not pass through a person
- * looking at the result — the same discipline [DwPhotoMeasurePanel] and [DwIdentityOcrControl] apply
+ * looking at the result — the same discipline [DwPhotoMeasurePanel] and [DwIdentityCardControl] apply
  * to a proposed number, and it matters more here because a plate is a picture that will be printed
  * and a bad threshold is obvious to a human and invisible to everything else.
  *
@@ -129,12 +130,24 @@ import kotlin.math.roundToInt
  * photograph that already fills the frame it is close to right — and the output is a PICTURE the
  * designer is looking at. The preview is the check that the gate would have been.
  *
- * ── NO AUTOMATIC CORNER GUESS, AND [DwSketchRectify]'s HEADER ARGUES THAT AT LENGTH ───────────
+ * ── THE CORNER GUESS PROPOSES AND NEVER PLACES ────────────────────────────────────────────────
  *
- * The web module can propose the four corners by finding the largest bright region. It is not ported.
- * Its own comment calls the manual path the real feature and the guess a convenience on top of it —
- * and the manual path is what is built here, complete, including the nudge arrows that are the only
- * route to a corner for somebody who cannot aim a fingertip.
+ * "Find the sheet" runs [dwGuessSheetCorners] — Otsu, a morphological closing, the largest bright
+ * component, its extremes along the two diagonals, three confidence gates. What comes back is DRAWN
+ * on the photograph as an outline with no handles on it, and the four handles do not move until
+ * "Use these corners" is pressed. That second press is the difference from the web panel, where
+ * `runGuess` calls `setCorners` directly, and the reason is a real difference between the two
+ * screens rather than caution for its own sake: the web recomputes a live plate preview 60 ms after
+ * any corner moves, so a wrong guess contradicts itself on screen before the designer has finished
+ * reading the note about it. THIS PANEL HAS NO LIVE PREVIEW — a plate is built only when "Make the
+ * plate" is pressed — so a guess that moved the handles would replace four positions with a
+ * proposal and show nothing at all that disagreed with it. [DwPhotoMeasurePanel] states the same
+ * rule for a measured number ("it never writes a dimension by itself") and [DwIdentityCardControl]
+ * for a read one.
+ *
+ * When the guess is not confident it says so in one sentence and NOTHING MOVES. The manual path is
+ * still the real feature and is complete here without it, including the nudge arrows that are the
+ * only route to a corner for somebody who cannot aim a fingertip.
  */
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -276,7 +289,7 @@ private val CORNER_NAME = listOf(
  * allocation this feature makes — and re-opening decodes again off the main thread. That is the right
  * trade on a phone whose other job right now is the camera.
  *
- * Split into two composables for the reason [DwIdentityOcrControl]'s comment gives: a composable
+ * Split into two composables for the reason [DwIdentityCardControl]'s comment gives: a composable
  * whose remembered slots sit below a conditional return appears and disappears between frames.
  */
 @Composable
@@ -393,6 +406,21 @@ private fun DwSketchRectifyOpen(
     var working by remember { mutableStateOf(false) }
 
     /**
+     * What "find the sheet" last proposed, and the sentence that goes with it.
+     *
+     * TWO SLOTS AND NOT ONE, because they are not the same thing and are cleared at different
+     * moments. [guess] is a shape drawn on the photograph and is dropped the instant it is accepted
+     * or dismissed; [guessNote] is what the designer is owed for pressing a button, including when
+     * the answer was "I could not tell", and it outlives the shape. A single nullable guess would
+     * make the refusal unsayable — there is nothing to hang the sentence on.
+     *
+     * NEITHER IS A CORNER. Nothing in this pair is read by [build]; the only path from here into
+     * [corners] is `acceptGuess`, which a person presses. See the file header.
+     */
+    var guess by remember { mutableStateOf<DwCornerGuess?>(null) }
+    var guessNote by remember { mutableStateOf<String?>(null) }
+
+    /**
      * Decode the chosen photograph and take its luma plane, off the main thread, one at a time.
      *
      * `Dispatchers.Default` and never the main thread: [DwImageDecode] measures its own decode at a
@@ -411,6 +439,11 @@ private fun DwSketchRectifyOpen(
         plateBitmap = null
         plateNote = null
         refusal = null
+        // A proposed quadrilateral belongs to ONE photograph's pixel grid exactly as a corner does,
+        // and an outline left drawn over a different photograph is a shape the designer would accept
+        // believing it was found in what they are looking at.
+        guess = null
+        guessNote = null
         corners.clear()
         active = 0
         decoding = true
@@ -506,10 +539,90 @@ private fun DwSketchRectifyOpen(
         )
     }
 
+    /**
+     * "Find the sheet" — run the search and PROPOSE what it found. Nothing moves.
+     *
+     * OFF THE MAIN THREAD, ALWAYS. [dwGuessSheetCorners] is a dozen linear passes over a plane
+     * reduced to [DW_GUESS_EDGE_PX] — tens of milliseconds on a field handset, which is under a
+     * frame on a desk and an unmistakable stutter on the device this app is actually for.
+     *
+     * NOTHING LEAKS WHEN THE SCREEN GOES AWAY. The coroutine belongs to `rememberCoroutineScope`,
+     * which is cancelled when [DwSketchRectifyOpen] leaves composition — closing the panel, leaving
+     * the stage, or the whole form being disposed. The pass inside `withContext` does not poll for
+     * cancellation and does not need to: it is bounded by the reduced plane's size rather than by
+     * the photograph's, so the worst case is that a few tens of milliseconds of arithmetic finish
+     * into a result nobody reads. What it must never do — and cannot, because the writes are on the
+     * far side of the suspension point — is set state on a screen that has gone.
+     */
+    fun findTheSheet() {
+        val plane = sourcePlane ?: return
+        // Which photograph this search is ABOUT, checked again on the far side of the suspension.
+        // Switching photographs mid-search is a two-tap sequence a designer makes without thinking,
+        // and the plane already captured belongs to the one they have just left — so without this the
+        // outline would be drawn over a DIFFERENT picture, at coordinates that mean nothing in it,
+        // and "Use these corners" would move four handles to a shape found somewhere else. The
+        // LaunchedEffect that clears `guess` on a switch cannot help: this write happens after it.
+        val searchedId = sourceId
+        working = true
+        guess = null
+        guessNote = null
+        scope.launch {
+            val found = withContext(Dispatchers.Default) { dwGuessSheetCorners(plane) }
+            working = false
+            if (searchedId != sourceId) return@launch
+            if (found == null) {
+                // Silent in the module, said out loud here — the designer pressed a button and is
+                // owed an answer, and "I could not tell" is an answer. What it must never do is
+                // propose a quadrilateral it does not believe in. See dwGuessSheetCorners.
+                guessNote = "The edges of the sheet could not be made out in this photograph — " +
+                    "the four handles are yours to place, as they were."
+                return@launch
+            }
+            guess = found
+            // `roundToInt` rather than `DwPhotoMeasure.jsRound`: the two are the same function for
+            // a positive value, and this is a percentage on a label rather than a pixel count that
+            // has to land on the same integer as the browser's.
+            guessNote = "A sheet filling ${(found.frameShare * 100).roundToInt()}% of the frame is " +
+                "outlined on the photograph. Nothing has moved — the handles are still where you " +
+                "left them."
+        }
+    }
+
+    /**
+     * Move the four handles onto the proposal, because a person asked for that.
+     *
+     * THIS IS THE ONLY PATH FROM THE SEARCH INTO [corners], and it goes through [setCorner] rather
+     * than writing the map directly, so the guess is clamped to the photograph and clears any plate
+     * on screen by exactly the same code a drag does. A machine-produced position gets no shortcut
+     * a fingertip does not get.
+     */
+    fun acceptGuess() {
+        val found = guess ?: return
+        if (found.corners.size != 4) return
+        for (index in 0 until 4) setCorner(index, found.corners[index])
+        active = 0
+        guess = null
+        guessNote = "The four handles are on the sheet the search found. Check each one and drag or " +
+            "nudge any that is off — the search works on a shrunken copy, so it is right to a few " +
+            "pixels rather than to the pixel."
+    }
+
     fun build() {
         val plane = sourcePlane ?: return
         val marked = (0 until 4).mapNotNull { corners[it] }
         if (marked.size != 4) return
+        // WHICH PHOTOGRAPH THIS PLATE IS OF, checked again on the far side of every suspension, for
+        // the reason `findTheSheet` checks it — and the consequence here is worse than a misplaced
+        // outline. Switching photographs mid-build is a two-tap sequence a designer makes without
+        // thinking; the plane and the four corners already captured belong to the one they have just
+        // left, so the plate that lands would be a rectification of a DIFFERENT picture, sitting
+        // under the new photograph with a size and a timing that look like its own. "Attach" would
+        // then file it as this field's derived plate, and the pairing that makes a plate evidence —
+        // `image` and this field on one record — would be a lie in the archive.
+        //
+        // The `LaunchedEffect(source.item.id)` above clears `plate` on a switch and cannot help:
+        // these writes happen after it.
+        val builtFrom = sourceId
         working = true
         plate = null
         plateBitmap = null
@@ -532,6 +645,13 @@ private fun DwSketchRectifyOpen(
                     DwPlateOptions(aspect = shape.aspect, lineArt = lineArt),
                 )
             }
+            if (builtFrom != sourceId) {
+                // `working` is cleared even on the abandoned path: it is a flag about the panel and
+                // not about this photograph, and leaving it set would disable every button on a
+                // screen whose work has simply moved on.
+                working = false
+                return@launch
+            }
             when (outcome) {
                 is DwPlateResult.Refusal -> {
                     working = false
@@ -541,6 +661,9 @@ private fun DwSketchRectifyOpen(
                 is DwPlateResult.Plate -> {
                     val rendered = withContext(Dispatchers.Default) { DwSketchPlate.bitmapOf(outcome.plane) }
                     working = false
+                    // The second suspension, and the second check. A render that finished after the
+                    // switch is a bitmap of the previous photograph.
+                    if (builtFrom != sourceId) return@launch
                     if (rendered == null) {
                         refusal = "There was not enough memory on this device to build the plate. " +
                             "Close the other photographs on this stage and try again."
@@ -555,6 +678,17 @@ private fun DwSketchRectifyOpen(
         }
     }
 
+    /**
+     * File the plate on screen as this field's image.
+     *
+     * NO `sourceId` GUARD, DELIBERATELY, and this is the one place in the panel where its absence is
+     * the correct answer rather than an omission. [build] and [findTheSheet] guard because their
+     * results are ABOUT a photograph and would be drawn over a different one; this writes the plate
+     * the designer was looking at when they pressed the button, into a field that is the same field
+     * whichever source it was derived from. Abandoning it on a switch would throw away work a person
+     * explicitly asked for — after the PNG had already been encoded and written — and leave them with
+     * a button that appeared to do nothing.
+     */
     fun attach() {
         val rendered = plateBitmap ?: return
         working = true
@@ -725,6 +859,7 @@ private fun DwSketchRectifyOpen(
                 else -> {
                     val markColor = MaterialTheme.colorScheme.primary
                     val discColor = MaterialTheme.field.surface50
+                    val guessColor = MaterialTheme.field.success
                     /*
                      * The image and the quadrilateral are drawn by ONE Canvas through ONE transform.
                      * Two draw paths over the same photograph is how the handles and the picture come
@@ -751,6 +886,35 @@ private fun DwSketchRectifyOpen(
                                     end = imageToView(placed[(index + 1) % 4]),
                                     strokeWidth = 4f,
                                     pathEffect = dashes,
+                                )
+                            }
+                        }
+
+                        /*
+                         * The proposal, when there is one — drawn UNDER NO HANDLES AT ALL, which is
+                         * the difference that carries the meaning. The marked quadrilateral has four
+                         * numbered discs on its corners and this has none, so "the one you can drag"
+                         * and "the one that is only being suggested" are told apart by a difference
+                         * in KIND rather than by telling two colours apart on a phone in a courtyard
+                         * in direct sunlight — the discrimination DwPanelChip's comment refuses to
+                         * ask anybody to make. The finer dots and the second colour are on top of
+                         * that, not instead of it.
+                         *
+                         * It is deliberately NOT cleared when a handle is dragged. The proposal is a
+                         * statement about the PHOTOGRAPH and stays true however the handles move; a
+                         * designer comparing their own placement against it is doing exactly what it
+                         * is for.
+                         */
+                        val proposed = guess?.corners
+                        if (proposed != null && proposed.size == 4) {
+                            val dots = PathEffect.dashPathEffect(floatArrayOf(3f, 7f))
+                            for (index in 0 until 4) {
+                                drawLine(
+                                    color = guessColor,
+                                    start = imageToView(proposed[index]),
+                                    end = imageToView(proposed[(index + 1) % 4]),
+                                    strokeWidth = 3f,
+                                    pathEffect = dots,
                                 )
                             }
                         }
@@ -797,6 +961,79 @@ private fun DwSketchRectifyOpen(
             ) {
                 DwZoomButton(Icons.Filled.Remove, "Zoom out", enabled) { zoomBy(1f / 1.5f, null) }
                 DwZoomButton(Icons.Filled.Add, "Zoom in", enabled) { zoomBy(1.5f, null) }
+            }
+        }
+
+        /* ── Find the sheet — a proposal, and the press that accepts it ─────────────────────── */
+
+        if (bitmap != null) {
+            // DIRECTLY UNDER THE PHOTOGRAPH, not above it and not down beside "Make the plate",
+            // because the thing being decided is a shape drawn a few dp higher up. A designer asked
+            // to accept or reject an outline has to be able to see the outline and the two buttons
+            // without scrolling between them.
+            OutlinedButton(
+                onClick = { findTheSheet() },
+                enabled = enabled && !working && sourcePlane != null,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                // The label does not change while the pass runs. `working` is shared with the
+                // plate build and the attach, so a "Looking…" here would be a lie during either of
+                // those — and the search itself is tens of milliseconds, which is a flash nobody
+                // reads. The note below is what actually reports back.
+                Text("Find the sheet", fontSize = 13.sp)
+            }
+
+            guessNote?.let { note ->
+                // Not [DwPanelNote]: that primitive draws a warning triangle whatever colour it is
+                // tinted, and neither "here is the sheet" nor "I could not tell" is a warning. The
+                // live region is the part that matters — the outline is invisible to a screen reader,
+                // so this sentence is the whole of what it hears.
+                Text(
+                    note,
+                    color = MaterialTheme.field.body,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.field.surface50, RoundedCornerShape(8.dp))
+                        .padding(8.dp)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
+
+            if (guess != null) {
+                // FlowRow and not Row, for the reason every other pair of controls in this panel is
+                // one: "Leave the handles alone" is a long label, and at a 200% font scale on a
+                // 320dp screen a Row puts half of it off the edge where it cannot be pressed.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Button(
+                        onClick = { acceptGuess() },
+                        enabled = enabled && !working,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Use these corners", fontSize = 13.sp)
+                    }
+                    // A FIRST-CLASS OUTCOME AND NOT A CANCEL. Deciding the outline is wrong is a
+                    // correct decision made by the only person who can make it, so it gets a plain
+                    // button in the same row and no confirmation.
+                    TextButton(
+                        onClick = {
+                            guess = null
+                            guessNote = null
+                        },
+                        enabled = enabled,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text("Leave the handles alone", fontSize = 12.sp)
+                    }
+                }
             }
         }
 

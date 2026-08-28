@@ -22,6 +22,7 @@ from app.api.routes.data_browser import (
 from app.core.db import db
 from app.core.deps import can_download_dataset, get_current_user
 from app.services.access import owner_download_scope
+from app.services.concurrency import gather_reads
 from app.services.csv_export import records_to_csv
 from app.services.record_fields import info_panel, info_text, interview_label
 from app.services.records import owned_or_granted_where
@@ -215,32 +216,59 @@ async def dataset_manifest(
             "specific researcher's data you have access to.",
         )
     else:
-        rec_where = await owned_or_granted_where(current_user)
-        # Media carries its own owner column, and the repository-wide download is not a licence to
-        # read uploads the caller cannot see anywhere else in the app (GET /media, /search and the
-        # data browser all filter on uploadedById). Empty — a no-op — for Professor and above.
-        media_vis = await owned_or_granted_where(current_user, owner_field="uploadedById")
+        # BOTH HALVES OF THE VISIBILITY ANSWER, STATED AS ONE WAVE — AND IT BUYS NO TRIP TODAY.
+        # Only the ``uploadedById`` variant queries: ``records.owned_or_granted_where`` is dictionary
+        # work for ``createdById`` and reads the design-workshop tag ids only for the media column,
+        # and its own comment forbids the record variant from growing a lookup to match. So this is
+        # one query below professor and none at Professor and above, gathered or not. It is written
+        # as a pair so that the day the record half does acquire a read it joins this wave instead
+        # of adding a round trip nobody notices; the six table reads below are where this route's
+        # measured trips actually go.
+        rec_where, media_vis = await gather_reads(
+            owned_or_granted_where(current_user),
+            # Media carries its own owner column, and the repository-wide download is not a licence
+            # to read uploads the caller cannot see anywhere else in the app (GET /media, /search
+            # and the data browser all filter on uploadedById). Empty — a no-op — for Professor and
+            # above.
+            owned_or_granted_where(current_user, owner_field="uploadedById"),
+        )
 
     def _in_scope(rtype: str, rid: str) -> bool:
         return scope is None or rid in scope.get(rtype, set())
 
-    workshops = await db.workshop.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_WORKSHOP_INCLUDE, order=_EXPORT_ORDER
-    )
-    artisans = await db.artisan.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_ARTISAN_INCLUDE, order=_EXPORT_ORDER
-    )
-    products = await db.productdocumentation.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_PRODUCT_INCLUDE, order=_EXPORT_ORDER
-    )
-    tools = await db.tooldocumentation.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_TOOL_INCLUDE, order=_EXPORT_ORDER
-    )
-    interviews = await db.questionnaireinterview.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
-    )
-    processes = await db.process.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_PROCESS_INCLUDE, order=_EXPORT_ORDER
+    # THE SIX TABLE READS GO OUT AS ONE WAVE. They share a WHERE and depend on nothing but it, and
+    # this route MEASURED 12.98 round trips (9,105 ms) against production with them in series
+    # (docs/SCALABILITY.md §1.2). Six coroutines is inside ``pool_width()`` (10), so ``gather_reads``
+    # issues them together rather than falling back to its semaphore and making two waves of it.
+    #
+    # THE MEDIA READ IS DELIBERATELY NOT IN THIS WAVE and must not be moved into it: ``media_or``
+    # below is built out of the ids these six return, so it is a genuine dependency and a second
+    # wave is the correct shape, not an oversight.
+    #
+    # NO EXTRA MEMORY. These six lists were all held simultaneously anyway — ``truncated`` on the
+    # very next line reads all six, and the manifest is assembled from all six — so gathering
+    # changes when the rows arrive, not how many are resident. The row caps (``EXPORT_TAKE``,
+    # ``MEDIA_TAKE``) are still the only thing bounding this route's footprint; see
+    # docs/SCALABILITY.md §5.2.
+    workshops, artisans, products, tools, interviews, processes = await gather_reads(
+        db.workshop.find_many(
+            where=rec_where, take=EXPORT_TAKE, include=_WORKSHOP_INCLUDE, order=_EXPORT_ORDER
+        ),
+        db.artisan.find_many(
+            where=rec_where, take=EXPORT_TAKE, include=_ARTISAN_INCLUDE, order=_EXPORT_ORDER
+        ),
+        db.productdocumentation.find_many(
+            where=rec_where, take=EXPORT_TAKE, include=_PRODUCT_INCLUDE, order=_EXPORT_ORDER
+        ),
+        db.tooldocumentation.find_many(
+            where=rec_where, take=EXPORT_TAKE, include=_TOOL_INCLUDE, order=_EXPORT_ORDER
+        ),
+        db.questionnaireinterview.find_many(
+            where=rec_where, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
+        ),
+        db.process.find_many(
+            where=rec_where, take=EXPORT_TAKE, include=_PROCESS_INCLUDE, order=_EXPORT_ORDER
+        ),
     )
     truncated = any(
         len(rows) >= EXPORT_TAKE

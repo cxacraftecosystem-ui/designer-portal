@@ -45,23 +45,30 @@ import kotlin.math.sqrt
  * points at the untouched photograph. A derived plate is a second artifact that cites the first; it
  * is never a corrected version of it.
  *
- * ── WHAT WAS DELIBERATELY NOT PORTED, AND WHY THAT IS THE HONEST LINE ─────────────────────────
+ * ── WHAT IS NOT IN THIS FILE, AND WHERE IT WENT ───────────────────────────────────────────────
  *
  * The web module carries an AUTOMATIC CORNER GUESS — Otsu, a morphological closing, a flood fill for
  * the largest bright component, its extremes along the two diagonals, and three separate confidence
- * gates. It is about a quarter of that file and by far its most delicate quarter. It is NOT here,
- * and the web module's own comment says why it can be left out without taking the feature with it:
+ * gates. It is about a quarter of that file and by far its most delicate quarter. This header used to
+ * say it was not ported and set the condition on which it could be:
  *
- *     "THE MANUAL PATH IS THE REAL FEATURE AND THIS IS A CONVENIENCE ON TOP OF IT. `SketchRectifyField`
- *      starts every sketch with four draggable handles inset from the frame edges, and it does that
- *      whether or not this function found anything."
+ *     "If it is ever wanted, it goes in as a whole with its gates and its tests, or not at all; a
+ *      half-ported guess with the gates left off is the one version that must never exist."
  *
- * A guess that fires MOVES four handles the designer can drag anyway; when it declines — which it
- * does for anything that is not unmistakably a sheet — the panel is exactly what is built here. So
- * the guess buys four drags on the photographs where it works, at the price of five hundred lines
- * whose failure mode (a confidently wrong quadrilateral) the web module itself calls worse than
- * silence. If it is ever wanted, it goes in as a whole with its gates and its tests, or not at all;
- * a half-ported guess with the gates left off is the one version that must never exist.
+ * IT IS PORTED, AND ON THAT CONDITION. It lives in `ui/designworkshop/DwSketchRectifyGuess.kt` —
+ * whole, with all three gates and the contrast refusal that precedes them, and with the web spec's
+ * four cases carried over as `DwSketchRectifyGuessTest`. Its own header explains why it sits beside
+ * the panel rather than here: the panel is its only caller.
+ *
+ * WHAT THE PORT DID NOT CHANGE is the point that argument turned on. THE MANUAL PATH IS STILL THE
+ * FEATURE — the panel starts every sketch with four draggable handles inset from the frame edges,
+ * and it does that whether or not the guess found anything — and the handset's guess is one step
+ * weaker than the browser's on purpose: it DRAWS a proposal and waits for a second press, where the
+ * web moves the handles outright. A confidently wrong quadrilateral is still the failure mode both
+ * modules are written to avoid, and on this client it costs a press rather than four re-drags.
+ *
+ * [dwOtsuThreshold] at the foot of this file is the one piece that lives HERE, because it acquired a
+ * second caller: the tests measure the local method against it. See its own comment.
  *
  * [DwSketchPlate] is the only file in this feature that knows what a Bitmap is, for the same reason
  * [DwImageDecode] is for image quality: everything here has to be testable on a desktop JVM, and
@@ -592,4 +599,58 @@ object DwSketchRectify {
         }
         return DwPlateResult.Plate(finished, (System.nanoTime() - startedAt) / 1_000_000)
     }
+}
+
+/**
+ * Otsu's global threshold value: the single grey level that best separates the histogram into two
+ * classes by between-class variance.
+ *
+ * A GLOBAL THRESHOLD IS THE RIGHT TOOL FOR ONE QUESTION AND THE WRONG ONE FOR THE NEXT, which is
+ * worth saying plainly here because [DwSketchRectify.sauvolaThreshold] argues at length that a global
+ * threshold cannot work on a photographed sketch. Both are true, and they are about different
+ * questions. Telling BRIGHT SHEET FROM DARK TABLE is a two-population question about the whole frame
+ * — exactly the situation Otsu's method is for, and what the corner guess uses it for. Telling PENCIL
+ * FROM PAPER is not: the two populations differ from one end of the page to the other under a tube
+ * light on one wall, which is why the plate is thresholded locally and this is not.
+ *
+ * ONE FUNCTION, THREE READERS, AND THAT IS THE POINT OF IT LIVING HERE. `dwGuessSheetCorners` calls
+ * it to find the sheet; `DwSketchRectifyGuessTest` pins its two edge cases; and `DwSketchRectifyTest`
+ * uses it as the COUNTEREXAMPLE the local method is measured against — "a global threshold cannot do
+ * this", asserted against the strongest global method there is rather than against a strawman. Those
+ * three were briefly two implementations of the same arithmetic, one of them private to a test, and
+ * a counterexample that has drifted from the shipped function is measuring the wrong thing.
+ *
+ * TOP-LEVEL RATHER THAN A MEMBER OF [DwSketchRectify], deliberately: nothing in the plate pipeline
+ * calls it, and folding it into that object would put a method on the rectifier that the rectifier
+ * never uses.
+ */
+internal fun dwOtsuThreshold(plane: GreyPlane): Int {
+    val histogram = DoubleArray(256)
+    for (index in plane.data.indices) histogram[plane.at(index)] += 1.0
+    val total = plane.data.size
+    if (total == 0) return 128
+
+    var sumAll = 0.0
+    for (level in 0 until 256) sumAll += level * histogram[level]
+
+    var backgroundWeight = 0.0
+    var backgroundSum = 0.0
+    var best = 0
+    var bestVariance = -1.0
+    for (level in 0 until 256) {
+        backgroundWeight += histogram[level]
+        if (backgroundWeight == 0.0) continue
+        val foregroundWeight = total - backgroundWeight
+        if (foregroundWeight == 0.0) break
+        backgroundSum += level * histogram[level]
+        val backgroundMean = backgroundSum / backgroundWeight
+        val foregroundMean = (sumAll - backgroundSum) / foregroundWeight
+        val delta = backgroundMean - foregroundMean
+        val between = backgroundWeight * foregroundWeight * delta * delta
+        if (between > bestVariance) {
+            bestVariance = between
+            best = level
+        }
+    }
+    return best
 }

@@ -130,9 +130,8 @@ export const MAX_VERB_LANGUAGE_CHARS = 40;
  * India-time date, which is what makes a held copy safe — a copy whose day no longer matches is
  * stale rather than authoritative.
  *
- * `refusal` is NOT on the 201. It exists only on the pre-flight (see {@link dwAiVerbAllowance}),
- * where it carries `cap_refusal`'s own sentence so that neither client has to author the wording of
- * a ceiling.
+ * `refusal` is on NEITHER response today — see {@link DwAiVerbAllowanceState} for what the server
+ * actually sends and what covers the gap.
  */
 export type DwAiVerbAllowance = {
   /** The daily ceiling, or null when this deployment sets none. 0 is a real setting: verbs are off. */
@@ -147,10 +146,36 @@ export type DwAiVerbAllowance = {
   aiVerbsByVerb: Record<string, number>;
 };
 
-/** The pre-flight's answer: the allowance, plus the sentence to show if it is already spent. */
+/**
+ * The pre-flight's answer: the allowance, and the server's ceiling sentence WHERE IT SENDS ONE.
+ *
+ * **`refusal` IS OPTIONAL BECAUSE THE ROUTE DOES NOT SEND IT, AND TYPING IT AS ALWAYS-PRESENT WAS A
+ * LIE THIS FILE TOLD.** `GET /design-workshops/ai-verb-allowance` returns
+ * `ai_verb_cap.allowance_payload(...)` and nothing else — the five keys of {@link DwAiVerbAllowance}
+ * — so `refusal` arrives `undefined` on every deployment. Nothing BREAKS on that:
+ * {@link verbAllowanceRefusal} reads it with `??` and falls back to this file's own sentence, which
+ * is the honest degradation. What was broken is the TYPE, which promised a key that never comes and
+ * invited the `allowance.refusal !== null` an implementer writes when a field is declared
+ * non-optional — a test that is `false` for `undefined` and would have drawn no refusal at all on a
+ * spent account.
+ *
+ * The server's sentence is still worth having, which is why this is documented rather than deleted:
+ * `cap_refusal` words the ZERO-CAP case — *"this server is not sending anything to the writing and
+ * captioning models at the moment"* — and that is a different fact from "you have used yours up",
+ * one this client deliberately refuses to guess at (see {@link verbAllowanceRefusal}). Adding
+ * `"refusal": ai_verb_cap.cap_refusal(allowance)` to that route's returned dict is the whole change;
+ * the route belongs to the backend lane, and until it lands the fallback stands.
+ *
+ * True as of «2026-08-27»; re-check with
+ * «grep -n "refusal" backend/app/api/routes/design_workshops.py».
+ */
 export type DwAiVerbAllowanceState = DwAiVerbAllowance & {
-  /** `ai_verb_cap.cap_refusal(allowance)` — null while there is room. Never re-worded here. */
-  refusal: string | null;
+  /**
+   * `ai_verb_cap.cap_refusal(allowance)` — the server's own words for the ceiling, never re-worded
+   * here. `null` while there is room; ABSENT when the route sent none, which is every deployment
+   * today. Read it through {@link verbAllowanceRefusal} and not directly.
+   */
+  refusal?: string | null;
 };
 
 /**
@@ -183,15 +208,27 @@ let verbAllowanceInFlight: Promise<DwAiVerbAllowanceState | null> | null = null;
 /**
  * Ask what today's ceiling is, before spending a run to find out.
  *
- * **IT NEVER THROWS AND NULL IS AN ORDINARY ANSWER.** Two different things produce it and a caller
- * has nothing different to do about either: no connection, or a server that does not offer this
- * route. The second is not hypothetical today — `GET /design-workshops/ai-verb-allowance` DOES NOT
- * EXIST YET; it is the one backend change this feature needs and it is owned by another lane (see
- * the note in the module that consumes this). Until it lands, every deployment answers 404, this
- * resolves null, and the surfaces degrade exactly as they do with no signal: no countdown is drawn,
- * nothing is disabled on a ceiling nobody can see, and a cap that is genuinely reached arrives as
- * the server's own 429 sentence after the press. That is a worse experience than the pre-flight and
- * it is an honest one, which is the pair of properties a missing route has to have.
+ * **THE ROUTE EXISTS. THIS COMMENT USED TO SAY IT DID NOT, AND THAT WAS THE DEFECT.**
+ * `GET /design-workshops/ai-verb-allowance` is declared in
+ * `backend/app/api/routes/design_workshops.py` — above `GET /{workshop_id}` with the rest of the
+ * literal paths, gated on `_require_designer`, answering `ai_verb_cap.allowance_payload` off two
+ * primary-key reads with no provider call and nothing spent. What stood here was written while the
+ * route was still owned by another lane and asserted in capitals that it DID NOT EXIST YET and that
+ * every deployment therefore answered 404. It shipped; the sentence did not get deleted with it.
+ * That is the expensive kind of stale comment — a reader who believed it would have built a
+ * workaround around a working pre-flight, or left the countdown undrawn on the belief that the
+ * number could not be had without spending a run to be refused.
+ * True as of «2026-08-27»; re-check with
+ * «grep -n "ai-verb-allowance" backend/app/api/routes/design_workshops.py».
+ *
+ * **IT STILL NEVER THROWS AND NULL IS STILL AN ORDINARY ANSWER**, which is the half that did not
+ * change and must not be tidied away now that the 404 has an explanation. Two things still produce
+ * null and a caller has nothing different to do about either: no connection — a field laptop drops
+ * out for minutes at a time — or a deployment older than the route, since the fleet is not all on
+ * one build. Either way the surfaces degrade exactly as they do with no signal: no countdown is
+ * drawn, nothing is disabled on a ceiling nobody can see, and a cap that is genuinely reached
+ * arrives as the server's own 429 sentence after the press. Worse than the pre-flight, and honest,
+ * which is the pair of properties the degraded path has to have.
  *
  * `ai_verb_cap.allowance_payload`'s own docstring makes the argument for the route: *"a client that
  * can learn the ceiling only by being refused has to spend a run to learn it"* — and a run is a

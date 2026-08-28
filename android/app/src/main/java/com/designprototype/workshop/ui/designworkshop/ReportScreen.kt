@@ -267,6 +267,19 @@ fun ReportScreen(
      * designer sees BEFORE they hand a document over; a warning that waits for the export has waited
      * one step too long.
      */
+    /*
+      WHICH OF THE TWO PREVIEWS IS ON SCREEN.
+
+      PAGES BY DEFAULT, because the file is what is submitted and "does it fit on the page" is the
+      question a preview exists to answer — asked for on 2026-08-27: *"it should render as if on
+      actual a4 sheet … it should also be there on android."* The reading flow is kept as the other
+      half of the switch rather than replaced: it is the better surface for proofing prose on a
+      handset, and `DwReportPreview`'s header now says which question each of the two answers.
+
+      Keyed to the workshop like every other piece of preview state, so opening a different report
+      does not inherit the last one's view.
+    */
+    var previewAsPages by remember(workshopId) { mutableStateOf(true) }
     var previewUnresolvedMedia by remember(workshopId) { mutableStateOf(0) }
     var previewLosses by remember(workshopId) { mutableStateOf<List<String>>(emptyList()) }
     /**
@@ -960,22 +973,64 @@ fun ReportScreen(
             ) {
                 /*
                   WHAT THIS SCREEN IS AND IS NOT, said above the document rather than left to be
-                  inferred. Two claims, both load-bearing:
+                  inferred.
 
-                  · it is built from the DRAFT ON THIS DEVICE, so it needs no signal and reflects
-                    every stage saved here — including ones that have not synced;
-                  · it is NOT laid out on pages. See `DwReportPreview`'s header for why an A4 sheet is
-                    unreadable at 360dp. A designer who needs to check pagination exports the .pdf,
-                    which is the button directly below.
+                  THE SECOND CLAIM CHANGED ON 2026-08-27 AND HAD TO BE REWRITTEN RATHER THAN LEFT.
+                  It used to say "It is not laid out in pages: export the .pdf to check where the
+                  breaks fall", which was true for as long as there was only a flow. There are A4
+                  sheets now, so that sentence would send a designer to a file for an answer the
+                  screen in front of them is already giving — and would leave the page count below it
+                  looking like something the screen had invented.
+
+                  What survives of it is the QUALIFICATION, which is the half that was load-bearing:
+                  the pages here are measured with this device's fonts, and the file is laid out by
+                  its own writer. `DwReportSheets` prints that sentence directly above the sheets,
+                  where the number it qualifies is, rather than here.
                 */
                 Text(
                     "Built on this device from what has been saved here — the same document the " +
-                        "export writes. It is not laid out in pages: export the .pdf to check where " +
-                        "the breaks fall.",
+                        "export writes, and the same blocks in both views below.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
                 )
+
+                /*
+                  THE TWO VIEWS, named by what they SHOW rather than by a mode: "Pages" and
+                  "Reading" are the two questions a designer is choosing between, and each label is
+                  the answer to one of them.
+
+                  THE MARK AND THE FILL TOGETHER, NEVER THE FILL ALONE (rule 5). The chosen view
+                  carries a tick in its own label as well as a filled pill, so which one is selected
+                  survives for a reader who cannot tell the two fills apart and for one listening to
+                  TalkBack, where the label is the whole of the signal.
+                */
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf(true to "Pages", false to "Reading").forEach { (pages, label) ->
+                        val selected = previewAsPages == pages
+                        Text(
+                            if (selected) "$label ✓" else label,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.field.body
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            modifier = Modifier
+                                .background(
+                                    if (selected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.field.surface100
+                                    },
+                                    RoundedCornerShape(999.dp),
+                                )
+                                .clickable { previewAsPages = pages }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
                 /*
                   WHAT THE DOCUMENT BELOW IS SHORT OF, ABOVE THE DOCUMENT AND NOT UNDER IT.
 
@@ -1009,22 +1064,30 @@ fun ReportScreen(
                         lineHeight = 15.sp,
                     )
                 }
-                DwReportPreview(
-                    document = document,
-                    /*
-                      THE SAME RESOLUTION `deviceImageLoader` PERFORMS, and by the same rule:
-                      `ImageRef.source` IS an absolute path on this device, put there by the builder
-                      when it resolved the draft's media. So there is no id lookup to do and no
-                      workshop context to thread — a token that names a file which is not there is a
-                      photograph attached on another client, which is `null` and which the preview
-                      draws as a named placeholder rather than an empty frame.
+                /*
+                  THE SAME RESOLUTION `deviceImageLoader` PERFORMS, and by the same rule:
+                  `ImageRef.source` IS an absolute path on this device, put there by the builder when
+                  it resolved the draft's media. So there is no id lookup to do and no workshop
+                  context to thread — a token that names a file which is not there is a photograph
+                  attached on another client, which is `null` and which the preview draws as a named
+                  placeholder rather than an empty frame.
 
-                      Kept as a lambda rather than reusing `deviceImageLoader` because that returns
-                      the BYTES (which is what a writer needs) and Coil wants the File (which is what
-                      lets it decode and cache off the main thread).
-                    */
-                    resolveImage = { source -> File(source).takeIf { it.exists() } },
-                )
+                  Kept as a lambda rather than reusing `deviceImageLoader` because that returns the
+                  BYTES (which is what a writer needs) and Coil wants the File (which is what lets it
+                  decode and cache off the main thread).
+
+                  HOISTED so that both views resolve a photograph identically. Two resolvers is two
+                  answers to "is this plate on the device", and the sheet view would then paginate
+                  around a picture the reading view had not drawn.
+                */
+                val resolvePreviewImage: (String) -> File? =
+                    remember { { source: String -> File(source).takeIf { it.exists() } } }
+
+                if (previewAsPages) {
+                    DwReportSheets(document = document, resolveImage = resolvePreviewImage)
+                } else {
+                    DwReportPreview(document = document, resolveImage = resolvePreviewImage)
+                }
             }
         }
 

@@ -9,6 +9,7 @@ import {
   LIST_PAGE_CEILING,
   listCut,
   mergeById,
+  queueCutNotice,
   type ListCut
 } from "@/components/data/cappedList";
 import { craftChangeClearsArtisan } from "@/components/forms/recordPickers";
@@ -161,6 +162,65 @@ test("a total the wire did not carry says nothing rather than claiming a cut of 
   // `undefined` here at runtime. The safe default is the quiet one.
   const missing = { items: [{ id: "a" }], page: 1, pageSize: 100, pages: 1 } as unknown as PageResult<{ id: string }>;
   expect(listCut(missing, "artisans")).toBeNull();
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The review queue — a cut nothing on screen can reach past
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("a review queue that was not cut says nothing at all", () => {
+  // The flag is the server's answer, decided by reading one row beyond the cap. Arithmetic that
+  // merely looks like a cut is not one, and a standing notice over a whole queue teaches a reviewer
+  // to ignore the notice.
+  expect(queueCutNotice(false, cutOf(200, 340, "pending records"), 200)).toBe("");
+  expect(queueCutNotice(undefined, cutOf(200, 340, "pending records"), 200)).toBe("");
+});
+
+test("a cut review queue never sends the reviewer to a search box or a pager", () => {
+  // `GET /review/pending` takes no `page`, `pageSize` or search parameter — `list_pending_reviews`
+  // says so and says why — so both of `CutReach`'s endings would name a way out that does not
+  // exist. The pager on that screen walks the rows already downloaded, which is the worse of the
+  // two errors: it is a control the reader can see, doing something other than what it was said to
+  // do. Telling somebody to narrow an unnarrowable list is what the viewer-picker finding cost.
+  const sentence = queueCutNotice(true, cutOf(200, 340, "pending records"), 200);
+  expect(sentence).toContain("200");
+  expect(sentence).toContain("340");
+  expect(sentence, "the rows behind the cap are the oldest — that is the fact").toContain("oldest");
+  expect(sentence).not.toContain("search");
+  expect(sentence).not.toContain("narrow");
+  expect(sentence).not.toContain("pager");
+});
+
+test("a cut review queue is still stated when the numbers are missing or contradictory", () => {
+  // Both states a live server denies, and both must still ANNOUNCE the cut: silence beside a true
+  // flag is an unstated cut, which is the defect this module exists to close. `cap: 0` is what a
+  // deployment predating that key sends, and the sentence must not claim a ceiling of zero.
+  const noCap = queueCutNotice(true, cutOf(200, 340, "pending records"), 0);
+  expect(noCap).toContain("not shown");
+  expect(noCap).not.toContain("0 of each");
+  const noArithmetic = queueCutNotice(true, cutOf(200, 200, "pending records"), 200);
+  expect(noArithmetic).toContain("not shown");
+  expect(noArithmetic).not.toContain("Showing 200 of 200");
+  // A cut answer can never carry an EMPTY list — the cut is by count alone — but "Showing 0 of 340"
+  // would be a contradiction on screen, so that arm is worded rather than computed.
+  const nothing = queueCutNotice(true, cutOf(0, 340, "pending records"), 200);
+  expect(nothing).toContain("this is not an empty queue");
+  expect(nothing).not.toContain("Showing 0");
+});
+
+test("the review screen reads the envelope it used to throw away", () => {
+  const source = read("app", "(protected)", "review", "page.tsx");
+
+  // It asked for `{ items, total }` and read only `items`, so `truncated`, `cap` and `shown` were
+  // discarded and the browser then paged client-side over the capped list — a page count derived
+  // from rows the server had already cut.
+  expect(source).toContain("apiFetch<PendingEnvelope>");
+  expect(source).toContain("<CappedListNotice");
+  expect(source).toContain("queueCutNotice(queue.truncated");
+  // The count on screen is the server's total, not the length of the page.
+  expect(source).toContain("total={queue.total}");
+  expect(source, "the length of a capped list is the one figure that is certainly wrong")
+    .not.toContain("total={items.length}");
 });
 
 test("merging option pages adds rows and never removes one", () => {

@@ -45,6 +45,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Archive, ChevronLeft, ChevronRight, ClipboardList, Plus, Save } from "lucide-react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
@@ -54,12 +55,12 @@ import { useToast } from "@/components/ui/Toast";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { formatDateTime } from "@/lib/format";
+import { cachedQuestionnaireNotice, loadQuestionnaireWithCache } from "@/lib/questionnaireFormCache";
 import {
   answerableQuestions,
   answeredCount,
   answersByQuestion,
   createEntry,
-  getQuestionnaire,
   saveAnswers,
   type QForm,
   type QFormEntry,
@@ -81,8 +82,14 @@ function AnswerPageBody() {
   const search = useSearchParams();
   const router = useRouter();
   const { toast } = useToast();
+  const { user, loading: authLoading } = useAuth();
 
   const [form, setForm] = useState<QForm | null>(null);
+  /**
+   * Set only while the form on screen came out of this browser's storage because nothing could reach
+   * the server. Null again the moment a live read succeeds.
+   */
+  const [cached, setCached] = useState<{ at: string | null; version: number } | null>(null);
   const [entryId, setEntryId] = useState<string>("");
   const [sectionIndex, setSectionIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -166,23 +173,44 @@ function AnswerPageBody() {
     | { kind: "edit" };
   const [pendingExit, setPendingExit] = useState<Exit | null>(null);
 
+  /**
+   * WITH retired questions — see the file header. The read-only rows they produce are the only place
+   * a previously-recorded answer to a retired question can still be seen.
+   *
+   * READ THROUGH THE CACHE. A designer standing in front of a respondent with no signal can now open
+   * this screen and READ the questions they are about to ask, and read what has already been
+   * recorded in this sitting. They still cannot SAVE — `saveSection` fails loudly and the banner
+   * says so before the first question is asked, not after a section has been typed — because
+   * whether a question may still be answered is a fact only the server holds.
+   *
+   * The stored copy is served only when nothing reached the server. A 403 (a revoked grant), a 404
+   * and a 5xx all still reach the error banner: each of those is the server answering, and a copy
+   * that contradicted it would be this screen inventing an entitlement.
+   */
+  const viewerId = user?.id ?? null;
   const load = useCallback(async () => {
     try {
-      // WITH retired questions — see the file header. The read-only rows they produce are the only
-      // place a previously-recorded answer to a retired question can still be seen.
-      const next = await getQuestionnaire(id, { includeRetired: true });
-      setForm(next);
+      const read = await loadQuestionnaireWithCache(id, { includeRetired: true, viewerId });
+      setForm(read.form);
+      setCached(read.fromCache ? { at: read.cachedAt, version: read.cachedVersion ?? read.form.version } : null);
       setError(null);
-      return next;
+      return read.form;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load that questionnaire");
       return null;
     }
-  }, [id]);
+  }, [id, viewerId]);
 
+  /**
+   * WAITS FOR THE SESSION. `load` depends on the viewer's id — the stored copy is stamped with whose
+   * it is and refused to any other account on a shared field laptop — and `AuthProvider` resolves
+   * `user` after mount, so without this guard the whole form, its sittings and every answer would be
+   * fetched twice on every open.
+   */
   useEffect(() => {
+    if (authLoading) return;
     void load();
-  }, [load]);
+  }, [authLoading, load]);
 
   /**
    * Which sitting is open.
@@ -473,6 +501,17 @@ function AnswerPageBody() {
 
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+      {/*
+        BEFORE THE FIRST QUESTION IS ASKED, not after a section has been typed. This is the screen the
+        cache exists for — a designer sitting with a respondent, reading the next question off a copy
+        — and it is also the screen where the refusal to save offline costs the most, so the sentence
+        that says both is at the top of it and not tucked beside the Save button.
+      */}
+      {cached ? (
+        <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800 dark:bg-amber-500/15 dark:text-amber-100">
+          {cachedQuestionnaireNotice(formatDateTime(cached.at), cached.version)}
+        </div>
       ) : null}
       {!form.isActive ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">

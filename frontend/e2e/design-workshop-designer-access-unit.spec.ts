@@ -73,7 +73,7 @@ test("administering who is on a workshop is admin-only, because every viewer rou
   */
   expect(isAdmin(user("ADMIN"))).toBe(true);
   expect(isAdmin(user("MASTER_ADMIN"))).toBe(true);
-  for (const role of ["DESIGNER", "PROFESSOR", "RESEARCHER", "FIELD_CONTRIBUTOR", "CROWDSOURCE_VOLUNTEER"] as UserRole[]) {
+  for (const role of ["DESIGNER", "INSPECTOR", "PROFESSOR", "RESEARCHER", "FIELD_CONTRIBUTOR", "CROWDSOURCE_VOLUNTEER"] as UserRole[]) {
     expect(`${role} may not administer viewers=${isAdmin(user(role))}`).toBe(`${role} may not administer viewers=false`);
   }
 });

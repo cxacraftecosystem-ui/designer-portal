@@ -51,6 +51,7 @@ const ROLES: UserRole[] = [
   "MASTER_ADMIN",
   "ADMIN",
   "PROFESSOR",
+  "INSPECTOR",
   "DESIGNER",
   "RESEARCHER",
   "FIELD_CONTRIBUTOR",
@@ -67,6 +68,15 @@ test.describe("who may open the sketches and prototypes hub", () => {
     expect(canAccessRoute(user("DESIGNER"), HUB)).toBe(true);
     expect(canAccessRoute(user("ADMIN"), HUB)).toBe(true);
     expect(canAccessRoute(user("MASTER_ADMIN"), HUB)).toBe(true);
+  });
+
+  test("an inspector is refused, and outranking a designer is exactly why that needs saying", () => {
+    // INSPECTOR (37) sits ABOVE DESIGNER (35), so every rank-threshold instinct says yes here. The
+    // guard is a set, the set is {DESIGNER, ADMIN, MASTER_ADMIN}, and an inspector is outside it —
+    // the tier reviews a designer's records and does not run the workshop that produced them. This
+    // assertion exists because the same reasoning that admits a professor would admit an inspector,
+    // and the shell of this page is a list of workshop NAMES.
+    expect(canAccessRoute(user("INSPECTOR"), HUB)).toBe(false);
   });
 
   test("a professor is refused, even though a professor outranks a designer elsewhere", () => {

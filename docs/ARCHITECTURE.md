@@ -195,7 +195,7 @@ HTTP and never share the supervisor.
 ```mermaid
 flowchart TD
   routes["backend/app/api/routes/*.py<br/>one module per resource"]
-  deps["core/deps.py<br/>auth + the seven-tier ladder<br/>+ the identity cache"]
+  deps["core/deps.py<br/>auth + the eight-tier ladder<br/>+ the identity cache"]
   schemas["schemas/*.py<br/>Pydantic, extra=forbid"]
   svc["services/*.py"]
   prisma[Prisma Python client]

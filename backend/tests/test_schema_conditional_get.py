@@ -263,6 +263,109 @@ async def test_the_304_carries_vary_even_without_gzip() -> None:
     assert second.content == b""
 
 
+# =================================================================================================
+# The two things a BROWSER needs that a server-side test would never notice
+#
+# The web client began conditioning this one request on 2026-08-28 — `frontend/lib/api.ts`'
+# `ApiFetchOptions.revalidateFromHttpCache`, set by `fetchStageRegistry` and by nothing else. That
+# turns two properties of this endpoint from incidental into load-bearing, and neither was asserted
+# anywhere: every test above drives the route with the identity dependency overridden and without an
+# `Origin` header, which is exactly the shape in which both failures are invisible.
+# =================================================================================================
+
+
+def _app_without_identity() -> httpx.AsyncClient:
+    """The real application with NOTHING overridden — the only way to exercise the real dependency."""
+    from app.main import create_app
+
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app()), base_url="http://dw.test"
+    )
+
+
+async def test_the_tag_is_not_a_way_past_the_identity_dependency() -> None:
+    """A CONDITIONAL GET IS STILL AN AUTHENTICATED GET, and `*` is the input that would prove it isn't.
+
+    `_if_none_match_matches` answers True for `If-None-Match: *` without comparing anything, so if
+    the header were consulted before the dependency, an unauthenticated caller sending two characters
+    would learn that the registry exists and, worse, would be handed a 304 that a browser cache turns
+    into the stored body. It is not: FastAPI resolves `Depends(get_current_user)` before the handler
+    runs at all, so the refusal happens first and the header is never reached.
+
+    Asserted with NO override, which is the whole point of the test — every other test in this file
+    replaces the dependency, and under that replacement this cannot fail. `_user_from_bearer` raises
+    on a missing credential before it decodes anything or touches a database, so this stays a
+    database-free test like the rest of the module.
+    """
+    async with _app_without_identity() as client:
+        refused = await client.get(SCHEMA, headers={"If-None-Match": "*"})
+
+    assert refused.status_code == 401
+    # Not a 304, and not the payload either: the body must be the refusal and nothing else.
+    assert refused.json() == {"detail": "Missing bearer token"}
+    assert "stages" not in refused.text
+
+
+async def test_the_304_carries_the_cors_headers_a_browser_needs_to_finish_revalidating() -> None:
+    """THE FAILURE THIS FORECLOSES IS TOTAL, NOT PARTIAL, AND IT IS INVISIBLE TO EVERY OTHER TEST HERE.
+
+    The web client is served from a different origin from this API. A browser revalidating its stored
+    registry sends the conditional GET itself and applies the SAME cross-origin check to the answer
+    that it applied to the first one — so a 304 arriving without `Access-Control-Allow-Origin` is not
+    a slow path or a lost saving: `fetch` rejects, `fetchStageRegistry` throws, and every form in the
+    feature falls back to the IndexedDB copy or draws nothing. Turning the client half on is what
+    makes that reachable, because until 2026-08-28 no browser ever sent `If-None-Match` here.
+
+    It holds today because Starlette's `CORSMiddleware` stamps every response it wraps rather than
+    only the ones with bodies — which is a fact about a dependency, and facts about dependencies are
+    what tests are for. Both directions are checked, because the interesting failure is the 304
+    differing from the 200 rather than either one being wrong on its own.
+
+    `Vary` is asserted as a SET. The route writes `Accept-Encoding` and the middleware appends
+    `Origin`, and they land in opposite orders on the two responses (`Origin, Accept-Encoding` on the
+    200, `Accept-Encoding, Origin` on the 304); a string comparison would pin an ordering nothing
+    depends on and would go red the day either half is reordered.
+    """
+    from app.core.config import get_settings
+
+    origins = [o for o in get_settings().cors_origins if o != "*"]
+    if not origins:
+        pytest.skip("this deployment allows every origin, so there is no per-origin header to check")
+    origin = origins[0]
+
+    async with _app_with_middleware() as client:
+        first = await client.get(
+            SCHEMA, headers={"Origin": origin, "Accept-Encoding": "gzip"}
+        )
+        second = await client.get(
+            SCHEMA,
+            headers={
+                "Origin": origin,
+                "Accept-Encoding": "gzip",
+                "If-None-Match": first.headers["etag"],
+            },
+        )
+
+    assert first.status_code == 200
+    assert first.headers["access-control-allow-origin"] == origin
+
+    assert second.status_code == 304
+    assert second.headers["access-control-allow-origin"] == origin, (
+        "a 304 the browser cannot read is worse than no 304 — fetch rejects and the registry never loads"
+    )
+    # The credentialed flag has to match too: a browser that sent a credentialed request and got an
+    # answer without it discards the answer exactly as it would for a missing origin header.
+    assert second.headers.get("access-control-allow-credentials") == first.headers.get(
+        "access-control-allow-credentials"
+    )
+    # Both cache-key inputs are named on both responses. `Origin` matters here in a way it does not
+    # in the gzip tests above: without it a cache keyed only on the URL could answer a request from
+    # one origin with a response stamped for another.
+    as_set = lambda value: {part.strip().lower() for part in value.split(",")}  # noqa: E731
+    assert as_set(second.headers["vary"]) == as_set(first.headers["vary"])
+    assert as_set(second.headers["vary"]) == {"accept-encoding", "origin"}
+
+
 async def test_a_star_matches_anything(client: httpx.AsyncClient) -> None:
     """``If-None-Match: *`` means "if you have any representation at all". We always do."""
     assert (await _fetch(client, headers={"If-None-Match": "*"})).status_code == 304

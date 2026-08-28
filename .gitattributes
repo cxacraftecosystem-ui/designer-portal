@@ -47,3 +47,17 @@ Dockerfile      text eol=lf
 *.woff          binary
 *.woff2         binary
 *.db            binary
+
+# ---------------------------------------------------------------------------------------------
+# The vendored tracing engine stays LF everywhere, so the SHA-256 digests recorded in
+# `frontend/lib/trace/UPSTREAM-MANIFEST.txt` mean the same thing on every machine. Under
+# `* text=auto` above, a Windows checkout would rewrite the newlines and every digest in that
+# manifest would mismatch on every Windows machine while the files were in fact correct.
+#
+# There used to be a second entry here, `-text` on `android/app/src/main/assets/dw-trace-engine.js`,
+# for the same reason one level down: the handset ran this engine as a minified JavaScript bundle
+# built from these sources, and a CRLF rewrite would have broken the byte-for-byte check on it. The
+# handset now runs the engine as Kotlin — `android/core-imaging`, `core-vector`, `core-pipeline` and
+# `core-export`, hashed in `android/UPSTREAM-MANIFEST-KOTLIN.txt` — so there is no generated asset
+# left to protect. This line still earns its keep for the TypeScript the web traces with.
+frontend/lib/trace/**  text eol=lf

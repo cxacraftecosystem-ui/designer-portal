@@ -7,6 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from app.core.db import db
 from app.core.deps import get_current_user, require_master_admin
 from app.schemas.feedback import FeedbackUpsertRequest
+from app.services.concurrency import gather_reads
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -152,16 +153,21 @@ async def list_feedback(
     # what makes ``X-Truncated`` exact instead of guessed. Do not "optimise" it away by testing
     # ``len(rows) == pageSize``: that reports a shortfall on the page that happens to end exactly on
     # the boundary, and a master admin told rows are missing when they are not has no way to check.
-    total = await db.feedback.count()
-    rows = await db.feedback.find_many(
-        # ``id`` is the TIEBREAKER and it is load-bearing now that this read is paged.
-        # ``updatedAt`` is not unique — an upsert-per-account table gets ties whenever two people
-        # send feedback in the same instant, and a non-total order under LIMIT/OFFSET lets one row
-        # appear on two pages while another appears on none.
-        order=[{"updatedAt": "desc"}, {"id": "desc"}],
-        include={"user": True},
-        skip=skip,
-        take=pageSize,
+    # The two go out together: nothing in the page depends on the count and nothing in the count
+    # depends on the page, so in series the count was a whole cross-region round trip spent on a
+    # number. It is still EXACT, which is the property the paragraph above defends.
+    total, rows = await gather_reads(
+        db.feedback.count(),
+        db.feedback.find_many(
+            # ``id`` is the TIEBREAKER and it is load-bearing now that this read is paged.
+            # ``updatedAt`` is not unique — an upsert-per-account table gets ties whenever two
+            # people send feedback in the same instant, and a non-total order under LIMIT/OFFSET
+            # lets one row appear on two pages while another appears on none.
+            order=[{"updatedAt": "desc"}, {"id": "desc"}],
+            include={"user": True},
+            skip=skip,
+            take=pageSize,
+        ),
     )
     truncated = total > skip + len(rows)
     response.headers["X-Total-Count"] = str(total)

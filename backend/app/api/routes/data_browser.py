@@ -82,10 +82,19 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
+from starlette.background import BackgroundTask
 
 from app.core.db import db
 from app.core.deps import require_dataset_downloader
+from app.services import memory_budget
+from app.services.concurrency import gather_reads
 from app.services.media_naming import (
     RESERVED_NAMES as _RESERVED_NAMES,
     clip as _clip,
@@ -121,7 +130,7 @@ from app.services.record_fields import (
 )
 from app.services.records import owned_or_granted_where
 from app.services.rich_text import plain_from_stored
-from app.services.s3 import get_object_bytes
+from app.services.s3 import ObjectTooLarge, discard_temp, download_to_temp, head_object
 from app.services.transcript_format import transcript_cell
 from app.services.xlsx_report import XLSX_MIME, build_report_workbook
 
@@ -141,7 +150,24 @@ MAX_WALK_DEPTH = 16
 _WALK_SEM = asyncio.Semaphore(5)
 # Refuse in-process audio conversion beyond this size — decoding a very large WAV would exhaust
 # the t3.micro's RAM; the client falls back to the original object URL.
-MAX_CONVERT_BYTES = 200 * 1024 * 1024
+#
+# 32 MiB, DOWN FROM 200 MiB, and the old number was not a bound at all. docs/SCALABILITY.md §5.1
+# fix 3 asks for exactly this figure, and the measurement behind it is in that section: five live
+# objects are over 131 MiB and THREE OF THEM (131.2, 151.4, 156.0 MiB) sat under the 200 MiB
+# constant and were therefore ADMITTED — each one decoded to PCM by ffmpeg, several times its
+# compressed size, in a single-worker uvicorn on a 1 GiB box. A cap that admits a file the box
+# cannot hold is a comment, not a cap.
+#
+# This is the CEILING, not the answer. `convert_ceiling_bytes()` is what the route asks, and it
+# lowers this further when the box says it has less; a constant cannot know what else is in flight.
+MAX_CONVERT_BYTES = 32 * 1024 * 1024
+# The same treatment for the untouched-object fallback, which had NO cap of any kind — it read the
+# whole object into the heap and handed it to `Response(content=...)`, for any size, whenever
+# `media.url` was falsy. That path now streams from disk, so this bound is about DISK rather than
+# RAM: it exists so one pathological object cannot fill the box's root volume. The largest object
+# in this deployment is 668.44 MiB (MEASURED, §5.1), so 1 GiB admits everything in the archive
+# today and refuses only what nothing has ever uploaded.
+MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 # Per-sheet row cap for /data/report (a truncation note row is appended when hit).
 REPORT_TAKE = 5000
 # Pseudo craft-folder id gathering a workshop's artisans that have no craft assigned.
@@ -379,10 +405,25 @@ class Scope:
 
 
 async def _scope_for(user: Any) -> Scope:
-    return Scope(
-        records=await owned_or_granted_where(user),
-        media=await owned_or_granted_where(user, owner_field="uploadedById"),
+    """Both row-visibility filters for one /data request, resolved as one wave.
+
+    **IT SAVES NO ROUND TRIP TODAY, AND THAT IS WORTH KNOWING BEFORE SOMEBODY QUOTES IT AS ONE.**
+    Only the ``media`` half ever queries. ``records.owned_or_granted_where`` is dictionary work for
+    a record owner column and reads the design-workshop tag ids only for ``uploadedById`` — and its
+    own comment states that the record variant must NOT grow a lookup to match, because that one
+    rides every /export CSV and every /data page. So below professor this pair costs one query
+    whether it is gathered or awaited in turn, and for Professor and above it costs none.
+
+    What the wave buys is that the pair is now STATED as a pair, on a function that sits on every
+    /data route (tree, manifest, report, download). If the record half ever does acquire a read, it
+    joins a wave instead of quietly adding a second round trip to four routes at once. That is a
+    claim about shape, not about latency; do not cite it as a measured saving.
+    """
+    record_where, media_where = await gather_reads(
+        owned_or_granted_where(user),
+        owned_or_granted_where(user, owner_field="uploadedById"),
     )
+    return Scope(records=record_where, media=media_where)
 
 
 def _and(where: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -2193,48 +2234,70 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
 
     if len(segs) <= 1:
         # Root (or the all-workshops folder): everything visible, each sheet capped at REPORT_TAKE.
-        data["workshops"] = await db.workshop.find_many(
-            where=scope.records,
-            take=REPORT_TAKE,
-            order={"createdAt": "desc"},
-            include={"createdBy": True},
+        #
+        # EIGHT INDEPENDENT SHEETS, ONE WAVE. Not one of these reads consumes another's output — the
+        # root report is eight unrelated tables side by side — and ``/data/report?format=json``
+        # MEASURED 19.01 round trips (13,289 ms) against production with them in series
+        # (docs/SCALABILITY.md §1.2). Eight is inside ``pool_width()`` (10), so this is one wave and
+        # not two; do not add a ninth read here without checking that number again, because at
+        # eleven ``gather_reads`` silently splits into two waves at its semaphore.
+        #
+        # THE MEMORY IS UNCHANGED AND STILL CAPPED BY ``REPORT_TAKE``. All eight lists were resident
+        # together before — the workbook is built from every sheet at once — so what moved is when
+        # they arrive, not how much is held. §5.2 is the live ceiling here, not this wave.
+        (
+            data["workshops"],
+            data["crafts"],
+            data["artisans"],
+            data["products"],
+            data["processes"],
+            data["tools"],
+            data["interviews"],
+            data["media"],
+        ) = await gather_reads(
+            db.workshop.find_many(
+                where=scope.records,
+                take=REPORT_TAKE,
+                order={"createdAt": "desc"},
+                include={"createdBy": True},
+            ),
+            db.craft.find_many(
+                take=REPORT_TAKE,
+                order={"createdAt": "desc"},
+                include={"workshops": {"include": {"workshop": True}}},
+            ),
+            db.artisan.find_many(
+                where=scope.records,
+                take=REPORT_TAKE,
+                order={"createdAt": "desc"},
+                include=_ARTISAN_INCLUDE,
+            ),
+            db.productdocumentation.find_many(
+                where=scope.records,
+                take=REPORT_TAKE,
+                order={"createdAt": "desc"},
+                include=_PRODUCT_INCLUDE,
+            ),
+            db.process.find_many(
+                where=scope.records,
+                take=REPORT_TAKE,
+                order={"createdAt": "desc"},
+                include=_PROCESS_INCLUDE,
+            ),
+            db.tooldocumentation.find_many(
+                where=scope.records,
+                take=REPORT_TAKE,
+                order={"createdAt": "desc"},
+                include=_TOOL_INCLUDE,
+            ),
+            db.questionnaireinterview.find_many(
+                where=scope.records,
+                take=REPORT_TAKE,
+                order={"createdAt": "desc"},
+                include=_INTERVIEW_INCLUDE,
+            ),
+            _report_media(None, scope),
         )
-        data["crafts"] = await db.craft.find_many(
-            take=REPORT_TAKE,
-            order={"createdAt": "desc"},
-            include={"workshops": {"include": {"workshop": True}}},
-        )
-        data["artisans"] = await db.artisan.find_many(
-            where=scope.records,
-            take=REPORT_TAKE,
-            order={"createdAt": "desc"},
-            include=_ARTISAN_INCLUDE,
-        )
-        data["products"] = await db.productdocumentation.find_many(
-            where=scope.records,
-            take=REPORT_TAKE,
-            order={"createdAt": "desc"},
-            include=_PRODUCT_INCLUDE,
-        )
-        data["processes"] = await db.process.find_many(
-            where=scope.records,
-            take=REPORT_TAKE,
-            order={"createdAt": "desc"},
-            include=_PROCESS_INCLUDE,
-        )
-        data["tools"] = await db.tooldocumentation.find_many(
-            where=scope.records,
-            take=REPORT_TAKE,
-            order={"createdAt": "desc"},
-            include=_TOOL_INCLUDE,
-        )
-        data["interviews"] = await db.questionnaireinterview.find_many(
-            where=scope.records,
-            take=REPORT_TAKE,
-            order={"createdAt": "desc"},
-            include=_INTERVIEW_INCLUDE,
-        )
-        data["media"] = await _report_media(None, scope)
         return data
 
     wid = segs[1]
@@ -2336,10 +2399,23 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
     rid = rest[1] if len(rest) >= 2 else None
     proc_id = rest[3] if len(rest) >= 4 and rest[2] == "processes" else None
 
-    products: list[Any] = []
-    if branch in (None, "products") and aids:
+    # PRODUCTS, TOOLS AND INTERVIEWS ALL KEY OFF ``aids`` AND OFF NOTHING ELSE, SO THEY GO TOGETHER.
+    # The chain above this point is real — a workshop's artisans have to be known before any of the
+    # three can be asked for — but these three are siblings, and awaiting them in series was three
+    # cross-region round trips where one wave does. ``processes`` stays BELOW them and must: it is
+    # keyed by ``pids``, which does not exist until the products have come back.
+    #
+    # Each closure returns exactly the list the straight-line code assigned, the empty list for a
+    # branch that does not apply included — so a path that asks for one of the three still issues
+    # one query and not three. At most ONE of them can take its ``_require`` arm (``branch`` holds a
+    # single value and the three arms test different values of it), so there is no question of two
+    # 404s racing to be the one the caller sees.
+
+    async def _load_products() -> list[Any]:
+        if branch not in (None, "products") or not aids:
+            return []
         if branch == "products" and rid:
-            products = [
+            return [
                 await _require(
                     db.productdocumentation,
                     rid,
@@ -2348,25 +2424,86 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
                     scope_where=scope.records,
                 )
             ]
-        else:
-            # Mirrors the tree: an artisan's products, in this workshop or workshop-less.
-            products = await db.productdocumentation.find_many(
-                where=_and(
-                    {
-                        "AND": [
-                            {"artisanId": {"in": aids}},
-                            {"OR": [{"workshopId": wid}, {"workshopId": None}]},
-                        ]
-                    },
-                    scope.records,
-                ),
-                take=REPORT_TAKE,
-                order={"createdAt": "desc"},
-                include=_PRODUCT_INCLUDE,
-            )
+        # Mirrors the tree: an artisan's products, in this workshop or workshop-less.
+        return await db.productdocumentation.find_many(
+            where=_and(
+                {
+                    "AND": [
+                        {"artisanId": {"in": aids}},
+                        {"OR": [{"workshopId": wid}, {"workshopId": None}]},
+                    ]
+                },
+                scope.records,
+            ),
+            take=REPORT_TAKE,
+            order={"createdAt": "desc"},
+            include=_PRODUCT_INCLUDE,
+        )
+
+    async def _load_tools() -> list[Any]:
+        if branch not in (None, "tools") or not aids:
+            return []
+        if branch == "tools" and rid:
+            return [
+                await _require(
+                    db.tooldocumentation,
+                    rid,
+                    "Tool",
+                    include=_TOOL_INCLUDE,
+                    scope_where=scope.records,
+                )
+            ]
+        return await db.tooldocumentation.find_many(
+            where=_and(
+                {
+                    "AND": [
+                        {
+                            "OR": [
+                                {"artisanId": {"in": aids}},
+                                {"artisanLinks": {"some": {"artisanId": {"in": aids}}}},
+                            ]
+                        },
+                        {"OR": [{"workshopId": wid}, {"workshopId": None}]},
+                    ]
+                },
+                scope.records,
+            ),
+            take=REPORT_TAKE,
+            order={"createdAt": "desc"},
+            include=_TOOL_INCLUDE,
+        )
+
+    async def _load_interviews() -> list[Any]:
+        if branch not in (None, "questionnaire") or not aids:
+            return []
+        if branch == "questionnaire" and rid:
+            return [
+                await _require(
+                    db.questionnaireinterview,
+                    rid,
+                    "Interview",
+                    include=_INTERVIEW_INCLUDE,
+                    scope_where=scope.records,
+                )
+            ]
+        return await db.questionnaireinterview.find_many(
+            where=_and({"artisans": {"some": {"artisanId": {"in": aids}}}}, scope.records),
+            take=REPORT_TAKE,
+            order={"createdAt": "desc"},
+            include=_INTERVIEW_INCLUDE,
+        )
+
+    products, tools, interviews = await gather_reads(
+        _load_products(), _load_tools(), _load_interviews()
+    )
     data["products"] = products
+    data["tools"] = tools
+    data["interviews"] = interviews
     pids = [p.id for p in products]
 
+    # A SECOND WAVE, AND A GENUINE DEPENDENCY: ``pids`` comes out of the products above. This is the
+    # one read in this block that cannot join the wave, and it is why the block is two waits and not
+    # one.
     processes: list[Any] = []
     if pids:
         if proc_id:
@@ -2382,61 +2519,6 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
                 include=_PROCESS_INCLUDE,
             )
     data["processes"] = processes
-
-    tools: list[Any] = []
-    if branch in (None, "tools") and aids:
-        if branch == "tools" and rid:
-            tools = [
-                await _require(
-                    db.tooldocumentation,
-                    rid,
-                    "Tool",
-                    include=_TOOL_INCLUDE,
-                    scope_where=scope.records,
-                )
-            ]
-        else:
-            tools = await db.tooldocumentation.find_many(
-                where=_and(
-                    {
-                        "AND": [
-                            {
-                                "OR": [
-                                    {"artisanId": {"in": aids}},
-                                    {"artisanLinks": {"some": {"artisanId": {"in": aids}}}},
-                                ]
-                            },
-                            {"OR": [{"workshopId": wid}, {"workshopId": None}]},
-                        ]
-                    },
-                    scope.records,
-                ),
-                take=REPORT_TAKE,
-                order={"createdAt": "desc"},
-                include=_TOOL_INCLUDE,
-            )
-    data["tools"] = tools
-
-    interviews: list[Any] = []
-    if branch in (None, "questionnaire") and aids:
-        if branch == "questionnaire" and rid:
-            interviews = [
-                await _require(
-                    db.questionnaireinterview,
-                    rid,
-                    "Interview",
-                    include=_INTERVIEW_INCLUDE,
-                    scope_where=scope.records,
-                )
-            ]
-        else:
-            interviews = await db.questionnaireinterview.find_many(
-                where=_and({"artisans": {"some": {"artisanId": {"in": aids}}}}, scope.records),
-                take=REPORT_TAKE,
-                order={"createdAt": "desc"},
-                include=_INTERVIEW_INCLUDE,
-            )
-    data["interviews"] = interviews
 
     if branch == "misc" and aid is not None:
         # Mirrors the tree's artisan misc listing exactly.
@@ -2836,8 +2918,19 @@ def _transcript_sheet(
                 _cell(m.transcriptText),
             ]
         )
+    # ``len(media) >= REPORT_TAKE``, NOT the row count, exactly as the three media sheets below do.
+    # These rows are the subset of ``media`` carrying a transcript, and ``media`` was already capped
+    # at REPORT_TAKE by ``_report_media``; leaving this argument off fell back to ``_sheet``'s own
+    # ``len(rows) > REPORT_TAKE``, which a short subset can never satisfy. With 5,000 media capped
+    # and a few hundred of them transcribed, the sheet was cut upstream and flagged ``truncated:
+    # false`` — a silent cut, which is the one thing a cap here may not be.
     return _sheet(
-        "Transcripts", TRANSCRIPT_COLOR, columns, rows, prose=[columns.index("Transcript")]
+        "Transcripts",
+        TRANSCRIPT_COLOR,
+        columns,
+        rows,
+        len(media) >= REPORT_TAKE,
+        prose=[columns.index("Transcript")],
     )
 
 
@@ -3051,11 +3144,35 @@ async def data_report(
     )
 
 
-def _convert_audio_to_mp4(raw: bytes) -> io.BytesIO:
-    """Decode any uploaded audio container and re-encode as .mp4/AAC (sync; run off-loop)."""
+def convert_ceiling_bytes() -> int:
+    """The largest recording this box will convert in-process RIGHT NOW.
+
+    `MAX_CONVERT_BYTES` bounded from above by what the box says is actually free — see
+    `services/memory_budget`, and docs/SCALABILITY.md §5.1 fix 3 for why a constant alone was never
+    the right shape. It can only ever return something at or below the constant, so a machine with
+    memory to spare behaves exactly as it did, and a machine under pressure refuses sooner instead
+    of dying with an OOM that takes every in-flight request with it.
+
+    A FUNCTION AND NOT A CONSTANT because the answer changes between two requests a second apart,
+    which is the whole point; and it reads `MAX_CONVERT_BYTES` at call time rather than closing over
+    it, so lowering that module attribute (as `tests/test_media_convert_bound.py` does) still moves
+    the ceiling the route enforces.
+    """
+    return memory_budget.budget_bytes(MAX_CONVERT_BYTES)
+
+
+def _convert_audio_to_mp4(source_path: str) -> io.BytesIO:
+    """Decode any uploaded audio container and re-encode as .mp4/AAC (sync; run off-loop).
+
+    TAKES A PATH, NOT BYTES. Handed `io.BytesIO(raw)` pydub must be given the whole compressed input
+    in the heap first, so the object was resident twice over before ffmpeg had decoded anything;
+    given a path, ffmpeg opens the file itself and this process never holds the input at all. The
+    OUTPUT is still a `BytesIO` — an .mp4 of a recording small enough to pass `convert_ceiling_bytes`
+    is a few megabytes, and it is streamed straight out of here.
+    """
     from pydub import AudioSegment
 
-    segment = AudioSegment.from_file(io.BytesIO(raw))
+    segment = AudioSegment.from_file(source_path)
     out = io.BytesIO()
     segment.export(out, format="mp4")  # ffmpeg's mp4 muxer defaults to AAC audio
     out.seek(0)
@@ -3105,59 +3222,74 @@ async def download_media(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Audio conversion unavailable: pydub is not installed on the server.",
             ) from exc
-        # TWO CHECKS, BECAUSE THE COLUMN IS A CLAIM AND THE LENGTH IS A FACT.
+        # THREE CHECKS, BECAUSE THE COLUMN IS A CLAIM AND THE LENGTH IS A FACT — and the fact is now
+        # available, which it was not when this comment was first written and said "two".
         #
         # ``MediaFile.sizeBytes`` is whatever the client declared at ``POST /media/complete``: the
         # schema bounds it only from below (``Field(gt=0)``), it is stored verbatim, and nothing in
-        # this codebase ever reconciles it against the stored object — there is no ``head_object``
-        # anywhere in ``backend/app``. Nor does the upload signature bound the body:
-        # ``s3.presign_put_url`` signs Bucket/Key/ContentType and no ``content-length-range``, and
-        # its docstring records why that must stay so (a signed condition breaks every Android build
-        # already in the field). So an account holding ``canDownloadDataset`` could presign an upload
-        # declaring ``sizeBytes: 1024``, PUT 1.5 GB to the returned URL, complete it as AUDIO, and
-        # then click download on their OWN row: the 413 below would not fire, ``get_object_bytes``
-        # would pull 1.5 GB into the heap of this single-worker uvicorn process, and pydub/ffmpeg
-        # would decode a second copy beside it. The box OOMs, taking every in-flight request with it.
+        # this codebase ever reconciles it against the stored object. Nor does the upload signature
+        # bound the body: ``s3.presign_put_url`` signs Bucket/Key/ContentType and no
+        # ``content-length-range``, and its docstring records why that must stay so (a signed
+        # condition breaks every Android build already in the field). So an account holding
+        # ``canDownloadDataset`` could presign an upload declaring ``sizeBytes: 1024``, PUT 1.5 GB
+        # to the returned URL, complete it as AUDIO, and then click download on their OWN row.
         #
-        # The declared size is kept as the CHEAP first refusal — it costs nothing and rejects the
-        # honest large recording before a byte moves. The real length is then checked before the
-        # expensive half, which is the transcode: ffmpeg decoding compressed audio is where one copy
-        # becomes several, so refusing between the fetch and the decode removes the multiplier even
-        # though the fetch itself has already happened. What remains after this is one oversized read
-        # into the heap; closing that needs a ``head_object`` helper in ``services/s3``, which is
-        # written up as a follow-up rather than bolted on from here.
+        # The declared size is kept as the CHEAP first refusal — it costs nothing, not even a round
+        # trip, and rejects the honest large recording before anything is asked of storage. The real
+        # length then comes from ``s3.head_object``, which is the follow-up this comment used to say
+        # was outstanding: it reads ``ContentLength`` and no bytes, so an object that lied about its
+        # size is refused BEFORE the fetch rather than after it. ``head_object`` answers ``None``
+        # when storage will not say (a custom endpoint without ``HEAD``, a permission the API lacks),
+        # and that is not treated as "small": ``download_to_temp``'s ``max_bytes`` counts what
+        # actually lands and raises ``ObjectTooLarge`` mid-transfer, so the bound holds either way.
+        #
+        # AND THE READ ITSELF NO LONGER HAPPENS IN THE HEAP. ``download_to_temp`` streams the object
+        # to a temp file in ranged chunks, so peak heap here is a chunk rather than the whole
+        # recording, and ffmpeg opens that file directly instead of being handed a ``BytesIO`` of it.
+        ceiling = convert_ceiling_bytes()
         declared = int(media.sizeBytes or 0)
-        if declared > MAX_CONVERT_BYTES:
+        if declared > ceiling:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="This recording is too large to convert in-process; download the original.",
+            )
+        head = await asyncio.to_thread(head_object, media.objectKey)
+        if head is not None and head.size_bytes > ceiling:
+            # Same answer as the declared-size refusal, deliberately: the caller asked for a
+            # conversion of something too big to convert, and which of the two numbers caught it is
+            # the server's business.
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="This recording is too large to convert in-process; download the original.",
             )
         try:
-            # Blocking S3 read off the event loop — this is the single-worker web process.
-            raw = await asyncio.to_thread(get_object_bytes, media.objectKey)
+            # Blocking S3 transfer off the event loop — this is the single-worker web process.
+            source_path = await asyncio.to_thread(
+                download_to_temp, media.objectKey, suffix=".src", max_bytes=ceiling
+            )
+        except ObjectTooLarge as exc:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="This recording is too large to convert in-process; download the original.",
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Could not fetch the audio bytes from object storage.",
             ) from exc
-        if len(raw) > MAX_CONVERT_BYTES:
-            # Same answer as the declared-size refusal, deliberately: the caller asked for a
-            # conversion of something too big to convert, and which of the two numbers caught it is
-            # the server's business. Dropping the reference first so the bytes are collectable while
-            # FastAPI builds the response.
-            del raw
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="This recording is too large to convert in-process; download the original.",
-            )
         try:
             # ffmpeg decode + AAC encode runs in a worker thread so requests keep flowing.
-            out = await asyncio.to_thread(_convert_audio_to_mp4, raw)
+            out = await asyncio.to_thread(_convert_audio_to_mp4, source_path)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Audio conversion to mp4 failed (is ffmpeg installed?): {exc}",
             ) from exc
+        finally:
+            # The .mp4 is fully built in ``out`` by now, so the source is dead either way — and it
+            # must go on the failure path too, or every ffmpeg error leaves a copy of the recording
+            # on the disk this cap exists to protect.
+            discard_temp(source_path)
         stem = display_stem(media, fallback=media.id)
         return StreamingResponse(
             out,
@@ -3168,16 +3300,36 @@ async def download_media(
     # Non-audio (or an explicitly non-mp4 format): hand back the original object.
     if media.url:
         return RedirectResponse(media.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    # THIS FALLBACK HAD NO BOUND OF ANY KIND. It is reached whenever ``media.url`` is falsy — which
+    # is every object stored without a public base URL — and it read the whole file into the heap
+    # and passed it to ``Response(content=...)``, at any size, in the single-worker web process.
+    # Streaming it off disk instead makes the size a DISK question rather than a RAM one, and
+    # ``MAX_DOWNLOAD_BYTES`` is the bound on that; the 413 says so rather than truncating.
     try:
-        raw = await asyncio.to_thread(get_object_bytes, media.objectKey)
+        source_path = await asyncio.to_thread(
+            download_to_temp, media.objectKey, max_bytes=MAX_DOWNLOAD_BYTES
+        )
+    except ObjectTooLarge as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"This file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
+                f"server will spool for a download. Fetch it from object storage directly."
+            ),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not fetch the media bytes from object storage.",
         ) from exc
     name = display_filename(media, fallback=media.id)
-    return Response(
-        content=raw,
+    # ``background=`` and NOT a ``finally``: the file has to outlive this function, because
+    # ``FileResponse`` has not read a byte of it yet — Starlette streams it while sending. The
+    # background task runs after the last byte is on the wire, which is the only safe moment to
+    # unlink it. Deleting it here would serve an empty download.
+    return FileResponse(
+        source_path,
         media_type=media.mimeType or "application/octet-stream",
         headers={"Content-Disposition": _content_disposition(name)},
+        background=BackgroundTask(discard_temp, source_path),
     )

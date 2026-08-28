@@ -5,8 +5,9 @@ something else.
 
 **A job that died before the provider answered left its clip reading QUEUED for ever.**
 ``MediaFile.transcriptStatus`` is written back only by ``_apply_transcription_result``, which is
-reached only once the provider has responded. Every raise before that point — the consent read,
-``get_object_bytes``, ``transcribe_audio_bytes``, ``load_app_settings``, ``refine_transcript_text`` —
+reached only once the provider has responded. Every raise before that point — the consent read, the
+size gate, ``download_to_temp``, ``transcribe_audio_bytes``, ``load_app_settings``,
+``refine_transcript_text`` —
 went to ``_handle_job_failure``, which updated the job and nothing else. So an eleven-minute
 interview whose S3 object was briefly unreachable overnight ended with the job FAILED and the clip
 still reading ``transcriptStatus="QUEUED"``, ``transcriptError=None``.
@@ -183,6 +184,13 @@ def _run_transcription(monkeypatch, refine: Any) -> dict[str, Any]:
         return {}
 
     monkeypatch.setattr(media_queue.dictation_consent, "transcription_verdict", _verdict)
+    # THE TRANSCRIPTION PATH NO LONGER READS THE OBJECT INTO THE HEAP — it sizes it with
+    # ``head_object`` and streams it to a temp file with ``download_to_temp`` — so stubbing
+    # ``get_object_bytes`` alone would let a real boto3 call out of this unit test. ``head_object``
+    # answers None ("storage will not say"), which is the branch that carries on to the fetch.
+    monkeypatch.setattr(media_queue, "head_object", lambda _key: None)
+    monkeypatch.setattr(media_queue, "download_to_temp", lambda _key, **_kw: "/tmp/fake-audio")
+    monkeypatch.setattr(media_queue, "discard_temp", lambda _path: None)
     monkeypatch.setattr(media_queue, "get_object_bytes", lambda _key: b"audio")
     monkeypatch.setattr(media_queue, "transcribe_audio_bytes", _transcribe)
     monkeypatch.setattr(media_queue, "load_app_settings", _settings)

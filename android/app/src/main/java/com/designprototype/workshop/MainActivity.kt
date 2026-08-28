@@ -76,6 +76,9 @@ import com.designprototype.workshop.ui.deriveAgeYears
 import com.designprototype.workshop.ui.deriveExperienceYears
 import com.designprototype.workshop.ui.FieldIslandNav
 import com.designprototype.workshop.ui.FieldPermissions
+import com.designprototype.workshop.ui.PRODUCT_MEASURE_DIMENSIONS
+import com.designprototype.workshop.ui.RecordMeasureField
+import com.designprototype.workshop.ui.TOOL_MEASURE_DIMENSIONS
 import com.designprototype.workshop.ui.NavGroup
 import com.designprototype.workshop.ui.visibleNavItems
 import com.designprototype.workshop.ui.IslandEntry
@@ -91,6 +94,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.LocalContentColor
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.encodeToString
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -154,7 +158,11 @@ import com.designprototype.workshop.data.CraftCreateRequest
 import com.designprototype.workshop.data.DataAccessGrantDto
 import com.designprototype.workshop.data.DataAccessScopeItemDto
 import com.designprototype.workshop.data.DataAccessTierInfo
+import com.designprototype.workshop.data.DwMeasurementMarkers
+import com.designprototype.workshop.data.DwMeasurementReading
 import com.designprototype.workshop.data.DwStageFocus
+import com.designprototype.workshop.data.dwGeometryMarker
+import com.designprototype.workshop.data.dwVisionMarker
 // The ONE email rule on this handset — see the note above the artisan form's email check.
 import com.designprototype.workshop.data.DwTextFormats
 import com.designprototype.workshop.data.EntryCommentDto
@@ -189,6 +197,10 @@ import com.designprototype.workshop.data.signInErrorMessage
 import com.designprototype.workshop.data.occurrenceDate
 import com.designprototype.workshop.ui.AccessRosterScreen
 import com.designprototype.workshop.ui.accessRefusalChrome
+import com.designprototype.workshop.ui.WorkshopAccessQueueFailure
+import com.designprototype.workshop.ui.WorkshopAccessQueueView
+import com.designprototype.workshop.ui.workshopAccessQueueFailure
+import com.designprototype.workshop.ui.workshopAccessQueueNotice
 import com.designprototype.workshop.ui.ApiKeysScreen
 import com.designprototype.workshop.ui.MyAiKeysScreen
 import com.designprototype.workshop.ui.AppPreferences
@@ -212,6 +224,7 @@ import com.designprototype.workshop.ui.Coral
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireScreen
 import com.designprototype.workshop.ui.DataBrowserScreen
 import com.designprototype.workshop.ui.RecordCodeSection
+import com.designprototype.workshop.ui.RecordEditHistorySection
 // The shared prose box behind every record form: an optional on-device microphone and an optional
 // rich-text editor, both defaulting to off. See `ui/RecordProseField.kt` and `ui/RecordProseText.kt`.
 import com.designprototype.workshop.ui.RecordProseField
@@ -232,6 +245,9 @@ import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineSeed
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DwProvenanceScreen
+import com.designprototype.workshop.ui.designworkshop.InspectionDetailScreen
+import com.designprototype.workshop.ui.designworkshop.InspectionListScreen
+import com.designprototype.workshop.ui.designworkshop.DwReportHistoryScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerProfileScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen
 import com.designprototype.workshop.ui.designworkshop.PhotoIntakeScreen
@@ -242,6 +258,7 @@ import com.designprototype.workshop.ui.designworkshop.StageIndexScreen
 import com.designprototype.workshop.ui.designworkshop.StageScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopCodesScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopListScreen
+import com.designprototype.workshop.ui.designworkshop.WorkshopInspectorsScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopViewersScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireAnswerScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireDetailScreen
@@ -262,6 +279,7 @@ import com.designprototype.workshop.ui.TaskAdminScreen
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.Muted
 import com.designprototype.workshop.ui.resolveDarkTheme
+import com.designprototype.workshop.ui.reviewQueueCutNotice
 import com.designprototype.workshop.ui.syncAppPreferences
 import com.designprototype.workshop.ui.SurfaceCard
 import kotlinx.coroutines.launch
@@ -282,10 +300,12 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Architecture
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LockOpen
@@ -347,6 +367,7 @@ import com.designprototype.workshop.data.mediaPurposeMetadata
 import com.designprototype.workshop.data.MediaFileDto
 import com.designprototype.workshop.data.AppSettingUpdateRequest
 import com.designprototype.workshop.data.PendingReviewDto
+import com.designprototype.workshop.data.PendingReviewListDto
 import com.designprototype.workshop.data.StagedMedia
 import com.designprototype.workshop.data.TaskDto
 import com.designprototype.workshop.data.WorkshopAccessLevelDto
@@ -626,6 +647,32 @@ private sealed interface Screen {
     data class DesignWorkshopReport(val workshopId: String) : Screen
 
     /**
+     * The log of every report FILE already generated for one workshop, and the stage diff between
+     * any two of them — the phone's `…/report/history` page.
+     *
+     * A SIBLING OF [DesignWorkshopReport] AND NOT A TAB OF IT, which is the argument
+     * [DwReportHistoryScreen] makes at length: that screen produces the NEXT file, this one is the
+     * record of the files already handed to an office. They are read at different moments by people
+     * asking different questions, and folding them together would bury four submissions under the
+     * controls for making a fifth.
+     *
+     * Carries the DRAFT STORE's id like every other screen in this feature; the screen resolves the
+     * server id from the draft's `remoteId` itself and says so when there is none, because a report
+     * generated before the workshop reached the server is never logged at all.
+     *
+     * NOT ADMIN-ONLY, unlike [DesignWorkshopViewers] and [DesignWorkshopProvenance]:
+     * `GET /design-workshops/{id}/report-history` takes `get_current_user` and then
+     * `load_workshop_or_404`, so anyone who may open the workshop may read its export log, and
+     * neither the router nor the stage index gates the control. Re-check it by SYMBOL, not by
+     * line — `grep -n -A3 'report-history' backend/app/api/routes/design_workshops.py` shows the
+     * decorator and the `report_history` signature together, and what matters is that the
+     * signature says `Depends(get_current_user)` and NOT `_require_designer`. The first draft of
+     * this note pinned it to lines 3657-3658; the route had moved a hundred lines by the end of
+     * the same day's edits, and those two lines are now the middle of an unrelated renderer.
+     */
+    data class DesignWorkshopReportHistory(val workshopId: String) : Screen
+
+    /**
      * The sketch/prototype chooser — the menu's way into work that is filed on stages 11 and 13.
      *
      * `object` and not a `data class`: it carries nothing. Every workshop it can open is fetched by
@@ -688,6 +735,46 @@ private sealed interface Screen {
      * left the phone has no row for a grant to point at.
      */
     data class DesignWorkshopViewers(val workshopId: String) : Screen
+
+    /**
+     * WHO INSPECTS THIS WORKSHOP - the admin's appointment screen for the fifth scope.
+     *
+     * A THIRD SIBLING OF THE REPORT, hanging off the stage index for the reason the other two do: it
+     * is a fact about the WORKSHOP rather than about any one of its 22 stages.
+     *
+     * A SEPARATE SCREEN FROM [DesignWorkshopViewers] AND NOT A TAB OF IT, although both are
+     * admin-only "who" screens reached from the same place. They decide different things over
+     * different tables: a viewer row admits its holder to all 22 stages AND EVERY WRITE ON THEM,
+     * because `load_workshop_or_404(..., for_edit=True)` performs no role check at all; an inspection
+     * row admits its holder to one read-only route and to nothing else. The server refuses at import
+     * time to let the two role sets overlap. Folding them into one screen would put a read grant and
+     * a write grant under one heading, which is exactly the confusion the two tables exist to prevent.
+     *
+     * Carries the DRAFT STORE's id like its siblings; the screen resolves `remoteId` itself.
+     */
+    data class DesignWorkshopInspectors(val workshopId: String) : Screen
+
+    /**
+     * THE INSPECTOR'S OWN LIST - the design workshops an admin has assigned this account to inspect.
+     *
+     * `object` and not a `data class`: it carries nothing. Which workshop is asked BY the screen, and
+     * the arrival has no parameters that belong to it - unlike [DesignWorkshops.startCreating] or
+     * [DesignWorkshopStage.focus], both of which are carried in the route precisely because they
+     * belong to ONE arrival and must not survive a back-and-forward.
+     */
+    data object DesignWorkshopInspections : Screen
+
+    /**
+     * ONE WORKSHOP UNDER INSPECTION, read-only.
+     *
+     * **[workshopId] IS THE SERVER'S ID AND NOT THE DRAFT STORE'S - the only design-workshop route in
+     * this table of which that is true.** Every other screen in the family carries a draft id, which
+     * for a workshop started in a courtyard is a `local-...` id no server has ever seen, and resolves
+     * `remoteId` itself. An inspector has no draft of this workshop, did not create it, cannot edit
+     * it, and must never acquire one - the draft store is what `WorkshopSync` PUSHES. The id comes
+     * from [DesignWorkshopInspections], which is the only list this account can reach.
+     */
+    data class DesignWorkshopInspection(val workshopId: String) : Screen
 
     /**
      * The admin authorship & divergence view for one workshop — the phone's `…/provenance` page.
@@ -1707,6 +1794,12 @@ private fun HomeScreen(
             // pre-select — the pool round's own audience arrives with an id from a message, not from
             // a list this account can see.
             NavDestination.DESIGN_REVIEW -> screen = Screen.DesignReview
+            // The Inspector / Reviewer tier's own list. Ungated HERE, like every other design-workshop
+            // arm: the menu decides whether to OFFER the row (`canInspectDesignWorkshops`, which is
+            // set membership on {INSPECTOR} and refuses an admin), and the SCREEN re-derives the same
+            // predicate from the cached account before it issues a single request. A third check in
+            // the router would be the copy nobody updates.
+            NavDestination.DESIGN_WORKSHOP_INSPECTIONS -> screen = Screen.DesignWorkshopInspections
             // The LIST, for the same reason as the row above: a menu entry that created a
             // questionnaire every time it was tapped would leave a trail of untitled forms.
             NavDestination.CUSTOM_QUESTIONNAIRES -> screen = Screen.Questionnaires
@@ -1791,6 +1884,9 @@ private fun HomeScreen(
             is Screen.DesignWorkshopStages -> Screen.DesignWorkshops()
             is Screen.DesignWorkshopStage -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopReport -> Screen.DesignWorkshopStages(s.workshopId)
+            // Back to the INDEX and not to the report screen, even though the two are siblings: the
+            // index is the only route in, so it is the only route out.
+            is Screen.DesignWorkshopReportHistory -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopCodes -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopPhotos -> Screen.DesignWorkshopStages(s.workshopId)
             // Back to THIS workshop's index and not to the designer roster, which is the other
@@ -1798,6 +1894,17 @@ private fun HomeScreen(
             // all, this says who may open one record. The only route in is the index, so the only
             // route out is back to it.
             is Screen.DesignWorkshopViewers -> Screen.DesignWorkshopStages(s.workshopId)
+            // Back to THIS workshop's index for the same reason as the row above it: the index is
+            // the only route in, so it is the only route out.
+            is Screen.DesignWorkshopInspectors -> Screen.DesignWorkshopStages(s.workshopId)
+            // Reached from the menu, so back is the dashboard - the rule every menu-reached screen
+            // in this family follows.
+            is Screen.DesignWorkshopInspections -> Screen.Dashboard
+            // Back to the LIST and not to the dashboard: the list is the only route in - an inspector
+            // cannot navigate to a workshop by typed id and has no other surface that names one - so
+            // it is the only route out, and an inspector working through four assignments must not be
+            // returned to the dashboard between each one.
+            is Screen.DesignWorkshopInspection -> Screen.DesignWorkshopInspections
             // Back to THIS workshop's index for the same reason as the row above it: the index is the
             // only route in, so it is the only route out. An admin auditing a workshop is auditing a
             // workshop, not browsing the list.
@@ -1853,16 +1960,27 @@ private fun HomeScreen(
         // second one above it.
         is Screen.MyAiKeys -> null
         is Screen.DataBrowser -> "Data Browser"
-        // Null on all six: each of these screens draws its own heading, carrying the workshop's own
-        // title and its progress bar. A shared header above that would state the section twice and
-        // spend the page's first line saying less than the line under it.
+        // Null on all eight arms immediately below — counted by reading them: workshops, stages,
+        // one stage, report, report history, codes, photos, viewers. Each of those screens draws its
+        // own heading, carrying the workshop's own title and its progress bar. A shared header above
+        // that would state the section twice and spend the page's first line saying less than the
+        // line under it.
         is Screen.DesignWorkshops -> null
         is Screen.DesignWorkshopStages -> null
         is Screen.DesignWorkshopStage -> null
         is Screen.DesignWorkshopReport -> null
+        // Null for the same reason: the screen draws its own `DW_REPORT_HISTORY_TITLE` heading over
+        // a subtitle the shared header cannot carry.
+        is Screen.DesignWorkshopReportHistory -> null
         is Screen.DesignWorkshopCodes -> null
         is Screen.DesignWorkshopPhotos -> null
         is Screen.DesignWorkshopViewers -> null
+        // Null on all three for the same reason as the eight above: each draws its own heading -
+        // the appointment screen carries the workshop's title under it, the list carries its own
+        // description, and the read carries the workshop's craft, cluster and code.
+        is Screen.DesignWorkshopInspectors -> null
+        is Screen.DesignWorkshopInspections -> null
+        is Screen.DesignWorkshopInspection -> null
         // Null for the same reason: the screen draws its own "Authorship & divergence" heading, which
         // is the web's `<PageHeader title=…>` word for word. A shared header above it would state the
         // section twice and spend the page's first line saying less than the line under it.
@@ -1918,6 +2036,7 @@ private fun HomeScreen(
         is Screen.DesignWorkshopStages,
         is Screen.DesignWorkshopStage,
         is Screen.DesignWorkshopReport,
+        is Screen.DesignWorkshopReportHistory,
         is Screen.DesignWorkshopCodes,
         is Screen.DesignWorkshopPhotos -> NavDestination.DESIGN_WORKSHOPS
         // Its OWN destination and not DESIGN_WORKSHOPS: this screen is reached from its own menu row,
@@ -1937,6 +2056,15 @@ private fun HomeScreen(
         // It is not `DESIGNER_ROSTER`: that is the institution's list of who may sign in at all,
         // and this is one workshop's readers.
         is Screen.DesignWorkshopViewers -> NavDestination.DESIGN_WORKSHOPS
+        // The appointment screen lights the DESIGN WORKSHOPS row, like every other screen reached
+        // from a workshop's stage index: an admin got here from a workshop, and that is the row that
+        // opens the list they came through.
+        is Screen.DesignWorkshopInspectors -> NavDestination.DESIGN_WORKSHOPS
+        // The inspector's two screens light their OWN row and never DESIGN_WORKSHOPS, which is the
+        // row an inspector cannot see at all: `canRunDesignWorkshops` is set membership and INSPECTOR
+        // is not in the set, so lighting it would highlight a menu entry that is not rendered.
+        is Screen.DesignWorkshopInspections -> NavDestination.DESIGN_WORKSHOP_INSPECTIONS
+        is Screen.DesignWorkshopInspection -> NavDestination.DESIGN_WORKSHOP_INSPECTIONS
         // Lights the same row as its siblings, for the same reason as the viewer roster above: it is
         // admin chrome, but it is still a screen INSIDE one design workshop and the row opens the
         // list the admin is already in.
@@ -2211,6 +2339,17 @@ private fun HomeScreen(
                         screen = Screen.DesignWorkshops(startCreating = true)
                     },
                     onOpenDesignWorkshops = { message = null; screen = Screen.DesignWorkshops() },
+                    // The same rule as the line above, read from the object that owns it, and
+                    // deliberately NOT routed through `canCreate(mode)`: that table is a rank
+                    // ladder and this one is a set. See [SketchesAndPrototypesCard].
+                    showSketchesAndPrototypes = SketchesAndPrototypesCard.visibleTo(user),
+                    // The CHOOSER, exactly as the drawer row builds it — never a stage directly.
+                    // Which workshop the designer means is the question this destination exists
+                    // to ask, and the dashboard knows no more about that than the menu does.
+                    onOpenSketchesAndPrototypes = {
+                        message = null
+                        screen = Screen.SketchesAndPrototypes
+                    },
                     // `adminSurface(isAdmin(user))` on the web dashboard: the role decides, the
                     // toggle can only take the tile away again.
                     showAdminHub = isAdmin && adminChrome,
@@ -2555,6 +2694,16 @@ private fun HomeScreen(
                     screen = Screen.DesignWorkshopStage(s.workshopId, key, focus)
                 },
                 onOpenReport = { message = null; screen = Screen.DesignWorkshopReport(s.workshopId) },
+                // Passed, and therefore DRAWN. The parameter defaults to null and the index draws no
+                // control at all for a null — a host that offers no route must not show a button that
+                // dead-ends — so omitting this argument is what kept the whole report-history lane off
+                // the phone. Not gated here or on the index: the log is readable by anyone who may
+                // open the workshop, and it has something to say even for a workshop the server has
+                // never seen.
+                onOpenReportHistory = {
+                    message = null
+                    screen = Screen.DesignWorkshopReportHistory(s.workshopId)
+                },
                 onOpenCodes = { message = null; screen = Screen.DesignWorkshopCodes(s.workshopId) },
                 onOpenPhotos = { message = null; screen = Screen.DesignWorkshopPhotos(s.workshopId) },
                 // Ungated HERE, deliberately, exactly like the DESIGNER-tier screens below: the
@@ -2563,6 +2712,13 @@ private fun HomeScreen(
                 // the cached account on entry and again at the moment of the write. A third check
                 // in the router would be the copy nobody updates.
                 onOpenViewers = { message = null; screen = Screen.DesignWorkshopViewers(s.workshopId) },
+                // Ungated HERE for the same reason as the row above it. The index offers this
+                // control to an admin only, and the screen re-derives `require_admin` from the cached
+                // account on entry and again at the moment of the write. NOT the same rule as the row
+                // below and NOT the same rule as the inspector's own screens: this one is admin-only,
+                // and `canInspectDesignWorkshops` - the predicate that opens the READ - refuses an
+                // admin by name.
+                onOpenInspectors = { message = null; screen = Screen.DesignWorkshopInspectors(s.workshopId) },
                 // Ungated HERE for the same reason as the row above it, and the index HIDES this one
                 // from a non-admin rather than explaining it — see the comment on that control.
                 onOpenProvenance = { message = null; screen = Screen.DesignWorkshopProvenance(s.workshopId) },
@@ -2600,6 +2756,15 @@ private fun HomeScreen(
                 onError = { showMessage(it) }
             )
 
+            // NEITHER an `onMessage` NOR an `onError` arm, the same shape as the provenance screen
+            // below: nothing on this screen writes, so it has nothing to report as having landed,
+            // and its one failure — the history read — is rendered in place above its own "Try
+            // again" control rather than as a message that slides away at the foot of the page.
+            is Screen.DesignWorkshopReportHistory -> DwReportHistoryScreen(
+                repository = repository,
+                workshopId = s.workshopId
+            )
+
             is Screen.DesignWorkshopCodes -> WorkshopCodesScreen(
                 repository = repository,
                 workshopId = s.workshopId,
@@ -2621,6 +2786,51 @@ private fun HomeScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) }
+            )
+
+            // No `onError` arm either, and for its sibling's reason: every failure on that screen is
+            // rendered beside the control that caused it, because a message about who is EXAMINING
+            // somebody's fortnight of fieldwork must not be a line that slides away while the screen
+            // underneath still shows the panel the admin thought they had saved.
+            //
+            // Ungated HERE, exactly like the viewer roster above: the stage index decides whether to
+            // offer the control (admins only), and the screen re-derives `is_admin` from the cached
+            // account before it issues a single request.
+            is Screen.DesignWorkshopInspectors -> WorkshopInspectorsScreen(
+                repository = repository,
+                workshopId = s.workshopId,
+                onMessage = { showMessage(it) }
+            )
+
+            /*
+             * THE INSPECTOR / REVIEWER TIER'S TWO SCREENS - the fifth scope, and the only pair in
+             * this table an ADMIN and a MASTER ADMIN cannot reach.
+             *
+             * NEITHER TAKES `onMessage` NOR `onError`. Both are READS and never write, so neither has
+             * anything to report as having landed; and the only failure either can have is the read
+             * itself, which each renders in place above a "Try again" control rather than as a
+             * message that slides away. Taking a channel a screen never calls is how the next person
+             * wiring up a failure path finds a wire that goes nowhere.
+             *
+             * Ungated at this call site, like every sibling above: both screens re-derive
+             * `canInspectDesignWorkshops` from the CACHED account and issue no request at all when
+             * the answer is already known. That predicate is set membership on {INSPECTOR} and
+             * refuses an admin BY NAME - read its own note before assuming a rank comparison would do.
+             */
+            is Screen.DesignWorkshopInspections -> InspectionListScreen(
+                repository = repository,
+                // THE SERVER'S ID, handed straight across. Unlike every other design-workshop
+                // navigation in this file there is no draft to resolve: an inspector holds no local
+                // copy of this workshop and must never acquire one.
+                onOpenWorkshop = { id ->
+                    message = null
+                    screen = Screen.DesignWorkshopInspection(workshopId = id)
+                }
+            )
+
+            is Screen.DesignWorkshopInspection -> InspectionDetailScreen(
+                repository = repository,
+                workshopId = s.workshopId
             )
 
             // NEITHER an `onMessage` NOR an `onError` arm, unlike its siblings. This screen is a READ
@@ -3302,6 +3512,57 @@ internal object DesignWorkshopCard {
     fun visibleTo(user: UserDto): Boolean = FieldPermissions.canRunDesignWorkshops(user)
 }
 
+/**
+ * The dashboard's Sketches & prototypes card: its two words, its glyph, and the one predicate that
+ * decides whether it is drawn at all.
+ *
+ * WHY IT IS NOT AN [EntryMode], which is the shape every other card on this grid takes. The same two
+ * reasons that keep [DesignWorkshopCard] out of that enum, and either alone would be fatal:
+ *
+ *  * ROUTING. `screenFor` sends every mode to [Screen.Create], the single record-form slot. This
+ *    destination is [Screen.SketchesAndPrototypes] — a chooser that asks WHICH workshop and then
+ *    hands over to the stage that already owns the work, 11 for a sketch and 13 for a prototype.
+ *    There is no form here at all, which is the same fact the card's single button states: one
+ *    destination, so an "Update" beside it would have to invent a second one.
+ *  * PERMISSION. The grid filters its [EntryMode] cards through `canCreate(mode)`, a RANK TABLE —
+ *    "this tier and above". `can_run_design_workshops` is a SET, `{DESIGNER, ADMIN, MASTER_ADMIN}`,
+ *    so a PROFESSOR outranks a designer everywhere else in this app and is still outside it. A rank
+ *    ladder would therefore have offered the card to the two tiers the API answers with "Designer
+ *    access required" — the mistake the web tile shipped once on the card above this one.
+ *
+ * THE LABEL IS THE MENU ROW'S, CHARACTER FOR CHARACTER, ampersand and lower-case "p" and all — and
+ * that is the OPPOSITE of [DesignWorkshopCard], whose singular card deliberately differs from its
+ * plural row. There is nothing to differ from here. Rule 3 of the web dashboard's parity note pairs
+ * a tile with its nav row through `EntryMode.label` against `EntryMode.actionTitle`, and this
+ * destination is not an `EntryMode` on either client, so the tile simply takes the row's own words.
+ * `SketchesAndPrototypesScreen` already prints the same string as its heading; the one spelling in
+ * the tree that differs is the web PAGE title, "Sketches and Prototypes", and a fourth invented here
+ * would be found by nobody's grep.
+ *
+ * "Open" AND NOT "New", which is a correctness claim rather than a matter of taste: arriving here
+ * creates nothing, and [dashboardPrimaryIcon] reads this exact word to choose an arrow over a plus.
+ *
+ * Both strings are also the web tile's own — `label` and `newLabel` in the `tiles` array at
+ * `frontend/app/(protected)/dashboard/page.tsx` — and `DashboardTileParityTest` holds the two grids
+ * to each other string for string, so neither client can drift alone.
+ */
+internal object SketchesAndPrototypesCard {
+    /** The web tile's `label`, and the menu row's, and the screen's own heading — one spelling. */
+    const val LABEL = "Sketches & prototypes"
+
+    /** The web tile's `newLabel`. Not "New": this card opens a chooser and creates nothing. */
+    const val PRIMARY_LABEL = "Open"
+
+    /**
+     * Whether this account is offered the card, mirroring `can_run_design_workshops` in
+     * `backend/app/core/deps.py`. Named rather than inlined for the same reason
+     * [DesignWorkshopCard.visibleTo] is: the card and the menu row can then be asserted to read the
+     * SAME predicate, and a card that disagreed with the row beside it would be the stranded-work
+     * trap arriving by the other door.
+     */
+    fun visibleTo(user: UserDto): Boolean = FieldPermissions.canRunDesignWorkshops(user)
+}
+
 @Composable
 private fun DashboardScreen(
     stats: DashboardStats?,
@@ -3318,6 +3579,15 @@ private fun DashboardScreen(
     onNewDesignWorkshop: () -> Unit = {},
     /** Opens the list itself — the card's "Update", and the way back into a workshop already begun. */
     onOpenDesignWorkshops: () -> Unit = {},
+    /**
+     * [SketchesAndPrototypesCard.visibleTo] — the SET again, never [actions] and never a rank floor.
+     * Its own flag rather than one boolean shared with [showDesignWorkshop], even though the two
+     * predicates are identical today: they are two decisions about two destinations, and folding
+     * them into one is how a later narrowing of either would silently take the other with it.
+     */
+    showSketchesAndPrototypes: Boolean = false,
+    /** Opens the chooser — which workshop, then straight to the stage that owns the work. */
+    onOpenSketchesAndPrototypes: () -> Unit = {},
     showAdminHub: Boolean = false,
     onOpenAdminHub: () -> Unit = {},
     onWalkthrough: () -> Unit = {},
@@ -3379,10 +3649,66 @@ private fun DashboardScreen(
                 DashboardTile(
                     label = DesignWorkshopCard.LABEL,
                     icon = Icons.Filled.DesignServices,
-                    primaryIcon = Icons.Filled.Add,
                     primaryLabel = DesignWorkshopCard.PRIMARY_LABEL,
                     onPrimary = onNewDesignWorkshop,
                     onUpdate = onOpenDesignWorkshops
+                )
+            )
+        }
+        /*
+         * SECOND, DIRECTLY BEHIND THE WORKSHOP IT BELONGS TO. The web grid puts it in the same cell
+         * for the same three reasons — the "SECOND AND THIRD" comment on its own tile in
+         * `frontend/app/(protected)/dashboard/page.tsx` — and every one of them holds here:
+         *
+         *   • IT IS THE SAME WORK. Uploading a sketch is stage 11 of a workshop and a prototype is
+         *     stage 13; this card is those two things reached with NO workshop in hand, which is why
+         *     the screen's first question is which workshop. It is not reference data like Artisan /
+         *     Product / Process / Tool further down, and it is not one of the three "show me what is
+         *     already in the repository" reading surfaces (View Data, Map, Consolidated
+         *     questionnaire).
+         *   • IT CARRIES THE IDENTICAL PREDICATE to the card above, so the two appear and disappear
+         *     together and whoever next moves `can_run_design_workshops` sees both call sites at
+         *     once, a few lines apart.
+         *   • The grid row it costs is charged only to the accounts that can see it at all — the
+         *     same trade [DesignWorkshopCard]'s comment makes for going first.
+         *
+         * WHAT THIS FIXES, WHICH IS NEITHER THE FEATURE NOR THE SCREEN. Both have been on this
+         * handset since the chooser wave — `NavDestination.SKETCHES_AND_PROTOTYPES` and
+         * `SketchesAndPrototypesScreen`, with the sketch work itself older still, inside the stage
+         * flow. What there was no way to do was FIND it: the drawer's BROWSE group answers "where is
+         * the thing I already know about" and never "what is this application for", and the
+         * dashboard is the screen this app opens on. A destination that exists in one register and
+         * not the other is exactly the defect `frontend/e2e/dashboard-tile-parity-unit.spec.ts` was
+         * written for, one client over, and its opening paragraph is the report this card answers:
+         * everything shipped, and the owner still said the feature was "still not there".
+         *
+         * DESIGN REVIEW IS DELIBERATELY NOT HERE YET, though it is the other half of this feature
+         * and the web grid's third tile. One card at a time, so the row each one costs on a 360dp
+         * handset is argued on its own evidence rather than waved through as a pair.
+         * `DashboardTileParityTest` names it as a known web-only tile, so adding it later means
+         * editing that list and writing the reason there.
+         *
+         * NOT `Icons.Filled.Brush`, WHICH IS THIS DESTINATION'S OWN MENU GLYPH, and that is the one
+         * place this card departs from the row it takes its words from. Brush is already the Craft
+         * card's glyph on THIS grid; an admin passes both predicates and so sees both cards; and a
+         * grid is scanned side by side, where two identical purple tiles in one glance is the one
+         * thing eighteen small cards cannot afford. `Architecture` is the drafting compass, a
+         * sibling of the `DesignServices` pencil-and-rule directly above it, which is the right
+         * family signal for the card that sits there. The drawer keeps Brush and that is not this
+         * file's to change; there the two rows sit under different group headings and are never
+         * scanned together. Re-check the pair with `grep -n "Icons.Filled.Brush"
+         * android/app/src/main/java/com/designprototype/workshop/ui/AppNavigation.kt`.
+         */
+        if (showSketchesAndPrototypes) {
+            add(
+                DashboardTile(
+                    label = SketchesAndPrototypesCard.LABEL,
+                    icon = Icons.Filled.Architecture,
+                    primaryLabel = SketchesAndPrototypesCard.PRIMARY_LABEL,
+                    onPrimary = onOpenSketchesAndPrototypes
+                    // No `onUpdate`, deliberately: this card has ONE destination. The chooser it
+                    // opens is already where "carry on with the one I am in" lives, so a second
+                    // button would lead to the same screen under a different word.
                 )
             )
         }
@@ -3391,7 +3717,6 @@ private fun DashboardScreen(
                 DashboardTile(
                     label = entry.label,
                     icon = entry.icon(),
-                    primaryIcon = Icons.Filled.Add,
                     primaryLabel = entry.createButtonLabel(),
                     onPrimary = { onNew(entry) },
                     onUpdate = if (entry.editable) ({ onUpdateExisting(entry) }) else null
@@ -3403,7 +3728,6 @@ private fun DashboardScreen(
                 DashboardTile(
                     label = "Settings",
                     icon = Icons.Filled.Tune,
-                    primaryIcon = Icons.Filled.Tune,
                     primaryLabel = "Open",
                     onPrimary = onOpenAdminHub
                 )
@@ -3532,6 +3856,35 @@ private fun EntryMode.createButtonLabel(): String = when (this) {
 }
 
 /**
+ * The glyph on a dashboard tile's primary button, DERIVED FROM THE WORD ON IT rather than chosen
+ * tile by tile.
+ *
+ * `frontend/components/DashboardCard.tsx` branches on exactly these two strings — its comment reads
+ * "a plus on a button that only navigates is a lie" — and then states that "Android draws the same
+ * distinction (`primaryIcon`)". THAT SENTENCE WAS FALSE HERE UNTIL 2026-08-27. Every tile on this
+ * grid passed `Icons.Filled.Add` unconditionally, so on the first screen of the app five cards drew
+ * a plus beside the word "Open" (View Data, Map, Consolidated questionnaire, Tasks, Workshop
+ * access), Users drew "+ Manage" — which reads as "add a user" on a button that opens a list — and
+ * the admin Settings card drew a tuning fork on a button that only navigates. Nothing was broken,
+ * which is exactly why it survived six waves: a wrong glyph costs nothing until somebody reads it.
+ *
+ * Derived rather than passed, so the word and the glyph now have ONE author and cannot drift apart
+ * again. Re-check the web half with
+ * `grep -n 'newLabel === "Open"' frontend/components/DashboardCard.tsx`, and note that these are
+ * two literal words and not a general rule about verbs: "Upload" and "New interview" DO create
+ * something and keep the plus on both clients.
+ *
+ * `AutoMirrored` because an arrow means "onward", and onward points leftward in a right-to-left
+ * layout.
+ *
+ * `internal` and top-level so the parity test can call it. [DashboardTile] below is file-private,
+ * as is every other part of this grid, and a rule nothing can reach is a rule nothing can check.
+ */
+internal fun dashboardPrimaryIcon(primaryLabel: String): ImageVector =
+    if (primaryLabel == "Open" || primaryLabel == "Manage") Icons.AutoMirrored.Filled.ArrowForward
+    else Icons.Filled.Add
+
+/**
  * One dashboard tile's content: the icon, the display label, the filled primary action and — where
  * the record type can be edited — the outlined "Update" action.
  *
@@ -3542,11 +3895,13 @@ private fun EntryMode.createButtonLabel(): String = when (this) {
 private class DashboardTile(
     val label: String,
     val icon: ImageVector,
-    val primaryIcon: ImageVector,
     val primaryLabel: String,
     val onPrimary: () -> Unit,
     val onUpdate: (() -> Unit)? = null
-)
+) {
+    /** Read [dashboardPrimaryIcon]: not a parameter, so no call site can contradict its own word. */
+    val primaryIcon: ImageVector = dashboardPrimaryIcon(primaryLabel)
+}
 
 /**
  * Web parity with `components/DashboardCard.tsx`: a card, a small dark icon tile, the display label,
@@ -4035,6 +4390,17 @@ private val ROLE_RANK = mapOf(
     // (see `assignableRoles`), so a missing entry would silently make the tier unassignable from the
     // phone while the web offered it, leaving two clients that disagree about who exists.
     "DESIGNER" to 35,
+    // 37, added 2026-08-27, in the middle of the free 36-39 band so a gap survives on both sides —
+    // the same argument that put DESIGNER at 35. An inspector reviews a designer's work without
+    // being able to rewrite it, and the rank is what buys that: 37 > 35 satisfies
+    // `can_review_record`'s "strictly below me", while 37 < 40 leaves `can_edit_others_record`
+    // (a Professor floor) closed. Both halves are asserted in `backend/tests/test_inspector_tier.py`.
+    //
+    // It has NO design-workshop authority, and that is not an omission to correct here: those gates
+    // are `DESIGN_WORKSHOP_ROLES` set membership, not a rank floor, so no number placed in this map
+    // grants them. Adding INSPECTOR to that set would be the wrong fix — the read-only workshop
+    // scope is the right one.
+    "INSPECTOR" to 37,
     "PROFESSOR" to 40,
     "ADMIN" to 50,
     "MASTER_ADMIN" to 60
@@ -4059,6 +4425,9 @@ private val ROLE_LABELS = mapOf(
     "FIELD_CONTRIBUTOR" to "Field Contributor",
     "RESEARCHER" to "Researcher",
     "DESIGNER" to "Designer",
+    // Both words, byte for byte the server's `ROLE_LABELS["INSPECTOR"]` and the web's: the stored
+    // token is INSPECTOR because `canReview` already owns "review" in its relational sense.
+    "INSPECTOR" to "Inspector / Reviewer",
     "PROFESSOR" to "Professor",
     "ADMIN" to "Admin",
     "MASTER_ADMIN" to "Master Admin"
@@ -4659,18 +5028,48 @@ private suspend fun uploadAttachments(
  * Acceptance IS the signature — once a person has pressed the button, `{by, byName, at}` is a true
  * sentence about the row again.
  *
- * WHAT IS NOT DONE HERE, so nobody reads this as the whole feature: the accepted reading is still
- * saved with NO `measurementMethods` marker on the request body, which the server reads as
- * `UNRECORDED` — honest, and never the false human claim. Sending the marker is blocked on a server
- * change this file cannot make: `measurementMethods` is not declared on `ProductCreate` /
- * `ProductUpdate` / `ToolCreate` / `ToolUpdate`, whose shared `APIModel` is
+ * ── THE MARKER IS NOW SENT. THIS SECTION SAID IT COULD NOT BE — CORRECTED 2026-08-27 ──────────
+ *
+ * What stood here read: *"WHAT IS NOT DONE HERE, so nobody reads this as the whole feature: the
+ * accepted reading is still saved with NO `measurementMethods` marker on the request body, which the
+ * server reads as `UNRECORDED` — honest, and never the false human claim. Sending the marker is
+ * blocked on a server change this file cannot make: `measurementMethods` is not declared on
+ * `ProductCreate` / `ProductUpdate` / `ToolCreate` / `ToolUpdate`, whose shared `APIModel` is
  * `ConfigDict(extra="forbid")`, so a handset that started sending it today would have every product
- * and tool save rejected with a 422. `measurement_provenance`'s module docstring is explicit about
- * the ordering — *"Deploy the schema BEFORE EITHER CLIENT, and never the other way round"* — and it
- * records that it once read "deploy the schema first", full stop, with the paragraph beneath it
- * describing what that shorter phrasing cost. This KDoc quoted the RETIRED sentence back at it, which
- * is how a lesson gets un-learned: "first" says nothing about which client, and the failure being
- * guarded against is a schema that lands after one of the two.
+ * and tool save rejected with a 422."*
+ *
+ * Every word of that was true when it was written and the blocker is gone. The declaration landed on
+ * all four bodies on 2026-08-27, behind the skip-list entry the next paragraph demands, and this
+ * section is now the client half it was waiting for: the Accept button below sends
+ * `measurementMethods` with the reading it writes. Re-check the server end with:
+ *
+ *     grep -n "measurementMethods: dict" backend/app/schemas/records.py   # four hits, one per body
+ *     grep -n "MARKER_BODY_KEY" backend/app/services/access.py        # in REVISION_SKIP_FIELDS
+ *
+ * The first pattern is NARROWED to the declaration line on purpose. A bare `measurementMethods`
+ * over that file answers seven times as of 2026-08-27 (counted with `grep -c`): the four
+ * declarations plus three lines of the prose block that introduces them, and that count moves
+ * whenever the prose is edited. `measurementMethods: dict` answers exactly four — one per body —
+ * and stays four.
+ *
+ * If the first answers four times, a marker is sendable; if the second answers, it is sendable
+ * without writing a `RecordRevision` nobody made.
+ *
+ * THE ORDERING SENTENCE IT QUOTED IS STILL THE RULE and is kept because the trap is still live for
+ * the web. `measurement_provenance`'s module docstring says *"Deploy the schema BEFORE EITHER CLIENT,
+ * and never the other way round"*, and it records that it once read "deploy the schema first", full
+ * stop, with the paragraph beneath describing what the shorter phrasing cost. This KDoc quoted the
+ * RETIRED sentence back at it, which is how a lesson gets un-learned: "first" says nothing about
+ * which client, and the failure being guarded against is a schema that lands after one of the two.
+ * Android sending the marker changes nothing about that — a handset may be a fortnight behind the
+ * server, so an older build sending no marker must keep saving exactly as it does now, and it does:
+ * the key is absent rather than null on an unmarked save, and the server reads absence as UNRECORDED.
+ *
+ * WHAT IS STILL NOT DONE HERE, so this does not become the next stale paragraph: the marker describes
+ * the three `*Inches` columns and nothing else. A dimension on a design-workshop STAGE still records
+ * no method — that half needs one more key beside `{by, byName, at}` in
+ * `entry_provenance.merge_entry_provenance`, which `measurement_provenance.py` describes as needing no
+ * migration and nobody has written yet.
  *
  * THE ORDERING HAS A THIRD STEP AHEAD OF BOTH, and dropping it is the same mistake one layer down:
  * `access.REVISION_SKIP_FIELDS` must gain `MARKER_BODY_KEY` BEFORE the schema declares the field, or
@@ -4702,8 +5101,12 @@ private fun GridMeasurementSection(
     repository: WorkshopRepository,
     media: MediaCaptureState,
     includeHeight: Boolean = true,
-    onLengthBreadth: (length: Double?, breadth: Double?) -> Unit,
-    onHeight: (Double) -> Unit
+    // THE MARKER RIDES WITH THE NUMBER THROUGH BOTH OF THESE, and the parameter is non-null so a
+    // call site cannot quietly forget it. `dwVisionMarker` always produces one — the server's own,
+    // echoed verbatim, or a bare `VISION_MODEL` when an older deployment sent none — so there is no
+    // state in which a number leaves this section without the fact that a model estimated it.
+    onLengthBreadth: (length: Double?, breadth: Double?, marker: JsonObject) -> Unit,
+    onHeight: (value: Double, marker: JsonObject) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -4717,8 +5120,12 @@ private fun GridMeasurementSection(
     // two — a map would need a wrapper type whose only purpose is to be unwrapped by a `when` over
     // the same two strings. Null means "nothing on offer": either nothing has been read yet, or the
     // reading has been accepted, or the photo behind it was discarded.
-    var proposedLengthBreadth by remember { mutableStateOf<Pair<Double?, Double?>?>(null) }
-    var proposedHeight by remember { mutableStateOf<Double?>(null) }
+    //
+    // EACH HOLDS THE WHOLE READING RATHER THAN THE BARE NUMBERS, since 2026-08-27: the marker that
+    // says a model produced them has to survive from the answer to the Accept press, and a `Double`
+    // has nowhere to keep it.
+    var proposedLengthBreadth by remember { mutableStateOf<DwMeasurementReading?>(null) }
+    var proposedHeight by remember { mutableStateOf<DwMeasurementReading?>(null) }
 
     // group keys: "lengthBreadth" (one photo → both length & breadth) and "height" (one photo).
     fun analyze(group: String, uri: Uri) {
@@ -4759,7 +5166,9 @@ private fun GridMeasurementSection(
         scope.launch {
             if (group == "lengthBreadth") {
                 runCatching { repository.analyzeMeasurementLengthBreadth(context, uri) }
-                    .onSuccess { (length, breadth) ->
+                    .onSuccess { reading ->
+                        val length = reading.lengthInches
+                        val breadth = reading.breadthInches
                         val parts = buildList {
                             if (length != null && length > 0) add("L ${"%.2f".format(length)}\"")
                             if (breadth != null && breadth > 0) add("B ${"%.2f".format(breadth)}\"")
@@ -4769,16 +5178,17 @@ private fun GridMeasurementSection(
                         } else {
                             // OFFERED, NOT WRITTEN — see this section's header for the record the old
                             // straight-to-form call was making about who measured the object.
-                            proposedLengthBreadth = length to breadth
+                            proposedLengthBreadth = reading
                             status = status + (group to "Read ${parts.joinToString(" · ")} — check it against the object")
                         }
                     }
                     .onFailure { status = status + (group to "Analysis failed — enter it manually") }
             } else {
                 runCatching { repository.analyzeMeasurement(context, uri, "height") }
-                    .onSuccess { value ->
+                    .onSuccess { reading ->
+                        val value = reading.valueInches
                         if (value != null && value > 0.0) {
-                            proposedHeight = value
+                            proposedHeight = reading
                             status = status + (group to "Read ${"%.2f".format(value)} in — check it against the object")
                         } else {
                             status = status + (group to "Couldn't read a value — enter it manually")
@@ -4858,14 +5268,20 @@ private fun GridMeasurementSection(
             // the figure it will write" — so a designer who has stopped reading the status line still
             // cannot accept a number without seeing it.
             if (key == "lengthBreadth") {
-                proposedLengthBreadth?.let { (length, breadth) ->
+                proposedLengthBreadth?.let { reading ->
+                    val length = reading.lengthInches
+                    val breadth = reading.breadthInches
                     val parts = buildList {
                         if (length != null && length > 0) add("L ${"%.2f".format(length)}\"")
                         if (breadth != null && breadth > 0) add("B ${"%.2f".format(breadth)}\"")
                     }
                     OutlinedButton(
                         onClick = {
-                            onLengthBreadth(length, breadth)
+                            // THIS PRESS IS THE ACCEPTANCE, and the marker is what makes the
+                            // server's `{by, byName, at}` stamp read as one — *a vision model
+                            // estimated this, and this designer accepted it* — rather than as a
+                            // claim that they measured the object themselves.
+                            onLengthBreadth(length, breadth, dwVisionMarker(reading.marker))
                             proposedLengthBreadth = null
                             status = status + (key to "Filled ${parts.joinToString(" · ")} — still editable")
                         },
@@ -4873,10 +5289,14 @@ private fun GridMeasurementSection(
                     ) { Text("Use ${parts.joinToString(" · ")}", fontSize = 12.sp) }
                 }
             } else {
-                proposedHeight?.let { value ->
+                proposedHeight?.let { reading ->
+                    // Non-null by construction: `proposedHeight` is only ever set from the branch
+                    // that has already checked `value != null && value > 0.0`.
+                    val value = reading.valueInches ?: return@let
                     OutlinedButton(
                         onClick = {
-                            onHeight(value)
+                            // The acceptance, as above.
+                            onHeight(value, dwVisionMarker(reading.marker))
                             proposedHeight = null
                             status = status + (key to "Filled ${"%.2f".format(value)} in — still editable")
                         },
@@ -7655,6 +8075,16 @@ private fun ProductForm(
     var length by remember(editing) { mutableStateOf(numToText(editing?.lengthInches)) }
     var breadth by remember(editing) { mutableStateOf(numToText(editing?.breadthInches)) }
     var height by remember(editing) { mutableStateOf(numToText(editing?.heightInches)) }
+    /*
+     * HOW THE THREE BOXES ABOVE WERE MEASURED, for the ones somebody accepted a proposal into.
+     *
+     * KEYED ON `editing` LIKE THE BOXES THEMSELVES, and that matters on the correction path: opening
+     * a different record reloads the numbers, and a ledger that outlived them would go on claiming a
+     * geometry for a value it has never seen. The stored dimensions it loads with are UNMARKED, which
+     * is right — this form cannot know how a number already in the database came to be, and the
+     * server reads an absent marker as UNRECORDED rather than as TYPED.
+     */
+    val markers = remember(editing) { DwMeasurementMarkers() }
     var costOfMaking by remember(editing) { mutableStateOf(numToText(editing?.costOfMaking)) }
     var sellingPrice by remember(editing) { mutableStateOf(numToText(editing?.sellingPrice)) }
     var rawMaterials by remember(editing) { mutableStateOf(editing?.rawMaterialsUsed ?: "") }
@@ -7739,6 +8169,22 @@ private fun ProductForm(
                 lengthInches = length.toDoubleOrNull(),
                 breadthInches = breadth.toDoubleOrNull(),
                 heightInches = height.toDoubleOrNull(),
+                /*
+                 * HOW THOSE THREE WERE MEASURED — read from the boxes AS THEY STAND AT SAVE, which
+                 * is the whole anti-staleness rule and the reason this is computed here rather than
+                 * kept as a field somebody has to remember to clear. A dimension typed over since it
+                 * was accepted no longer matches the accepted text and is dropped; so is a cleared
+                 * one. Null when nothing survives, and `explicitNulls = false` then drops the key.
+                 *
+                 * AND THIS IS ALSO THE OFFLINE PATH. `body` is what `offlineFormJson.encodeToString`
+                 * serialises into the outbox a few lines below, and `syncOutbox` decodes the same
+                 * type back out, so a record saved in a courtyard keeps its provenance instead of
+                 * arriving a fortnight later indistinguishable from a hand-typed one. There is no
+                 * second body to keep in step — which is exactly why there must not be one.
+                 */
+                measurementMethods = markers.body(
+                    mapOf("lengthInches" to length, "breadthInches" to breadth, "heightInches" to height)
+                ),
                 costOfMaking = costOfMaking.toDoubleOrNull(),
                 sellingPrice = sellingPrice.toDoubleOrNull(),
                 marketDemand = marketDemand,
@@ -7893,12 +8339,52 @@ private fun ProductForm(
             Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal) { breadth = it } }
         }
         TextInput("Height (inches)", height, keyboardType = KeyboardType.Decimal) { height = it }
+        /*
+         * THE TWO MEASUREMENT ROUTES, DELIBERATELY IN THIS ORDER.
+         *
+         * [RecordMeasureField] runs `DwPhotoMeasure` — the port of `frontend/lib/photoMeasure.ts` —
+         * entirely on this handset. It costs nothing per use, works with the aircraft-mode switch on
+         * in the courtyard where the object actually is, and anybody can re-derive its answer later
+         * from the marks that produced it. [GridMeasurementSection] below posts the photograph to a
+         * vision model that ESTIMATES the number: it needs a network, it bills per call, and
+         * `MeasurementMethod.VISION_MODEL.reproducible` is False because nobody can check it after
+         * the fact.
+         *
+         * Both are offered because they fail in different places — geometry needs a reference of a
+         * known length in the frame, the model does not. The geometric one is FIRST because it is
+         * the one that should be reached for first, and it draws nothing at all when the batch has
+         * no photograph in it, so a record with no images looks exactly as it did before.
+         */
+        RecordMeasureField(
+            dimensions = PRODUCT_MEASURE_DIMENSIONS,
+            current = mapOf("lengthInches" to length, "breadthInches" to breadth, "heightInches" to height),
+            photos = media.uris,
+            purposes = media.purposes,
+            enabled = !saving,
+            onPropose = { column, text, technique ->
+                when (column) {
+                    "lengthInches" -> length = text
+                    "breadthInches" -> breadth = text
+                    "heightInches" -> height = text
+                }
+                // RECORDED WITH THE EXACT TEXT JUST WRITTEN, which is what lets `body()` tell later
+                // whether this number is still the one the panel proposed. See DwMeasurementMarkers.
+                markers.accept(column, text, dwGeometryMarker(technique))
+            },
+        )
         GridMeasurementSection(
             repository = repository,
             media = media,
             includeHeight = true,
-            onLengthBreadth = { l, b -> if (l != null && l > 0) length = numToText(l); if (b != null && b > 0) breadth = numToText(b) },
-            onHeight = { height = numToText(it) }
+            // EACH DIMENSION IS MARKED ONLY WHERE IT IS ACTUALLY WRITTEN — inside the same `if` that
+            // writes it. A model that read a length but not a breadth fills one box, and marking the
+            // other would claim a method for a number this request does not carry, which the server
+            // refuses BY NAME with a 422 and which the outbox will not queue.
+            onLengthBreadth = { l, b, marker ->
+                if (l != null && l > 0) { length = numToText(l); markers.accept("lengthInches", length, marker) }
+                if (b != null && b > 0) { breadth = numToText(b); markers.accept("breadthInches", breadth, marker) }
+            },
+            onHeight = { value, marker -> height = numToText(value); markers.accept("heightInches", height, marker) }
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Cost of making", costOfMaking, keyboardType = KeyboardType.Decimal) { costOfMaking = it } }
@@ -7965,6 +8451,19 @@ private fun ToolForm(
     var width by remember(editing) { mutableStateOf(numToText(editing?.width)) }
     var length by remember(editing) { mutableStateOf(numToText(editing?.lengthInches)) }
     var breadth by remember(editing) { mutableStateOf(numToText(editing?.breadthInches)) }
+    // The third of the triple, added 2026-08-27 with the column itself. NOT the `height` above:
+    // that one is a bare Decimal that declares no unit, and it keeps holding whatever was typed.
+    var heightInches by remember(editing) { mutableStateOf(numToText(editing?.heightInches)) }
+    /*
+     * HOW `length` / `breadth` / `heightInches` were measured. See the identical ledger in the
+     * product form for why it is keyed on `editing` and why loaded values start unmarked.
+     *
+     * NOTE WHICH HEIGHT. This tracks `heightInches` and never the bare `height` above — that box is
+     * unit-less, no measurement route writes into it, and the server refuses a marker naming it by
+     * name. `DwMeasurementMarkers.accept` also drops any column outside the documented three, so the
+     * mistake cannot reach the wire even if a later call site makes it.
+     */
+    val markers = remember(editing) { DwMeasurementMarkers() }
     var thickness by remember(editing) { mutableStateOf(numToText(editing?.thickness)) }
     var weight by remember(editing) { mutableStateOf(numToText(editing?.weight)) }
     var radius by remember(editing) { mutableStateOf(numToText(editing?.radius)) }
@@ -8051,6 +8550,17 @@ private fun ToolForm(
                 width = width.toDoubleOrNull(),
                 lengthInches = length.toDoubleOrNull(),
                 breadthInches = breadth.toDoubleOrNull(),
+                heightInches = heightInches.toDoubleOrNull(),
+                /*
+                 * HOW THE THREE `*Inches` COLUMNS WERE MEASURED, read from the boxes as they stand at
+                 * save. Identical in every respect to the product form's — including that this same
+                 * `body` is what goes into the outbox below, so the queued tool carries its provenance
+                 * and an online one has no advantage over it. `height` / `width` / `thickness` /
+                 * `weight` / `radius` are never named here; only these three may be.
+                 */
+                measurementMethods = markers.body(
+                    mapOf("lengthInches" to length, "breadthInches" to breadth, "heightInches" to heightInches)
+                ),
                 thickness = thickness.toDoubleOrNull(),
                 weight = weight.toDoubleOrNull(),
                 radius = radius.toDoubleOrNull(),
@@ -8249,17 +8759,60 @@ private fun ToolForm(
             Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal) { length = it } }
             Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal) { breadth = it } }
         }
+        TextInput("Height (inches)", heightInches, keyboardType = KeyboardType.Decimal) { heightInches = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Thickness", thickness, keyboardType = KeyboardType.Decimal) { thickness = it } }
             Box(modifier = Modifier.weight(1f)) { TextInput("Weight", weight, keyboardType = KeyboardType.Decimal) { weight = it } }
         }
         TextInput("Radius", radius, keyboardType = KeyboardType.Decimal) { radius = it }
+        /*
+         * THE TWO MEASUREMENT ROUTES, DELIBERATELY IN THIS ORDER.
+         *
+         * [RecordMeasureField] runs `DwPhotoMeasure` — the port of `frontend/lib/photoMeasure.ts` —
+         * entirely on this handset. It costs nothing per use, works with the aircraft-mode switch on
+         * in the courtyard where the object actually is, and anybody can re-derive its answer later
+         * from the marks that produced it. [GridMeasurementSection] below posts the photograph to a
+         * vision model that ESTIMATES the number: it needs a network, it bills per call, and
+         * `MeasurementMethod.VISION_MODEL.reproducible` is False because nobody can check it after
+         * the fact.
+         *
+         * Both are offered because they fail in different places — geometry needs a reference of a
+         * known length in the frame, the model does not. The geometric one is FIRST because it is
+         * the one that should be reached for first, and it draws nothing at all when the batch has
+         * no photograph in it, so a record with no images looks exactly as it did before.
+         */
+        RecordMeasureField(
+            dimensions = TOOL_MEASURE_DIMENSIONS,
+            current = mapOf("lengthInches" to length, "breadthInches" to breadth, "heightInches" to heightInches),
+            photos = media.uris,
+            purposes = media.purposes,
+            enabled = !saving,
+            onPropose = { column, text, technique ->
+                when (column) {
+                    "lengthInches" -> length = text
+                    "breadthInches" -> breadth = text
+                    "heightInches" -> heightInches = text
+                }
+                // As on the product form: the accepted text is recorded with the marker so a later
+                // hand edit drops the claim. See DwMeasurementMarkers.
+                markers.accept(column, text, dwGeometryMarker(technique))
+            },
+        )
         GridMeasurementSection(
             repository = repository,
             media = media,
             includeHeight = true,
-            onLengthBreadth = { l, b -> if (l != null && l > 0) length = numToText(l); if (b != null && b > 0) breadth = numToText(b) },
-            onHeight = { height = numToText(it) }
+            // Marked only where written — see the product form's note for why an unwritten dimension
+            // must not carry a method.
+            onLengthBreadth = { l, b, marker ->
+                if (l != null && l > 0) { length = numToText(l); markers.accept("lengthInches", length, marker) }
+                if (b != null && b > 0) { breadth = numToText(b); markers.accept("breadthInches", breadth, marker) }
+            },
+            // INTO THE COLUMN THAT SAYS "inches", not the bare `height` box above it. The model is asked
+            // for inches and answers in inches; `ToolDocumentation.height` records no unit at all,
+            // so landing it there threw away the one fact that makes the number costable. The marker
+            // names `heightInches` for the same reason — it is the column that was written.
+            onHeight = { value, marker -> heightInches = numToText(value); markers.accept("heightInches", heightInches, marker) }
         )
         DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
         DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }
@@ -10837,7 +11390,12 @@ private suspend fun loadReviewRecordValues(
 @Composable
 private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String) -> Unit) {
     val scope = rememberCoroutineScope()
-    var pending by remember { mutableStateOf<List<PendingReviewDto>>(emptyList()) }
+    // THE WHOLE ENVELOPE, not just the rows. `cap`, `total` and `truncated` are how this card can
+    // say the queue was cut at all — the rows the server dropped are the OLDEST, so a screen that
+    // kept only `items` reported the most overdue work as though it did not exist. See
+    // [PendingReviewListDto].
+    var queue by remember { mutableStateOf(PendingReviewListDto()) }
+    val pending: List<PendingReviewDto> = queue.items
     var loading by remember { mutableStateOf(true) }
     var info by remember { mutableStateOf<String?>(null) }
 
@@ -10845,7 +11403,7 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
         scope.launch {
             loading = true
             runCatching { repository.pendingReviews() }
-                .onSuccess { pending = it }
+                .onSuccess { queue = it }
                 .onFailure { onError(it.apiErrorMessage("Unable to load the review queue")) }
             loading = false
         }
@@ -10866,7 +11424,20 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
             }
             pending.isEmpty() -> Text("Nothing pending — everything has been reviewed. 🎉", color = Muted, fontSize = 12.sp)
             else -> {
-                Text("${pending.size} record(s) awaiting review", color = Body, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                // ``total``, not ``pending.size``: they are the same number until the queue outgrows
+                // the cap, and after that the length of the list is the one figure that is certainly
+                // wrong — 200 of 340 announced as "200 record(s) awaiting review". The line below
+                // says which of the two the reader is looking at.
+                Text("${queue.total} record(s) awaiting review", color = Body, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                // Wording decided in ui/ReviewQueueCopy.kt, the twin of the web's `queueCutNotice`,
+                // never assembled here: one queue described in two sentences by two clients is how a
+                // reviewer learns that neither means much. Renders nothing when the queue is whole.
+                reviewQueueCutNotice(
+                    truncated = queue.truncated,
+                    shown = pending.size,
+                    total = queue.total,
+                    cap = queue.cap,
+                )?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp) }
                 info?.let { Text(it, color = SuccessGreen, fontSize = 11.sp) }
                 pending.forEach { item ->
                     // Keyed by the record, not by position in the list. Every row here remembers state
@@ -10885,7 +11456,19 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
                                 // the same pair as the key above, because an id alone does not name a
                                 // row here: the queue is several tables concatenated, so dropping by id
                                 // could take an unreviewed record of another type off the screen with it.
-                                pending = pending.filterNot { it.recordType == item.recordType && it.id == item.id }
+                                val remaining = queue.items.filterNot {
+                                    it.recordType == item.recordType && it.id == item.id
+                                }
+                                // ``total`` counts rows on the SERVER, and the record just decided
+                                // has left the queue there too — so it comes down with the list or
+                                // the header reads as a backlog that refuses to shrink, which is the
+                                // exact symptom the cut used to be discovered by. Floored at the
+                                // length of the list so the two can never contradict each other.
+                                queue = queue.copy(
+                                    items = remaining,
+                                    shown = remaining.size,
+                                    total = maxOf(queue.total - 1, remaining.size),
+                                )
                                 info = message
                             },
                             onInfo = { info = it },
@@ -11862,30 +12445,27 @@ private fun RecordCollabSection(
                 }
             ) { Text("Post") }
         }
+        /*
+         * THE LEDGER, DRAWN BY `ui/RecordEditHistory.kt` AND NOT INLINE HERE.
+         *
+         * This block used to print `"$field: old → new"` in ordinary body ink with no caption above
+         * it. For the five columns `access.REVISION_REDACTED_FIELDS` logs WITHOUT their value —
+         * aadhaarNumber, pehchanCardNumber, phone, email, address — the server sends the direction
+         * of the change instead ("(value recorded)" → "(cleared)"), and an admin who believes the
+         * panel's usual promise reads those two words as the artisan's old Aadhaar number.
+         * [RecordEditHistorySection] carries the caption naming that exception, word for word from
+         * `frontend/components/CollabPanel.tsx`, and sets a redacted pair in muted italic rather
+         * than in the struck-through red that means "this is what the field held".
+         *
+         * NULL is the endpoint refusing (neither owner nor admin) and draws nothing at all; an EMPTY
+         * list is a readable ledger with no edits in it and says so. The divider stays here because
+         * it separates this section from the comments above it, which is the caller's business.
+         */
         revisions?.let { revs ->
             HorizontalDivider()
-            Text("Edit history", display = true, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            if (revs.isEmpty()) Text("No edits recorded.", color = Muted, fontSize = 12.sp)
-            revs.forEach { r ->
-                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text("${r.editedBy?.name ?: "Unknown"} · ${r.createdAt.take(10)}", color = Muted, fontSize = 11.sp)
-                    r.changes.forEach { (field, change) ->
-                        Text(
-                            "$field: ${jsonText(change.old)} → ${jsonText(change.new)}",
-                            color = Body, fontSize = 12.sp
-                        )
-                    }
-                }
-            }
+            RecordEditHistorySection(revs)
         }
     }
-}
-
-/** Render a JSON value (string/number/bool/null) from an edit-history change for display. */
-private fun jsonText(value: kotlinx.serialization.json.JsonElement?): String {
-    if (value == null || value is kotlinx.serialization.json.JsonNull) return "—"
-    val prim = value as? kotlinx.serialization.json.JsonPrimitive ?: return value.toString()
-    return prim.content
 }
 
 /** Record types a miscellaneous-media upload can be linked to (item: Misc Media). */
@@ -13709,7 +14289,7 @@ private fun UserManagementForm(
 
     RecordCard(title = "Users and access") {
         Text(
-            "Professors and above can move a user along the six-tier ladder (never above their own " +
+            "Professors and above can move a user along the eight-tier ladder (never above their own " +
                 "tier); admins can additionally grant or revoke questionnaire-builder, record " +
                 "review & approval, view-provenance and dataset-download access. Craft and workshop " +
                 "creation are not grantable — they come with Professor, so promote instead. Tap a " +
@@ -13766,7 +14346,9 @@ private fun UserManagementForm(
                     }
                     if (expanded) {
                         HorizontalDivider()
-                        // The six-tier ladder, not an admin/researcher switch: the previous two-state
+                        // The eight-tier ladder (EIGHT since INSPECTOR landed on 2026-08-27; the
+                        // count is ROLE_RANK.size, and the sentence on the card above says the same
+                        // number by hand), not an admin/researcher switch: the previous two-state
                         // button could neither reach Crowdsource Volunteer, Field Contributor or
                         // Professor nor be used by a professor at all, and demoting an admin dropped
                         // them straight past Professor to Researcher.
@@ -14499,6 +15081,14 @@ private fun WorkshopAccessQueueCard(
     var showAll by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
+    /**
+     * The last load's failure, CLASSIFIED and kept — not merely raised and forgotten.
+     *
+     * This is what lets the card tell "the server answered and nobody is waiting" apart from "the
+     * server refused this account" and "nothing answered at all". Held in state because the message
+     * `onError` raises slides away, and the sentence the card draws in its place must not.
+     */
+    var failure by remember { mutableStateOf<WorkshopAccessQueueFailure?>(null) }
     // Level the admin will hand out, per pending row — seeded from what the user asked for.
     val chosenLevel = remember { mutableStateMapOf<String, String>() }
 
@@ -14506,8 +15096,18 @@ private fun WorkshopAccessQueueCard(
         scope.launch {
             loading = true
             runCatching { repository.workshopAccessQueue(if (showAll) "ALL" else "PENDING") }
-                .onSuccess { rows = it }
-                .onFailure { onError(it.apiErrorMessage("Unable to load the access queue")) }
+                .onSuccess { rows = it; failure = null }
+                // CLASSIFIED ONCE, and the message shown below is fed from the SAME value.
+                // `apiErrorMessage` consumes Retrofit's buffered error body, so calling it here and
+                // again inside `workshopAccessQueueFailure` would leave one of the two holding a
+                // fallback instead of the server's own sentence. `rows` is deliberately NOT cleared:
+                // a failed refresh leaves the previous list on screen, which is why the notice below
+                // is handed `rows.size` and warns that it may be stale.
+                .onFailure { error ->
+                    val classified = error.workshopAccessQueueFailure()
+                    failure = classified
+                    onError(classified.message)
+                }
             loading = false
         }
     }
@@ -14540,14 +15140,59 @@ private fun WorkshopAccessQueueCard(
             FilterChip(selected = !showAll, onClick = { showAll = false }, label = { Text("Pending") })
             FilterChip(selected = showAll, onClick = { showAll = true }, label = { Text("Full history") })
         }
-        when {
-            loading -> Text("Loading requests…", color = Muted, fontSize = 12.sp)
-            rows.isEmpty() -> Text(
-                if (showAll) "No workshop access rows yet." else "Nothing waiting — the queue is clear. 🎉",
-                color = Muted,
-                fontSize = 12.sp
-            )
-            else -> rows.forEach { row ->
+        /*
+         * WHAT THIS CARD IS ALLOWED TO SAY WHEN IT IS SHOWING NOTHING.
+         *
+         * It used to decide from `rows.isEmpty()` alone, so a 403 and an unreachable handset both
+         * read "Nothing waiting — the queue is clear" while researchers piled up in a queue nobody
+         * had actually read. The three-way split — answered-and-empty / refused / never asked — is
+         * `workshopAccessQueueNotice` in `ui/WorkshopAccessQueueCopy.kt`, a pure function pinned by
+         * `WorkshopAccessQueueCopyTest`, so the words live in one place a JVM test can walk.
+         *
+         * Null means the list speaks for itself. With rows still on screen and a failed reload it is
+         * a STALENESS warning above them rather than an empty state, because `refresh()` leaves the
+         * previous rows in place.
+         */
+        val notice = if (loading) null else workshopAccessQueueNotice(
+            view = if (showAll) WorkshopAccessQueueView.HISTORY else WorkshopAccessQueueView.PENDING,
+            failure = failure,
+            rowsOnScreen = rows.size,
+        )
+        notice?.let { n ->
+            if (n.answered) {
+                // The server answered and the answer was "none". An ordinary state, so it reads as
+                // one — the card's own ink, no panel.
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(n.heading, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(n.body, color = Muted, fontSize = 12.sp)
+                }
+            } else {
+                // A FILLED AMBER PANEL when the queue was NOT read, the same treatment the sign-in
+                // refusal gets: this is the only place the approver will be told that what they are
+                // looking at is not the state of the queue. Colour never carries it alone — the
+                // heading says which of the two it is in words.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.field.warningContainer, RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        n.heading,
+                        display = true,
+                        color = MaterialTheme.field.onWarningContainer,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
+                    )
+                    Text(n.body, color = MaterialTheme.field.onWarningContainer, fontSize = 12.sp)
+                }
+            }
+        }
+        if (loading) {
+            Text("Loading requests…", color = Muted, fontSize = 12.sp)
+        } else {
+            rows.forEach { row ->
                 val busy = busyId == row.id
                 val pending = row.status == "PENDING"
                 ElevatedCard(

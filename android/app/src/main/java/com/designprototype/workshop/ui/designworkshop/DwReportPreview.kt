@@ -79,20 +79,39 @@ import java.io.File
  * them, and this one is offline-first by design.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * WHY IT IS A FLOW OF BLOCKS AND NOT A4 SHEETS
+ * WHY THIS IS A FLOW OF BLOCKS — AND WHY IT IS NO LONGER THE ONLY VIEW
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  *
- * The web's `/report` page lays blocks onto A4 at real millimetre dimensions, because it answers a
- * question about PAGES — has the cover's info table pushed the hero photograph onto page two. That
- * question cannot be answered on a 360dp-wide screen: an A4 sheet rendered to fit is 4pt type, and
- * rendered at readable type it needs horizontal scrolling, which is a gesture nobody can aim on a
- * phone while reading. So this draws the document as a readable column and says so on screen. A
- * designer who needs to check pagination has the .pdf export two taps away, on the same screen.
+ * THIS SECTION USED TO SAY THERE COULD BE NO A4 VIEW ON A HANDSET, AND THE ARGUMENT IT MADE WAS
+ * SOUND. It is kept here rather than deleted, because [DwReportSheets] is built on top of it:
  *
- * PAGE BREAKS ARE DRAWN AS A MARKED RULE rather than being ignored. A `PAGEBREAK` is a break the
- * template ASKED for and both writers honour it exactly, so it is the one piece of page structure
- * that is knowable here — and a preview that silently dropped it would let a designer arrange two
- * sections believing they sit together when the file will always split them.
+ *   *"an A4 sheet rendered to fit is 4pt type, and rendered at readable type it needs horizontal
+ *   scrolling, which is a gesture nobody can aim on a phone while reading."*
+ *
+ * Both halves of that are still true. What was wrong was the conclusion. They are not a reason to
+ * have no page view; they are the SPECIFICATION for one — fit-to-width really is about 4pt type at
+ * 360dp, so the sheet ships with a zoom and a pinch and "Actual size" one tap away; and at actual
+ * size the sheet really is wider than the screen, so the stage scrolls sideways only ONCE THE READER
+ * HAS ZOOMED PAST THE FIT, never at rest and never under a finger that meant to scroll the document.
+ * Asked for on 2026-08-27: *"it should render as if on actual a4 sheet … it should also be there on
+ * android."*
+ *
+ * SO THERE ARE TWO VIEWS, AND THEY ANSWER DIFFERENT QUESTIONS. This one answers "does this prose
+ * read correctly, and did the right photographs land under the right headings" — which is what a
+ * designer does most of, and which a readable single column is simply better at. [DwReportSheets]
+ * answers "does it fit on the page, and where does the break fall". `ReportScreen` offers both.
+ *
+ * ONE RENDERER, TWO VIEWS. The sheets re-render nothing: they call [DwReportBlock] — this file's own
+ * composable, with the same arguments — and lay the results onto fixed A4 boxes. That is why
+ * [DwReportBlock] is `internal` rather than private, and why the break probes below sit on this
+ * file's own repeating children rather than in a parallel copy of them. A second block renderer on
+ * one device is two documents that nobody compares until an officer opens the file.
+ *
+ * PAGE BREAKS ARE DRAWN AS A MARKED RULE here rather than being ignored. A `PAGEBREAK` is a break the
+ * template ASKED for and every writer honours it exactly, so it is the one piece of page structure
+ * that is knowable in a flow — and a preview that silently dropped it would let a designer arrange
+ * two sections believing they sit together when the file will always split them. In the sheet view
+ * that same block is not drawn at all: it has become the page turn it always meant.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  * THE FIGURES
@@ -107,8 +126,13 @@ import java.io.File
  * the document.
  */
 
-/** How much of the theme is honoured here. See [DwReportPreview] for what the accent is used on. */
-private fun accentColor(hex: String?): Color? {
+/**
+ * How much of the theme is honoured here. See [DwReportPreview] for what the accent is used on.
+ *
+ * `internal` because [DwReportSheets] draws the same blocks and must resolve the accent the same
+ * way; a second copy of this parser is a second answer to "what colour is this report".
+ */
+internal fun dwAccentColor(hex: String?): Color? {
     val cleaned = hex?.trim()?.removePrefix("#")?.takeIf { it.length == 6 } ?: return null
     return runCatching { Color(("ff$cleaned").toLong(16)) }.getOrNull()
 }
@@ -164,7 +188,7 @@ internal fun DwReportPreview(
     resolveImage: (String) -> File?,
     modifier: Modifier = Modifier,
 ) {
-    val accent = accentColor(document.theme.accent)
+    val accent = dwAccentColor(document.theme.accent)
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -175,8 +199,16 @@ internal fun DwReportPreview(
     }
 }
 
+/**
+ * One block. The only block renderer this app has — [DwReportPreview] flows them and
+ * [DwReportSheets] pages them, and neither draws anything of its own.
+ *
+ * [key] is the block's index in `ReportDocument.blocks`. It identifies the block to the measurement
+ * probe below and, in the sheet view, is what a `PageSlice` carries back so that the right block is
+ * drawn in the right window.
+ */
 @Composable
-private fun DwReportBlock(
+internal fun DwReportBlock(
     block: Block,
     accent: Color?,
     resolveImage: (String) -> File?,
@@ -184,6 +216,22 @@ private fun DwReportBlock(
 ) {
     val ink = MaterialTheme.colorScheme.onSurface
     val muted = MaterialTheme.field.muted
+
+    /*
+      WHERE THIS BLOCK MAY BE CUT, reported only while the sheet view is measuring.
+
+      `LocalDwFlowProbe` is null everywhere else — in this file's own flow, and in any other caller —
+      so with no probe every arm below composes exactly as it did before the sheets existed. The
+      probes mark the places the FILE WRITERS break a block and nowhere else: `_block_bullets` places
+      one item at a time, `_simple_grid` one pair, `place_row` one row with the header redrawn above
+      the continuation, `_block_image_grid` one grid row, and `_draw_lines` one LINE — which is why a
+      paragraph and a callout report their line boxes rather than a child count.
+
+      They are HERE, on the real children, rather than in a parallel measuring renderer, because a
+      measuring copy that drifts from the drawing copy breaks the page where the drawing does not —
+      and nothing would fail; the sheet would simply be wrong.
+    */
+    val probe = LocalDwFlowProbe.current
 
     // EXHAUSTIVE `when` ON A SEALED INTERFACE, with no `else`. That is what makes the compiler point
     // at this file the day a seventeenth block type is added to the model — the same discipline
@@ -256,18 +304,26 @@ private fun DwReportBlock(
             )
         }
 
+        // `_draw_lines` calls `_ensure(line.height)` once per line, so a paragraph breaks BETWEEN
+        // LINES — and `TextLayoutResult.getLineBottom` is where those lines fall on this device.
         is ParagraphBlock -> Text(
             runsToAnnotated(block.runs),
             color = if (block.style.name.contains("CAPTION")) muted else ink,
             fontSize = if (block.style.name.contains("CAPTION")) 11.sp else 13.sp,
+            onTextLayout = { probe?.textLines(key, it) },
             modifier = Modifier
                 .fillMaxWidth()
+                .dwTextTop(probe, key)
                 .padding(start = if (block.align == Align.CENTER) 0.dp else 0.dp)
         )
 
         is BulletListBlock -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             block.items.forEachIndexed { at, item ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // `_block_bullets` places one item at a time: an item is where a list may be cut.
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.dwBreakStop(probe, key, at),
+                ) {
                     Text(
                         if (block.ordered) "${at + 1}." else "•",
                         color = accent ?: muted,
@@ -279,8 +335,15 @@ private fun DwReportBlock(
         }
 
         is KeyValueBlock -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            block.pairs.forEach { (label, runs) ->
-                KeyValueLine(label, runsToAnnotated(runs), muted, ink)
+            // `_simple_grid` places one pair at a time: a pair is where the grid may be cut.
+            block.pairs.forEachIndexed { at, pair ->
+                KeyValueLine(
+                    pair.first,
+                    runsToAnnotated(pair.second),
+                    muted,
+                    ink,
+                    modifier = Modifier.dwBreakStop(probe, key, at),
+                )
             }
         }
 
@@ -309,12 +372,23 @@ private fun DwReportBlock(
                     )
                 }
             }
-            HorizontalDivider(color = MaterialTheme.field.hairline)
-            block.rows.forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    block.columns.forEachIndexed { at, column ->
+            // WHERE THE HEADER ENDS, so a continuation page can RESERVE it. `place_row` calls
+            // `place_header()` after `_new_page()` — "exactly as Word repeats a `<w:tblHeader/>` row
+            // over a body row it has split" — and a header that is drawn but not reserved costs the
+            // continuation a row it thought it had.
+            HorizontalDivider(
+                color = MaterialTheme.field.hairline,
+                modifier = Modifier.dwHeaderBottom(probe, key),
+            )
+            block.rows.forEachIndexed { at, row ->
+                // `place_row` places one row at a time: a row is where a table may be cut.
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().dwBreakStop(probe, key, at),
+                ) {
+                    block.columns.forEachIndexed { at2, column ->
                         Text(
-                            runsToAnnotated(row.getOrNull(at).orEmpty()),
+                            runsToAnnotated(row.getOrNull(at2).orEmpty()),
                             color = ink,
                             fontSize = 12.sp,
                             modifier = Modifier.weight(column.widthPct.coerceAtLeast(1f))
@@ -324,6 +398,10 @@ private fun DwReportBlock(
             }
             block.totalRow?.let { total ->
                 HorizontalDivider(color = MaterialTheme.field.hairline)
+                // NO BREAK STOP ON THE TOTAL ROW, and its absence is the decision. Every body row
+                // above is a legal cut; the total is not, so the packer can never put a sum on a page
+                // of its own under a repeated header — which is the one place in a cost table a
+                // reader must not have to turn the page to reach.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     block.columns.forEachIndexed { at, column ->
                         Text(
@@ -358,8 +436,13 @@ private fun DwReportBlock(
         is ImageGridBlock -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             // Chunked to the template's own column count, so a four-up grid in the file reads as a
             // four-up grid here rather than as a single column of unrelated photographs.
-            block.images.chunked(block.columns.coerceAtLeast(1)).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+            block.images.chunked(block.columns.coerceAtLeast(1)).forEachIndexed { at, row ->
+                // `_block_image_grid` loops `range(0, n, cols)` and `_ensure`s ONE GRID ROW at a
+                // time: a grid row, never a single plate, is where a gallery may be cut.
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth().dwBreakStop(probe, key, at),
+                ) {
                     row.forEach { (ref, caption) ->
                         Column(modifier = Modifier.weight(1f)) {
                             val file = resolveImage(ref.source)
@@ -426,7 +509,17 @@ private fun DwReportBlock(
             if (block.title.isNotBlank()) {
                 Text(block.title, color = ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
-            Text(runsToAnnotated(block.runs), color = ink, fontSize = 12.sp)
+            // A callout is MOVED WHOLE while it fits a page at all — `_cut_row`'s docstring calls
+            // that "an ordinary break" — and is divided only when it fits no page. Its line boxes
+            // are reported for that last case; the title above is never a cut point, because a
+            // boxed aside cut immediately under its own title is worse than one moved.
+            Text(
+                runsToAnnotated(block.runs),
+                color = ink,
+                fontSize = 12.sp,
+                onTextLayout = { probe?.textLines(key, it) },
+                modifier = Modifier.fillMaxWidth().dwTextTop(probe, key),
+            )
         }
 
         is SignatureBlock -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -463,8 +556,17 @@ private fun DwReportBlock(
 }
 
 @Composable
-private fun KeyValueLine(label: String, value: AnnotatedString, muted: Color, ink: Color) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+private fun KeyValueLine(
+    label: String,
+    value: AnnotatedString,
+    muted: Color,
+    ink: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
         Text(label, color = muted, fontSize = 12.sp, modifier = Modifier.weight(0.4f))
         Text(value, color = ink, fontSize = 12.sp, modifier = Modifier.weight(0.6f))
     }

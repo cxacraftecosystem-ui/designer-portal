@@ -240,7 +240,15 @@ data class FieldTokens(
     val isDark: Boolean
 )
 
-private val LightFieldTokens = FieldTokens(
+/*
+  `internal` RATHER THAN PRIVATE, FOR ONE CALLER AND ONE REASON. `DwReportSheets.DwPaperPalette`
+  draws a preview of a sheet of PAPER, and paper does not invert with the theme: a white page whose
+  ink came from the dark palette is near-white text on white. So that one subtree provides the LIGHT
+  tokens and the LIGHT scheme together, which is the palette the .docx and the .pdf are written in.
+  Nothing else may reach for these — `DesignWorkshopTheme` remains the only way to set the app's
+  theme, and a screen that pinned itself to one palette would ignore a reader's own choice.
+*/
+internal val LightFieldTokens = FieldTokens(
     body = FieldPalette.Ink700Light,
     muted = FieldPalette.Ink500Light,
     placeholder = FieldPalette.Ink300Light,
@@ -300,7 +308,7 @@ val MaterialTheme.field: FieldTokens
 // Colour schemes — every slot mapped deliberately, so nothing falls back to a Material default.
 // ---------------------------------------------------------------------------------------------
 
-private val FieldLightColorScheme: ColorScheme = lightColorScheme(
+internal val FieldLightColorScheme: ColorScheme = lightColorScheme(
     primary = FieldPalette.Purple700,
     onPrimary = Color.White,
     primaryContainer = FieldPalette.Purple100,

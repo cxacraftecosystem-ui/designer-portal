@@ -59,21 +59,36 @@ import kotlin.math.min
  * PICKED-image path is not a fallback for anything and is the one route a typed code cannot replace
  * — see the paragraph above.
  *
- * ── WHAT THE LIVE PATH SHARES WITH THIS ONE, AND THE ONE HINT IT DELIBERATELY DROPS ───────────
+ * ── WHAT THE LIVE PATH SHARES WITH THIS ONE — REWRITTEN 2026-08-28, BECAUSE IT NO LONGER SHARES
+ *    THE LIBRARY ────────────────────────────────────────────────────────────────────────────────
  *
- * Same library, same `POSSIBLE_FORMATS = [QR_CODE]` narrowing, same parser afterwards
- * ([decodeWorkshopCode]) — so a payment QR is refused by one sentence however it arrived. The one
- * divergence is TRY_HARDER, which is ON here and OFF on the live path. The reason is in this file's
- * own words below: it "costs milliseconds on a still picture that is already in memory". At thirty
- * frames a second those milliseconds ARE the frame budget, and the next frame is a better retry
- * than a harder look at this one. A still picture gets no next frame, so it keeps the flag.
+ * WHAT THIS SECTION SAID UNTIL 2026-08-28, kept so the change is legible rather than mysterious:
  *
- * The live path's pure half lives at the bottom of THIS file — [dwQrCropInBuffer],
- * [dwQrCompactLuminance] and [DwQrLiveDecoder] — for the reason the ladder is pure: so it can be
- * asserted on a machine with no handset. `DwQrLiveFrameTest` pushes symbols made by this app's own
- * [DwQrEncode] through the live decoder over a synthetic Y plane whose row stride is deliberately
- * wider than its width, which is the shape a real handset hands over and the one a naive
- * implementation gets wrong.
+ *     "Same library, same `POSSIBLE_FORMATS = [QR_CODE]` narrowing, same parser afterwards
+ *      ([decodeWorkshopCode]) … The one divergence is TRY_HARDER, which is ON here and OFF on the
+ *      live path."
+ *
+ * The live camera is ML KIT from 2026-08-28 — `MlKitQrFrameReader` in `data/DwQrFrameReader.kt`,
+ * bundled model, QR only. The owner reported that a code held inside the reticle was not being read,
+ * and `app/build.gradle.kts` had already recorded, dated and measured, that ML Kit reads a bent,
+ * angled or glared live frame better than ZXing — as an ACCEPTED REGRESSION. The regression became
+ * the defect, so it was re-traded. That build file carries the whole argument and the byte cost.
+ *
+ * WHAT IS STILL SHARED IS THE PART THAT MATTERS MOST: the QR-only narrowing, and
+ * [decodeWorkshopCode] afterwards. A payment QR is still refused by one sentence however it arrived,
+ * from any of the four doors, and that has not moved. TRY_HARDER remains this file's own flag, still
+ * ON here, and it now governs the still and picked routes only — and see [DwQrLiveDecoder] for the
+ * 2026-08-28 measurement showing it buys no accuracy on a live frame, which is not what this file
+ * used to imply.
+ *
+ * THIS FILE STILL HOLDS THE WHOLE OF THE LIVE PATH THAT CAN BE TESTED, which is why the reference
+ * decoder was not deleted with the choice. [dwQrCropInBuffer], [dwQrCompactLuminance],
+ * [dwQrReticleInUprightFrame], [dwQrSightingInReticle] and [DwQrLiveDecoder] are pure, and
+ * `DwQrLiveFrameTest` pushes symbols made by this app's own [DwQrEncode] through the decoder over a
+ * synthetic Y plane whose row stride is deliberately wider than its width — the shape a real handset
+ * hands over and the one a naive implementation gets wrong. ML Kit cannot run in a JVM test at all,
+ * so deleting this would have traded the only accuracy evidence this repository can produce for
+ * accuracy nobody here can measure.
  *
  * ── THE LADDER, AND WHY A FIRST FAILURE IS NOT AN ANSWER ──────────────────────────────────────
  *
@@ -346,11 +361,18 @@ suspend fun dwReadQrPicture(
  *
  * It was designed as `data/DwQrFrame.kt` and it is here instead for one reason worth writing down:
  * the wave that added the live scanner owns this file and may not create new files under `data/`.
- * NOTHING ELSE ARGUES FOR THE SPLIT ANYWAY — the still path and the live path are one decoder with
- * two front doors, they share the QR_CODE narrowing and the "hand the raw text to
- * [decodeWorkshopCode] and judge nothing here" rule, and the one place they differ (TRY_HARDER) is
- * an argument that reads better beside the flag it is about than in a second file. If a later wave
- * does split them, move the whole block and keep the header's cross-references.
+ *
+ * THE SECOND HALF OF THAT ARGUMENT DIED ON 2026-08-28 AND THE CONCLUSION SURVIVED IT, which is worth
+ * separating rather than quietly rewriting. It used to read: "NOTHING ELSE ARGUES FOR THE SPLIT
+ * ANYWAY — the still path and the live path are one decoder with two front doors … and the one place
+ * they differ (TRY_HARDER) is an argument that reads better beside the flag it is about". They are
+ * NOT one decoder any more: the live camera is ML Kit and lives in `data/DwQrFrameReader.kt`.
+ *
+ * What stayed here is the PURE half, and the reason is stronger than the old one. Everything below
+ * this line is arithmetic with no Android in it — the crop, the strides, the two reticle maps and the
+ * ZXing reference decoder — and it is the only part of a live scanner a machine with no handset can
+ * assert. Moving it beside a reader that cannot be unit-tested would put testable code in an
+ * untestable file. The seam is what belongs there; the arithmetic belongs here.
  *
  * ── PURE, AND WHY THAT IS THE WHOLE POINT ─────────────────────────────────────────────────────
  *
@@ -601,12 +623,22 @@ fun dwQrCompactLuminance(
  * second. A CLASS and not an `object` is what keeps that promise: an `object` would be shared across
  * two scanners the day a second one is mounted, which is the very hazard the still path names.
  *
- * ── TRY_HARDER IS OFF, WHICH IS THE ONE PLACE THE TWO PATHS DIVERGE ───────────────────────────
+ * ── TRY_HARDER IS OFF, AND IT COSTS LESS THAN THIS COMMENT USED TO CLAIM ──────────────────────
  *
  * The still path's own comment gives the reason to keep it there and to drop it here: it "costs
  * milliseconds on a still picture that is already in memory", and at thirty frames a second those
  * milliseconds are the frame budget. The next frame is the retry, and it is a better one — the hand
  * has moved, the focus has settled, the glare is somewhere else.
+ *
+ * THIS USED TO BE DESCRIBED AS "THE ONE PLACE THE TWO PATHS DIVERGE", WHICH IMPLIED A CAPABILITY WAS
+ * BEING TRADED. MEASURED ON 2026-08-28 AND IT IS NOT. A symbol this app's own encoder produced was
+ * pushed through this decoder over a 516x516 frame with and without the hint, under blur, tilt,
+ * glare, low contrast and shrinking modules, and the two agreed on EVERY case: the same floor of two
+ * pixels per module, the same failure at about two-thirds of a module of blur, the same tilt limit.
+ * `docs/DECISION-qr-scanning-on-android.md` has the table and the fixture's limits. The hint is
+ * dropped here for speed and nothing is given up for it — which is a better argument than the one
+ * that stood here, and it is written down because "we accepted a small accuracy loss" is the kind of
+ * belief that later gets traded against something real.
  *
  * PURE JAVA ALL THE WAY DOWN, so `DwQrLiveFrameTest` runs the real shipping decoder on the desktop.
  */
@@ -709,4 +741,163 @@ fun dwQrReticleFraction(
         right = (0.5f + halfWidthFraction).coerceIn(0f, 1f),
         bottom = (0.5f + halfHeightFraction).coerceIn(0f, 1f),
     )
+}
+
+// ======================================================================================
+// THE LIVE PATH — the pure half, part two: a reader that will not be told where to look
+// ======================================================================================
+
+/**
+ * WHY THERE IS A SECOND SET OF COORDINATE FUNCTIONS BELOW, ADDED 2026-08-28.
+ *
+ * Everything above maps the reticle INTO the buffer, because a decoder that takes a rectangle can be
+ * handed one. ML Kit's barcode reader takes no rectangle at all: it is given a frame and it answers
+ * with whatever codes it found and where they were. So the reticle is honoured the other way round —
+ * the reader looks at the whole frame and a sighting outside the box is REFUSED afterwards.
+ *
+ * THAT IS A DELIBERATE CHOICE AND IT IS THE MORE FORGIVING OF THE TWO. The defect reported on
+ * 2026-08-27 was that codes held inside the box were not being read, which is a FALSE NEGATIVE, and
+ * cropping is the operation that manufactures false negatives: a crop that is a few pixels tight, or
+ * a crop taken against a `cropRect` a handset filled in differently from the documentation, hides a
+ * code that is plainly inside the brackets. Reading the whole frame cannot fail that way. The cost
+ * is the opposite error — reading a code the designer did not aim at — and that is what the
+ * acceptance test below is for, plus a sentence on screen when a sighting is refused, so the one new
+ * failure this introduces is SAID rather than silent.
+ *
+ * ── THE SPACE THESE WORK IN IS NOT THE SPACE THE FUNCTIONS ABOVE WORK IN ──────────────────────
+ *
+ * [dwQrCropInBuffer] answers in the UNROTATED buffer, because that is what a decoder handed a
+ * luminance plane reads. A whole-frame reader is given the rotation and turns the picture itself, so
+ * it reports boxes in the UPRIGHT frame — the picture the right way up, which for a quarter turn has
+ * the buffer's width and height swapped. Mixing the two spaces would put the acceptance rectangle a
+ * quarter turn away from the sighting, and the symptom would be codes inside the box being refused:
+ * the very defect being fixed, reintroduced one layer down. Hence two functions and two names.
+ */
+
+/** A code a reader found in one frame, and where it sat. [bounds] is in the UPRIGHT frame. */
+data class DwQrSighting(val text: String, val bounds: DwQrCrop?)
+
+/** The upright frame's width, given a buffer and how far clockwise it must turn to stand up. */
+fun dwQrUprightWidth(bufferWidth: Int, bufferHeight: Int, rotationDegrees: Int): Int =
+    if (rotationDegrees == 90 || rotationDegrees == 270) bufferHeight else bufferWidth
+
+/** The upright frame's height. See [dwQrUprightWidth]. */
+fun dwQrUprightHeight(bufferWidth: Int, bufferHeight: Int, rotationDegrees: Int): Int =
+    if (rotationDegrees == 90 || rotationDegrees == 270) bufferWidth else bufferHeight
+
+/**
+ * The drawn reticle as fractions of the UPRIGHT frame, inflated by [margin].
+ *
+ * ── THE THREE SPACES, AGAIN, IN THE ORDER THEY COMPOSE ────────────────────────────────────────
+ *
+ * The designer's box holds the reticle as fractions of ITSELF. The viewfinder is showing [displayed]
+ * — `ImageProxy.getCropRect()`, a rectangle in UNROTATED buffer pixels, which CameraX fills in from
+ * the bound `ViewPort`. And the reader reports in the upright frame. So this turns [displayed] into
+ * the upright frame first, and then places the reticle inside it as a fraction of the whole upright
+ * frame. Composing in the other order is the quarter-turn error described above.
+ *
+ * The rotation cases are the FORWARD map of the inverse [dwQrCropInBuffer] applies, derived from the
+ * same statement: a clockwise turn of [rotationDegrees] sends the buffer's top-left corner to the
+ * corner named there. They are stated as pixel ranges rather than as fractions because [displayed]
+ * arrives in pixels and the frame's own two dimensions are what normalise them.
+ *
+ * @return null when the answer cannot be computed honestly — an unusable rotation, a displayed
+ *   rectangle that is not inside the buffer, or a degenerate reticle. NULL MEANS "accept any
+ *   sighting", never "guess a rectangle": a scanner that refuses every code because it could not
+ *   work out where the box was is the worse of the two failures by a long way.
+ */
+fun dwQrReticleInUprightFrame(
+    reticle: DwQrFraction,
+    displayed: DwQrCrop,
+    rotationDegrees: Int,
+    bufferWidth: Int,
+    bufferHeight: Int,
+    margin: Float = DW_QR_RETICLE_MARGIN,
+): DwQrFraction? {
+    if (bufferWidth <= 0 || bufferHeight <= 0) return null
+    if (displayed.isEmpty) return null
+    if (displayed.left < 0 || displayed.top < 0) return null
+    if (displayed.right > bufferWidth || displayed.bottom > bufferHeight) return null
+    if (rotationDegrees != 0 && rotationDegrees != 90 && rotationDegrees != 180 && rotationDegrees != 270) return null
+
+    val safeMargin = if (margin.isFinite() && margin >= 0f) margin else 0f
+    val inflated = reticle.inflated(safeMargin) ?: return null
+
+    val frameWidth = dwQrUprightWidth(bufferWidth, bufferHeight, rotationDegrees).toFloat()
+    val frameHeight = dwQrUprightHeight(bufferWidth, bufferHeight, rotationDegrees).toFloat()
+
+    // [displayed], in upright pixels. A clockwise turn of the buffer takes the named corner to the
+    // named corner, and these are the four rectangles that follow from that.
+    val edges = when (rotationDegrees) {
+        90 -> DwQrEdges(
+            left = bufferHeight - displayed.bottom.toFloat(),
+            right = bufferHeight - displayed.top.toFloat(),
+            top = displayed.left.toFloat(),
+            bottom = displayed.right.toFloat(),
+        )
+        180 -> DwQrEdges(
+            left = bufferWidth - displayed.right.toFloat(),
+            right = bufferWidth - displayed.left.toFloat(),
+            top = bufferHeight - displayed.bottom.toFloat(),
+            bottom = bufferHeight - displayed.top.toFloat(),
+        )
+        270 -> DwQrEdges(
+            left = displayed.top.toFloat(),
+            right = displayed.bottom.toFloat(),
+            top = bufferWidth - displayed.right.toFloat(),
+            bottom = bufferWidth - displayed.left.toFloat(),
+        )
+        else -> DwQrEdges(
+            left = displayed.left.toFloat(),
+            right = displayed.right.toFloat(),
+            top = displayed.top.toFloat(),
+            bottom = displayed.bottom.toFloat(),
+        )
+    }
+
+    val spanX = edges.right - edges.left
+    val spanY = edges.bottom - edges.top
+    if (spanX <= 0f || spanY <= 0f) return null
+
+    return DwQrFraction(
+        left = ((edges.left + inflated.left * spanX) / frameWidth).coerceIn(0f, 1f),
+        top = ((edges.top + inflated.top * spanY) / frameHeight).coerceIn(0f, 1f),
+        right = ((edges.left + inflated.right * spanX) / frameWidth).coerceIn(0f, 1f),
+        bottom = ((edges.top + inflated.bottom * spanY) / frameHeight).coerceIn(0f, 1f),
+    )
+}
+
+/** Four edges in one value, so the branch above returns a rectangle rather than four locals. */
+private data class DwQrEdges(val left: Float, val right: Float, val top: Float, val bottom: Float)
+
+/**
+ * Is this sighting the one the designer aimed at?
+ *
+ * ── THE TEST IS THE CENTRE AND NOT CONTAINMENT, WHICH IS THE WHOLE DESIGN ─────────────────────
+ *
+ * A card held close enough to read easily OVERFLOWS the reticle — that is what a designer does when
+ * a code is not reading, and it is the right instinct. Requiring the whole bounding box to sit
+ * inside the brackets would refuse exactly the frames somebody is trying hardest on, which is the
+ * reported defect wearing a different hat. The centre is what "the code I am pointing at" means.
+ *
+ * A NULL RETICLE ACCEPTS EVERYTHING, on the same reasoning [dwQrReticleInUprightFrame] gives: the
+ * box not being known is a reason to read the frame, never a reason to refuse it. So does a reader
+ * that found a code but would not say where — refusing that would trade a real read for a
+ * coordinate this app does not have.
+ *
+ * @param bounds where the reader says the code was, in UPRIGHT frame pixels.
+ */
+fun dwQrSightingInReticle(
+    bounds: DwQrCrop?,
+    frameWidth: Int,
+    frameHeight: Int,
+    reticle: DwQrFraction?,
+): Boolean {
+    if (reticle == null) return true
+    if (bounds == null || bounds.isEmpty) return true
+    if (frameWidth <= 0 || frameHeight <= 0) return true
+    val centreX = (bounds.left + bounds.width / 2f) / frameWidth
+    val centreY = (bounds.top + bounds.height / 2f) / frameHeight
+    return centreX >= reticle.left && centreX <= reticle.right &&
+        centreY >= reticle.top && centreY <= reticle.bottom
 }

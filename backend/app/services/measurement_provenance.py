@@ -14,6 +14,10 @@ proposal a person accepted, because nobody can re-derive it and nothing can chec
 **THE CONCRETE FAILURE THIS PREVENTS, WHICH IS ALREADY IN THE DATABASE.** ``ProductDocumentation``
 and ``ToolDocumentation`` carry ``lengthInches`` / ``breadthInches`` / ``heightInches``, printed as a
 documented dimension by ``services/record_fields.py`` and read by somebody costing a production run.
+(True of BOTH tables as of 2026-08-27, and of the product alone before it: ``ToolDocumentation``
+gained ``heightInches`` that day. What that absence used to cost, and every place in this file that
+argued from it, is written out under WHAT THE RECORD HALF CAN NOW REACH below. Re-check with
+``grep -n "heightInches" backend/prisma/schema.prisma``, which must answer twice.)
 Three different processes write those columns and, until this module, the row recorded no difference
 between them:
 
@@ -101,36 +105,79 @@ behaviour is asserted in ``tests/test_measurement_provenance.py`` on a laptop wi
 THE CLIENT SPECIFICATION — what Android and the web must do, neither of which is implemented here
 --------------------------------------------------------------------------------------------------
 
-The server half is done: this module, ``services/ai.py`` and ``api/routes/media.py`` produce the
-marker, and ``records.merge_field_provenance`` / ``record_fields.dims_with_method`` store and print
-it. The client half is four edits in files this change deliberately does not touch. Written down here
+The server half is done, all of it, as of 2026-08-27: this module, ``services/ai.py`` and
+``api/routes/media.py`` produce the marker; ``schemas/records.py`` accepts it on all four record
+bodies and refuses a malformed one by name; ``access.REVISION_SKIP_FIELDS`` keeps it out of the audit
+ledger; and ``records.merge_field_provenance`` / ``record_fields.dims_with_method`` store and print
+it. The client half is four edits in files that change deliberately did not touch. Written down here
 rather than in a planning document because this is the file whose vocabulary they have to speak, so
-this is where whoever picks it up will already be looking.
+this is where whoever picks it up will already be looking. §2 of the three below — send the marker
+back on the save — has since landed on BOTH clients; the paragraph after next is the evidence, and
+this file no longer speaks for the state of §1 or §3.
 
-**READ THE ONE BLOCKER FIRST.** ``measurementMethods`` is not declared on ``ProductCreate`` /
-``ProductUpdate`` / ``ToolCreate`` / ``ToolUpdate``, and their shared ``APIModel`` is
-``ConfigDict(extra="forbid")`` — so a client that starts sending the marker today has its ENTIRE save
-rejected with a 422 naming a key the researcher has never heard of, and the web's ``saveOrQueue``
-refuses to queue a 4xx ("the server saw it and said no"), so the save does not happen and is not
-retried. ``offline.isSchemaRefusal`` at least names that shape of failure honestly — it exists
-because a client sent a then-new ``merge`` flag to an API that predated it and every stage save came
-back refused — but the work is still not saved. Deploy the schema BEFORE EITHER CLIENT, and never the
-other way round. (That sentence used to read "deploy the schema first", full stop, and the next
-paragraph is what it cost.)
+**THE ONE BLOCKER, AND IT IS CLEARED — 2026-08-27.** ``measurementMethods`` IS now declared on
+``ProductCreate`` / ``ProductUpdate`` / ``ToolCreate`` / ``ToolUpdate``. A client may send it from
+that commit onward; re-check with
+``grep -n "measurementMethods: dict" backend/app/schemas/records.py``, which answers four times, one
+per body. (The pattern is narrowed on purpose. Plain ``grep -n "measurementMethods"`` on that file
+also hits the prose block that introduces the four declarations, so its count is not four and moves
+whenever that prose is edited — this one only moves when a body gains or loses the key.)
 
-**THE SCHEMA IS NOT THE FIRST STEP THOUGH, AND LANDING IT FIRST CORRUPTS AN AUDIT TRAIL.**
-``access.REVISION_SKIP_FIELDS`` has to gain :data:`MARKER_BODY_KEY` BEFORE this schema declaration,
-not after it. The schema is precisely what makes the marker SENDABLE, and a sendable marker with no
-skip entry makes ``guard_record_edit`` write a ``RecordRevision`` nobody made on every save that
-carries one — the mechanism is in §THE RECORD HALF below, and the row it writes is in an immutable
-audit table that cannot be un-written by landing the skip entry afterwards. So the order is
-``access.py``, then the four schemas, then the clients. Each step is inert until the one after it
-lands — the skip entry alone can skip nothing, because nothing can send the key yet — which is what
-makes this order free to obey and the other one expensive.
+**AND THE MARKER IS NOW ON THE WIRE FROM BOTH CLIENTS — 2026-08-27.** §2 below is done. Counted by
+running these two greps and reading every hit::
 
-Declare it on all four as ``dict[str, Any] | None = None`` — not a pydantic model, because
+    grep -n "measurementMethods = markers.body" android/.../MainActivity.kt
+        → 2 hits: the product save and the tool save
+    grep -rn "measurementMethods: measurementMethodsFor" frontend/components/forms/
+        → 2 hits: ProductForm.tsx and ToolForm.tsx
+
+Each of those four sites serves BOTH the create POST and the update PATCH — the two Kotlin request
+models are also the PATCH body (see ``ApiModels.ProductCreateRequest``), and each web form builds one
+``payload`` and picks the verb off ``initial`` — so all four record schemas are now reachable from a
+shipped build, and every one of those sites can compose its body OFFLINE and post it later (Android's
+outbox, the web's ``saveOrQueue``). WHAT THAT CHANGES FOR ANYONE EDITING THIS FILE is in
+:func:`marker_body_problems`, under "THE REASON THIS WAS FREE HAS EXPIRED": there is an installed
+fleet now, and no new refusal may be added to that function.
+
+What the blocker was, kept because it is the reason the order below is not negotiable and because the
+same wall stands in front of the stage half: their shared ``APIModel`` is ``ConfigDict(extra="forbid")``
+— so a client that had started sending the marker before that declaration would have had its ENTIRE
+save rejected with a 422 naming a key the researcher has never heard of, and the web's
+``saveOrQueue`` refuses to queue a 4xx ("the server saw it and said no"), so the save would not have
+happened and would not have been retried. ``offline.isSchemaRefusal`` at least names that shape of
+failure honestly — it exists because a client sent a then-new ``merge`` flag to an API that predated
+it and every stage save came back refused — but the work is still not saved. Deploy the schema BEFORE
+EITHER CLIENT, and never the other way round. (That sentence used to read "deploy the schema first",
+full stop, and the next paragraph is what it cost.)
+
+**THE SCHEMA WAS NOT THE FIRST STEP, AND LANDING IT FIRST WOULD HAVE CORRUPTED AN AUDIT TRAIL.**
+``access.REVISION_SKIP_FIELDS`` had to gain :data:`MARKER_BODY_KEY` BEFORE this schema declaration,
+not after it — and did, in the same change, in that order. The schema is precisely what makes the
+marker SENDABLE, and a sendable marker with no skip entry makes ``guard_record_edit`` write a
+``RecordRevision`` nobody made on every save that carries one — the mechanism is in §THE RECORD HALF
+below, and the row it writes is in an immutable audit table that cannot be un-written by landing the
+skip entry afterwards. So the order was ``access.py``, then the four schemas, then the clients — and
+all three have now landed, in that order. Each step was inert until the one after it landed — the skip
+entry alone could skip nothing, because nothing could send the key yet — which is what made this order
+free to obey and the other one expensive. It is no longer inert: the last step ran, so the skip entry
+and the four declarations are now load-bearing on live saves rather than waiting for a sender.
+
+**THE TYPE IT LANDED AS, WHICH IS NOT THE ONE THIS PARAGRAPH USED TO PRESCRIBE.** It reads
+``dict[str, dict[str, Any]] | None = None`` on all four, with a shared
+``schemas/records.validate_measurement_methods`` behind it that REFUSES a marker body describing
+something the request is not saying: an unknown method name, a method naming a column outside
+:data:`DIMENSION_FIELDS`, a method for a dimension the same body sends no value for, an unreadable
+technique or confidence. Each is a 422 naming the key, the value and what to send instead.
+
+This paragraph used to say ``dict[str, Any] | None = None`` and to validate nothing, "because
 :func:`provenance_of_marker` is the single validator and it deliberately degrades anything unreadable
-to :data:`UNRECORDED` rather than raising — and deploy that before either client ships its half.
+to :data:`UNRECORDED` rather than raising". THE DEGRADE IS STILL THERE AND STILL LOAD-BEARING — it is
+what a save path must do, and its DIRECTION is this module's safety property. It is the wrong answer
+at the API boundary, and :func:`marker_body_problems` carries the full argument: a degrade there
+turns a client's typo into a record indistinguishable from one saved by a client that never
+implemented any of this, silently, right after a designer pressed Accept on a machine's number. The
+boundary refuses; the save path degrades; the degrade is the second line of defence rather than the
+only one.
 
 **1. Stop auto-filling. Propose, then let a person confirm.**
 
@@ -242,19 +289,25 @@ save from a client that has not implemented its half writes an explicit "nobody 
 rather than nothing — honest, distinguishable, and never the false human claim. Expect a burst of
 those from the installed fleet and read them as the design.
 
-ONE KEY STILL HAS TO BE ADDED IN A FILE THIS MODULE DOES NOT OWN. ``access.REVISION_SKIP_FIELDS``
-does not list ``measurementMethods``, and ``guard_record_edit`` runs ``record_revision`` on the raw
-``data`` BEFORE ``merge_field_provenance`` pops the key. So every marker-bearing PATCH currently
-diffs ``measurementMethods`` from ``None`` and writes a ``RecordRevision`` — which breaks
-``record_revision``'s own contract ("No-op when nothing meaningful changed") and fills an admin audit
-trail with an edit nobody made. Moving the pop earlier is not available: the merge must still see the
-marker. The marker is a hint about how a value was produced, not a value.
+THE KEY THAT HAD TO BE ADDED IN A FILE THIS MODULE DOES NOT OWN IS IN — 2026-08-27.
+``access.REVISION_SKIP_FIELDS`` lists ``measurementMethods``, and it is the only entry in that set
+that is not a column. Re-check with ``grep -n "MARKER_BODY_KEY" backend/app/services/access.py``.
 
-THIS IS THE FIRST STEP OF THE ROLLOUT, NOT A FOLLOW-UP TO IT. §THE CLIENT SPECIFICATION says "deploy
-the schema first" and means schema-before-client; it does not mean schema-before-this. Land this skip
-entry, then the four schema declarations, then the clients — because the schema is what makes the key
-sendable, and every marker-bearing save between the two lands a revision row that no later edit can
-retract.
+WHAT IT PREVENTS, KEPT BECAUSE THE MECHANISM IS STILL LIVE AND THE ROW IS STILL UNRETRACTABLE.
+``guard_record_edit`` runs ``record_revision`` on the raw ``data`` BEFORE ``merge_field_provenance``
+pops the key. Without the entry, every marker-bearing PATCH diffs ``measurementMethods`` from
+``None`` — ``get_value(record, "measurementMethods")`` is None, ``values_match(None, {...})`` is
+False — and writes a ``RecordRevision``, which breaks ``record_revision``'s own contract ("No-op when
+nothing meaningful changed") and fills an admin audit trail with an edit nobody made. Moving the pop
+earlier is not available: the merge must still see the marker. The marker is a hint about how a value
+was produced, not a value.
+
+THIS WAS THE FIRST STEP OF THE ROLLOUT, NOT A FOLLOW-UP TO IT. §THE CLIENT SPECIFICATION says "deploy
+the schema first" and means schema-before-client; it does not mean schema-before-this. The skip entry
+landed, then the four schema declarations, then the clients — all three are in, in that order,
+because the schema is what makes the key sendable and every marker-bearing save between the two would
+have landed a revision row that no later edit can retract. The clients having shipped is why the
+entry now matters in practice rather than in principle: marker-bearing saves arrive today.
 
 ``record_fields.dims_with_method`` then prints the method on the "Dimensions (LxBxH in)" cell — and
 therefore in the data browser, every .xlsx sheet and the ``/export/products.csv`` /
@@ -268,12 +321,29 @@ told it. TYPED and :data:`UNRECORDED` print nothing, because appending "method n
 majority of the rows in this database is noise that would train a reader to skip the clause on the
 row where it matters.
 
-WHAT THE RECORD HALF STILL CANNOT REACH, stated here so nobody reports it as a half-finished rollout:
-``ToolDocumentation`` has no ``heightInches``. The grid control's height reading lands in the plain
+WHAT THE RECORD HALF CAN NOW REACH, AND THE PARAGRAPH THAT USED TO SAY OTHERWISE. This read:
+*"``ToolDocumentation`` has no ``heightInches``. The grid control's height reading lands in the plain
 ``height`` column, which is not in :data:`DIMENSION_FIELDS`, so a marker naming it is dropped — an
 accepted vision-model tool height is gated by the button on both clients and recorded as nothing.
 Widening :data:`DIMENSION_FIELDS` is not free (``width`` beside it is a plain typed input) and is the
-repo owner's call.
+repo owner's call."*
+
+THE OWNER MADE THAT CALL ON 2026-08-27, and it turned out not to be a widening at all.
+``ToolDocumentation.heightInches`` landed that day — schema, an additive migration, the column list
+in ``routes/tools.py``, ``ToolCreate`` / ``ToolUpdate``, and both Android DTOs — so the tool carries
+the same documented triple the product does and :data:`DIMENSION_FIELDS` already named all three. A
+tool's height reading now has a documented column to land in and a method to land beside it, and the
+one thing that has to change to use it is the CLIENT: a grid height accepted on a tool form must be
+written to ``heightInches``, not to the plain ``height`` box. ``height`` and ``width`` stay outside
+:data:`DIMENSION_FIELDS` and stay ordinary typed inputs.
+
+The old paragraph is quoted rather than deleted because of what it was doing while it stood: it read
+as a settled limitation of the design, it was cited from ``routes/tools.py`` and from the test file,
+and anybody arriving to finish the tool half would have found it, believed it and stopped. That is
+the same failure the ``lengthCm`` note below records at length — a "this is impossible" comment with
+no date and no way to re-check it is a decision that outlives its reason. Re-check this one::
+
+    grep -n "heightInches" backend/prisma/schema.prisma
 
 --------------------------------------------------------------------------------------------------
 THE MIGRATION THIS DOES NOT REPLACE
@@ -383,17 +453,97 @@ GEOMETRY_TECHNIQUES: frozenset[str] = frozenset({"SCALE", "RECTIFIED"})
 #:
 #: ENUMERATED, so a marker cannot stamp a method onto an unrelated column. Without this a client could
 #: send ``{"materialCost": {"method": "TYPED"}}`` and have it written into the provenance blob, where
-#: it would read as though this system had an opinion about how a cost was arrived at. ``heightInches``
-#: is absent from ``ToolDocumentation`` and present here anyway: a marker naming a column its table
-#: does not have is dropped by the write path along with the value it describes, and one list is
-#: better than two that can disagree.
+#: it would read as though this system had an opinion about how a cost was arrived at. A marker naming
+#: anything outside this set is REFUSED at the schema by :func:`marker_body_problems` and dropped in
+#: silence by :func:`method_stamps` — two layers, on purpose, and that function's docstring says why
+#: the inner one may not raise.
+#:
+#: ALL THREE ARE REAL COLUMNS ON BOTH TABLES AS OF 2026-08-27, and the note here used to say
+#: otherwise: *"``heightInches`` is absent from ``ToolDocumentation`` and present here anyway: a
+#: marker naming a column its table does not have is dropped by the write path along with the value
+#: it describes, and one list is better than two that can disagree."* The one-list argument still
+#: holds and is why this set is shared; the absence it was excusing is gone. Re-check with::
+#:
+#:     grep -n "heightInches" backend/prisma/schema.prisma
+#:
+#: WHAT IS STILL DELIBERATELY OUT, so nobody reads the widening as an invitation: ``ToolDocumentation``
+#: also has ``height``, ``width``, ``thickness``, ``weight`` and ``radius``, and every one of them is
+#: an ordinary typed input with no grid control pointed at it. A method marker naming one of those is
+#: a client aiming a photograph reading at the wrong column, and it is told so by name.
 DIMENSION_FIELDS: frozenset[str] = frozenset({"lengthInches", "breadthInches", "heightInches"})
 
 #: The stage-registry dimension fields, named here ONLY so a reader looking for them finds this note.
-#: ``lengthCm`` / ``widthCm`` / ``heightCm`` are ``DwStageEntry.data`` keys, not columns, and that Json
-#: blob has no per-field provenance structure at all — so the mechanism in this module cannot reach
-#: them, and the offline geometry path's ``DwPhotoMeasureField`` comment ("the registry has a column
-#: for the dimension and none for the doubt") is still true of them after this change.
+#: ``lengthCm`` / ``widthCm`` / ``heightCm`` are ``DwStageEntry.data`` keys and not columns. That much
+#: is still true, and it is the whole of what makes them different from :data:`DIMENSION_FIELDS`.
+#:
+#: ── THE REST OF THIS NOTE USED TO SAY THE MECHANISM COULD NOT REACH THEM. IT CAN. ─────────────────
+#:
+#: The sentence that stood here read: *"that Json blob has no per-field provenance structure at all —
+#: so the mechanism in this module cannot reach them."* That was a correct statement of the schema on
+#: 2026-08-20, the day this module was written. It stopped being true on 2026-08-23, when
+#: ``services/entry_provenance.py`` landed ``DwStageEntry.fieldProvenance``: a Json column BESIDE
+#: ``data`` holding ``{fieldKey: {by, byName, at, source, ...}}``, merged on every stage save by
+#: :func:`entry_provenance.merge_entry_provenance`, and already rendered to designers by
+#: ``DwProvenanceScreen.kt`` and ``components/designworkshop/FieldProvenance.tsx``. It is the same
+#: shape as ``extraMetadata.fieldProvenance`` on the record tables — which is precisely the shape
+#: :meth:`MeasurementProvenance.stamp` was written to sit inside. So the stage half needs NO NEW TABLE
+#: AND NO MIGRATION: one more key beside ``{by, byName, at}``, exactly as on a record.
+#:
+#: THE STALE SENTENCE IS RECORDED RATHER THAN QUIETLY DELETED BECAUSE OF WHAT IT COST. It was
+#: load-bearing, it read as settled, and it was the first thing anybody arriving to add the stage half
+#: would find — so they read it, believed it, and deferred, on the one surface where a dimension is
+#: measured in a courtyard off a photograph rather than typed at a desk off a tape. A "this is
+#: impossible" comment with no date and no way to re-check it is a decision that outlives its reason.
+#: Re-check this one, and do not trust either version of it on its word::
+#:
+#:     grep -n "fieldProvenance" backend/prisma/schema.prisma
+#:     grep -n "def merge_entry_provenance" backend/app/services/entry_provenance.py
+#:
+#: ── WHAT IS ACTUALLY MISSING, AS OF 2026-08-27, AND NONE OF IT IS IN THIS FILE ────────────────────
+#:
+#: * :func:`entry_provenance.merge_entry_provenance` builds its stamp out of ``new_data`` alone and
+#:   has no marker to merge. It needs the line ``records.merge_field_provenance`` already has, spelt
+#:   in its own locals — ``out[key] = dict(designer_stamp) | stamps.get(key, {})`` over a
+#:   :func:`method_stamps` called with these keys in place of :data:`DIMENSION_FIELDS` — on the
+#:   DESIGNER branch only. Not on the hydration branch, where the value came off a record and the
+#:   method is that record's answer rather than this save's; and not on the carry-forward branch, for
+#:   the reason §THE RECORD HALF gives about unchanged values, which bites harder here: both clients
+#:   re-send a whole stage, so a marker merged there would re-stamp every dimension in the stage
+#:   every time somebody fixed a typo in a neighbouring box.
+#: * the marker has to reach it, and IT MUST NOT RIDE INSIDE ``data``. ``data`` is validated against
+#:   the registry and echoed back, so a reserved key in it comes back in ``droppedKeys`` on every
+#:   save and destroys the one client/server registry-drift signal this repository has —
+#:   ``schema.prisma`` says exactly that about ``fieldProvenance``'s own placement outside ``data``.
+#:   It belongs on ``StageEntryIn`` beside ``data``, and ``APIModel`` is ``extra="forbid"``, so that
+#:   declaration ships BEFORE either client sends one. That is the same blocker §THE CLIENT
+#:   SPECIFICATION states for the four record schemas — cleared THERE on 2026-08-27 and still
+#:   standing here, so the record half is no longer the example to point at for what it costs, only
+#:   for the order that clears it: the guard first, then the declaration, then the client.
+#:
+#: Both clients already HOLD the method at the propose button. On the web ``photoMeasure.methodMarker``
+#: composes it and ``PhotoMeasureField``'s propose button hands it to ``onPropose`` (2026-08-27); the
+#: Kotlin twin has the same two facts under ``DwPhotoMeasure.METHOD_SCALE`` / ``METHOD_RECTIFIED`` and
+#: composes no marker yet.
+#:
+#: ── THIS SET IS THREE KEYS AND THE WEB PROPOSES INTO EIGHT ────────────────────────────────────────
+#:
+#: :data:`DIMENSION_FIELDS` can be closed because a table has the columns it has. THE STAGE REGISTRY
+#: DOES NOT WORK THAT WAY: ``stageFieldRoles.measurableLengthFields`` never looks at a key, it asks
+#: whether a field's declared ``unit`` is a length, and on 2026-08-27 that answers yes for nineteen
+#: fields across six entities under eight distinct keys — ``lengthCm``, ``widthCm``, ``heightCm``,
+#: ``breadthCm`` (``tool``), ``diameterCm`` (``prototype``) and ``finalLengthCm`` / ``finalWidthCm`` /
+#: ``finalHeightCm`` (``prototypeValidation``). THE SET BELOW NAMES THREE OF THOSE EIGHT. Whoever
+#: wires the stage half must choose deliberately between widening it and deriving it from the registry
+#: the way the clients do; left at three it silently drops the method on ``tool``'s ``breadthCm``, on
+#: ``prototype``'s ``diameterCm``, and on all three stage-14 validation dimensions — writing nothing
+#: where the record half would have written an explicit UNRECORDED, which is the one outcome
+#: :func:`method_stamps` was built to avoid. Re-check the count with::
+#:
+#:     grep -n "measurableLengthFields" frontend/components/designworkshop/stageFieldRoles.ts
+#:
+#: The ``DwPhotoMeasureField`` line the old note quoted — "the registry has a column for the dimension
+#: and none for the doubt" — is untouched by any of this and remains true. A method is not an error
+#: bar: ``uncertainty`` still has nowhere to be stored, which is why both clients spend it on screen.
 STAGE_DIMENSION_KEYS: frozenset[str] = frozenset({"lengthCm", "widthCm", "heightCm"})
 
 
@@ -616,6 +766,210 @@ def provenance_of_marker(marker: Any) -> MeasurementProvenance:
         self_reported_confidence=self_reported_confidence(marker, key=MARKER_CONFIDENCE_KEY),
         technique=technique if technique in GEOMETRY_TECHNIQUES else None,
     )
+
+
+#: Every key a marker may carry a FACT under, in the spelling :meth:`MeasurementProvenance.marker`
+#: writes and a client echoes back. Named for the refusal sentences, which have to be able to say
+#: what was allowed instead of only what was wrong.
+#:
+#: NOT A CLOSED SET ON THE WIRE, and :func:`marker_body_problems` deliberately does not refuse a key
+#: outside it — see the "OPEN KEYS, CLOSED VALUES" paragraph there for the version-skew argument.
+MARKER_FACT_KEYS: tuple[str, ...] = (
+    "method",
+    "provider",
+    "modelId",
+    MARKER_CONFIDENCE_KEY,
+    "technique",
+)
+
+
+def marker_body_problems(markers: Any, *, present_fields: Any) -> list[str]:
+    """Everything wrong with a client-sent ``measurementMethods`` body, one finished sentence each.
+
+    An empty list means the body is storable exactly as sent. PURE, like everything else here: the
+    caller decides what a problem costs. :mod:`app.schemas.records` raises them as a 422 on all four
+    record schemas; nothing on the save path calls this.
+
+    ``present_fields`` is the dimension columns THIS request also carries a value for. The schema
+    passes the non-null dimensions off the same model instance.
+
+    ── WHY THIS EXISTS BESIDE :func:`provenance_of_marker`, WHICH ALREADY "HANDLES" ALL OF IT ───────
+
+    Because they answer different questions at different moments, and this module's docstring used to
+    argue only the second one:
+
+    * :func:`provenance_of_marker` runs INSIDE A SAVE, on every path, including saves whose marker
+      never came off a request body. It must never raise — failing a record edit over a provenance
+      hint trades a real loss for a cosmetic one — so it DEGRADES: an unreadable marker becomes
+      :data:`UNRECORDED`, never ``TYPED``, and the direction of that fallback is the safety property
+      of this whole module. None of that changes, and this function does not weaken it.
+    * this one runs at the API BOUNDARY, before anything is written, where the alternative to a
+      refusal is not a safe default but A SILENT LIE OF OMISSION. A designer presses Accept on a
+      vision-model reading, the client sends a marker with a typo in the method name, the degrade
+      writes ``UNRECORDED``, and the row is now indistinguishable from one saved by a client that
+      never implemented any of this. Nobody is told — not in the client, not in the record — and an
+      accepted machine reading is recorded as nothing. That is precisely the outcome
+      :func:`method_stamps` exists to avoid one layer down, arrived at from the other side.
+
+    So the boundary refuses and the save path degrades, and the degrade is the second line of defence
+    rather than the only one.
+
+    ── WHAT A REFUSAL COSTS, STATED HERE BECAUSE IT IS NOT FREE ────────────────────────────────────
+
+    A ``ValueError`` out of a pydantic validator is a 422 on the WHOLE request, and the web's
+    ``saveOrQueue`` will not queue a 4xx ("the server saw it and said no") — so a client bug in the
+    marker throws away a form the researcher filled in, and offline it is not retried either. That is
+    the same failure §THE CLIENT SPECIFICATION describes for an undeclared key, and it is why every
+    sentence below names the exact key, the exact value, and what to send instead.
+
+    THE REASON THIS WAS FREE HAS EXPIRED — 2026-08-27, AND THE CONCLUSION IS "KEEP THESE, ADD NONE".
+    This paragraph used to read "No client sends this key yet ... so there is no installed fleet to
+    break", and it ended "the same strictness added after two clients had shipped would not be, and
+    should not be added then". Both clients have since shipped it, in this same tree —
+    ``measurementMethods = markers.body(...)`` twice in Android's ``MainActivity.kt`` and
+    ``measurementMethods: measurementMethodsFor(...)`` once each in the web's ``ProductForm.tsx`` and
+    ``ToolForm.tsx``, counted by running the two greps in §THE CLIENT SPECIFICATION and reading every
+    hit — so the condition that sentence set for itself is met, and it applies to this function now.
+
+    THE REFUSALS BELOW STAY — all eight of them, counted as the refusal sentences this function can
+    produce: the one early ``return`` for a body that is not an object, plus seven
+    ``problems.append`` calls. They cost the shipped fleet nothing, because neither client can
+    compose a shape they reject: each builds the whole body in ONE helper
+    (``frontend/components/forms/measurementMethods.ts::measurementMethodsFor``,
+    ``android/.../data/DwMeasurementMarkers.kt::body``), and both emit a marker only under a key in
+    :data:`DIMENSION_FIELDS` whose box still holds the exact accepted text, carrying either the
+    server's own ``methodMarker`` echoed back verbatim or the offline path's PHOTO_GEOMETRY literal.
+    ``DwMeasurementMarkers.body`` says so of itself, naming the "no value for this dimension" refusal
+    as the thing its blank check exists to keep unreachable. Deleting the refusals would buy that
+    fleet nothing and would re-open the silent lie for the next client to write.
+
+    NO NEW REFUSAL MAY BE ADDED HERE. That is the whole of what the expiry changes, and it is not
+    only about adding an ``if``: renaming a :class:`MeasurementMethod` member, narrowing
+    :data:`DIMENSION_FIELDS`, closing :data:`MARKER_FACT_KEYS` on the wire, or requiring a key that is
+    optional today each widens this set from a shipped client's point of view. All four send sites go
+    through a queue that composes the body OFFLINE and posts it later — Android's outbox and the web's
+    ``saveOrQueue`` — so the body that meets a new rule may have been composed a fortnight before that
+    rule existed; a handset is allowed to be that far behind the server. A 422 is not queued by the
+    web's ``saveOrQueue`` and is not retried by Android's ``syncOutbox``
+    (``WorkshopRepository.isTransient`` answers false for every 4xx but 401/408/429). Nor does the
+    skew escape hatch catch it: ``apiRefusal`` sets ``schemaSkew`` only for a 422 whose ``detail``
+    carries pydantic's ``extra_forbidden``, and a ``ValueError`` out of this function is a
+    ``value_error``, so the entry is filed as REFUSED-ON-A-PERSON and ``blocksRetry`` parks it. What
+    the designer is then offered in the outbox tray is "Try again", which replays the identical bytes
+    and is refused identically, and "Throw away". The record and the photographs staged beside it are
+    stuck, not delayed.
+
+    WHAT TO DO INSTEAD WITH SOMETHING NEWLY WRONG: degrade it in :func:`provenance_of_marker`, which
+    already turns anything unreadable into :data:`UNRECORDED` and never into ``TYPED``, and tell the
+    client author somewhere that is not a 422 on a researcher's filled-in form. The boundary refuses
+    what it refused on the day the key became sendable, and nothing more.
+
+    ── OPEN KEYS, CLOSED VALUES ──────────────────────────────────────────────────────────────────
+
+    A key inside a marker that is not in :data:`MARKER_FACT_KEYS` is IGNORED, not refused, and it is
+    the one accept-and-drop deliberately left here. A marker is echoed back VERBATIM as the endpoint
+    handed it out, so a server that later adds a key to :meth:`MeasurementProvenance.marker` would
+    otherwise 422 every client echoing it at an older instance mid-deploy — a version skew that
+    breaks saves for a reason no researcher can act on. The VALUES of the keys this system does
+    define are closed: each either lands in the stamp or is refused here, and none is silently
+    dropped at the boundary.
+    """
+    allowed_fields = ", ".join(sorted(DIMENSION_FIELDS))
+    if not isinstance(markers, Mapping):
+        return [
+            f"{MARKER_BODY_KEY} must be an object keyed by dimension name, such as "
+            '{"lengthInches": {"method": "TYPED"}}.'
+        ]
+
+    present = {field for field in (present_fields or ()) if field in DIMENSION_FIELDS}
+    known_methods = {m.value for m in MeasurementMethod}
+    problems: list[str] = []
+
+    for field in sorted(markers):
+        marker = markers[field]
+        where = f"{MARKER_BODY_KEY}.{field}"
+
+        # ENUMERATED FIRST, because every check under this one reads the marker as a statement ABOUT
+        # a documented dimension, and there is no such statement to make about ``materialCost``.
+        # Left to ``method_stamps`` this is a silent drop; refused here it names the three columns a
+        # method may describe, which is the whole answer a client author needs.
+        if field not in DIMENSION_FIELDS:
+            problems.append(
+                f"{MARKER_BODY_KEY} names {field}, which is not a documented dimension. A "
+                f"measurement method may only describe {allowed_fields}."
+            )
+            continue
+
+        if not isinstance(marker, Mapping):
+            problems.append(
+                f"{where} must be an object stating a method, such as "
+                '{"method": "TYPED"} for a number somebody typed.'
+            )
+            continue
+
+        raw_method = marker.get("method")
+        if not isinstance(raw_method, str) or raw_method not in known_methods:
+            # Case-sensitive, for the reason :func:`provenance_of_marker` gives: accepting "typed"
+            # would turn an unrecognised token into an assertion about how somebody measured
+            # something. Refused here it costs the client one corrected string instead.
+            problems.append(
+                f"{where} states a measurement method this server does not know: {raw_method!r}. "
+                f"Send one of {', '.join(sorted(known_methods))}."
+            )
+            continue
+        method = MeasurementMethod(raw_method)
+
+        # A METHOD IS A STATEMENT ABOUT A NUMBER, SO THE NUMBER HAS TO BE IN THE SAME REQUEST.
+        # ``merge_field_provenance`` narrows the stamps to the columns the save is writing, so a
+        # marker for a dimension this body does not carry describes nothing that is happening here
+        # and is dropped — after the designer pressed Accept on it.
+        #
+        # NOTE WHAT THIS DOES NOT REFUSE: a dimension sent with an UNCHANGED value. That key is
+        # present, so it passes here, and the changed-fields loop inside ``merge_field_provenance``
+        # is what declines to re-stamp it. That is the anti-laundering rule and it belongs there,
+        # where the stored row is in scope; a schema cannot see the stored row and must not pretend
+        # to.
+        if field not in present:
+            problems.append(
+                f"{where} states how {field} was measured, but this request sends no value for "
+                f"{field}. Send the measurement in the same request, or leave the method out."
+            )
+            continue
+
+        technique = marker.get("technique")
+        if technique is not None:
+            if technique not in GEOMETRY_TECHNIQUES:
+                problems.append(
+                    f"{where} names a photo-measurement technique this server does not know: "
+                    f"{technique!r}. Send {' or '.join(sorted(GEOMETRY_TECHNIQUES))}, or leave "
+                    f"technique out."
+                )
+            elif method is not MeasurementMethod.PHOTO_GEOMETRY:
+                # Stored, this puts ``methodTechnique: "SCALE"`` beside ``method: "VISION_MODEL"``
+                # in an audit trail: a geometry that did not happen, asserted next to the method
+                # that did. Nothing in this repository composes that — ``vision_model_provenance``
+                # never sets a technique, and the offline path sets one only with PHOTO_GEOMETRY.
+                problems.append(
+                    f"{where} carries a technique on a {method.value} reading, and a technique says "
+                    f"how a PHOTO_GEOMETRY measurement was derived. Leave it out unless the method "
+                    f"is PHOTO_GEOMETRY."
+                )
+
+        # AN EXPLICIT NULL IS AN ABSENCE, NOT A CLAIM, so only a value that is present and
+        # unreadable is refused — the honest-unknown rule :func:`self_reported_confidence` states,
+        # applied to the refusal rather than to the parse. ``payload()`` sends this key as null when
+        # the model reported no confidence, so a client relaying the server's own answer must not be
+        # refused for it.
+        if marker.get(MARKER_CONFIDENCE_KEY) is not None and (
+            self_reported_confidence(marker, key=MARKER_CONFIDENCE_KEY) is None
+        ):
+            problems.append(
+                f"{where} carries a {MARKER_CONFIDENCE_KEY} this server cannot read: "
+                f"{marker.get(MARKER_CONFIDENCE_KEY)!r}. Send a number from 0 to 1, or leave the "
+                f"key out."
+            )
+
+    return problems
 
 
 def method_stamps(markers: Any, *, fields: Any = None) -> dict[str, dict[str, Any]]:

@@ -1,0 +1,33 @@
+# Parity fixtures — SHA-256 of the DECOMPRESSED bytes, which is what the engine sees.
+#
+# The .gz is NOT hashed: DEFLATE compression is not reproducible between implementations, so a
+# hash of the compressed file would go red for a reason that has nothing to do with the pixels.
+# engine/pngEncoder.ts:19-22 draws the same distinction about its own encoder and says what the
+# parity fixtures compare: "the decoded image, which is exact".
+#
+# Regenerate:  node e2e/fixtures/trace-parity/make-fixtures.mjs   (from frontend/)
+# Verified by: e2e/trace-parity-unit.spec.ts on load, and the Android half MUST do the same
+#              before it traces — see that spec's ANDROID CONTRACT section.
+#
+# <sha256 of raw RGBA>  <file>  <width>x<height>  <raw bytes>
+
+# The oracle's own disc. One closed outline whose bounding box is arithmetic.
+884db495e317ccd5ce5dd675c84a097b4c761167a3a581e8bcd9304d49212bd2  disc-256x192.rgba.gz  256x192  196608
+
+# The oracle's preview input: large enough that a 256 px preview really scales.
+d79ae52ac3941ffc0d88840573c778de7ef2b378e8fea926541c2bc74e9c7a03  disc-1024x768.rgba.gz  1024x768  3145728
+
+# An empty sheet. Every stage below the edge detector gets an empty mask.
+c1f7d702a80ae5e7dc52d62ef2577cbbb25c045d6dda3a49a872130518f48cc0  blank-256x192.rgba.gz  256x192  196608
+
+# A photographed sketch: tilted sheet, illumination ramp, drawn strokes. From e2e/fixtures/sketch-on-table.png (1600x1200, 8-bit grey, non-interlaced), halved twice with integer 2x2 box averages.
+e54aa36cd6c1aedc6639a3714cb9328f8c8101380baf37eec56569078bf16125  sketch-photo-400x300.rgba.gz  400x300  480000
+
+# Pathological: opaque black everywhere. No background, so every threshold degenerates.
+4d856b7a9008759aff68a0d1cde95b895fb952761719549f339d00d6eda9f543  all-black-320x240.rgba.gz  320x240  307200
+
+# Pathological: one mid-grey pixel, smaller than every kernel the pipeline convolves with.
+79dfad351f79ef0e65a11fff0a9ed44bf628f9390ff06b92ee4ee5e2477616ea  one-pixel-1x1.rgba.gz  1x1  4
+
+# Pathological aspect (682:1) with a 1 px rule and two 1 px columns.
+ad3ac416ddd368dbe0c658ad2e4d71160ac152414a6884cc1bd2dffdd6bb8152  hairline-2048x3.rgba.gz  2048x3  24576

@@ -47,6 +47,7 @@ import {
   canManageWorkshops,
   canReview,
   canRunDesignWorkshops,
+  canSeeDataTile,
   isAdmin,
   roleLabel
 } from "@/lib/permissions";
@@ -384,8 +385,33 @@ function DashboardView() {
     // volunteer contributes.
     { label: "Questionnaire", icon: ClipboardList, newHref: "/questionnaire?new=1", updateHref: "/questionnaire", newLabel: "New interview" },
     { label: "Miscellaneous Media", icon: Images, newHref: "/media", newLabel: "Upload" },
-    // Reading is never gated: without dataset access the tile leads to Browse records instead.
-    { label: "View Data", icon: Eye, newHref: canDownloadDataset(user) ? "/data" : "/search", newLabel: "Open" },
+    /*
+      THE DESTINATION FORKS ON THE GRANT; WHETHER THE TILE IS DRAWN AT ALL FORKS ON THE TIER, AND
+      THOSE ARE TWO DIFFERENT QUESTIONS.
+
+      `canDownloadDataset(user) ? "/data" : "/search"` has always been right about WHERE: a reader
+      without dataset access is sent to Browse records rather than at a padlock. What was missing was
+      any answer to WHETHER — the tile was drawn for every signed-in account, including the tiers the
+      "View Data" MENU ROW has always refused (`NAV_ITEMS` gates it on `canDownloadDataset`), so the
+      dashboard and the menu disagreed outright about one destination. The owner reported it from the
+      designer's side: "for designers, view data card should not be there, it is only for admins,
+      master admins, professors, and researchers."
+
+      `canSeeDataTile` IS THOSE FOUR TIERS AND IS A SET, NOT A RANK FLOOR — DESIGNER(35) and
+      INSPECTOR(37) sit inside the Researcher-and-above range and are both out. Its own doc block
+      carries the argument, including why a designer holding an explicit dataset grant keeps the menu
+      row and the URL and still gets no tile.
+
+      NOTHING HERE IS A ROUTE GUARD. `/data` keeps `canDownloadDataset`; `/search` stays open to
+      every signed-in account because its endpoints are, and `ROUTE_GUARDS` is unchanged.
+    */
+    {
+      label: "View Data",
+      icon: Eye,
+      newHref: canDownloadDataset(user) ? "/data" : "/search",
+      newLabel: "Open",
+      visible: canSeeDataTile(user)
+    },
     // The two web-only reading surfaces, which had no entry point anywhere and were reachable only
     // by typing the URL. They sit here, after View Data, because all three answer "show me what is
     // already in the repository" — and a feature a researcher cannot find is a feature that was not

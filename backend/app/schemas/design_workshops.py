@@ -16,11 +16,12 @@ the envelope around it.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, model_validator
 
 from app.schemas.common import APIModel
+from app.schemas.design_workshop_viewers import MAX_DESIGN_WORKSHOP_VIEWERS
 from app.services.ai_layers import MAX_SOURCE_TEXT_CHARS as _MAX_SOURCE_TEXT_CHARS
 from app.services.custom_sections import (
     MAX_CUSTOM_DESCRIPTION_CHARS,
@@ -105,11 +106,16 @@ class DesignWorkshopCreate(APIModel):
     # grantees to print on a ministry document — and a guess is worse than the defect it replaces,
     # because the defect is at least consistent.
     #
-    # SINGULAR, DELIBERATELY. Stage 1 and stage 3 declare exactly ONE designer block — one
-    # ``designerName``, one ``designerProfile``, one signature — so a list here would inherit the
-    # unanswerable question rather than answer it. The second and third designers are added through
-    # the viewers panel exactly as they are today; making the block repeatable is a registry change
-    # and the owner's call.
+    # SINGULAR, DELIBERATELY, AND IT STAYED SINGULAR WHEN THE WORKSHOP GAINED MANY DESIGNERS —
+    # see ``designerUserIds`` below, which is the plural one. Stage 1 and stage 3 declare exactly
+    # ONE designer block — one ``designerName``, one ``designerProfile``, one signature — and
+    # ``report_meta`` feeds ``record.designerName`` into the .docx's ``dc:creator``, a field the
+    # file format cannot express as a list. So THIS field answers "whose profile is copied and
+    # whose name is on the cover", which has exactly one answer, and the new one answers "who may
+    # open this workshop", which has several. Making the stage-1 block repeatable is a registry
+    # change — it moves ``registry_version()``, which stales every handset's bundled schema asset
+    # and moves every existing workshop's completeness — and it is the owner's call, not this
+    # field's.
     #
     # OPTIONAL, AND ABSENT MEANS "UNCHANGED". A workshop is opened in a room on day one and the
     # admin may genuinely not know yet who will run it; the offline create path cannot reach the
@@ -129,6 +135,64 @@ class DesignWorkshopCreate(APIModel):
         description=(
             "The designer this workshop is FOR. Their DesignerProfile is copied into stage 1 and "
             "stage 3, and they are granted access in the same call. Omit if not yet known."
+        ),
+    )
+    # ── EVERY DESIGNER WHO MAY OPEN THIS WORKSHOP ────────────────────────────────────────────────
+    #
+    # THE ASK THIS ANSWERS, verbatim: "Designer this workshop is for should be a multi-select
+    # dropdown with searchable functionality … the design workshop would only be visible to those
+    # particular designers, admins and master admins would be able to see all the design workshops."
+    #
+    # THE SECOND HALF OF THAT SENTENCE IS ALREADY THE SHIPPED RULE AND NOTHING HERE CHANGES IT. A
+    # design workshop is already visible only to its creator, to admins, and to whoever holds a
+    # ``DesignWorkshopViewer`` row — enforced IN THE QUERY on the list
+    # (``visible_to_clause``) and IN THE LOAD on the single read (``load_workshop_or_404``), with the
+    # refusal spelled 404 "Record not found" so it cannot be told apart from an id that does not
+    # exist. A DESIGNER cannot create a workshop at all (``assert_can_create_design_workshops`` is
+    # ``is_admin``), so ``createdById`` never matches for them and a designer sees EXACTLY the
+    # workshops they hold a row on. This field is therefore not a new access rule; it is the missing
+    # way to write the rows at the moment the workshop is opened, instead of the admin having to
+    # remember the viewers panel afterwards.
+    #
+    # WHY NO NEW TABLE, WHICH IS THE CHANGE THAT WAS DESIGNED AND REJECTED. A
+    # ``DesignWorkshopDesigner`` join table mirroring ``DesignWorkshopViewer`` would be a SECOND
+    # SOURCE OF ACCESS — the thing ``DesignWorkshopViewer``'s own schema comment forbids by name
+    # ("Do not add a predicate that reads it: that is the 'two places to look when somebody has
+    # access they should not'"). Viewer membership is consulted from at least six places, and one of
+    # them — ``questionnaire_forms._visible_questionnaire_where`` — spells ``viewers: {some: …}`` BY
+    # HAND rather than importing the clause. A second table needs a second arm in every one of them,
+    # and the hand-written one is the arm somebody misses: the symptom would be a co-designer who
+    # can open the workshop and finds its questionnaire list empty. So the multi-select writes the
+    # table that already decides this question.
+    #
+    # RELATIONSHIP TO ``designerUserId`` ABOVE, WHICH IS UNCHANGED IN MEANING: that one names the
+    # LEAD — whose ``DesignerProfile`` is copied into stage 1 and stage 3 and whose name reaches the
+    # report cover and the .docx ``dc:creator``. This one names the whole team, LEAD INCLUDED, and
+    # decides nothing about the report. Sending both is the normal case. Sending only this one is
+    # legal: the first id becomes the lead, because a client that ticked names and named no lead
+    # still has to get a profile seeded and the alternative is seeding the ADMIN's, which is the
+    # defect ``designerUserId`` exists to end.
+    #
+    # OPTIONAL, AND IT MUST STAY OPTIONAL FOREVER. An APK a fortnight behind sends ``designerUserId``
+    # alone, or neither; ``APIModel`` forbids unknown keys but says nothing about absent ones, so
+    # both bodies behave exactly as they did before this field existed. That is not politeness — on
+    # Android ``saveOrQueue`` will NOT re-queue a 4xx, so a create the server refuses is a create
+    # whose record is LOST. Narrowing this body (making either field required, or dropping the
+    # singular one) would destroy fieldwork on every handset that had not updated.
+    #
+    # CAPPED BY THE SAME CONSTANT THE VIEWERS PUT USES, imported rather than restated. The two
+    # writes land in one table; a create that accepted a set the viewers screen would refuse — or
+    # the reverse — is the same list with two rules. The cap also bounds real work rather than
+    # merely tidying the wire: the route reads every named account out of the user table, the
+    # designer roster and the access roster BEFORE it writes anything, so an uncapped list would let
+    # one caller choose how much work the server does.
+    designerUserIds: list[Annotated[str, Field(max_length=64)]] | None = Field(
+        default=None,
+        max_length=MAX_DESIGN_WORKSHOP_VIEWERS,
+        description=(
+            "Every designer this workshop is for, the lead included. Each is granted access in "
+            "this same call, and the workshop is visible to them and to admins and nobody else. "
+            "Omit if not yet known."
         ),
     )
     craftName: str | None = Field(default=None, max_length=160)

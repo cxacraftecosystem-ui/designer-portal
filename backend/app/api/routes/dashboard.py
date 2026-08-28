@@ -85,11 +85,21 @@ async def dashboard_stats(current_user: Any = Depends(get_current_user)) -> dict
     # counted TWICE each — once for the total, once for the PENDING subset — so a single
     # ``group_by`` over `status` answers both questions in one trip and removes four reads outright.
     # What remains is mutually independent, and goes out together. Measured against production data:
-    # 10.1s sequential -> 7.8s from the grouping alone -> 950ms once gathered.
+    # 10.1s sequential -> 7.8s from the grouping alone -> 950ms once gathered. THAT 950 ms WAS
+    # MEASURED BEFORE THE `mine` HALF WAS ADDED and is not a figure for the wave as it now stands;
+    # nothing has re-measured it since, and it should not be quoted as if it had.
     #
-    # The `mine` half rides the SAME wave rather than a second one. It is four more group_bys and two
-    # more counts against indexed owner columns, all independent of everything else here, so it adds
-    # rows to the one round trip instead of adding a round trip.
+    # THE `mine` HALF IS A SECOND WAVE, NOT MORE ROWS IN THE FIRST — and this comment used to claim
+    # the opposite. The unpack below is SIXTEEN coroutines and ``gather_reads`` is bounded by
+    # ``pool_width()`` (``concurrency.py``), which is ``DATABASE_CONNECTION_LIMIT`` = 10
+    # (``core/config.py``). Sixteen against a bound of ten takes the SEMAPHORE branch, so ten reads
+    # go out, and the remaining six follow as they free up: two waves, ~2 x 694 ms, not one. It is
+    # still far better than the fourteen sequential reads it replaced, and the six are still
+    # independent of everything else here — what is false is "instead of adding a round trip".
+    #
+    # To make it one wave again, either narrow the unpack below ten or lower the `mine` half onto a
+    # cache; do not raise ``DATABASE_CONNECTION_LIMIT`` to fit it, which is the mistake the 40 -> 10
+    # cut recorded in ``core/config.py`` was reverting.
     grouped = (db.artisan, db.workshop, db.productdocumentation, db.tooldocumentation)
 
     def pending(where: dict[str, Any]) -> dict[str, Any]:

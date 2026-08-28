@@ -10,6 +10,7 @@ import {
   markSigmaForDisplayScale,
   measureByRectification,
   measureBySameScale,
+  methodMarker,
   propagateUncertainty,
   roundToUncertainty,
   solveHomography,
@@ -683,5 +684,65 @@ test.describe("photoMeasure — units", () => {
     // A registry field declaring `unit="hands"` must not have a centimetre figure written into it.
     expect(convertLength(1, "cm", "hands" as never)).toBeNull();
     expect(convertLength(1, "furlong" as never, "cm")).toBeNull();
+  });
+});
+
+/**
+ * The marker is the only thing in this module that another system PARSES rather than reads, so these
+ * are string tests and they are meant to be. `backend/app/services/measurement_provenance.py` matches
+ * `method` against a Python enum and `technique` against `GEOMETRY_TECHNIQUES`, and a marker that
+ * misses either is not rejected — `provenance_of_marker` degrades it to `UNRECORDED`, silently and by
+ * design, because failing a designer's save over a provenance hint would trade a real loss for a
+ * cosmetic one. So a typo here does not break a build or a request. It writes "nobody recorded a
+ * method" onto a dimension that was in fact measured, for ever, and the only thing standing between
+ * that and production is an assertion on the literal spelling.
+ */
+test.describe("photoMeasure — how the answer describes itself", () => {
+  test("a scale measurement is PHOTO_GEOMETRY by the SCALE technique", () => {
+    const result = measureBySameScale({
+      reference: { from: { x: 100, y: 100 }, to: { x: 300, y: 100 }, length: 100, unit: "mm" },
+      target: { from: { x: 100, y: 400 }, to: { x: 500, y: 400 } }
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Both keys, both spellings, and the whole object — an extra key would reach the provenance blob
+    // and be stored beside a dimension for the life of the record.
+    expect(methodMarker(result)).toEqual({ method: "PHOTO_GEOMETRY", technique: "SCALE" });
+  });
+
+  test("a rectified measurement is the SAME method and a different technique", () => {
+    const imaged = projectAll(TILT, A4_CORNERS);
+    const [targetFrom, targetTo] = projectAll(TILT, [
+      { x: 30, y: 40 },
+      { x: 150, y: 140 }
+    ]);
+    const result = measureByRectification({
+      corners: [imaged[0], imaged[1], imaged[2], imaged[3]],
+      rectangle: A4,
+      target: { from: targetFrom, to: targetTo }
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // THE POINT OF THE PAIR: four corners and two marks are the same KIND of number to whoever reads
+    // the record — arithmetic over marks a person placed — and differ only for somebody re-deriving
+    // it. That is why the server carries a separate `technique` key instead of two more enum members,
+    // and a change that promoted RECTIFIED to its own `method` would break this test first.
+    expect(methodMarker(result)).toEqual({ method: "PHOTO_GEOMETRY", technique: "RECTIFIED" });
+  });
+
+  test("the marker carries the method and nothing about how well it was measured", () => {
+    const result = measureBySameScale({
+      reference: { from: { x: 100, y: 100 }, to: { x: 300, y: 100 }, length: 100, unit: "mm" },
+      target: { from: { x: 100, y: 400 }, to: { x: 500, y: 400 } }
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.uncertainty).toBeGreaterThan(0);
+    // `uncertainty` IS a propagated error bar, and `measurement_provenance.py` keeps a hard
+    // `confidenceIsCalibrated: false` beside the vision model's number precisely so the two can never
+    // be mistaken for each other on a wire that carries both. Putting this one on the marker would
+    // land a real error bar in the same key an uncalibrated self-report arrives under. It is spent on
+    // screen instead, before the accept, because the registry has no column for it.
+    expect(Object.keys(methodMarker(result)).sort()).toEqual(["method", "technique"]);
   });
 });

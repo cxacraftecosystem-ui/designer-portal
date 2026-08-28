@@ -38,14 +38,17 @@ import type { UserRole } from "@/lib/types";
  *
  * So the ORDER and the NAMES come from `ROLES_BY_RANK` / `ROLE_LABELS`, the COUNT in the heading and
  * the `aria-label` is spelled from `TIERS_LOW_TO_HIGH.length` (see `NUMBER_WORD`), and only the
- * sentence of copy for each tier lives here. Typed as `Record<UserRole, string>`, an eighth tier
- * added to `UserRole` fails `tsc` in this file until somebody writes its line.
+ * sentence of copy for each tier lives here. Typed as `Record<UserRole, string>`, a NINTH tier
+ * added to `UserRole` fails `tsc` in this file until somebody writes its line — ninth and not
+ * eighth since 2026-08-27, because INSPECTOR landed that day and is already written in below.
  *
  * THE FIRST DRAFT OF THIS REWRITE DERIVED THE ROWS AND LEFT THE COUNT WRITTEN OUT BY HAND, in the
  * heading and the `aria-label`, under this same paragraph promising the miscount was now a build
  * error. It was not: writing the one missing `TIER_COPY` line would have satisfied `tsc` and shipped
  * a headline reading "Seven tiers" over eight rows — which is, word for word, the defect this file
- * was opened to fix ("Six tiers, and each one inherits the last."). `lib/permissions.ts` carries a
+ * was opened to fix ("Six tiers, and each one inherits the last."). That hypothetical became the
+ * real case on 2026-08-27 when INSPECTOR (rank 37) landed: the heading followed the array by
+ * itself, and the only hand-written thing this file needed was the sentence of copy below. `lib/permissions.ts` carries a
  * correction for the same genre one directory away: a hand-check dressed as a guarantee is worse
  * than no claim, because the next reader stops checking.
  *
@@ -78,6 +81,12 @@ const TIER_COPY: Record<UserRole, string> = {
     "Create artisans, products, processes, tools and interviews; edit your own and review the tiers below.",
   DESIGNER:
     "Run design & prototype workshops and sign the report — the stages, the custom sections, the AI layers, the exports.",
+  // The one row whose sentence has to say what the tier is NOT, because the label alone reads like a
+  // promotion and it is not one. An inspector outranks a designer for REVIEW and is outside the set
+  // that runs a workshop — deliberately, and the paragraph below this ladder already tells a reader
+  // that running a workshop is the one power the ladder does not carry upwards.
+  INSPECTOR:
+    "Inspect and review a designer's records — approve, reject, send back. Does not run workshops and does not rewrite a designer's record.",
   PROFESSOR: "Crafts, workshops, the questionnaire builder, promotions, full dataset download.",
   ADMIN: "Settings hub, task assignment, workshop access grants, accounts.",
   MASTER_ADMIN: "Everything, plus managed API keys and global app settings."

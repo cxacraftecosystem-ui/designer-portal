@@ -103,9 +103,12 @@ class DwMediaCapCeilingTest {
         assertEquals(200, DW_DEFAULT_MAX_ITEMS)
         assertEquals(DW_DEFAULT_MAX_ITEMS, dwEffectiveMaxItems(0))
         assertEquals(DW_DEFAULT_MAX_ITEMS, dwEffectiveMaxItems(-3))
-        // A declared ceiling wins, in both directions: the two motif galleries cap DOWN at 20, and a
-        // field that one day declares more than the default must get what it declared.
+        // A declared ceiling wins, in both directions: the two motif galleries cap DOWN — at 25
+        // since the owner's instruction of 2026-08-27, and at 20 before it, which is why the number
+        // below is a literal argument rather than a read of the registry — and a field that one day
+        // declares more than the default must get what it declared.
         assertEquals(20, dwEffectiveMaxItems(20))
+        assertEquals(25, dwEffectiveMaxItems(25))
         assertEquals(500, dwEffectiveMaxItems(500))
     }
 

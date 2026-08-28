@@ -770,6 +770,21 @@ _MAX_PRICE_BANDS = 6
 FIGURES: dict[str, tuple[str, str]] = {
     "OUTPUT_COUNTS": ("WORKSHOP_OUTCOMES", "_chart_output_counts"),
     "PROTOTYPE_STATUS": ("WORKSHOP_OUTCOMES", "_chart_prototype_status"),
+    # THE SURVEY IS THE STAGE THAT COLLECTS A DISTRIBUTION, and until these two entries existed it
+    # owned no figure — it reached the reader as a table of rows and nothing else, while stage 9's
+    # price bands, SWOT and design direction all cite it as their evidence.
+    #
+    # PLACED BY OWNERSHIP, NOT BY A TEMPLATE EDIT. ``_charts_for`` matches a stage section against
+    # this table's second column and ``TemplateSection.include_figures`` defaults to True, so naming
+    # the stage here is the whole of the placement. Counted 2026-08-28 over ``report_templates
+    # .TEMPLATES``: of the six templates, four carry a ``MARKET_SURVEY_CAPTURE`` section and all four
+    # leave ``include_figures`` at its default (DCH_STANDARD, DIC_STANDARD, IMPLEMENTING_AGENCY —
+    # where it is Annexure C — and DETAILED_TECHNICAL), so all four gain both figures with no edit to
+    # ``report_templates`` and no move of the by-value ``report_templates_pin.json`` fixture. The two
+    # that do not print the stage — COMPACT_SUMMARY and the buyer-facing PHOTO_CATALOGUE — gain
+    # nothing, which is right for the catalogue for the reason its cost section already gives.
+    "SURVEY_RESPONDENTS": ("MARKET_SURVEY_CAPTURE", "_chart_survey_respondents"),
+    "SURVEY_PRICE_EXPECTATIONS": ("MARKET_SURVEY_CAPTURE", "_chart_survey_price_expectations"),
     "COST_BY_HEAD": ("COSTING_MARKET_LINKAGE", "_chart_cost_by_head"),
     "PRICE_BANDS": ("COSTING_MARKET_LINKAGE", "_chart_price_bands"),
     "ADOPTION": ("POST_WORKSHOP_FOLLOWUP", "_chart_adoption"),
@@ -2330,6 +2345,129 @@ class ReportBuilder:
             series=tuple((label, float(count)) for label, count in tally.items()),
             title="Prototypes by review decision",
             caption=f"{sum(tally.values())} prototype(s) reviewed.",
+        )
+
+    def _survey_responses(self) -> list[dict[str, Any]]:
+        """Stage 8's response rows. One accessor so both survey figures read the same set."""
+        return self.data.rows("MARKET_SURVEY_CAPTURE", "surveyResponse")
+
+    def _unentered_responses(self) -> int:
+        """How many responses the summary CLAIMS were collected beyond the rows actually entered.
+
+        ``surveySummary.responsesCollected`` is a number the designer types; the rows beneath it are
+        what they entered. The two disagree routinely and legitimately — a hundred people answered
+        in a market, twelve were written up — and a figure drawn from the twelve is a figure about
+        twelve people. Stating the gap in the caption is the whole difference between "this is what
+        the survey found" and "this is what was typed in", and a reader cannot recover it from the
+        picture. Zero when the summary states nothing, or states no more than the rows carry: a
+        stated count BELOW the row count is the designer's number being stale, not work skipped, so
+        it is not reported as a gap.
+        """
+        stated = _as_number(self.data.value("MARKET_SURVEY_CAPTURE", "responsesCollected"))
+        if stated is None or stated < 0:
+            return 0
+        return max(0, int(stated) - len(self._survey_responses()))
+
+    def _chart_survey_respondents(self) -> ChartBlock | None:
+        """Who the survey actually asked: stage 8's responses tallied by respondent group.
+
+        THE FIRST FIGURE DRAWN FROM THE SURVEY, and it answers the question the survey table raises
+        and never answers — thirty rows of free text, and no way to see that twenty-six of them are
+        consumers and the retailer view rests on one person. Every later stage leans on this stage:
+        stage 9's price bands, its SWOT and its design direction all cite "the survey".
+
+        REGISTRY ORDER, NOT COUNT ORDER, for ``_chart_adoption``'s reason one step further on.
+        ``RESPONDENT_GROUP`` is declared consumer first, then the trade (retailer, wholesaler,
+        exporter), then the makers, then the institutions — so the same picture has the same shape in
+        every report and two workshops can be compared by eye. Sorting by count would reshuffle the
+        axis for every workshop, which is the one property that makes that comparison possible.
+        Tokens the registry does not know are printed after it, in the order they were met, rather
+        than dropped — a phone one release ahead can store one, and ``enum_label`` already prefers
+        the raw token to failing an export a designer is waiting on in the field.
+
+        A GROUP NOBODY SURVEYED IS ABSENT, NOT ZERO. "Exporter 0" beside four real bars is read as
+        "exporters were asked and had nothing to say"; what the record says is that none were met.
+        """
+        entity = self._entity("MARKET_SURVEY_CAPTURE", "surveyResponse")
+        spec = entity.field("respondentGroup") if entity else None
+        if spec is None:
+            return None
+        from app.services.stage_schema import ENUMS
+
+        known = list(ENUMS.get(spec.enum, {}))
+        tally: dict[str, int] = {}
+        unstated = 0
+        for row in self._survey_responses():
+            token = clean_text(row.get("respondentGroup")).strip()
+            if not token:
+                unstated += 1
+                continue
+            tally[token] = tally.get(token, 0) + 1
+        # Registry order first, then anything stored that the registry has never heard of, in the
+        # order it was met — ``dict`` preserves insertion, so ``tally`` IS that order.
+        order = [t for t in known if t in tally] + [t for t in tally if t not in known]
+        series = [(enum_label(spec.enum, token), float(tally[token])) for token in order]
+        if len(series) < MIN_CHART_CATEGORIES:
+            return None
+        plotted = sum(tally.values())
+        caption = f"{plotted} response(s) plotted, from the rows entered at this workshop."
+        # EVERY ROW THIS FIGURE DID NOT COUNT IS NAMED. A tally that quietly stops short is
+        # indistinguishable from a survey that reached fewer people than it did.
+        if unstated:
+            caption += f" {unstated} more recorded no respondent group and could not be plotted."
+        unentered = self._unentered_responses()
+        if unentered:
+            caption += (
+                f" The survey summary states {plotted + unstated + unentered} response(s) "
+                f"collected, so {unentered} were never entered as rows and are in no figure here."
+            )
+        return ChartBlock(
+            kind=ChartKind.HORIZONTAL_BAR,
+            series=tuple(series),
+            title="Survey responses by respondent group",
+            unit="responses",
+            caption=caption,
+        )
+
+    def _chart_survey_price_expectations(self) -> ChartBlock | None:
+        """What the people surveyed said they would pay, banded.
+
+        DELIBERATELY NOT ``PRICE_BANDS``, which bins the ``expectedPrice`` on stage 17's cost
+        sheets — what the workshop means to charge. This bins stage 8's ``priceExpectation`` — what
+        a buyer standing in a market said they would pay. The gap between the two pictures is the
+        single most useful thing this report can show a designer, and it only exists because they
+        are two figures rather than one merged distribution. Their titles say which is which; both
+        carry the count their band heights are built from.
+
+        Through ``_price_bands``, the same binner stage 17's figure uses, so the two are comparable
+        band for band. A MONEY value reaches this builder as a fixed-2 decimal STRING and never as a
+        number: ``stage_schema.coerce_value`` stores ``f"{checked:.2f}"`` so the value survives the
+        JSON round trip without picking up a binary-float artefact (1250.10 coming back as
+        1250.0999999999999). ``_as_number`` parses it and rejects NaN, the infinities and ``bool``.
+        """
+        responses = self._survey_responses()
+        prices: list[float] = []
+        for row in responses:
+            amount = _as_number(row.get("priceExpectation"))
+            if amount is not None and amount > 0:
+                prices.append(amount)
+        bands = _price_bands(prices)
+        if len(bands) < MIN_CHART_CATEGORIES:
+            return None
+        caption = (
+            f"{len(prices)} of {len(responses)} response(s) stated a price expectation, in rupees."
+        )
+        unentered = self._unentered_responses()
+        if unentered:
+            caption += (
+                f" A further {unentered} response(s) the summary counts were never entered as rows."
+            )
+        return ChartBlock(
+            kind=ChartKind.BAR,
+            series=tuple(bands),
+            title="What respondents said they would pay",
+            unit="responses",
+            caption=caption,
         )
 
     def _chart_cost_by_head(self) -> ChartBlock | None:

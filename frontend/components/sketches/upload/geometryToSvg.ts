@@ -101,7 +101,16 @@ function num(v: number, precision: number): string {
   return s === "-0" ? "0" : s;
 }
 
-function sanitizeDimension(v: number): number {
+/**
+ * A canvas dimension every writer can use, whatever the worker sent.
+ *
+ * EXPORTED FOR `geometryToDocument.ts`, WHICH FEEDS THE ENGINE'S OWN WRITERS. Those writers guard with
+ * `Math.max(1, doc.width)`, and `Math.max(1, NaN)` is `NaN` — so a document whose size never became a
+ * number reaches a PDF's `/MediaBox` as `0.0` and the file opens empty. One rule for "what counts as a
+ * usable dimension" is what keeps the SVG this module writes and the PDF the engine writes agreeing
+ * about the page they are drawing on.
+ */
+export function sanitizeDimension(v: number): number {
   if (!Number.isFinite(v) || v <= 0) return 1;
   return v > MAX_COORD ? MAX_COORD : v;
 }
@@ -268,13 +277,28 @@ export function buildSvg(input: SvgInput, options: SvgOptions = {}): SvgResult {
   return {
     svg: out.join("\n"),
     shapesWritten: limit,
-    truncationNote:
-      shapeCount > limit
-        ? `This drawing has ${shapeCount.toLocaleString("en-IN")} separate paths and the file holds the ` +
-          `first ${limit.toLocaleString("en-IN")}. Raise “Minimum speck” or “Simplify” and trace again ` +
-          "to get a drawing that fits."
-        : null
+    truncationNote: truncationNoteFor(shapeCount, limit)
   };
+}
+
+/**
+ * The one sentence a designer is shown when {@link MAX_SHAPES_PER_FILE} cut a drawing short.
+ *
+ * ONE SENTENCE, NOT ONE PER FORMAT. Every writer this feature offers caps at the same ceiling, and
+ * five formats each phrasing the cut differently would read as five different faults — so
+ * `geometryToDocument.ts` calls this rather than writing its own. §1.10 of the frontend contract: a
+ * list that quietly stops is indistinguishable from a place with no records, and the same is true of
+ * a drawing that quietly stops.
+ *
+ * @returns the sentence, or null when nothing was dropped.
+ */
+export function truncationNoteFor(shapeCount: number, shapesWritten: number): string | null {
+  if (shapeCount <= shapesWritten) return null;
+  return (
+    `This drawing has ${shapeCount.toLocaleString("en-IN")} separate paths and the file holds the ` +
+    `first ${shapesWritten.toLocaleString("en-IN")}. Raise “Minimum speck” or “Simplify” and trace again ` +
+    "to get a drawing that fits."
+  );
 }
 
 /**

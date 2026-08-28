@@ -59,6 +59,7 @@ from app.core.deps import (
     role_value,
 )
 from app.schemas.tasks import TaskBatchCreate, TaskCreate, TaskUpdate
+from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import clean_data, contains, public_encode
 
@@ -617,21 +618,32 @@ def is_overdue(task: Any) -> bool:
     return due < datetime.now(UTC)
 
 
+async def _none() -> list[Any]:
+    """An awaitable empty list, so a skipped read keeps its slot in a ``gather_reads`` wave.
+
+    Same reason as ``questionnaire._zero`` and ``map_points._none``: the wave returns positionally,
+    so a read that turns out to have nothing to look up cannot simply be dropped without renumbering
+    the unpack beside it.
+    """
+    return []
+
+
 async def load_scope_lookups(tasks: list[Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Artisan and section rows referenced anywhere on this page, in two queries, so the UI never
-    has to follow up per task."""
+    """Artisan and section rows referenced anywhere on this page, in ONE wave of two queries, so the
+    UI never has to follow up per task."""
     artisan_ids: set[str] = set()
     section_ids: set[str] = set()
     for task in tasks:
         artisan_ids.update(task.artisanIds or [])
         section_ids.update(task.sectionIds or [])
-    artisans = (
-        await db.artisan.find_many(where={"id": {"in": sorted(artisan_ids)}}) if artisan_ids else []
-    )
-    sections = (
-        await db.questionnairesection.find_many(where={"id": {"in": sorted(section_ids)}})
+    # The two reads are of different tables and neither uses the other's rows, so they go out
+    # together — a page of tasks used to pay a cross-region round trip for the artisans and then a
+    # second one for the sections. A page that references neither still issues nothing.
+    artisans, sections = await gather_reads(
+        db.artisan.find_many(where={"id": {"in": sorted(artisan_ids)}}) if artisan_ids else _none(),
+        db.questionnairesection.find_many(where={"id": {"in": sorted(section_ids)}})
         if section_ids
-        else []
+        else _none(),
     )
     return (
         {artisan.id: artisan for artisan in artisans},
@@ -702,6 +714,11 @@ def serialize_task(
     return payload
 
 
+async def _empty_derived() -> dict[str, dict[str, Any]]:
+    """The awaitable ``{}`` that keeps ``withDerived=false`` in the wave's second slot."""
+    return {}
+
+
 async def serialize_tasks(
     tasks: list[Any],
     with_derived: bool = True,
@@ -709,7 +726,8 @@ async def serialize_tasks(
 ) -> list[dict[str, Any]]:
     """*lookups* is the ``(artisans, sections)`` pair :func:`load_scope_lookups` would go and fetch.
     A caller that has just resolved a scope already holds exactly those rows, so handing them over
-    saves the two round trips it would take to read them again.
+    saves the round trip it would take to read them again (the two queries share one wave now, so it
+    is one trip rather than the two this said before they were gathered).
 
     ONE CALLER PASSES IT — :func:`create_task_batch` — and the docstring says so rather than
     describing a convention this file does not keep. That route is the only one whose cost had to
@@ -718,8 +736,25 @@ async def serialize_tasks(
     it over too; each writes ONE row, so the saving there is two queries on one request rather than
     two hundred, and it is not worth a second hand-over to keep honest against the row it describes.
     Every read path leaves this unset and the fetch happens."""
-    artisan_map, section_map = lookups if lookups is not None else await load_scope_lookups(tasks)
-    derived = await derive_progress(tasks) if with_derived else {}
+    # THE LOOKUPS AND THE DERIVED COUNTS DO NOT DEPEND ON EACH OTHER, so the two go out together
+    # rather than one after the other: ``load_scope_lookups`` reads the artisans and sections the
+    # page NAMES, ``derive_progress`` counts the records those scopes MATCH, and neither reads the
+    # other's answer. In series that was the lookups' wave and then the counts' wave, one after the
+    # other, on every page of every task board.
+    #
+    # THE WIDTH, STATED BECAUSE IT IS AT THE LINE: ``load_scope_lookups`` issues at most 2 reads and
+    # ``derive_progress`` holds its own semaphore at ``DERIVED_CONCURRENCY`` (8), so this overlaps at
+    # most 10 — exactly ``pool_width()``, the ceiling ``gather_reads`` itself enforces and never
+    # above it (docs/SCALABILITY.md §6). Raising ``DERIVED_CONCURRENCY`` would push one request past
+    # the pool; it is the number to check before touching, not this line.
+    if lookups is not None:
+        artisan_map, section_map = lookups
+        derived = await derive_progress(tasks) if with_derived else {}
+    else:
+        (artisan_map, section_map), derived = await gather_reads(
+            load_scope_lookups(tasks),
+            derive_progress(tasks) if with_derived else _empty_derived(),
+        )
     return [serialize_task(task, artisan_map, section_map, derived) for task in tasks]
 
 
@@ -904,8 +939,8 @@ async def create_task_batch(
     # module docstring says why it is also the least defensible one. The keys stay present and stay
     # typed the same; ``derivedCount`` is null exactly as it already is for any page over
     # DERIVED_TASK_LIMIT. Artisans and sections are handed over from ``resolve_scope``, which has
-    # just loaded precisely this batch's ids, so re-reading them would be two round trips for rows
-    # already in hand.
+    # just loaded precisely this batch's ids, so re-reading them would be a round trip (two queries
+    # in one wave, since they were gathered) spent on rows already in hand.
     tasks = await serialize_tasks(
         created,
         with_derived=False,
@@ -972,16 +1007,20 @@ async def list_tasks(
         where["batchId"] = batchId
 
     page, page_size, skip = normalize_pagination(page, pageSize)
-    total = await db.assignedtask.count(where=where)
-    tasks = await db.assignedtask.find_many(
-        where=where,
-        skip=skip,
-        take=page_size,
-        include=INCLUDE,
-        # ``id`` last: this read is the one that actually skips, and ``dueAt`` is nullable while
-        # ``createdAt`` is shared across a batch, so without a unique final key page 2 can repeat or
-        # drop rows that sorted equal on page 1.
-        order=[{"dueAt": "asc"}, {"createdAt": "desc"}, {"id": "desc"}],
+    # Count and page together — the shape ``records.count_and_page`` exists for, spelled out here
+    # because this read needs ``include=INCLUDE`` and that helper takes ``relations``.
+    total, tasks = await gather_reads(
+        db.assignedtask.count(where=where),
+        db.assignedtask.find_many(
+            where=where,
+            skip=skip,
+            take=page_size,
+            include=INCLUDE,
+            # ``id`` last: this read is the one that actually skips, and ``dueAt`` is nullable while
+            # ``createdAt`` is shared across a batch, so without a unique final key page 2 can
+            # repeat or drop rows that sorted equal on page 1.
+            order=[{"dueAt": "asc"}, {"createdAt": "desc"}, {"id": "desc"}],
+        ),
     )
     items = await serialize_tasks(tasks, with_derived=withDerived)
     return page_payload(items, total, page, page_size)
@@ -1221,24 +1260,10 @@ async def task_options(
         )
     if term:
         user_clauses.append({"OR": [{"name": contains(term)}, {"email": contains(term)}]})
-    users = await db.user.find_many(
-        where={"AND": user_clauses},
-        order=[{"name": "asc"}, {"id": "asc"}],
-        take=TASK_OPTION_USER_LIMIT + 1,
-    )
-    assignees_truncated = len(users) > TASK_OPTION_USER_LIMIT
-    assignable = [user_brief(user) for user in users[:TASK_OPTION_USER_LIMIT]]
 
     workshop_where: dict[str, Any] = {}
     if term:
         workshop_where["OR"] = [{"title": contains(term)}, {"place": contains(term)}]
-    workshops = await db.workshop.find_many(
-        where=workshop_where,
-        order=[{"date": "desc"}, {"id": "asc"}],
-        take=TASK_OPTION_WORKSHOP_LIMIT + 1,
-    )
-    workshops_truncated = len(workshops) > TASK_OPTION_WORKSHOP_LIMIT
-    workshops = workshops[:TASK_OPTION_WORKSHOP_LIMIT]
 
     artisan_clauses: list[dict[str, Any]] = []
     if workshopId:
@@ -1256,11 +1281,36 @@ async def task_options(
         artisan_clauses.append({"OR": [{"name": contains(term)}, {"place": contains(term)}]})
     # Two ORs again, and again AND-composed: the workshop narrowing and the search must both hold.
     artisan_where: dict[str, Any] = {"AND": artisan_clauses} if artisan_clauses else {}
-    artisans = await db.artisan.find_many(
-        where=artisan_where,
-        order=[{"name": "asc"}, {"id": "asc"}],
-        take=TASK_OPTION_ARTISAN_LIMIT + 1,
+
+    # FOUR INDEPENDENT PICKERS, ONE WAVE. None of the four consumes another's output — that is the
+    # whole shape of this endpoint, "everything the assignment dialog needs, in one call" — so
+    # awaiting them one at a time made the dialog cost four cross-region round trips where it needs
+    # one. Four is well inside ``pool_width()`` (10). Every WHERE is built above the wave so nothing
+    # in it has to wait on a predicate; the take/trim/``truncated`` arithmetic stays below it,
+    # unchanged, and the one-row-over trick that makes each flag exact is untouched.
+    users, workshops, artisans, sections = await gather_reads(
+        db.user.find_many(
+            where={"AND": user_clauses},
+            order=[{"name": "asc"}, {"id": "asc"}],
+            take=TASK_OPTION_USER_LIMIT + 1,
+        ),
+        db.workshop.find_many(
+            where=workshop_where,
+            order=[{"date": "desc"}, {"id": "asc"}],
+            take=TASK_OPTION_WORKSHOP_LIMIT + 1,
+        ),
+        db.artisan.find_many(
+            where=artisan_where,
+            order=[{"name": "asc"}, {"id": "asc"}],
+            take=TASK_OPTION_ARTISAN_LIMIT + 1,
+        ),
+        db.questionnairesection.find_many(where={"isActive": True}, order={"sortOrder": "asc"}),
     )
+
+    assignees_truncated = len(users) > TASK_OPTION_USER_LIMIT
+    assignable = [user_brief(user) for user in users[:TASK_OPTION_USER_LIMIT]]
+    workshops_truncated = len(workshops) > TASK_OPTION_WORKSHOP_LIMIT
+    workshops = workshops[:TASK_OPTION_WORKSHOP_LIMIT]
     artisans_truncated = len(artisans) > TASK_OPTION_ARTISAN_LIMIT
     artisans = artisans[:TASK_OPTION_ARTISAN_LIMIT]
 
@@ -1276,10 +1326,6 @@ async def task_options(
             workshops_truncated,
             artisans_truncated,
         )
-
-    sections = await db.questionnairesection.find_many(
-        where={"isActive": True}, order={"sortOrder": "asc"}
-    )
 
     return {
         "recordTypes": [

@@ -1,33 +1,58 @@
 import type { User, UserRole } from "@/lib/types";
 
 /**
- * The seven-tier role ladder, mirroring the backend exactly (app/core/deps.py).
+ * The EIGHT-tier role ladder, mirroring the backend exactly (app/core/deps.py).
  * Higher rank inherits every power of the ranks below it; the grantable can*
  * booleans additionally lift a single capability for a lower tier.
  *
- * SEVEN, AND THIS SENTENCE SAID SIX FOR AS LONG AS DESIGNER HAS EXISTED — the same off-by-one the
+ * EIGHT SINCE 2026-08-27, when INSPECTOR (37) was inserted between DESIGNER and PROFESSOR. The
+ * count in this sentence is now the ONLY hand-kept count left in this client: `AccessLadder.tsx`
+ * derives its heading from `ROLES_BY_RANK.length`, and `backend/tests/test_role_ladder_parity.py`
+ * holds the MAPS below to the server. Nothing counts this paragraph.
+ *
+ * IT SAID SIX FOR AS LONG AS DESIGNER HAS EXISTED — the same off-by-one the
  * backend's own ladder carried, corrected there with a note saying so. The tier is in the map
  * below, with its own explanation of why 35. It is not a typo with no consequence: this file is
  * where every client-side permission question is answered, and a reader who trusts prose over map
- * goes looking for six rows in a product whose primary user is the seventh. README.md's role table
+ * goes looking for six rows in a product whose primary user is not among them. README.md's role table
  * and docs/PERMISSIONS.md had already been corrected for the same miscount, and this map is the
  * client's answer to every permission question, so it is the worst remaining place to be wrong.
  * IT IS NOT THE LAST ONE, and the remaining list is now short enough to name rather than gesture at.
- * Nothing in the web client says six any more: the one site that was RENDERED CONTENT rather than a
+ * Nothing in the web client miscounts any more: the one site that was RENDERED CONTENT rather than a
  * comment — `components/hero/AccessLadder.tsx`, the public landing page's ladder, a literal six-row
  * array with no Designer in it whose own header claimed "the exact labels of ROLE_LABELS in
  * lib/permissions.ts" — now derives its rows, its labels and the count in its own heading from
  * `ROLES_BY_RANK` / `ROLE_LABELS` here, over a `Record<UserRole, string>` of copy that fails `tsc`
- * until a new tier is given its sentence. What is left is outside this client: `docs/PERMISSIONS.md`
+ * until a new tier is given its sentence. A SECOND rendered one hid from that sweep by saying SEVEN
+ * rather than six: `app/login/page.tsx`'s `BRAND_POINTS` shipped "Seven-tier access control" past
+ * INSPECTOR while the hero badge beside it, which speaks the same sentence from `TIER_COUNT_WORD`,
+ * re-counted itself. It now reads Eight and carries a note saying it is hand-kept and why. What is
+ * left is outside this client: `docs/PERMISSIONS.md`
  * and `SESSION_HANDOVER.md` say "six-tier" only to narrate that correction, `docs/RESEARCH_NOTES.md`
- * keeps a provenance-labelled six-row snapshot on purpose and says so, and the live miscounts are
- * comments in the Android client (`MainActivity.kt`, `ui/AppNavigation.kt`) and in the backend
- * (`.env.example`, `app/core/config.py`, `tests/test_review_edit_authority.py`) plus the frontend
- * skill file agents load (`.claude/skills/field-repo-frontend/SKILL.md`, which enumerates the six).
+ * keeps a provenance-labelled six-row snapshot on purpose and says so, and the live miscount is
+ * now ZERO. The last one standing was `MainActivity.kt` in the Android client, which said
+ * "six-tier ladder" twice — once in RENDERED SCREEN COPY on the users-and-access card
+ * ("Professors and above can move a user along the six-tier ladder"), which was the worst of the
+ * lot because a user read it, and once in the comment above the role dropdown on that same card,
+ * whose options are built from `ROLE_RANK` and so already listed eight. Both were corrected to
+ * "eight-tier" on 2026-08-27, the comment carrying the count's source with it.
+ * `ui/AppNavigation.kt` ("The EIGHT-tier ladder"),
+ * `backend/.env.example` ("eight tiers as of 2026-08-27") and the frontend skill file agents load,
+ * `.claude/skills/field-repo-frontend/SKILL.md` ("**Eight**-tier ladder"), were all on this list
+ * and are off it — each was corrected in the INSPECTOR wave. `backend/app/core/config.py` was on it
+ * and should not have been: its "pre-six-tier behavior" dates an ERA, not the present ladder.
+ * Counted 2026-08-27 by grepping `six-tier|seven-tier|six tiers|seven tiers` over the tree, and
+ * RE-COUNTED the same day with `git grep` after the Android correction landed: every surviving
+ * hit is a sentence narrating one of these corrections, the deliberate `RESEARCH_NOTES.md`
+ * snapshot, or the `20260724120000_six_tier_roles` migration folder, which is a name and is history.
+ * `backend/tests/test_review_edit_authority.py` was on that list and is off it, because it was not a
+ * stale comment at all: its `ALL_ROLES` had actually LOST DESIGNER, so the review-edit matrix ran 36
+ * pairs instead of 49 and never asked a single question about the tier. It now DERIVES the tuple
+ * from `deps.ROLE_RANK`, which is the only fix that stays fixed.
  * Nothing mechanical counts prose, which is why they rot one file at a time — cited by string and
  * not by line, because these files move under each other.
  *
- * "MIRRORING EXACTLY" IS A CLAIM ABOUT FOUR PROPERTIES — the same seven keys, at the same numbers,
+ * "MIRRORING EXACTLY" IS A CLAIM ABOUT FOUR PROPERTIES — the same eight keys, at the same numbers,
  * with the same labels, in the same declaration order — and it is worth saying which of them a
  * machine checks, because "already right" and "asserted" are different states:
  *  - KEYS and NUMBERS: `docs/tools/check-docs.mjs::checkRoleParity` parses `ROLE_RANK` out of both
@@ -36,12 +61,14 @@ import type { User, UserRole } from "@/lib/types";
  *    off disk and diffs `ROLE_LABELS` and the key sequence the same way. Before that spec existed
  *    this paragraph claimed all four had been "compared when the note was written", which is a
  *    hand-check dressed as a guarantee.
- * `ROLE_LABELS` has FOUR copies in this repository — here, `deps.py`, and two in the Android client
- * (`MainActivity.kt`, `TaskAdminScreen.kt`). Only the first two are diffed by anything; the Kotlin
- * pair is hand-kept, was correct when last read, and nothing would say if it stopped being.
+ * `ROLE_LABELS` has FIVE copies in this repository — here, `deps.py`, and THREE in the Android
+ * client (`MainActivity.kt`, `TaskAdminScreen.kt`, and `ui/AppNavigation.kt`'s `LABELS`, which this
+ * paragraph missed while telling other files off for undercounting). All five are now diffed
+ * against `deps.py` by `backend/tests/test_role_ladder_parity.py`, which is what stopped the Kotlin
+ * trio being "hand-kept, correct when last read, and nothing would say if it stopped being".
  *
  * DECLARATION ORDER IS A CONVENTION HERE, NOT A BEHAVIOUR, and an earlier draft of this note said
- * the opposite. `ROLES_BY_RANK` below sorts on the VALUES, and all seven ranks are distinct, so the
+ * the opposite. `ROLES_BY_RANK` below sorts on the VALUES, and all eight ranks are distinct, so the
  * array it produces is identical whatever order these keys are written in — nothing in the client
  * reads the declaration order at all (`ROLES_BY_RANK` and `ROLE_RANK` are read only by
  * `AssignmentBuilder.tsx` and `activity/page.tsx`, both by value). The order is kept in step with
@@ -55,6 +82,20 @@ export const ROLE_RANK: Record<UserRole, number> = {
   // 35, in the gap the original tens left. Mirrors ROLE_RANK in backend/app/core/deps.py; the
   // two must agree or the UI offers actions the API refuses.
   DESIGNER: 35,
+  // 37 — inspects and reviews a designer's work without running workshops. Added 2026-08-27.
+  //
+  // WHY 37: it is the MIDDLE of the free 36-39 band between DESIGNER and PROFESSOR, so a gap stays
+  // open on both sides for a future insert. Renumbering the tiers around it instead would change
+  // the meaning of every comparison in this file at once.
+  //
+  // WHAT IT MEANS FOR THE UI. This client's design-workshop controls are gated on SETS
+  // (`canRunDesignWorkshops`, `canCreateDesignWorkshops`), not on this number, so an inspector is
+  // offered no workshop control by the rank alone — correct, and the same position PROFESSOR is in.
+  // What the rank DOES change is `canReview`-adjacent chrome: at 37 an inspector outranks a
+  // designer, so the review queue will offer them a designer's records. That is the point of the
+  // tier; `backend/app/core/deps.py::can_review_record` is the gate that actually decides it and
+  // `backend/tests/test_inspector_tier.py` pins the answer. Hiding a control is not the rule.
+  INSPECTOR: 37,
   PROFESSOR: 40,
   ADMIN: 50,
   MASTER_ADMIN: 60
@@ -65,6 +106,11 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   FIELD_CONTRIBUTOR: "Field Contributor",
   RESEARCHER: "Researcher",
   DESIGNER: "Designer",
+  // BOTH WORDS. The stored token is INSPECTOR because "review" already names the relational sense
+  // (`canReview` = "may act on anyone below me"); the label says "Reviewer" too because that is the
+  // word a user searching a role picker for themselves will type. Byte for byte the server's
+  // ROLE_LABELS["INSPECTOR"] — `frontend/e2e/role-ladder-parity-unit.spec.ts` diffs the spelling.
+  INSPECTOR: "Inspector / Reviewer",
   PROFESSOR: "Professor",
   ADMIN: "Admin",
   MASTER_ADMIN: "Master Admin"
@@ -148,6 +194,72 @@ export function canReview(user: User | null | undefined) {
 
 export function canDownloadDataset(user: User | null | undefined) {
   return hasRank(user, "PROFESSOR") || !!user?.canDownloadDataset;
+}
+
+/**
+ * Who the dashboard offers the "View Data" tile to — Researcher, Professor, Admin and Master Admin,
+ * and nobody else.
+ *
+ * ── A FLOOR PLUS ONE CARVE-OUT, WHICH IS THE OWNER'S OWN INSTRUCTION ─────────────────────────────
+ *
+ * The owner's instruction is "view data card should not be there for designers; it is only for
+ * admins, master admins, professors, and researchers", and then, on the mechanism: "do it through
+ * floor for admin, master admin, and professor, but researchers should have access to the view data
+ * as well, implement a mechanism for the same".
+ *
+ * Those four tiers are RESEARCHER(30), PROFESSOR(40), ADMIN(50) and MASTER_ADMIN(60). NO PURE FLOOR
+ * EXPRESSES THAT SET: the tightest one that admits RESEARCHER also admits DESIGNER(35) and
+ * INSPECTOR(37), the two tiers sitting inside the range, and every threshold instinct gets them
+ * wrong. So the rule is a floor at PROFESSOR — which covers three of the four by rank — plus
+ * RESEARCHER named once, explicitly. `canDownloadDataset` directly above is the same shape (a floor
+ * plus a per-user carve-out), so this is the file's own idiom rather than a new one.
+ *
+ * ── WHY NOT A FOUR-ITEM ARRAY, WHICH IS WHAT THIS WAS FIRST WRITTEN AS ───────────────────────────
+ *
+ * Because a hand-written role list silently EXCLUDES a tier added above professor, and this ladder
+ * grows. INSPECTOR landed on 2026-08-27 and twenty-two hand-kept copies of the ladder had to be
+ * found and corrected across both clients, the tests and the docs;
+ * `backend/tests/test_role_ladder_parity.py` exists precisely because those lists rot one file at a
+ * time. A floor picks up a new senior tier by construction; an array waits for somebody to remember.
+ * The carve-out is the one part that must be spelled out, and it is one token long.
+ *
+ * DO NOT "SIMPLIFY" THIS TO `hasRank(user, "RESEARCHER")`. That is the single edit this predicate
+ * exists to survive, and it hands the tile to designers and inspectors — the exact two tiers the
+ * instruction excludes. The unit spec demonstrates that independently rather than asserting it.
+ *
+ * ── WHAT IT DECIDES, WHICH IS ONE TILE ───────────────────────────────────────────────────────────
+ *
+ * This is NOT an entitlement and it is NOT a route guard, and calling it one would be the lie the
+ * comment on `ROUTE_GUARDS` warns about:
+ *
+ *   * `/data` keeps its own row above, gated on `canDownloadDataset` — Professor and above, or the
+ *     explicit per-user grant. Nothing here widens or narrows that.
+ *   * `/search` ("Browse records") stays open to every signed-in account, exactly as its `NAV_ITEMS`
+ *     entry says (`gate: "get_current_user"`), because the endpoints behind it take nothing more
+ *     than a signed-in user and scope their rows per viewer on the server. A `ROUTE_GUARDS` row
+ *     there would be a client-side rule the API does not have.
+ *
+ * So a designer keeps every record they could read before; what they lose is a tile on the screen
+ * the app opens on, which was pointing most tiers at a destination the menu had already decided they
+ * were not the audience for. The tile and the "View Data" menu row disagreed outright before this:
+ * the row is `canDownloadDataset`, the tile was shown to everybody.
+ *
+ * ── THE TWO TIERS THE INSTRUCTION DID NOT NAME ───────────────────────────────────────────────────
+ *
+ * CROWDSOURCE_VOLUNTEER(10) and FIELD_CONTRIBUTOR(20) are OUT, deliberately. The instruction is a
+ * whitelist of four and both sit below every one of them; and neither loses a way in, because
+ * "Browse records" is an ungated menu row to the same `/search` the tile was sending them to.
+ *
+ * ── AND THE `canDownloadDataset` GRANT IS DELIBERATELY NOT AN ESCAPE HATCH HERE ───────────────────
+ *
+ * A DESIGNER holding the explicit grant still sees the "View Data" MENU ROW and still opens `/data`
+ * — nothing is taken from them — but gets no tile, because the tile answers "is this account part of
+ * this destination's audience", which is a question about the tier. Admitting a per-user boolean
+ * would make one dashboard tile's presence invisible in the role column, which is precisely the
+ * argument {@link canManageCrafts} gives for being rank-only.
+ */
+export function canSeeDataTile(user: User | null | undefined) {
+  return hasRank(user, "PROFESSOR") || user?.role === "RESEARCHER";
 }
 
 /**
@@ -453,6 +565,40 @@ export const ROUTE_GUARDS: RouteGuard[] = [
       "Sketches and prototypes are a named designer's work in progress, uploaded to a workshop and then ranked against other designers' pieces under the name of whoever ranked them, so this page is opened by designers, admins and the master admin."
   },
   {
+    /*
+      THE INSPECTOR'S OWN READ SURFACE, and the fourth top-level page in this family — which is why
+      its row was written in the same change as the page rather than owed afterwards. The three
+      before it (`/design-workshops`, `/design-review`, `/sketches-and-prototypes`) each shipped
+      with the nav entry hidden and the URL open, by a maintainer who had read this table and found
+      nothing beside the design-workshop tree.
+
+      IT IS A SIBLING OF `/design-workshops` AND NOT A CHILD, and that is a permission fact rather
+      than a filing one. The API's prefix is separate for the same reason: every caller of every
+      route on it is, by definition, somebody `load_workshop_or_404` turns away, and a route sharing
+      the workshop prefix invites the next reader to "fix" the inconsistency by widening that shared
+      loader — which grants STAGE WRITES, because `load_workshop_or_404(for_edit=True)` performs no
+      role check at all. `routeMatches` compares whole segments, so the `/design-workshops` row
+      above does not reach this path and could not be made to without pointing the two at one gate.
+
+      THE PREDICATE IS A ONE-MEMBER SET AND EVERY RANK INSTINCT IS WRONG ABOUT IT. An ADMIN is
+      REFUSED here, and a master admin is refused, and that is not this table narrowing something
+      the API would serve — `assert_inspection_surface` answers them a 403 by name. See
+      `canInspectDesignWorkshops` for the argument; the short version is that an admin scoped by
+      their own inspection rows sees an empty page and reads it as a broken feature, and an admin
+      scoped by "everything" turns this into a second full read of the archive.
+
+      SO THE MESSAGE NAMES THE OTHER DOOR, mirroring the server's `NOT_AN_INSPECTOR_DETAIL`, and it
+      has to: a refusal that says only "you may not" to an admin — on a READ surface, in a product
+      where admins read everything — reads as a broken deployment rather than as a rule.
+    */
+    path: "/design-workshop-inspections",
+    can: canInspectDesignWorkshops,
+    gate: "assert_inspection_surface (INSPECTION_ROLES, services/design_workshop_inspectors.py)",
+    title: "Inspector / Reviewer access required",
+    message:
+      "The inspection surface belongs to the Inspector / Reviewer tier, and is scoped to the workshops an admin has assigned to that account. Designers and admins read design & prototype workshops on Design workshops instead; an admin chooses who inspects a workshop on Manage workshop access."
+  },
+  {
     path: "/design-workshops",
     can: canRunDesignWorkshops,
     gate: "can_run_design_workshops",
@@ -666,6 +812,38 @@ export const DESIGN_WORKSHOP_CREATE_REFUSAL =
   "create it for your cluster and give you access — you can then fill in all 22 stages, add " +
   "artisans, products and photographs, and generate the report exactly as before. Any workshop " +
   "you already have access to is open to you now.";
+
+/**
+ * THE FIFTH SCOPE'S DOOR: who may open the inspector's own read surface.
+ *
+ * A SET WITH ONE MEMBER, mirroring `INSPECTION_ROLES` in
+ * `backend/app/services/design_workshop_inspectors.py`, which is `frozenset({"INSPECTOR"})`.
+ *
+ * **IT IS NOT "INSPECTOR AND ABOVE", AND THE RANK LADDER IS EXACTLY WHAT MISLEADS HERE.** 37 sits
+ * between DESIGNER and PROFESSOR, so every threshold instinct admits professors, admins and the
+ * master admin. `assert_inspection_surface` refuses all of them with a 403 — **including admins**,
+ * deliberately, and its own docstring gives the argument: scoped by THEIR OWN inspection rows an
+ * admin sees an empty list and reads it as a broken feature, and scoped by "everything, because
+ * they are an admin" this surface silently becomes a second full read of every workshop in the
+ * repository, which is a second place to look when somebody has access they should not. So the
+ * server's refusal is identical for an admin, a designer and a volunteer, and this predicate is too.
+ *
+ * WHAT AN ADMIN GETS INSTEAD is the administration of who inspects what — `GET`/`PUT
+ * /design-workshop-inspections/{id}/inspectors`, behind `require_admin`, rendered by
+ * `components/settings/DesignWorkshopInspectorsPanel.tsx` on /workshop-access/manage. Two halves of
+ * one feature with two different doors, which is why they are two predicates: `isAdmin` gates the
+ * assignment, this gates the reading, and neither one implies the other in either direction.
+ *
+ * AND IT IS NOT `canRunDesignWorkshops`. INSPECTOR is deliberately outside `DESIGN_WORKSHOP_ROLES`
+ * — a frozenset and not a rank floor — so every `/design-workshops`-family route refuses an
+ * inspector exactly as it refuses a professor. Gating this destination on that predicate would hide
+ * the one surface the tier exists for from the only tier that can use it.
+ */
+export const INSPECTION_ROLES: readonly UserRole[] = ["INSPECTOR"];
+
+export function canInspectDesignWorkshops(user: User | null | undefined) {
+  return !!user && INSPECTION_ROLES.includes(user.role);
+}
 
 /** Add, suspend and restore designers on the roster that gates their sign-in: Admin and above. */
 export function canManageDesignerRoster(user: User | null | undefined) {

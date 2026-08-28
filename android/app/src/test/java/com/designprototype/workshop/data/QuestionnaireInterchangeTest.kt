@@ -119,6 +119,36 @@ class QuestionnaireInterchangeTest {
     }
     """.trimIndent()
 
+    /**
+     * `POST /questionnaires/{id}/reuse` — NOT AN UPLOAD, wearing the upload's clothes.
+     *
+     * The route answers in the upload response's shape on purpose, so that one panel renders both
+     * (`questionnaire_forms.py`'s "THE RESPONSE IS THE UPLOAD RESPONSE'S SHAPE"). Every count is an
+     * explicit zero, which is a statement and not an omission, and `problems` is present and empty.
+     */
+    private val REUSED = """
+    {
+     "answersImported": 0,
+     "answersSkipped": 0,
+     "created": 2,
+     "entriesCreated": 0,
+     "problems": [],
+     "provenance": {
+      "action": "reused",
+      "answersSkipped": 0,
+      "reason": "This is a new questionnaire carrying the 2 questions of \u201cWeaving intake 2026\u201d. The two are separate from here on: editing one does not change the other. No sitting and no answer was copied \u2014 the fieldwork recorded against the original stays on the original, under the names of the people who recorded it \u2014 so this copy starts empty and ready for its own.",
+      "sourceQuestionnaireId": "cmsvfnb4y0001qq1bzd2g48lq"
+     },
+     "removed": 0,
+     "retired": 0,
+     "sections": 1,
+     "superseded": 0,
+     "unchanged": 0,
+     "versionAfter": 1,
+     "versionBefore": 1
+    }
+    """.trimIndent()
+
     /** `POST /questionnaires/{id}/upload` — the edit path. Note the four keys that are NOT here. */
     private val EDITED = """
     {
@@ -234,6 +264,55 @@ class QuestionnaireInterchangeTest {
 
         val imported = qFormProvenanceNotice(decode(IMPORTED))!!
         assertFalse("a correct hand-typed import must not read as a problem", imported.warn)
+    }
+
+    /**
+     * A REUSE MUST NOT BE ANNOUNCED AS AN IMPORT.
+     *
+     * `action` has three values and the notice used to test for one of them, so `reused` fell into
+     * the else arm and the panel said "The answers in this file were imported" — for an operation
+     * that imported nothing, copied no sitting and read no file. On the one screen a designer opens
+     * to find out what just happened to their questions.
+     *
+     * The properties, not the prose: it is not a warning (copying no answers is the whole point of a
+     * reuse), it never says the word "imported", and it carries no tally, because every count on a
+     * reuse is zero and a line reading "0 answers" invites the reader to look for a fault in an
+     * operation that went perfectly.
+     */
+    @Test
+    fun `a reuse is not described as an import of a file`() {
+        val notice = qFormProvenanceNotice(decode(REUSED))!!
+
+        assertFalse("copying no answers is what a reuse IS", notice.warn)
+        assertFalse(
+            "the else arm used to claim this",
+            notice.heading.contains("imported", ignoreCase = true),
+        )
+        assertFalse(
+            "and there was no file",
+            notice.heading.contains("file", ignoreCase = true),
+        )
+        assertNull("every count is zero; a tally here would be a line about nothing", notice.tally)
+    }
+
+    /** The server's paragraph reaches the screen unaltered on this branch too. */
+    @Test
+    fun `the reuse reason is passed through verbatim`() {
+        val report = decode(REUSED)
+        assertEquals(report.provenance!!.reason, qFormProvenanceNotice(report)!!.reason)
+    }
+
+    /**
+     * The three actions are three different sentences, and no two of them may be confused.
+     *
+     * This is the assertion that would have caught the defect: it fails the moment a fourth action
+     * is added to the server and falls through to whichever branch happens to be last.
+     */
+    @Test
+    fun `the three provenance actions read differently`() {
+        val headings = listOf(REUSED, IMPORTED, SKIPPED)
+            .map { qFormProvenanceNotice(decode(it))!!.heading }
+        assertEquals("no two of the three may read alike", headings.size, headings.toSet().size)
     }
 
     /** No answers in the file means no provenance block — not a block reading "0 answers". */

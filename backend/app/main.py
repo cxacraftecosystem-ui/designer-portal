@@ -17,6 +17,7 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.db import connect_db, db, disconnect_db
 from app.core.security import verify_jwt_configuration
+from app.scale import install_rate_limit
 from app.services.media_queue import process_next_media_jobs
 
 logger = logging.getLogger(__name__)
@@ -557,6 +558,30 @@ def create_app() -> FastAPI:
     # docstring. An unhandled error must become a normal response *below* CORS so the CORS layer can
     # still stamp `access-control-allow-origin` on the way out.
     app.add_middleware(UnhandledErrorMiddleware)
+    # THE RATE LIMITER, AND ITS POSITION IS THE SAME ARGUMENT THE LINE ABOVE MAKES.
+    #
+    # Between UnhandledErrorMiddleware and CORS, which puts it OUTSIDE the router and INSIDE CORS,
+    # and both halves of that are load-bearing:
+    #
+    #  * Inside CORS, a 429 travels back out through the CORS layer and picks up
+    #    `access-control-allow-origin`. Outside it, the same 429 reaches the browser bare, `fetch`
+    #    rejects, and the web app reports "Failed to fetch" with nothing anywhere naming a rate
+    #    limit — the exact confusion UnhandledErrorMiddleware exists to end, reintroduced by a
+    #    middleware that was meant to protect the box. Pinned by
+    #    `tests/test_rate_limit_install.py::test_a_refused_request_still_carries_the_cors_header`.
+    #  * Outside the router, a refused request costs no route resolution, no dependency, and no
+    #    database work. A limiter that only refuses AFTER the query it was protecting the box from
+    #    has already run protects nothing.
+    #
+    # It could not go outside SecurityHeaders/GZip either, for a smaller reason worth knowing: those
+    # two stamp and compress every response, and a 429 that skipped them would be the one response
+    # this API serves without a CSP.
+    #
+    # ADDS NOTHING WHEN THE FLAG IS OFF — not a middleware that returns early, no middleware at all.
+    # `SCALE_RATE_LIMIT_ENABLED` is false by default, so a fresh clone's stack is unchanged; see
+    # app/scale/rate_limit.py, which also documents the separate, much tighter budget the two
+    # credential endpoints get on top of the general allowance.
+    install_rate_limit(app)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

@@ -21,23 +21,31 @@
  * template declares. Approximately right is the failure mode this screen exists to avoid: the file
  * goes to a ministry.
  *
- * WHAT THE PAGINATION CAN AND CANNOT KNOW is stated on screen rather than guessed at. A
- * `PAGEBREAK` is a break the template asked for and both writers honour it exactly. Where the
- * OTHER breaks fall is decided by measuring wrapped text against the remaining height of a page,
- * which Word does on open and ReportLab does by laying the body out twice — neither is possible in
- * a browser, so the sheet count is a floor.
+ * WHAT THE PAGINATION CAN AND CANNOT KNOW is stated on screen rather than guessed at, and the
+ * line between the two MOVED. A `PAGEBREAK` is a break the template asked for and both writers
+ * honour it exactly; where the OTHER breaks fall is decided by measuring wrapped text against the
+ * remaining height of a page, which Word does on open and ReportLab does by laying the body out
+ * twice. This screen used to do neither — it cut only at declared breaks and drew a `min-height`
+ * sheet, so a long section rendered as one "page" several times taller than A4 and the count was
+ * a FLOOR. It measures now: `ReportSheets` lays every block out once off-screen at exactly the
+ * page's content width and `reportPagination.packPages` flows the measurements into fixed pages
+ * under `report_pdf.py`'s own splitting rules.
  *
- * THE RUNNING FOOT STILL PRINTS "Page N of M" ANYWAY, which reverses what this paragraph used to
- * say, so here is why. All four FILE renderers print that shape — both .docx writers off
- * `NUMPAGES`, both .pdf writers off their measuring pass — and a designer who proofs "Page 3" on
- * this screen and then hands over a document reading "Page 3 of 12" is holding two
- * differently-shaped numbers for one page, which is the same divergence the file-side fix existed
- * to close. So the shape matches and the M is the DECLARED page count, a floor: the strip above
- * the sheets says that in as many words, and `previewModel`'s `splitIntoSheets` is where the
- * reasoning lives. The old worry — an invented "Page 7 of 26" quoted into a covering email — is
- * answered where it actually bites, which is PRINT rather than the screen: `Ctrl+P` drops the
- * strip with the rest of the chrome, so `ReportSheet`'s print rules drop the "of M" with it and
- * the handed-over file carries the ordinal alone, with no total it cannot stand behind.
+ * SO THE COUNT IS A CLOSE ESTIMATE RATHER THAN A FLOOR, and that is a harder thing to say
+ * honestly, not an easier one. The preview measures with THIS BROWSER's fonts; the .pdf is laid
+ * out by ReportLab in whichever face `report_pdf` resolved and the .docx by Word when the file is
+ * opened, and three engines that disagree about one line can disagree about one page. A preview
+ * that looks authoritative RAISES the cost of overclaiming rather than removing it, so the strip
+ * above the sheets says exactly what the number is.
+ *
+ * THE RUNNING FOOT PRINTS "Page N of M" ANYWAY. All four FILE renderers print that shape — both
+ * .docx writers off `NUMPAGES`, both .pdf writers off their measuring pass — and a designer who
+ * proofs "Page 3" on this screen and then hands over a document reading "Page 3 of 12" is holding
+ * two differently-shaped numbers for one page, which is the same divergence the file-side fix
+ * existed to close. The worry it raises — an invented "Page 7 of 26" quoted into a covering email
+ * — is answered where it actually bites, which is PRINT rather than the screen: `Ctrl+P` drops the
+ * qualifying strip with the rest of the chrome, so `ReportSheet`'s print rules drop the "of M"
+ * with it and the handed-over file carries the ordinal alone, with no total it cannot stand behind.
  *
  * THE FIGURES ARE DRAWN LIVE. The map is the repository's own `IndiaMap`, over the same projection
  * and the same boundary assets `/map` uses, so the report's map and the app's map cannot disagree
@@ -103,7 +111,7 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { countCodeSpans, useReportMediaUrls } from "@/components/designworkshop/report/ReportBlock";
 import { ReportAccentPicker, resolvePreviewPalette } from "@/components/designworkshop/report/ReportAccentPicker";
 import { ReportSheets } from "@/components/designworkshop/report/ReportSheet";
-import type { PreviewBlock } from "@/components/designworkshop/report/previewModel";
+import type { PreviewBlock, PreviewMeta } from "@/components/designworkshop/report/previewModel";
 import {
   REPORT_STAGE_KEY,
   ReportSettingsPanel,
@@ -1334,6 +1342,15 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             <ReportSheets
               blocks={blocks}
               pageSize={pageSize}
+              // ON THE WIRE SINCE 2026-08-28, and still read defensively. `preview_report` in
+              // `design_workshops.py` now sends `marginMm` beside `pageSize`, which is what
+              // `report_pdf.py` sizes its text column from — and the text column is what decides
+              // where every line wraps and therefore where every page breaks. It is still read
+              // through `PreviewMeta` and `pageGeometry` still falls back to 25, because the
+              // sender is not the only thing between here and the value: an older server, or a
+              // response cached before that deploy, carries `meta` without the key. Where that
+              // happens the sheet says on screen that it assumed one.
+              marginMm={(preview.meta as PreviewMeta).marginMm}
               headerText={headerText}
               footerText={footerText}
               mediaUrls={mediaUrls}

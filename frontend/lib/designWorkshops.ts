@@ -593,6 +593,22 @@ export type DwSummary = {
   createdAt: string | null;
   updatedAt: string | null;
   deletedAt: string | null;
+  /**
+   * WHO DELETED IT — **on the trash listing alone**, and optional for that reason rather than as a
+   * hedge against an older server.
+   *
+   * `workshop_summary` names neither of these: the pointer is null on every live workshop, so
+   * putting it on the dict every list and every single read goes through would add a key that means
+   * nothing anywhere except the one listing that can contain a deleted row — and resolving the NAME
+   * there would be an account lookup per row on the page every designer loads. The route adds both
+   * to the rows of `deletedOnly`/`includeDeleted` in one batched query. Absent everywhere else.
+   *
+   * A NAME CAN BE NULL WITH AN ID PRESENT, and it is not an error: the column is `onDelete: SetNull`
+   * against `User`, so a pointer outlives the account it named. Render it as "an account no longer
+   * on record" — never as the workshop's creator, who did not delete it. See `deletedByLabel`.
+   */
+  deletedById?: string | null;
+  deletedByName?: string | null;
 };
 
 export type DwDetail = DwSummary & {
@@ -658,6 +674,44 @@ export type DwCreateBody = {
    * that has never heard of it is not either.
    */
   designerUserId?: string | null;
+  /**
+   * EVERY DESIGNER THIS WORKSHOP IS FOR — the full set that is granted access, the lead included.
+   *
+   * ── WHY THERE ARE TWO KEYS AND NOT ONE ──────────────────────────────────────────────────────
+   *
+   * They answer two different questions and only one of them has a single answer. WHO MAY OPEN IT
+   * is several people: a real Design & Prototype Development Workshop is a fortnight of work by two
+   * designers alongside a master craftsperson, and every one of them has to read the same 22
+   * stages. WHOSE NAME IS ON IT is exactly one: `seed_designer_prefill` copies ONE
+   * `DesignerProfile` into stage 1 and stage 3 — one `designerName`, one `designerProfile`, one
+   * signature — and `report_meta` puts that name into the .docx's `dc:creator`, which is a
+   * single-author field the file format cannot express as a list.
+   *
+   * So `designerUserId` keeps its exact meaning (THE LEAD, whose profile is seeded and whose name
+   * the report cover carries) and this names the whole team. Co-designers get access and appear in
+   * "Designers on a workshop"; they do not appear on the cover. Making the stage-1 designer block
+   * repeatable is a registry change — it moves `registry_version()`, stales the schema asset
+   * bundled into every APK and moves every existing workshop's completeness — so it is a separate
+   * wave and the owner's call, not something to reach for by widening a column.
+   *
+   * ── THE GRANT SET, AND WHAT AN OMITTED FIELD MEANS ──────────────────────────────────────────
+   *
+   * The server grants the lead plus everybody named here, minus the creator — whose access is not
+   * this list's to give, because they hold the workshop by having made it. An ineligible id
+   * ANYWHERE in the list refuses the WHOLE create, naming every account it objected to, and writes
+   * no row: a partly applied access change is the worst of both, because it looks like it worked.
+   * So a caller must render that whole sentence rather than a generic "could not create".
+   *
+   * **BOTH FIELDS ARE OPTIONAL FOREVER.** On Android `saveOrQueue` will not queue a 4xx, so a body
+   * the server refuses LOSES the record — narrowing this shape later (making either required, or
+   * removing the singular one) would silently destroy an un-updated handset's fortnight. And the
+   * key must not go onto the wire uninvited either: `APIModel` is `extra="forbid"`, so an API that
+   * predates this field answers 422 `extra_forbidden` to a body that merely CARRIES it. This
+   * repository ships the browser bundle and the API separately, so that skew is a live state.
+   * {@link createDesignWorkshop} is the one place that decides which of the two keys are sent, and
+   * it sends this one only when there is genuinely more than one designer — see its note.
+   */
+  designerUserIds?: string[] | null;
   craftName?: string | null;
   clusterName?: string | null;
   state?: string | null;
@@ -689,7 +743,101 @@ export type DwCreateBody = {
  * into stage 1 before stage 1 exists, and once the workshop is open the same outcome is reached by
  * editing stage 1 and by the viewers panel. So there is nothing for a PATCH to carry.
  */
-export type DwUpdateBody = Omit<Partial<DwCreateBody>, "designerUserId"> & { status?: string };
+export type DwUpdateBody = Omit<Partial<DwCreateBody>, "designerUserId" | "designerUserIds"> & {
+  status?: string;
+};
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The designers a workshop is opened for — the pure half
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The most accounts one create may name.
+ *
+ * The server's own cap, which it imports from `MAX_DESIGN_WORKSHOP_VIEWERS` rather than choosing
+ * separately, because the create and `PUT /design-workshops/{id}/viewers` write the SAME table: a
+ * create that accepted a set the viewers screen would refuse is one list with two rules.
+ */
+export const MAX_NAMED_DESIGNERS = 100;
+
+/**
+ * WHO MAY OPEN THE WORKSHOP, AND WHOSE NAME IS ON IT — resolved from what the picker holds.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT A TERNARY IN THE FORM ────────────────────────────────────────
+ *
+ * There is no React renderer in this project's devDependencies, so a decision written inside JSX is
+ * a decision no test can reach — the same split, and the same reason, as
+ * `components/ui/selectFilter.ts` and `components/data/cappedList.ts`. This one decides whose name
+ * lands on a ministry document, so it is exercised by `e2e/design-workshop-designer-team-unit.spec.ts`
+ * rather than by somebody looking at a screen.
+ *
+ * ── THE TWO RULES, AND THE CASE THAT MAKES THEM DIFFERENT ───────────────────────────────────────
+ *
+ * 1. **With designers ticked, the lead must be one of them.** An admin who names a lead and then
+ *    UNTICKS them has removed them; re-adding them because they are still held in `lead` would put
+ *    a designer on a workshop after the admin took them off it, which is the one direction an
+ *    access control must never drift. The first ticked is promoted instead.
+ * 2. **With nothing ticked, a lead standing alone IS the team.** This is not a hypothetical: a
+ *    draft written before this control was a multi-select carries a lead and an empty list, and
+ *    reading rule 1 over it would drop the designer that draft was opened for.
+ *
+ * Blanks are absent, duplicates collapse, and the ticked order is otherwise preserved — it is the
+ * order the admin built and the only order they can see.
+ *
+ * The lead is NEVER the account that pressed create. The server promotes the first named designer
+ * when no lead is sent, precisely because the only other candidate is the admin, and an admin's own
+ * name on a workshop opened on somebody else's behalf is the wrong-name-on-a-ministry-document
+ * defect `designerUserId` exists to end.
+ */
+export function namedDesignerTeam({ chosen, lead }: { chosen: readonly string[]; lead: string }): {
+  lead: string;
+  team: string[];
+} {
+  const ticked: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of chosen) {
+    const id = (raw ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ticked.push(id);
+  }
+  const preferred = (lead ?? "").trim();
+  if (ticked.length === 0) return preferred ? { lead: preferred, team: [preferred] } : { lead: "", team: [] };
+  const resolved = preferred && seen.has(preferred) ? preferred : ticked[0];
+  return { lead: resolved, team: [resolved, ...ticked.filter((id) => id !== resolved)] };
+}
+
+/**
+ * The two designer keys of a create body, or neither — the ONE place that decides what goes on the
+ * wire.
+ *
+ * ── THE THREE ANSWERS, AND WHY THE MIDDLE ONE MATTERS MOST ──────────────────────────────────────
+ *
+ *   NOBODY NAMED  → neither key. "Not decided yet" is a real and common answer: a workshop is
+ *                   opened in a room on day one and the admin may genuinely not know yet who will
+ *                   run it. The server then behaves exactly as it did before either field existed,
+ *                   and stage 1 carries whoever created it.
+ *   ONE DESIGNER  → `designerUserId` ALONE, which is byte-for-byte the body this client has been
+ *                   sending since the singular picker shipped. So the overwhelmingly common create
+ *                   is unchanged on the wire, and an API deployed before `designerUserIds` existed
+ *                   goes on answering it — rather than 422ing `extra_forbidden` at a key it has
+ *                   never heard of and taking a whole offline workshop's fortnight down with it.
+ *   SEVERAL       → both, lead first. Only here is the new key sent, and only here can that skew
+ *                   bite; there is no way to name a second designer without asking a server that
+ *                   understands the question.
+ *
+ * An empty array is never sent. `[]` reads on the wire as "I considered this and the answer is
+ * none", which is a different sentence from silence and one the server would have to interpret.
+ */
+export function designerCreateFields({ chosen, lead }: { chosen: readonly string[]; lead: string }): {
+  designerUserId?: string;
+  designerUserIds?: string[];
+} {
+  const resolved = namedDesignerTeam({ chosen, lead });
+  if (resolved.team.length === 0) return {};
+  if (resolved.team.length === 1) return { designerUserId: resolved.lead };
+  return { designerUserId: resolved.lead, designerUserIds: resolved.team };
+}
 
 export type DwSaveEntry = {
   entityKey: string;
@@ -1043,12 +1191,48 @@ let registryInFlight: Promise<DwRegistry> | null = null;
 /**
  * The field registry, fetched once per tab and thereafter served from memory, keyed by `version`.
  *
- * THE PAYLOAD IS LARGE — 496 field descriptors with help text, enum option lists and report roles —
- * and it is a pure constant on the server (`get_stage_schema` reads no database at all). Every
- * screen in this feature needs it: the list page to name the stages, the stage index to count them,
- * every stage form to render itself, and the report preview to caption its warnings. Fetching it
- * per navigation would put a few hundred kilobytes on the wire each time a designer moved between
- * two stages, on the metered rural connection this whole feature is written for.
+ * THE PAYLOAD IS LARGE — every stage, entity, field descriptor and enum option list the three
+ * clients render their forms from, with help text and report roles — and it is a pure constant on
+ * the server (`get_stage_schema` reads no database at all, and answers every caller and every role
+ * with the same bytes). MEASURED 2026-08-28: **162,717 bytes of JSON, 25,112 gzipped**, from
+ * `docs/SCALABILITY.md` §9.1's own reproduce command through `create_app()`; and **22 stages, 44
+ * entities, 635 field descriptors**, counted off that same response as
+ * `sum(len(e["fields"]) for s in d["stages"] for e in s["entities"])`.
+ *
+ * **READ EVERY ONE OF THOSE AS A DATED FLOOR AND NOT AS A CONSTANT.** This comment said "496 field
+ * descriptors" until 2026-08-28 and was wrong by 139, because the registry gains fields and never
+ * loses them. It does not drift annually either: the reproduce command run twice in one session on
+ * 2026-08-28 returned 162,178 and then 162,717, with `backend/app/services/stage_definitions.py` and
+ * `stage_schema.py` both carrying modification times inside that session — another workstream was
+ * writing the registry while it was being measured. The only figure anything enforces is the
+ * order-of-magnitude band in `backend/tests/test_schema_conditional_get.py::
+ * test_the_measured_sizes_are_still_in_the_range_the_docs_claim`. Count from `registry_to_dict()`
+ * before you quote a number, and date what you write. **12 OTHER FILES IN THIS CLIENT STILL REPEAT
+ * "22 stages, 43 entities, 496 typed fields"** (COUNTED 2026-08-28:
+ * `grep -rl '496[- ]field\|496 typed field\|~496' lib app components e2e` returns 13 including this
+ * one), and two of those three numbers were already wrong on the day this was measured — only the
+ * 22 still holds. They are named here rather than swept because several of those files belong to
+ * other workstreams as this is written; the sweep is one grep and a re-count.
+ *
+ * Every screen in this feature needs it: the list page to name the stages, the stage index to count
+ * them, every stage form to render itself, and the report preview to caption its warnings. Fetching
+ * it per navigation would put that on the wire each time a designer moved between two stages, on
+ * the metered rural connection this whole feature is written for.
+ *
+ * **TWO LAYERS, AND THEY ANSWER DIFFERENT QUESTIONS — DO NOT COLLAPSE THEM INTO ONE.** The module
+ * cache below removes every fetch after the first WITHIN a tab, and does nothing whatever for the
+ * first one: a cold tab, which is what a designer opens each morning, still paid the whole body.
+ * `revalidateFromHttpCache` is the other half — it lets the browser store the response and
+ * revalidate it with `If-None-Match` against the `ETag` `get_stage_schema` sends, so a cold start
+ * that already holds the current registry costs a 664-byte 304 instead of ~25 KB (MEASURED
+ * 2026-08-28, same command; §9.1 has the table). **This is the ONLY call in the client that opts
+ * in**, and `lib/api.ts` sends `cache: "no-store"` on everything else deliberately — the argument
+ * for both is on `ApiFetchOptions.revalidateFromHttpCache`.
+ *
+ * NOTHING BELOW CHANGES SHAPE BECAUSE OF IT. The browser revalidates and hands back an ordinary 200
+ * carrying the body; `fetch` never surfaces a 304 to JavaScript, so the `.then` still parses a full
+ * registry and the version comparison still decides identity exactly as it did. A 304 is
+ * indistinguishable from a 200 here because the caller never sees one.
  *
  * `refresh` re-asks the server and, WHEN THE VERSION IS UNCHANGED, deliberately returns the
  * *previously cached object* rather than the newly parsed one. Identity matters: components hold
@@ -1064,7 +1248,7 @@ export async function fetchStageRegistry(options?: { refresh?: boolean }): Promi
   if (!options?.refresh && cachedRegistry) return cachedRegistry;
   if (!options?.refresh && registryInFlight) return registryInFlight;
 
-  const request = apiFetch<DwRegistry>("/design-workshops/schema")
+  const request = apiFetch<DwRegistry>("/design-workshops/schema", {}, { revalidateFromHttpCache: true })
     .then((next) => {
       if (cachedRegistry && cachedRegistry.version === next.version) return cachedRegistry;
       cachedRegistry = next;
@@ -1094,8 +1278,10 @@ export function peekStageRegistry(): DwRegistry | null {
  * It returns whatever is now cached rather than what was passed in, and that is the point: if this
  * tab already holds a registry of the same version, the ALREADY-CACHED OBJECT is handed back. The
  * identity contract described above is what stops every `useMemo` and effect in the feature
- * rebuilding its field list, and an offline fallback that quietly broke it would rebuild all 496
- * field descriptors on the machine least able to afford it. A different version replaces the cache,
+ * rebuilding its field list, and an offline fallback that quietly broke it would rebuild every one
+ * of the several hundred field descriptors on the machine least able to afford it (635 on
+ * 2026-08-28; this said "496" and see the dated-floor note on `fetchStageRegistry` before you quote
+ * a number). A different version replaces the cache,
  * because that genuinely is a different field list.
  */
 export function adoptStageRegistry(registry: DwRegistry): DwRegistry {
@@ -1125,10 +1311,23 @@ export type DwListParams = {
    * someone else's fieldwork.
    */
   mineOnly?: boolean;
+  /**
+   * Show deleted workshops alongside the live ones. **ADMIN ONLY — the server answers 403, it does
+   * not quietly drop the flag**, because a client that asked for the trash and got the live list
+   * back would draw an ordinary workshop under a "Deleted" heading with a Restore button beside it.
+   */
+  includeDeleted?: boolean;
+  /**
+   * The trash: deleted workshops and nothing else, newest deleted first. Same 403, same reason.
+   *
+   * Wins over `includeDeleted` server-side when both are sent. Its rows carry `deletedById` and
+   * `deletedByName`; every other listing carries neither.
+   */
+  deletedOnly?: boolean;
 };
 
 export function listDesignWorkshops(params: DwListParams) {
-  // `buildQuery` takes no booleans and drops "" exactly as it drops null, so `mineOnly` is spelled
+  // `buildQuery` takes no booleans and drops "" exactly as it drops null, so each boolean is spelled
   // out as the literal "true" and omitted entirely when it is off.
   return apiFetch<PageResult<DwSummary>>(
     `/design-workshops${buildQuery({
@@ -1138,13 +1337,37 @@ export function listDesignWorkshops(params: DwListParams) {
       statusFilter: params.statusFilter ?? undefined,
       craftName: params.craftName ?? undefined,
       state: params.state ?? undefined,
-      mineOnly: params.mineOnly ? "true" : undefined
+      mineOnly: params.mineOnly ? "true" : undefined,
+      includeDeleted: params.includeDeleted ? "true" : undefined,
+      deletedOnly: params.deletedOnly ? "true" : undefined
     })}`
   );
 }
 
+/**
+ * `POST /design-workshops` — and the one request in this module that REWRITES what it was handed.
+ *
+ * The two designer keys are one answer occupying two wire slots, and a caller holding a picker's
+ * state can easily produce a pair the server would misread: an empty array, a one-element array
+ * that needs no new key at all, or a lead absent from the list. Both arms that create a workshop —
+ * the form's own POST and the sync pass's, minutes or a fortnight later — come through here, so
+ * normalising once is what keeps them sending the same body for the same choice. See
+ * {@link designerCreateFields} for the three answers, and for why the single-designer one must stay
+ * byte-identical to the body this client sent before the multi-select existed.
+ *
+ * `JSON.stringify` drops an `undefined` value, so a key `designerCreateFields` omits never reaches
+ * the wire at all — which is the whole protection against an API that predates the field, since
+ * `APIModel` is `extra="forbid"` and refuses a body that merely CARRIES an unknown key.
+ */
 export function createDesignWorkshop(body: DwCreateBody) {
-  return apiFetch<DwSummary>("/design-workshops", { method: "POST", body: JSON.stringify(body) });
+  const { designerUserId, designerUserIds, ...rest } = body;
+  return apiFetch<DwSummary>("/design-workshops", {
+    method: "POST",
+    body: JSON.stringify({
+      ...rest,
+      ...designerCreateFields({ chosen: designerUserIds ?? [], lead: designerUserId ?? "" })
+    })
+  });
 }
 
 export function getDesignWorkshop(id: string) {
@@ -1166,7 +1389,18 @@ export function deleteDesignWorkshop(id: string) {
   return apiFetch<void>(`/design-workshops/${id}`, { method: "DELETE" });
 }
 
-/** Undo a soft delete. Admin only — the point of a safety net is that it is not per-user. */
+/**
+ * Undo a soft delete. Admin only — the point of a safety net is that it is not per-user.
+ *
+ * **THE WAY TO A DELETED WORKSHOP IS `listDesignWorkshops({ deletedOnly: true })`,** and until that
+ * parameter existed this function had no caller on any surface: nothing listed deleted rows, so the
+ * only admin who could restore one was an admin who had written the id down before deleting it. The
+ * caller is the trash card on `/admin`. If you are adding a second one, list the rows the same way
+ * rather than asking somebody to paste an id.
+ *
+ * Idempotent on a live workshop — the server writes the two nulls it already holds and answers 200 —
+ * so a double-clicked Restore is not an error to handle.
+ */
 export function restoreDesignWorkshop(id: string) {
   return apiFetch<DwSummary>(`/design-workshops/${id}/restore`, { method: "POST" });
 }
@@ -1500,9 +1734,9 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     usedFor: "usedFor",
     cost: "cost",
     photo: "photo",
-    // `lengthCm`/`breadthCm` are CONVERTED on the server (the source columns are inches, ×2.54); the
-    // five `*AsRecorded` fields are the ones whose source carries no unit at all, and they keep that
-    // honesty in their name rather than being silently declared centimetres.
+    // `lengthCm`/`breadthCm`/`heightCm` are CONVERTED on the server (the source columns are inches,
+    // ×2.54); the five `*AsRecorded` fields are the ones whose source carries no unit at all, and
+    // they keep that honesty in their name rather than being silently declared centimetres.
     englishName: "englishName",
     yearsInUse: "yearsInUse",
     maker: "maker",
@@ -1514,6 +1748,11 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     remarks: "remarks",
     lengthCm: "lengthCm",
     breadthCm: "breadthCm",
+    // The THIRD converted figure, 2026-08-27. `ToolDocumentation.heightInches` did not exist
+    // before that day, so this table stopped at two. `heightAsRecorded` below is a DIFFERENT
+    // column — the old unit-less `height` — which is why the tool carries two heights and the
+    // product carries one.
+    heightCm: "heightCm",
     heightAsRecorded: "heightAsRecorded",
     widthAsRecorded: "widthAsRecorded",
     thicknessAsRecorded: "thicknessAsRecorded",

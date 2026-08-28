@@ -314,11 +314,16 @@ admin elevates it.
 
 ---
 
-## 4. Authorisation: the seven-tier ladder
+## 4. Authorisation: the eight-tier ladder
 
 Defined in `backend/app/core/deps.py`. Higher ranks inherit everything below them.
 
-**SEVEN, and this heading said six for as long as `DESIGNER` had existed.** The tier was inserted
+**EIGHT since 2026-08-27**, when `INSPECTOR` was inserted at rank 37 — see the row in the table and
+the two notes under it, and [PERMISSIONS.md](PERMISSIONS.md) §1 for the reasoning. The heading, the
+count and the table were widened in the same wave as the enum, which is the discipline the paragraph
+below exists to enforce and not a happy accident.
+
+**Before that it was SEVEN, and this heading said six for as long as `DESIGNER` had existed.** The tier was inserted
 at rank 35 — in the gap the original tens deliberately left — and this section went on printing a
 six-row table, so a reader counting down the rows to work out what a designer may do got an answer
 for somebody who is not in the product. A miscounted ladder is a security defect and not a typo:
@@ -329,7 +334,7 @@ in the same file has always driven the tier), and a sentence that says six is pr
 seventh keeps being left out of the next one. That gap is stated narrowly on purpose: a security
 document that overstates a coverage hole is the same defect as one that understates it.
 
-**The full capability matrix, the review state machine and the three layered access systems are
+**The full capability matrix, the review state machine and the five layered access systems are
 [PERMISSIONS.md](PERMISSIONS.md).** This section states only the security-relevant properties, so
 that the matrix has exactly one home and cannot disagree with itself.
 
@@ -338,14 +343,15 @@ that the matrix has exactly one home and cannot disagree with itself.
 | 60 | `MASTER_ADMIN` | Everything, **plus the three nobody else has**: read/set provider key values, repository settings, publish OTA releases. The only account that may act on a peer. |
 | 50 | `ADMIN` | Delete records, create/delete accounts, grant workshop access, approve **late** submissions |
 | 40 | `PROFESSOR` | Manage crafts/workshops/questionnaire, download the dataset, view and promote users |
+| 37 | `INSPECTOR` (labelled **"Inspector / Reviewer"**) | Everything a researcher may do, **plus reviewing a `DESIGNER`'s records** and reading a design workshop it has been scoped to. **Read-only in the workshop tree, and only where scoped** — it is outside `can_run_design_workshops`, exactly as a professor is, so it cannot run, stage-write, submit or sign a workshop. See both notes under this table. |
 | 35 | `DESIGNER` | Everything a researcher may do, plus running a design & prototype workshop — the stage writes, the custom sections, the AI layers, the consent record (`can_run_design_workshops`). **Not reachable by outranking it** — see the note under this table. |
 | 30 | `RESEARCHER` | **Create** records; edit own; review contributors and volunteers |
 | 20 | `FIELD_CONTRIBUTOR` | Populate existing records; review volunteers. **Cannot create records.** |
 | 10 | `CROWDSOURCE_VOLUNTEER` | Media, questionnaire answers and comments on existing records only |
 
 **The one rule in this section that is not a threshold.** `can_run_design_workshops` is a **SET** —
-`DESIGNER`, `ADMIN`, `MASTER_ADMIN` — so a `PROFESSOR` at rank 40 outranks a designer at 35 and
-still cannot run a design & prototype workshop. `is_admin` is written as a set and
+`DESIGNER`, `ADMIN`, `MASTER_ADMIN` — so a `PROFESSOR` at rank 40 and an `INSPECTOR` at 37 both
+outrank a designer at 35 and still cannot run a design & prototype workshop. `is_admin` is written as a set and
 `is_master_admin` as an equality, but both name the TOP of the ladder and so behave exactly as
 thresholds; this one skips a tier in the middle, which nothing else here does
 ([PERMISSIONS.md](PERMISSIONS.md) §1 calls it the one predicate in `deps.py` that is a set and not a
@@ -353,6 +359,27 @@ threshold, for the same reason). It is worth naming in a security document becau
 reads the table as monotonic will conclude the professor gate covers the designer gate, and it does
 not. The web client carries the identical set in `canRunDesignWorkshops`
 (`frontend/lib/permissions.ts`) and must keep carrying it.
+
+**The two directions `INSPECTOR` moves, because a security reader needs both and the table row only
+carries one.** An audit on 2026-08-26 established that every design-workshop gate in this product is
+set membership and not a rank floor — `_require_designer`, `load_ratable_workshop_or_404`,
+`access_for` and `_assert_every_id_may_be_granted`. So a rank between 35 and 40 **gains nothing** in
+the workshop tree, which is why the tier's actual workshop reach is a separate read-only row in
+`DesignWorkshopInspector` ([PERMISSIONS.md](PERMISSIONS.md) §4.5) rather than anything the number
+buys. That system's read loader takes **no `for_edit` parameter** and refuses to grow one, which is
+what makes "read-only" a structural property here rather than a policy note: there is no argument an
+inspector's request could carry that turns the read into a write.
+
+In the other direction it **gains something no line of code names**: `can_review_record` is "strictly
+below me", and 35 < 37, so an inspector may approve, reject and send back the repository records of
+every designer, repository-wide and with no scope involved. **That is intended** — it is why the rank
+is above 35 rather than below it — and the security-relevant part is the mechanism, not the outcome:
+a rank insert confers it with no line naming either tier and no test going red, which is the shape
+the 2026-08-26 audit flagged before the tier existed. It is written down in `can_review_record`'s
+docstring and asserted in `backend/tests/test_inspector_tier.py` in both directions — an inspector
+may reject a designer's record and may **not** rewrite it, because `can_edit_others_record` narrows
+the same comparison to rank 40. True as of 2026-08-27; re-check with
+`grep -n "def can_review_record" -A 30 backend/app/core/deps.py`.
 
 **What this predicate does NOT gate, because the rank row above is easy to read as though it did.**
 Running a workshop is not the same act as generating its report, and two file headers in `backend/`

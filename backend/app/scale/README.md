@@ -71,7 +71,7 @@ SCALE_CACHE_ENABLED=true python -m app.scale.selfcheck  # the memory cache doing
 | Variable | What it does | Default | Cost when off | How to verify |
 | --- | --- | --- | --- | --- |
 | `SCALE_RATE_LIMIT_ENABLED` | Off: **the middleware is never added to the app**. Not added-and-returning-early — absent. | `false` | Nothing. The stack is one layer shorter than if this existed. | `[mw.cls.__name__ for mw in app.user_middleware]` gains `RateLimitMiddleware`. |
-| `SCALE_RATE_LIMIT_REQUESTS` | Bucket capacity, and the sustained rate per window. | `120` | Not read. | The `x-ratelimit-limit` header on a 429. |
+| `SCALE_RATE_LIMIT_REQUESTS` | Bucket capacity, and the sustained rate per window. Per signed-in user, or per address when anonymous. Does **not** govern the sign-in doors — see below. | `120` | Not read. | The `x-ratelimit-limit` header on a 429. |
 | `SCALE_RATE_LIMIT_WINDOW_SECONDS` | Window the allowance refills over. | `60` | Not read. | The `retry-after` header on a 429. |
 
 ### Read replica
@@ -312,11 +312,39 @@ is dropped before it costs anything.
 
 Callers are identified by a truncated SHA-256 of their bearer token when present (so one user has
 one allowance across their phone and laptop, and an office behind one NAT is not one bucket), else
-by the left-most `X-Forwarded-For` entry. `/health*` and every `OPTIONS` preflight are exempt — a
-rate-limited preflight breaks the web app completely, and the browser reports it as a CORS failure
-rather than a 429.
+by the left-most `X-Forwarded-For` entry. The sign-in doors below are the one exception: there the
+`Authorization` header is ignored and the address alone is the identity.
 
-### Where to install it
+`/health*` and every `OPTIONS` preflight are exempt — a rate-limited preflight breaks the web app
+completely, and the browser reports it as a CORS failure rather than a 429.
+
+### Sign-in is a second, much tighter allowance
+
+`POST /api/auth/login` and `POST /api/datasets/token` both turn an email and a password into a
+token. The general allowance is not brute-force protection — at the default of 120 a minute it
+still permits 172,800 guesses a day — so those two paths carry their own budget of **failed**
+attempts on top of it: **20 per 300s, per address**, which is one further guess every 15s once it
+is spent.
+
+Two things make a ceiling that low safe to ship:
+
+* **Failures are charged, attempts are not.** A token is taken up front (so parallel guesses cannot
+  all clear the same check) and refunded unless the response is a **401**. A 200, a 403 from the
+  admission gate — which is reached only *after* bcrypt has passed — a 422, a 500: all refunded. A
+  designer who knows their password never spends anything, so an office or a carrier-grade NAT
+  sharing one address cannot lock itself out.
+* **It is keyed by address only, never by the bearer token.** Everything else here prefers the
+  token digest; on these two paths an attacker would just send a fresh random `Authorization`
+  header per guess and mint unlimited empty buckets.
+
+The numbers are constants in `rate_limit.py` (`_CREDENTIAL_FAILURES`, `_CREDENTIAL_WINDOW_SECONDS`),
+not `SCALE_*` settings: they are part of the limiter rather than a switch for an optional layer, and
+a backend change ships in one push. Grant redemption
+(`services/design_workshop_grants.py`) is deliberately **not** on the list — its refusal rests on
+110 bits of `secrets` output and that file argues at length that it must keep resting on the
+entropy alone.
+
+### Where it is installed
 
 In `app.main.create_app`, **after** `app.add_middleware(UnhandledErrorMiddleware)` and **before**
 `app.add_middleware(CORSMiddleware, ...)`:
@@ -327,16 +355,22 @@ install_rate_limit(app)          # adds nothing at all when the flag is off
 app.add_middleware(CORSMiddleware, ...)
 ```
 
+It was dormant until 2026-08-27: the package was complete and the settings existed, but this call
+was missing, so `SCALE_RATE_LIMIT_ENABLED=true` did nothing at all. Check it is still there with
+`grep -n install_rate_limit backend/app/main.py`.
+
 That position is load-bearing. Starlette runs the most recently added middleware outermost, so
 adding it before CORS puts the limiter *inside* the CORS layer and a 429 picks up
 `access-control-allow-origin` on the way out. Installed outside CORS, the same 429 reaches the
 browser without that header, the fetch rejects, and the web app says "Failed to fetch" — the exact
-confusion `UnhandledErrorMiddleware` was written to end. (Verified: with the limiter in this
-position a 429 carries `access-control-allow-origin: http://localhost:3000`.)
+confusion `UnhandledErrorMiddleware` was written to end. `tests/test_rate_limit_install.py` pins
+that: it builds the real app and asserts a 429 carries the header for an allowed `Origin`.
 
 With `SCALE_CACHE_BACKEND=redis` the window is shared across processes via `INCR`/`PEXPIRE`;
 otherwise each process uses its own token bucket, which is both faster and exactly as correct for a
-single process.
+single process — and production runs exactly one uvicorn worker per box on purpose. The credential
+budget above never uses the shared window: `INCR` has no honest refund, and with one worker there
+is nothing to share.
 
 ---
 

@@ -57,13 +57,41 @@ export function PhoneField({
   defaultValue,
   onValueChange,
   disabled,
-  mirror = true
+  mirror = true,
+  /**
+   * Refuse the submit when no number has been typed — the designer profile's `phone` box, and so far
+   * only that one.
+   *
+   * ── IT LANDS ON THE VISIBLE INPUT, NOT ON THE MIRROR, AND THAT IS THE WHOLE OF THE DESIGN ──────
+   *
+   * §12.2's rule is that a themed control's mirror must be `type="text"` and never `type="hidden"`,
+   * because a hidden input is exempt from constraint validation and a `required` on one would never
+   * block anything. That rule is about which ELEMENT can carry a constraint at all; it is not an
+   * instruction to put every constraint there. The mirror below is `absolute h-0 w-0 opacity-0`, so
+   * a browser refusing the submit anchors its bubble to a box of zero size — measured in Chromium:
+   * the submit IS blocked and the message IS "Please fill out this field", pointed at nothing a
+   * designer can see. The visible number input is an ordinary `<input>` in the same `<form>` with no
+   * `name` of its own, so `required` there is enforced identically, focuses the box that is empty,
+   * and draws the bubble where the answer goes.
+   *
+   * The mirror keeps `pattern`, which is a different question — that one is about the COMPOSED
+   * value's shape (dial code plus the right number of digits) and cannot be asked of the digits box
+   * alone. A pattern only fails when digits have been typed, i.e. after this constraint is satisfied,
+   * so the two never compete to report the same fault.
+   *
+   * DEFAULT FALSE, and `mirror={false}` callers must leave it that way. Native constraint validation
+   * is deliberately absent from the design-workshop stage forms — completeness there is judged by
+   * `stage_completeness` when a report is generated, not by the browser at save time — so a
+   * `required` reaching that surface would refuse a save the repository is happy to accept.
+   */
+  required = false
 }: {
   name?: string;
   defaultValue?: string | null;
   onValueChange?: (value: string) => void;
   disabled?: boolean;
   mirror?: boolean;
+  required?: boolean;
 }) {
   const [{ iso2, digits }, setState] = useState(() => splitStoredPhone(defaultValue));
   /**
@@ -219,6 +247,10 @@ export function PhoneField({
            * entered heard an unnamed edit box holding ten digits.
            */
           aria-label="Phone number"
+          // See the `required` prop's note: the constraint belongs on the box a reader can see, not
+          // on the zero-size mirror below. `aria-required` is not added beside it — `required` on a
+          // real input already computes it, and setting both is a second source for one fact.
+          required={required}
           aria-invalid={!!error}
           // `aria-invalid` was already set and pointed at nothing: the browser said "invalid" and
           // the REASON — which of the two length rules was broken — was painted in red under the

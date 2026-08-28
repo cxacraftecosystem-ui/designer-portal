@@ -55,10 +55,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 # Importing this module is what installs the twenty-two stages into the registry.
 import app.services.stage_definitions  # noqa: F401
 from app.api.routes import design_workshops as routes
+from app.schemas.design_workshop_viewers import MAX_DESIGN_WORKSHOP_VIEWERS
 from app.schemas.design_workshops import DesignWorkshopCreate
 from app.services import design_workshops as service
 
@@ -74,6 +76,12 @@ ACTOR = SimpleNamespace(id="admin-1", name="Sunil Patnaik", role="ADMIN")
 DESIGNER_ID = "designer-1"
 CREATOR_ID = ACTOR.id
 
+#: The SECOND designer on the workshop, and the reason there has to be one: every question this
+#: module asks about a multi-select — which of them is the lead, whose profile is copied, how many
+#: rows are written — has the same answer for a one-element list as it does for the singular field
+#: it replaced. A team of one cannot fail any of it.
+CO_DESIGNER_ID = "designer-2"
+
 #: What each account's ``DesignerProfile`` answers, keyed by user id. Deliberately disjoint values:
 #: an assertion that named the same institution for both could not fail.
 PROFILES: dict[str, dict[str, Any]] = {
@@ -88,6 +96,16 @@ PROFILES: dict[str, dict[str, Any]] = {
         "designerInstitution": "NIFT Bhubaneswar",
         "designerProfile": "Twelve years of ikat and tie-and-dye across western Odisha.",
         "designerExperience": 12,
+    },
+    # THE CO-DESIGNER, whose values are disjoint from BOTH accounts above for the same reason
+    # theirs are disjoint from each other: the multi-select's whole risk is that the seed starts
+    # guessing which grantee to print, and a co-designer sharing an institution with the lead could
+    # not tell a correct answer from a coincidence.
+    CO_DESIGNER_ID: {
+        "designerName": "Rukmini Behera",
+        "designerInstitution": "Sambalpur Handloom Cooperative",
+        "designerProfile": "Nine years of dhokra casting and bell metal in Dhenkanal.",
+        "designerExperience": 9,
     },
     # An account that has never opened the Designer Page. Present as a KEY with no values so the
     # stub answers ``{}`` for it exactly as ``prefill_from_profile`` answers for a missing profile
@@ -449,8 +467,51 @@ async def test_eligibility_is_the_viewers_screens_own_rule_asked_about_that_one_
         asked.append(set(user_ids))
 
     monkeypatch.setattr(service, "_assert_every_id_may_be_granted", _assert)
-    await service.assert_designer_may_be_named(DESIGNER_ID)
+    await service.assert_every_designer_may_be_named({DESIGNER_ID})
     assert asked == [{DESIGNER_ID}]
+
+
+async def test_a_whole_ticked_TEAM_is_asked_about_in_ONE_call_and_never_id_by_id(monkeypatch):
+    """The multi-select's refusal has to arrive complete, and a loop cannot make it complete.
+
+    ``_assert_every_id_may_be_granted`` refuses the WHOLE set and names every account it objected
+    to, stacking the two RESTORABLE refusals — an empanelment that lapsed, and a platform allow-list
+    that bars the account — precisely so an admin learns about both before walking to another
+    screen. Asked once per id it raises on the first bad one and says nothing about the second: an
+    admin who ticked four designers and is told about one has been sent on the first of two trips,
+    which is the exact round trip those sentences were worded to save.
+
+    So the assertion is on the SHAPE of the call and not merely on the ids in it. One call, holding
+    all of them.
+    """
+    asked: list[set[str]] = []
+
+    async def _assert(user_ids: set[str]) -> None:
+        asked.append(set(user_ids))
+
+    monkeypatch.setattr(service, "_assert_every_id_may_be_granted", _assert)
+    await service.assert_every_designer_may_be_named({DESIGNER_ID, CO_DESIGNER_ID})
+    assert asked == [{DESIGNER_ID, CO_DESIGNER_ID}], (
+        "the eligibility rule was asked one id at a time, so a create naming two ineligible "
+        "designers now refuses with only the first of them named"
+    )
+
+
+async def test_naming_nobody_costs_no_eligibility_QUERY_at_all(monkeypatch):
+    """An empty set is a no-op, not an empty ``IN`` list sent to Postgres.
+
+    The overwhelmingly common create — a workshop opened in a room on day one, before anybody knows
+    who will run it, or one posted by an APK that predates the field — names nobody. It must not pay
+    for three reads (the user table, the designer roster, the access roster) to be told so.
+    """
+    asked: list[set[str]] = []
+
+    async def _assert(user_ids: set[str]) -> None:
+        asked.append(set(user_ids))
+
+    monkeypatch.setattr(service, "_assert_every_id_may_be_granted", _assert)
+    await service.assert_every_designer_may_be_named(set())
+    assert asked == [set()]
 
 
 # ── 4. The create route: the order of operations, which is a no-orphan rule ──────────────────────
@@ -464,7 +525,7 @@ def test_the_create_route_settles_eligibility_BEFORE_it_writes_the_workshop_row(
     does and for the same reason: calling the route needs a database, and on this project's machines
     Docker is frequently not running.
 
-    THE FAILURE THIS ORDER PREVENTS. ``assert_designer_may_be_named`` raises a 422 for a PROFESSOR,
+    THE FAILURE THIS ORDER PREVENTS. ``assert_every_designer_may_be_named`` raises a 422 for a PROFESSOR,
     for a designer whose empanelment has lapsed, and for an account the platform allow-list has
     suspended. Asked AFTER ``db.designworkshop.create``, that 422 answers the client while the
     workshop row stands — so an admin correcting the picker and pressing create again accumulates
@@ -474,12 +535,12 @@ def test_the_create_route_settles_eligibility_BEFORE_it_writes_the_workshop_row(
     not half-succeed.
     """
     source = inspect.getsource(routes.create_design_workshop)
-    validate_at = source.index("await assert_designer_may_be_named(")
+    validate_at = source.index("await assert_every_designer_may_be_named(")
     create_at = source.index("await db.designworkshop.create(")
-    grant_at = source.index("await attach_the_named_designer(")
+    grant_at = source.index("await attach_the_named_designers(")
 
     assert validate_at < create_at, (
-        "the eligibility check moved below the create, so a refused designerUserId now leaves an "
+        "the eligibility check moved below the create, so a refused designer id now leaves an "
         "orphan draft behind on every retry"
     )
     assert create_at < grant_at, (
@@ -499,3 +560,253 @@ def test_designerUserId_is_optional_so_no_existing_client_is_broken_by_it():
 
     named = DesignWorkshopCreate(title="Ikat cluster fortnight", designerUserId=DESIGNER_ID)
     assert named.designerUserId == DESIGNER_ID
+
+# ── 5. THE MULTI-SELECT: several designers on one workshop, one name on the report ───────────────
+#
+# THE OWNER'S ASK, VERBATIM: "Designer this workshop is for should be a multi-select dropdown with
+# searchable functionality … the design workshop would only be visible to those particular
+# designers, admins and master admins would be able to see all the design workshops."
+#
+# THE VISIBILITY HALF OF THAT IS NOT TESTED HERE, BECAUSE IT IS NOT DECIDED HERE. A design workshop
+# is already visible only to its creator, to admins, and to whoever holds a ``DesignWorkshopViewer``
+# row — enforced IN THE QUERY on the list (``visible_to_clause``) and IN THE LOAD on the single read
+# (``load_workshop_or_404``). ``tests/test_design_workshop_designer_scope.py`` asserts that end to
+# end against a real Postgres, including that a designer who is NOT named is answered 404 with the
+# same detail string as an id that does not exist. What is asserted HERE is the half that decides
+# WHICH ROWS GET WRITTEN, and every one of these is a statement about three Python functions rather
+# than about Postgres — which is what lets it run on a machine with no Docker, exactly as the four
+# sections above do.
+#
+# THE PROPERTY THAT MATTERS MOST IN THIS SECTION IS THE ONE THAT LOOKS LIKE A DETAIL: a workshop
+# gaining many DESIGNERS must not give it many ``designerName``s. That column is promoted from a
+# stage-1 SINGLETON by ``promoted_values()``, it is capped at 180 characters, and ``report_meta``
+# feeds it into the .docx's ``dc:creator`` — a field the file format cannot express as a list. So
+# the team is plural and the name is singular, and ``named_designer_team`` is the seam between them.
+
+
+def test_the_lead_is_the_singular_field_when_a_body_sends_both():
+    """``designerUserId`` keeps its exact meaning: the one whose profile and name are used."""
+    lead, team = service.named_designer_team(DESIGNER_ID, [CO_DESIGNER_ID, DESIGNER_ID])
+    assert lead == DESIGNER_ID
+    assert team == [DESIGNER_ID, CO_DESIGNER_ID], (
+        "the lead must be first in the team as well, so that a client reading the team back cannot "
+        "disagree with the server about whose name is on the report"
+    )
+
+
+def test_a_body_that_ticks_names_but_names_no_lead_promotes_the_FIRST_TICKED():
+    """And emphatically not the admin who pressed create.
+
+    A client can legitimately send only the plural field — an older web form, a handset whose picker
+    has no lead control yet. Something still has to be seeded into stage 1's one designer block, and
+    there are exactly two candidates: the first person the admin ticked, or the ADMIN themselves.
+    The second is the wrong-name-on-a-ministry-document defect this whole module exists to guard,
+    arrived at by a new road. First-ticked is at least a choice a human made, and it is the name
+    both clients show on their lead line.
+    """
+    lead, team = service.named_designer_team(None, [CO_DESIGNER_ID, DESIGNER_ID])
+    assert lead == CO_DESIGNER_ID
+    assert team == [CO_DESIGNER_ID, DESIGNER_ID]
+
+
+def test_a_lead_who_is_not_in_the_ticked_list_is_granted_anyway():
+    """Two fields built from two pieces of client state can disagree. The lead wins the tie.
+
+    The alternative — honour the ticks and drop the lead — produces the single worst outcome this
+    surface has: a workshop whose stage 1 carries somebody's name and whose access refuses them,
+    with the only symptom a 404 they cannot tell apart from a workshop that does not exist. That is
+    exactly the failure ``attach_the_named_designer`` was written to end.
+    """
+    lead, team = service.named_designer_team(DESIGNER_ID, [CO_DESIGNER_ID])
+    assert lead == DESIGNER_ID
+    assert team == [DESIGNER_ID, CO_DESIGNER_ID]
+
+
+def test_blanks_duplicates_and_None_all_mean_nobody_named():
+    """Every one of these is a body some client actually sends.
+
+    ``""`` is an empty picker, a cleared field, or an offline draft that carried the key and never
+    got an answer. Reaching the eligibility rule it would 422 the create with "No account exists
+    with this id: " — naming nothing, on a form where the field is optional. ``None``/absent is an
+    APK that predates the field, and the empty list is a picker the admin opened and closed.
+    """
+    assert service.named_designer_team(None, None) == (None, [])
+    assert service.named_designer_team("", []) == (None, [])
+    assert service.named_designer_team("   ", ["", "   ", None]) == (None, [])
+    assert service.named_designer_team(None, [DESIGNER_ID, DESIGNER_ID, f" {DESIGNER_ID} "]) == (
+        DESIGNER_ID,
+        [DESIGNER_ID],
+    ), "a duplicated id must collapse rather than attempt a second row on the same primary key"
+
+
+def test_the_old_singular_wire_still_produces_exactly_what_it_used_to():
+    """THE FORTNIGHT-BEHIND HANDSET, pinned as one assertion.
+
+    An APK in the field sends ``designerUserId`` and nothing else, and on Android ``saveOrQueue``
+    will NOT re-queue a 4xx: a create the server refuses is a create whose record is LOST. So this
+    body may never 422 and may never change meaning. One named designer, one grant, and that
+    designer is the lead — byte for byte what the singular field did before the plural one existed.
+    """
+    assert service.named_designer_team(DESIGNER_ID, None) == (DESIGNER_ID, [DESIGNER_ID])
+
+
+def test_designerUserIds_is_optional_and_bounded_by_the_viewers_screens_own_cap():
+    """Additive on the wire, and capped by the same constant the viewers PUT uses.
+
+    The two writes land in the SAME table, so a create that accepted a set the viewers screen would
+    refuse — or the reverse — is one list with two rules. The cap is IMPORTED rather than restated
+    for that reason, and this asserts the import rather than a number.
+    """
+    body = DesignWorkshopCreate(title="Ikat cluster fortnight")
+    assert body.designerUserIds is None, (
+        "absent must mean 'nobody named'. If this ever defaults to [] it still reads the same to "
+        "the route, but a client can no longer tell 'I did not answer' from 'I answered nobody'."
+    )
+
+    named = DesignWorkshopCreate(
+        title="Ikat cluster fortnight",
+        designerUserId=DESIGNER_ID,
+        designerUserIds=[DESIGNER_ID, CO_DESIGNER_ID],
+    )
+    assert named.designerUserIds == [DESIGNER_ID, CO_DESIGNER_ID]
+
+    with pytest.raises(ValidationError):
+        DesignWorkshopCreate(
+            title="Too many",
+            designerUserIds=[f"designer-{n}" for n in range(MAX_DESIGN_WORKSHOP_VIEWERS + 1)],
+        )
+
+
+async def test_every_named_designer_gets_a_row_and_the_creator_gets_none(monkeypatch):
+    """The grant loop: one ``add_one_viewer`` per named account, and the creator excluded.
+
+    THE CREATOR IS NOT A VIEWER — their access comes from ``createdById``, so a row for them would
+    be a second, redundant source of truth for access they already hold, and one an admin could
+    "remove" from the viewers screen without anything changing. That rule held for the singular
+    field and has to keep holding when an admin ticks THEMSELVES alongside two designers, which is
+    what an admin running their own cluster will do.
+    """
+    written: list[str] = []
+
+    async def _add(tx: Any, *, workshop_id: str, user_id: str, **kwargs: Any) -> None:
+        written.append(user_id)
+
+    monkeypatch.setattr(service, "add_one_viewer", _add)
+    granted = await service.attach_the_named_designers(
+        "ws-1",
+        [ACTOR.id, DESIGNER_ID, CO_DESIGNER_ID],
+        granted_by_id=ACTOR.id,
+        creator_id=ACTOR.id,
+    )
+    assert written == [DESIGNER_ID, CO_DESIGNER_ID]
+    assert granted == [DESIGNER_ID, CO_DESIGNER_ID]
+
+
+def test_the_grant_loop_adds_and_can_never_REPLACE():
+    """A source sweep, because the wrong function is the plural-looking one standing beside it.
+
+    ``replace_viewers`` DELETES whatever it did not read. Used to put a team on a new workshop it
+    would destroy a viewer row a concurrent join-card redemption had just created and resurrect one
+    an admin had just removed — and on a BRAND-NEW workshop it would look completely correct, which
+    is exactly why this is asserted rather than commented. Every sibling writer of this table — a
+    decided access request, a redeemed card, the singular naming — funnels through ``add_one_viewer``
+    for the same reason.
+
+    THE DOCSTRING IS EXCLUDED FROM THE SWEEP, and having to do that is the known cost of asserting
+    on source. ``attach_the_named_designers`` NAMES ``replace_viewers`` in its own docstring, to
+    warn the next reader off it — which is exactly the warning worth keeping, and which a naive
+    substring search reads as the call it is warning about. ``test_design_workshop_gate`` hits the
+    same trap from the other side and solves it by refusing to spell the name in a comment at all;
+    here the sentence is worth more than the simpler assertion, so the docstring is subtracted
+    rather than the warning deleted. What is left is the executable body, which is what the property
+    is about.
+
+    **IT IS CUT BY ITS QUOTES AND NOT BY ``__doc__``, WHICH IS THE OBVIOUS SPELLING AND IS WRONG ON
+    THIS INTERPRETER.** Since Python 3.13 the compiler DEDENTS docstrings, so ``func.__doc__`` has
+    had four spaces stripped from the front of every continuation line and is no longer a substring
+    of the file it came from. ``source.replace(func.__doc__, "")`` therefore matches nothing,
+    silently — the whole docstring survives into the sweep and the test fails saying the grant loop
+    calls ``replace_viewers`` when it does not. A false accusation reads exactly like a real one, so
+    the cut is asserted to have happened rather than assumed.
+
+    The newlines are normalised for the same class of reason: ``inspect.getsource`` reads through
+    ``linecache``, which opens the file with ``newline=""``, so on a CRLF checkout — which this
+    repository's ``.gitattributes`` produces on Windows — the source arrives holding ``\\r\\n``.
+    """
+    source = inspect.getsource(service.attach_the_named_designers).replace("\r\n", "\n")
+    opening = source.index('"""')
+    closing = source.index('"""', opening + 3) + 3
+    body = source[:opening] + source[closing:]
+    assert "A LOOP OVER" not in body, (
+        "the docstring was not cut out, so the sweep below is running over text that still "
+        "contains the warning it is searching for — see the paragraph above"
+    )
+    assert "replace_viewers" not in body, (
+        "the grant loop reached for the whole-set replace, which deletes the viewer rows it did "
+        "not read — see services/design_workshop_access.add_one_viewer"
+    )
+    assert "add_one_viewer" in inspect.getsource(service.attach_the_named_designer)
+
+
+async def test_a_grant_that_fails_PART_WAY_does_not_pretend_the_create_succeeded(monkeypatch):
+    """No blanket ``except`` around the loop, and a log line naming what did land.
+
+    The loop is NOT in a transaction with the workshop create — the singular version says so, and
+    the exposure MULTIPLIES rather than changes shape when there are four ids. Swallowing the error
+    would turn a create that could not honour its body into a silent 201: the admin sees a workshop,
+    two of the four designers see nothing, and no screen anywhere connects the two. That is the same
+    class of failure as the wrong name on the report, where every automatic check agreed the
+    document was correct.
+
+    What is added instead of a swallow is a log line naming the ids that DID get rows, because the
+    admin's 500 cannot: without it an operator cannot tell a workshop with no designers on it from
+    one with three of four.
+    """
+    written: list[str] = []
+    logged: list[Any] = []
+
+    async def _add(tx: Any, *, workshop_id: str, user_id: str, **kwargs: Any) -> None:
+        if user_id == CO_DESIGNER_ID:
+            raise RuntimeError("driver went away")
+        written.append(user_id)
+
+    monkeypatch.setattr(service, "add_one_viewer", _add)
+    monkeypatch.setattr(service.logger, "exception", lambda *a, **k: logged.append((a, k)))
+
+    with pytest.raises(RuntimeError):
+        await service.attach_the_named_designers(
+            "ws-1",
+            [DESIGNER_ID, CO_DESIGNER_ID],
+            granted_by_id=ACTOR.id,
+            creator_id=CREATOR_ID,
+        )
+    assert written == [DESIGNER_ID]
+    assert logged, "the partial grant was neither raised to the caller nor written to the log"
+    assert DESIGNER_ID in str(logged[0]), (
+        "the log line must name the ids that DID get rows; 'granting failed' on its own tells an "
+        "operator nothing about how much of the team is on the workshop"
+    )
+
+
+async def test_a_TEAM_of_designers_still_seeds_exactly_ONE_designer_block(monkeypatch):
+    """The multi-select must not make the report's designer block plural.
+
+    ``designerName`` is promoted from a stage-1 SINGLETON, is capped at 180 characters, and reaches
+    the .docx's ``dc:creator`` through ``report_meta`` — a field the file format cannot express as a
+    list. The seed therefore takes the LEAD and nothing else: the co-designer's institution and
+    biography must appear NOWHERE, and the seed must not so much as ask about them. Note what makes
+    this assertable at all — ``seed_designer_prefill`` still takes ONE ``designer_id``, so there is
+    no place in it for a team to arrive, and :class:`_StubDb` still has no ``designworkshopviewer``
+    for it to go looking in.
+    """
+    db, asked = await _seed(monkeypatch, designer_id=DESIGNER_ID)
+
+    assert asked == [DESIGNER_ID], (
+        f"the seed asked about {asked}; with a team named it must still read exactly one profile, "
+        "because there is exactly one designer block to write it into"
+    )
+    setup = _entry(db, STAGE_1)["data"]
+    assert setup["designerName"] == "Meera Kanungo"
+    everything = _every_seeded_value(db)
+    assert "Rukmini Behera" not in everything
+    assert "Sambalpur Handloom Cooperative" not in everything

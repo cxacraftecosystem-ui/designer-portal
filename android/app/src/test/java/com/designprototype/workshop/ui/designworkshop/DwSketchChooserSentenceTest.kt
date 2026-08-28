@@ -107,4 +107,55 @@ class DwSketchChooserSentenceTest {
         assertEquals("two of the three answers share a sentence", all.size, all.toSet().size)
         all.forEach { assertTrue("an answer is blank", it.isNotBlank()) }
     }
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+    // WHAT A 3D MODEL DOES IN THE DELIVERED DOCUMENT
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * THE FACT, AND ONLY THE FACT.
+     *
+     * `DW_PROTOTYPE_3D_IN_THE_REPORT` makes one claim about a file this application does not
+     * generate: a 3D model attached on stage 13 appears in the ministry .docx as the words
+     * "1 document attached". That is `report_builder.format_value`'s output, and the sentence is
+     * worth nothing unless it is exactly right — a designer who reads it as "the model is printed"
+     * hands over a document a reviewer cannot see the prototype in, and one who reads it as "the
+     * file is carried" hands over a document the file is not inside.
+     *
+     * So the literal is pinned, and so are the two things the sentence must never come to say. The
+     * strings themselves are `report_builder.py`'s; TRUE AS OF 2026-08-27, re-check with:
+     *
+     *     grep -n "document attached" backend/app/services/report_builder.py
+     *
+     * A KOTLIN TEST CANNOT CHECK THE PYTHON, and that is the limit of this one. It pins that THIS
+     * COPY of the claim still contains the words the generator writes; it cannot pin that the
+     * generator still writes them. The only real guard is a backend test asserting the two facts
+     * where they are decided — see the note in `docs/SKETCHES-PROTOTYPES-PARITY.md`.
+     *
+     * NOTHING IS ASSERTED ABOUT [DW_TURNTABLE_CAPTURE_ADVICE], deliberately. That constant is craft
+     * advice — how many frames, what light — and a reader who disagrees with it must be free to
+     * improve it without a test standing in the way. Its own KDoc makes the same separation, which
+     * is why the two are two constants rather than one paragraph.
+     */
+    @Test
+    fun `the prototype sentence names the exact words the document generator writes`() {
+        assertTrue(
+            "the .docx says this and the sentence must quote it",
+            DW_PROTOTYPE_3D_IN_THE_REPORT.contains("1 document attached"),
+        )
+        // NEVER "printed", "shown", "drawn" or "included" ABOUT THE MODEL. `_images` places IMAGE and
+        // IMAGE_LIST fields only; no writer in this product can draw a mesh.
+        listOf("is printed", "is drawn", "is shown", "is rendered").forEach { promise ->
+            assertFalse(
+                "the sentence must not promise the model itself reaches the page: $promise",
+                DW_PROTOTYPE_3D_IN_THE_REPORT.contains(promise, ignoreCase = true),
+            )
+        }
+        // And it must go on saying what the designer can DO about it, which is the only reason the
+        // fact is on a chooser at all.
+        assertTrue(
+            "the action is the point of saying any of this",
+            DW_PROTOTYPE_3D_IN_THE_REPORT.contains("photograph the piece as well"),
+        )
+    }
 }

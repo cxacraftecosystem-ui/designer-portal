@@ -205,10 +205,17 @@ def section_question_data(section: Any) -> dict[str, str]:
 async def section_payloads(active_only: bool = True) -> list[dict[str, Any]]:
     section_where = {"isActive": True} if active_only else {}
     question_where: dict[str, Any] = {"isActive": True} if active_only else {}
-    sections = await db.questionnairesection.find_many(where=section_where, order={"sortOrder": "asc"})
-    questions = await db.questionnairequestion.find_many(
-        where=question_where,
-        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+    # The two reads are independent — the questions are grouped onto their sections in Python below,
+    # not by the database — so they go out together. MEASURED: ``GET /questionnaire/questions`` was
+    # 2,466 ms against production, which the round-trip model resolves to 3.41 trips: auth plus
+    # exactly these two in series (docs/SCALABILITY.md §1.2). ``/questionnaire/sections`` and the two
+    # other callers of this helper get the same trip back.
+    sections, questions = await gather_reads(
+        db.questionnairesection.find_many(where=section_where, order={"sortOrder": "asc"}),
+        db.questionnairequestion.find_many(
+            where=question_where,
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        ),
     )
     questions_by_section: dict[str, list[Any]] = {}
     for question in questions:

@@ -9,9 +9,9 @@ bodies never share a field even where they name the same idea: ``DesignerRosterC
 ``institution`` an admin typed to remember whom they empanelled, and ``DesignerProfileUpdate``
 has an ``institution`` the designer types and the report prints.
 
-Both are all-optional except the roster's ``email``, and every update body is applied with
-``exclude_unset``: a key that is absent leaves the stored value alone, and a key that is present
-and null clears it. That distinction is load-bearing on ``DesignerProfileUpdate`` — but NOT
+Every update body is applied with ``exclude_unset``: a key that is absent leaves the stored value
+alone, and a key that is present and null clears it. That distinction is load-bearing on
+``DesignerProfileUpdate`` — but NOT
 because a client sends a subset of it, because neither client does any more. Both profile editors
 render all twenty-one fields and put every key on the wire on every save
 (``designerProfileUpdateJson`` in ``ApiModels.kt``, ``fullDesignerProfileBody`` in
@@ -24,11 +24,57 @@ nothing else, which is what ``test_an_admin_may_write_a_designers_profile`` send
 without ``exclude_unset`` would read the other nineteen absent keys as "clear" and blank the
 institution, the biography and the signature the designer typed on the web the week before — the
 sort of loss nobody notices until a report prints without them.
+
+FOUR PROFILE COLUMNS MAY NOT BE CLEARED, WHICH IS A DIFFERENT STATEMENT FROM "REQUIRED". Since
+2026-08-27 the name, qualification, phone and e-mail are mandatory on a designer profile — see
+:data:`REQUIRED_PROFILE_COLUMNS` — and that is enforced by field validators, which pydantic runs
+only for a key that was actually SUPPLIED. So the ``exclude_unset`` contract above is untouched in
+both directions: an absent key still leaves the stored value alone (the admin's two-key PUT never
+meets the rule at all), and what is refused is only a body that explicitly asks to blank one of the
+four. Nothing here makes a column non-nullable — rows created before the rule, including the empty
+one ``GET`` mints on first read, are still perfectly readable; they simply cannot be re-saved with
+those boxes empty.
 """
 
-from pydantic import EmailStr, Field
+from typing import Any
+
+from pydantic import EmailStr, Field, ValidationInfo, field_validator
 
 from app.schemas.common import APIModel
+
+#: The profile columns that may not be CLEARED, and the words a designer knows them by.
+#:
+#: ── WHY THE API HAS THIS RULE AND NOT ONLY THE FORMS ────────────────────────────────────────────
+#:
+#: The owner's instruction of 2026-08-27 — "Name, qualification, email, and phone number should be
+#: mandatory fields as well" — is a statement about the RECORD, and a rule only the browser enforces
+#: is a rule the API does not have. Two clients write this table (``fullDesignerProfileBody`` on the
+#: web, ``designerProfileUpdateJson`` on the handset), both send all twenty-one keys on every save,
+#: and anything else holding a bearer token can PUT whatever it likes. The web form marks these four
+#: with `required` so the refusal is met in the box rather than as a round trip; this is what makes
+#: the refusal true of the repository.
+#:
+#: ── PRESENT-AND-EMPTY IS REFUSED; ABSENT IS UNTOUCHED, AND THAT DISTINCTION IS PRESERVED EXACTLY ──
+#:
+#: These are ``field_validator``s, which pydantic runs only for a key that is actually SUPPLIED — a
+#: field left to its default is not validated. So the module docstring's contract is unchanged: an
+#: absent key still leaves the stored value alone, and the admin's two-key partial PUT
+#: (``test_an_admin_may_write_a_designers_profile``) never reaches these at all. What is now refused
+#: is the one thing that used to be allowed and should not have been: a body that explicitly says
+#: "clear the name on the cover of every report this person generates".
+#:
+#: ── THE LABEL, NOT THE COLUMN NAME, IN THE SENTENCE ─────────────────────────────────────────────
+#:
+#: ``loc`` already carries the column for whoever is reading a log; the message is read by a designer
+#: on a screen, and it has to name the box they are looking at. The strings are
+#: ``DESIGNER_PROFILE_LABELS`` in ``frontend/components/designers/profileCopy.ts``, and the web
+#: client's ``describeApiDetail`` prints them as "displayName: Name is required…".
+REQUIRED_PROFILE_COLUMNS: dict[str, str] = {
+    "displayName": "Name",
+    "qualification": "Qualification",
+    "phone": "Phone",
+    "email": "Email",
+}
 
 
 class DesignerRosterCreate(APIModel):
@@ -111,3 +157,32 @@ class DesignerProfileUpdate(APIModel):
     cvMediaId: str | None = Field(default=None, max_length=64)
     empanelmentNo: str | None = Field(default=None, max_length=120)
     empanelmentDate: str | None = Field(default=None, max_length=32)
+
+    @field_validator("displayName", "qualification", "phone", "email")
+    @classmethod
+    def _mandatory_columns_may_not_be_cleared(
+        cls, value: Any, info: ValidationInfo
+    ) -> Any:
+        """Refuse a SUPPLIED name, qualification, phone or e-mail that is null or all whitespace.
+
+        See :data:`REQUIRED_PROFILE_COLUMNS` for why this rule is on the API rather than only in the
+        two forms, and for why it is a field validator: pydantic runs one only for a key that was
+        actually sent, so ``exclude_unset``'s "absent means leave it alone" is untouched and an
+        admin's two-key partial PUT never meets it.
+
+        The blank test matches ``update_profile``'s own fold — it stores ``value.strip() or None``,
+        so a single space and a null are the same instruction to the column, and refusing one while
+        accepting the other would be a rule that a trailing space defeats.
+
+        ``email`` reaches this already validated as an ``EmailStr``, so the only value that can get
+        this far and be empty is an explicit ``null``. The ``@`` rule stays where it is; this adds
+        nothing to it and must not, or the client's ``type="email"`` and the server would be two
+        opinions about one address.
+        """
+        if value is None or (isinstance(value, str) and not value.strip()):
+            label = REQUIRED_PROFILE_COLUMNS[info.field_name or ""]
+            raise ValueError(
+                f"{label} is required on a designer profile — it is printed on every report "
+                "generated under this name, so it cannot be left blank."
+            )
+        return value

@@ -3,7 +3,21 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { defaultTraceParams, sanitizeTraceParams, withOverrides } from "@/lib/trace/engine/params";
+/*
+  THE ENUMS BY NAME, ONLY IN THIS SPEC. `traceParamTable.ts` deliberately writes them as plain
+  strings and casts, because naming the enum as a VALUE would put the engine in the page's bundle
+  (see that file's header, difference 3) — and the whole first case below exists because that cast
+  makes a typo silent. A spec is under no such rule and is the right place to hold the real thing
+  beside the copy: `withOverrides` is typed over the enums, so a string here would not compile.
+*/
+import {
+  DenoiseMode,
+  EdgeEngine,
+  VectorModeParam,
+  defaultTraceParams,
+  sanitizeTraceParams,
+  withOverrides
+} from "@/lib/trace/engine/params";
 import type { TraceParams } from "@/lib/trace/engine/params";
 
 import {
@@ -16,6 +30,7 @@ import {
   applyParamPatch,
   changedLabels,
   formatValue,
+  inactiveReason,
   mergeParams,
   overwriteNotice
 } from "@/components/sketches/upload/traceParamTable";
@@ -577,4 +592,119 @@ test("the sentence a failed engine load shows is the one traceClient already own
   const runtime = readFileSync(join(__dirname, "..", "components", "sketches", "upload", "traceRuntime.ts"), "utf8");
   expect(client).toContain(sentence);
   expect(runtime).toContain(sentence);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * A control that cannot do anything right now
+ *
+ * `inactiveReason` makes a strong claim — "this row is doing nothing under your current settings" —
+ * and every arm of it is a condition read off `engine/pipeline.ts`. A claim like that is worse than no
+ * claim if it is wrong in either direction: a sentence under a live control tells a designer to stop
+ * using something that works, and a missing sentence leaves them dragging a slider the pipeline never
+ * reads. Both directions are asserted below.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("the inert-control sentences name the right rows, and only under the settings that make them true", () => {
+  const base = defaultTraceParams();
+  const keys = new Set([
+    ...SLIDERS.map((spec) => spec.key),
+    ...TOGGLES.map((spec) => spec.key),
+    ...CHOICES.map((spec) => spec.key)
+  ]);
+
+  /*
+    EVERY KEY THIS FUNCTION ANSWERS FOR IS A ROW THAT EXISTS. A typo in the switch would not fail to
+    compile, would not throw, and would produce a sentence that simply never appears — the silent
+    failure mode this whole table's header is written against, one level down.
+  */
+  const answered = [
+    "edge.blurSigma",
+    "edge.flow.sigmaM",
+    "edge.xdogPhi",
+    "cleanup.skeletonize",
+    "cleanup.pruneSpurs",
+    "cleanup.maxGap",
+    "preprocess.claheClip",
+    "preprocess.unsharpSigma",
+    "preprocess.denoiseStrength"
+  ];
+  for (const key of answered) expect(keys.has(key)).toBe(true);
+
+  /*
+    ── THE TRAP THIS EXISTS FOR ──────────────────────────────────────────────
+
+    `pipeline.ts:520-534` — the MEDIAN arm calls `Denoise.median(grey, p.preprocess.medianRadius)` and
+    never reads `denoiseStrength`, which the other three modes do. MEDIAN is what the `sketch` subject
+    selects, so on the commonest configuration this panel has, "Noise reduction" is inert and nothing
+    said so.
+  */
+  expect(inactiveReason("preprocess.denoiseStrength", withOverrides(base, { preprocess: { denoise: DenoiseMode.MEDIAN } }))).toBe(
+    "The median filter works from a fixed radius the panel does not expose, not from this."
+  );
+  expect(inactiveReason("preprocess.denoiseStrength", withOverrides(base, { preprocess: { denoise: DenoiseMode.NONE } }))).toBe(
+    "The noise filter is set to None."
+  );
+  // …and under a mode that DOES read it, silence. A sentence here would tell a designer to stop using
+  // a control that is working.
+  expect(
+    inactiveReason("preprocess.denoiseStrength", withOverrides(base, { preprocess: { denoise: DenoiseMode.BILATERAL } }))
+  ).toBeNull();
+
+  // ── THE EDGE ENGINE'S THREE ─────────────────────────────────────────────────
+  // `pipeline.ts:806-808` passes blurSigma only in the CANNY arm; `:838-852` reads the flow settings
+  // only in the default FDOG arm; `:817` and `:851` share xdogPhi between XDoG and Flow.
+  const canny = withOverrides(base, { edge: { engine: EdgeEngine.CANNY } });
+  const flow = withOverrides(base, { edge: { engine: EdgeEngine.FDOG } });
+  const xdog = withOverrides(base, { edge: { engine: EdgeEngine.XDOG } });
+  expect(inactiveReason("edge.blurSigma", canny)).toBeNull();
+  expect(inactiveReason("edge.blurSigma", flow)).toBe("Only the Canny engine reads this.");
+  expect(inactiveReason("edge.flow.sigmaM", flow)).toBeNull();
+  expect(inactiveReason("edge.flow.sigmaM", canny)).toBe("Only the Flow engine reads this.");
+  expect(inactiveReason("edge.xdogPhi", xdog)).toBeNull();
+  expect(inactiveReason("edge.xdogPhi", flow)).toBeNull();
+  expect(inactiveReason("edge.xdogPhi", canny)).toBe("Only the XDoG and Flow engines read this.");
+
+  // ── THE THREE THAT DEPEND ON ANOTHER CONTROL, QUOTED BY ITS OWN LABEL ──────
+  // The sentences quote the labels this very table declares, so a renamed control cannot leave a
+  // sentence pointing at a row nobody can find.
+  expect(inactiveReason("cleanup.maxGap", withOverrides(base, { cleanup: { bridgeGaps: false } }))).toBe(
+    "“Bridge stroke ends” is off."
+  );
+  expect(TOGGLES.find((spec) => spec.key === "cleanup.bridgeGaps")?.label).toBe("Bridge stroke ends");
+  expect(
+    inactiveReason("preprocess.claheClip", withOverrides(base, { preprocess: { claheEnabled: false } }))
+  ).toBe("“Equalise local contrast” is off.");
+  expect(TOGGLES.find((spec) => spec.key === "preprocess.claheEnabled")?.label).toBe("Equalise local contrast");
+  expect(
+    inactiveReason("preprocess.unsharpSigma", withOverrides(base, { preprocess: { unsharpAmount: 0 } }))
+  ).toBe("“Sharpen amount” is 0.");
+  expect(SLIDERS.find((spec) => spec.key === "preprocess.unsharpAmount")?.label).toBe("Sharpen amount");
+  expect(
+    inactiveReason("preprocess.unsharpSigma", withOverrides(base, { preprocess: { unsharpAmount: 1.5 } }))
+  ).toBeNull();
+
+  /*
+    ── OUTLINE MODE, WHICH SILENCES TWO ROWS AT ONCE ─────────────────────────
+
+    `pipeline.ts:613` — `const skeletonize = p.cleanup.skeletonize && !outlineMode`, so outline mode
+    turns thinning off whatever the toggle says, and `:619` puts spur pruning inside that same branch.
+    `cleanup.pruneSpurs` therefore has TWO reasons to be inert and reports the more specific one first.
+  */
+  const outline = withOverrides(base, { output: { vectorMode: VectorModeParam.OUTLINE } });
+  const thinned = withOverrides(base, { cleanup: { skeletonize: true } });
+  expect(inactiveReason("cleanup.skeletonize", outline)).toBe(
+    "Outline mode traces the edge of a region, so nothing is thinned."
+  );
+  expect(inactiveReason("cleanup.pruneSpurs", withOverrides(thinned, { cleanup: { skeletonize: false } }))).toBe(
+    "“Reduce ink to centrelines” is off, so there is no skeleton to prune."
+  );
+  expect(inactiveReason("cleanup.pruneSpurs", withOverrides(outline, { cleanup: { skeletonize: true } }))).toBe(
+    "Outline mode traces the edge of a region, so nothing is thinned."
+  );
+  expect(inactiveReason("cleanup.pruneSpurs", thinned)).toBeNull();
+
+  // AND EVERY OTHER ROW IN THE TABLE IS SILENT UNDER THE ENGINE'S OWN DEFAULTS EXCEPT THE ONES ABOVE.
+  // A sentence appearing under a row nobody wrote one for would be a claim nothing can defend.
+  const noisyAtDefaults = [...keys].filter((key) => inactiveReason(key, base) !== null);
+  for (const key of noisyAtDefaults) expect(answered).toContain(key);
 });

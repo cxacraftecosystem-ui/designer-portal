@@ -452,6 +452,10 @@ test("the roles file still says how many roles there are, and which of them gues
 const WORKSHOP_FIELD = "components/designworkshop/StageWorkshopField.tsx";
 const WORKSHOP_SELECT = "components/forms/WorkshopSelect.tsx";
 const SKETCHES_HUB = "app/(protected)/sketches-and-prototypes/page.tsx";
+// The chooser's three answers moved out of the page into a module of their own so that a test can
+// compare them with each other without mounting React — see `e2e/sketch-chooser-sentences-unit.spec.ts`.
+// The offline PANEL is still what this file is about; its words now live one import away.
+const SKETCHES_HUB_SENTENCES = "app/(protected)/sketches-and-prototypes/chooserSentences.ts";
 const DW_LIST = "app/(protected)/design-workshops/page.tsx";
 /*
   THE HANDSET'S HALF, READ AS TEXT FOR WANT OF ANYTHING BETTER.
@@ -587,7 +591,10 @@ test("(e) EVERY WORKSHOP PICKER ASKS THE SERVER FOR THE SCOPED LIST, AND NOTHING
   expect(hub).not.toContain('from "@/lib/designWorkshopStore"');
   expect(hub).not.toContain("listDrafts()");
   expect(hub).not.toContain("draftSummary)");
-  expect(hub).toContain("The repository could not be reached");
+  // The panel is still drawn, and still says which of the two things happened. The page mounts the
+  // heading by name; the words themselves are pinned next door, which is why both halves are read.
+  expect(hub).toContain("CHOOSER_OFFLINE_TITLE");
+  expect(read(SKETCHES_HUB_SENTENCES)).toContain("The repository could not be reached");
 
   /*
    * AND THE SAME RULE ON THE WORKSHOP LIST, WHICH IS THE BIGGER SURFACE OF THE TWO. It is the primary

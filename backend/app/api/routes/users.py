@@ -27,7 +27,7 @@ from app.core.security import hash_password
 from app.schemas.users import UserCreate, UserUpdate
 from app.services import access_roster
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.records import clean_data, contains, with_id_tiebreak
+from app.services.records import clean_data, contains, count_and_page, with_id_tiebreak
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -163,12 +163,15 @@ async def list_users(
         where["role"] = role
     if search:
         where["OR"] = [{"name": contains(search)}, {"email": contains(search)}]
-    total = await db.user.count(where=where)
-    # Offset paging over ``createdAt`` alone repeats rows and skips others whenever two accounts
-    # share a creation instant, and nothing on this table stops that: ``createdAt`` is not unique and
-    # carries no index. See ``records.with_id_tiebreak`` for the whole argument.
-    users = await db.user.find_many(
-        where=where, skip=skip, take=page_size, order=with_id_tiebreak({"createdAt": "desc"})
+    # ``count_and_page`` rather than the two awaits this used to be: the count and the page answer
+    # different questions about the same WHERE and neither reads the other, so in series they cost
+    # one whole cross-region round trip for nothing. The helper applies ``with_id_tiebreak`` on the
+    # way through, so the ordering here is character-for-character the one this route already had —
+    # offset paging over ``createdAt`` alone repeats rows and skips others whenever two accounts
+    # share a creation instant, and nothing on this table stops that: ``createdAt`` is not unique
+    # and carries no index. See ``records.with_id_tiebreak`` for the whole argument.
+    total, users = await count_and_page(
+        db.user, where=where, skip=skip, take=page_size, order={"createdAt": "desc"}
     )
     return page_payload([serialize_user(user) for user in users], total, page, page_size)
 

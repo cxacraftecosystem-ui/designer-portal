@@ -175,8 +175,27 @@ data class DwMediaItem(
  */
 @Immutable
 class DwMediaBridge(
+    /**
+     * The LOCAL draft id of the workshop these attachments belong to.
+     *
+     * Not the sync id — [DwFieldServices.workshopId] is that one and is null until the workshop
+     * exists on the server. This is the key the draft store files everything under, and it is here
+     * for [DwQualityFlagLog], which pins a capture-time finding to the workshop it was raised in so
+     * that stage 21's archive table can be offered the row days later on a different screen.
+     */
+    val workshopId: String,
     /** Resolve a stored media id to something drawable, or null when the bytes have gone missing. */
     val resolve: (String) -> DwMediaItem?,
+    /**
+     * Where a chosen photograph waits while it is measured, and where a refusal is remembered.
+     *
+     * OWNED BY THE STAGE AND NOT BY THE CARD, which is the whole reason it is passed down here
+     * rather than remembered inside [DwMediaCaptureCard]: a collection row collapsing takes the card
+     * out of the composition mid-check, and a screening cancelled there would leave photographs
+     * neither imported nor refused with nothing on screen saying they had ever been chosen. See
+     * DwPhotoScreening.kt's header.
+     */
+    val screening: DwScreeningStore,
     /**
      * Copy a whole picked/captured selection into the workshop's media directory and report the
      * new ids ONCE, in the order they were picked.
@@ -1796,6 +1815,12 @@ private fun MediaField(
         type = type,
         ids = ids,
         media = media,
+        // THE SCREENING SLOT: this field, in THIS ROW. `resetKey` is the row's own id for a
+        // collection and the field key for a singleton — the identity that already exists on this
+        // renderer precisely because collection rows share composable slots (see [FieldRenderer]'s
+        // `resetKey`). Keyed on the field alone, nine prototype rows would share one screening queue
+        // and one refusal notice, and row 2's rejected photograph would be reported under row 7.
+        slotKey = "${field.key}#$resetKey",
         enabled = enabled,
         onIdsChange = { next ->
             // ONE write per capture, whatever it was. Both shapes go through here so the
@@ -1830,7 +1855,13 @@ private fun MediaField(
             targets = targets,
             rowValues = rowValues,
             enabled = enabled,
-            onPropose = { key, proposed -> onPatch(mapOf(key to proposed)) },
+            // THE TECHNIQUE IS DROPPED HERE ON PURPOSE. A stage field's provenance is written by
+            // `entry_provenance.merge_entry_provenance`, which has no `measurementMethods` key to
+            // put it under — that mechanism reaches records only. The record forms are what read
+            // this third argument; see `DwMeasurementMarkers`. When the stage half lands (the
+            // `DIMENSION_FIELDS` note in `measurement_provenance.py` describes it as one more key
+            // beside `{by, byName, at}`, no migration), this is where it is already waiting.
+            onPropose = { key, proposed, _ -> onPatch(mapOf(key to proposed)) },
         )
     }
 
@@ -1857,27 +1888,143 @@ private fun MediaField(
      * Its one write is `onChange`, from a button that spells out what it will attach, after the
      * designer has looked at the plate it will attach.
      */
-    if (dwOffersSketchRectify(field, siblings)) {
-        val sourceFields = remember(siblings) { dwSketchSourceFields(siblings) }
-        val sources = sourceFields.flatMap { imageField ->
-            val imageIds = if (DwFieldType.of(imageField.type) == DwFieldType.IMAGE_LIST) {
-                DwValues.list(rowValues[imageField.key])
-            } else {
-                listOfNotNull(DwValues.text(rowValues[imageField.key]).takeIf { it.isNotBlank() })
+    /*
+     * THE PHOTOGRAPHS BOTH DERIVATION PANELS READ, BUILT ONCE SO THE TWO CANNOT DRIFT APART.
+     *
+     * `DwSketchRectifyPanel` straightens a photographed sketch into a plate; `DwSketchTracePanel`
+     * traces one into line art. They are offered on the SAME field and read the SAME images, and
+     * that is structural rather than coincidental: `dwOffersSketchTrace` DELEGATES to
+     * `dwOffersSketchRectify` instead of re-deriving the answer, for the reason its own KDoc gives —
+     * a second regex would be a second copy of "which fields are safe to attach a derived artefact
+     * to", and the two would eventually disagree.
+     *
+     * A second copy of the SOURCE list would be the same mistake one layer down, so there is one.
+     * Not remembered, because the previous shape was not either: only `dwSketchSourceFields` was, and
+     * it is a filter over a map that is already in memory.
+     */
+    val sketchDerivationSources =
+        if (dwOffersSketchRectify(field, siblings)) {
+            dwSketchSourceFields(siblings).flatMap { imageField ->
+                val imageIds = if (DwFieldType.of(imageField.type) == DwFieldType.IMAGE_LIST) {
+                    DwValues.list(rowValues[imageField.key])
+                } else {
+                    listOfNotNull(DwValues.text(rowValues[imageField.key]).takeIf { it.isNotBlank() })
+                }
+                imageIds.mapNotNull(media.resolve)
+                    .filter { it.mediaType.equals("IMAGE", ignoreCase = true) }
+                    .map { DwSketchSource(fieldLabel = imageField.label, item = it) }
             }
-            imageIds.mapNotNull(media.resolve)
-                .filter { it.mediaType.equals("IMAGE", ignoreCase = true) }
-                .map { DwSketchSource(fieldLabel = imageField.label, item = it) }
+        } else {
+            emptyList()
         }
+
+    if (dwOffersSketchRectify(field, siblings)) {
         DwSketchRectifyPanel(
             field = field,
-            sources = sources,
+            sources = sketchDerivationSources,
             media = media,
             currentFileName = ids.firstOrNull()?.let(media.resolve)?.displayName,
             enabled = enabled,
             onAttached = { id -> onChange(JsonPrimitive(id)) },
             onMessage = services?.onMessage ?: {},
             onError = services?.onError ?: {},
+        )
+    }
+
+    /*
+     * "Trace this sketch into line art", offered on the same FILE field as the rectify panel above.
+     *
+     * WHAT MAKES THIS DIFFERENT FROM EVERY OTHER PANEL ON THIS CARD: the arithmetic is not written
+     * for this app. It is the vendored engine — `android/core-imaging`, `core-vector`,
+     * `core-pipeline` and `core-export`, 101 Kotlin files taken verbatim from upstream with a SHA-256
+     * each in `android/UPSTREAM-MANIFEST-KOTLIN.txt`, and the same upstream the web runs as the
+     * TypeScript in `frontend/lib/trace/engine/`. A hand-written port would be a second
+     * implementation of Otsu, Canny and Bezier fitting, and two of those do not agree to the digit
+     * about a document that goes to a ministry. What holds these two vendorings together is
+     * `:core-pipeline`'s `ParityTest`, which replays the shared fixtures under `docs/fixtures/`
+     * through the Kotlin and asserts the TypeScript's numbers.
+     *
+     * This used to be one minified JavaScript bundle in `assets/`, run in an
+     * `androidx.javascriptengine` isolate. The owner replaced that route with the Kotlin one and it
+     * is deleted — see `DwSketchTrace.kt`'s header for what went and what it bought.
+     *
+     * IT RUNS ON THIS DEVICE AND MAKES NO NETWORK CALL. That is the whole reason it exists rather
+     * than a server endpoint: the sketch is traced in the courtyard where it was drawn, with no
+     * signal, and the designer sees the result before anything is attached.
+     *
+     * Its one write is `onChange`, from a button that names the file it will attach — the same
+     * single door the rectify panel uses, and for the same reason: attaching to a single-valued
+     * field REPLACES its value, so neither panel may ever be offered on `sketch.image` itself.
+     *
+     * ── `exportCard` IS THIS HOST'S, AND LEAVING IT NULL MEANT THERE WAS NO EXPORT AT ALL ────────
+     *
+     * The comment that used to sit here said the panel "draws its own export affordance when no host
+     * slot is supplied". **That was never true of the code beneath it.** `DwSketchTracePanel` draws
+     * the block only `if (traced != null && exportCard != null)`, and this is the only call to that
+     * panel in the tree — so for as long as the sentence stood, a designer could trace a sheet on a
+     * handset and had no way to save it, send it, or choose what ground it was written on. Five
+     * finished, tested surfaces were reachable from nothing: the five-format table, the route to the
+     * public Downloads folder, the share sheet, the per-format losses, and the one `DwTraceTier.EXPORT`
+     * control the parameter table declares. That is this repository's own rule about a capability that
+     * exists and cannot be reached, and it had been broken here by a defaulted argument and a comment
+     * that read as a decision.
+     *
+     * THE SLOT IS ADAPTED HERE RATHER THAN THE PANEL TAKING THE CARD, for the reason
+     * [DwTraceExportSlot] gives: the card needs a `WorkshopRepository` and a `DwTraceExporter` and the
+     * tuning surface needs neither, so a panel that composed it would be a panel nobody can preview.
+     * This host has a repository — `services.repository`, the same one every other networked control
+     * on this card reaches for — and a null `services` means the field is being PREVIEWED rather than
+     * edited, which is exactly the state that should offer no file writing at all.
+     */
+    if (dwOffersSketchTrace(field, siblings)) {
+        val exportRepository = services?.repository
+        DwSketchTracePanel(
+            field = field,
+            sources = sketchDerivationSources,
+            runtime = rememberDwTraceRuntime(),
+            media = media,
+            // The record's own category seeds the subject. `dwTraceSubjectFor` falls back to the
+            // default for anything it does not recognise, including absence, so an entity with no
+            // category field is not a special case here.
+            recordCategory = DwValues.text(rowValues["category"]).takeIf { it.isNotBlank() },
+            currentFileName = ids.firstOrNull()?.let(media.resolve)?.displayName,
+            enabled = enabled,
+            onAttached = { id -> onChange(JsonPrimitive(id)) },
+            onMessage = services?.onMessage ?: {},
+            onError = services?.onError ?: {},
+            exportCard = { slot ->
+                // NOT A NULL SLOT WHEN THERE IS NO REPOSITORY, BUT A SLOT THAT DRAWS NOTHING. The two
+                // are the same on screen and only one of them can be read: the reason the block is
+                // absent is written here, next to the condition, instead of being a defaulted argument
+                // three files away that the next reader has to go and look up.
+                if (exportRepository != null) {
+                    DwSketchTraceExportCard(
+                        repository = exportRepository,
+                        // Straight off the finished trace. The slot carries the panel's own state —
+                        // the background it read from `appliedParams`, which photograph was traced,
+                        // and the one busy flag — and the result carries everything about the drawing.
+                        traceSvg = slot.result.svg,
+                        geometry = slot.result.geometry,
+                        documentWidth = slot.result.width,
+                        documentHeight = slot.result.height,
+                        documentBackground = slot.documentBackground,
+                        sourceName = slot.sourceName,
+                        shapeCount = slot.result.shapeCount,
+                        nodeCount = slot.result.nodeCount,
+                        frameNote = slot.result.frameNote,
+                        isPreview = slot.result.isPreview,
+                        exporter = rememberDwTraceExporter(),
+                        busy = slot.busy,
+                        onBusyChange = slot.onBusyChange,
+                        onError = services?.onError ?: {},
+                        // The "White background" chips. `output.background` is a leaf of the engine's
+                        // parameter tree read at the twelfth stage, so the card asks and the PANEL
+                        // patches and re-traces — which is why this is a callback and not a value.
+                        onBackgroundChange = slot.onBackgroundChange,
+                        onNeedFullResolution = slot.onNeedFullResolution,
+                    )
+                }
+            },
         )
     }
 

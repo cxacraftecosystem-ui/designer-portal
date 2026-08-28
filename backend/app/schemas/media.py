@@ -109,6 +109,19 @@ class MediaCompleteRequest(APIModel):
     url: str | None = None
     caption: str | None = None
     checksum: str | None = None
+    #: ACCEPTED AND IGNORED, all four, exactly as ``url`` above is. ``complete_media_upload`` excludes
+    #: them from the create (``media.SERVER_WRITTEN_TRANSCRIPT_FIELDS``, which carries the argument):
+    #: the transcript columns are written by ``media_queue`` after the consent gate has decided, by
+    #: ``POST /media/{id}/transcript`` and by the workshop dictate route, and an upload body that could
+    #: set them let a caller record their own words as the artisan's without passing any of the three.
+    #:
+    #: NEITHER SHIPPED CLIENT SENDS ANY OF THEM (checked 2026-08-28: Android's ``MediaCompleteRequest``
+    #: in ``data/ApiModels.kt`` declares none; the web body in ``frontend/lib/media.ts`` lists none), so
+    #: these could have been deleted outright. They are kept because ``APIModel`` forbids extra keys —
+    #: deleting one 422s any build still sending it, and Android's ``saveOrQueue`` does not queue a 4xx,
+    #: so the refused upload loses the recording. ``transcribeMediaFile`` in that same web module still
+    #: returns ``{transcriptText, transcriptStatus, transcriptError}``, which is the shape an older
+    #: build merged into this body; tolerating them costs nothing and betting against it costs a file.
     transcriptText: str | None = None
     transcriptSummary: str | None = None
     transcriptStatus: str | None = None

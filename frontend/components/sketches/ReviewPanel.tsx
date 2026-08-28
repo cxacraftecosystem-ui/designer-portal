@@ -516,11 +516,32 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
               and it is being recorded against your name. A new rating will change the scores on the cards and will not
               move them.
             </p>
-          ) : readsStageRows ? (
+          ) : canArrange ? (
+            /*
+              GATED ON `canArrange`, THE SAME CONDITION THE CONTROLS ARE. It read `readsStageRows`,
+              which is a weaker test — so a browser with the tab open but no local copy of the stage was
+              invited to "move one" by this sentence while the sentence UNDER the list, three inches
+              away, said the list could not be moved. An invitation and a refusal about the same list on
+              one screen is the screen contradicting itself, and the handset gates its counterpart on
+              the control's own condition for exactly this reason.
+            */
             <p className="text-ink-700">
               <span className="font-semibold text-ink-900">This is the default order</span> — highest score first, and
               pieces nobody has rated yet at the end. Move one and the arrangement becomes yours, recorded against your
               name.
+            </p>
+          ) : readsStageRows ? (
+            /*
+              THE ORDER IS THE SAME AND THE INVITATION IS NOT TRUE. Separated from the pool branch below
+              rather than folded into it, because that one ends "whether this workshop's own designers
+              have settled an order of their own is not on this response" — which is false here: the
+              response carried the ordinals, and what is missing is this browser's copy of the stage.
+              One sentence covering both would have to drop the part that is worth saying.
+            */
+            <p className="text-ink-700">
+              <span className="font-semibold text-ink-900">These are in score order</span> — highest first, and pieces
+              nobody has rated yet at the end. They cannot be rearranged from here; the sentence under the list says
+              why.
             </p>
           ) : (
             /*
@@ -602,11 +623,27 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
         </ol>
       ) : null}
 
+      {/*
+        AN EMPTY ROUND NAMES THE FIELD THAT WOULD FILL IT.
+
+        The pool sentence said only that nothing had been declared finished, which leaves a designer
+        with a true statement and nowhere to go: "declared finished" is not the name of anything they
+        can see on a form. The field is real and the label is the registry's own —
+        `stage_definitions.py` declares `f("peerRoundClosedAt", "Peer review closed on", DATE, …)`,
+        cited at `app/(protected)/design-review/page.tsx:26` — so it is named here, which is the half
+        of the handset's sentence this page can honestly carry.
+
+        AND NOT THE COUNT, WHICH IS THE OTHER HALF. The handset says how many of the pieces it holds
+        carry the date; this surface deliberately holds no rows (`readsStageRows` is false on the pool
+        page, and its reader is refused this workshop by `load_workshop_or_404`), so a count here would
+        be a number invented to match the shape of the other client's sentence. Saying why there is no
+        count costs one clause and is the difference between "cannot" and "did not bother".
+      */}
       {items !== null && items.length === 0 ? (
         <p className="panel px-4 py-6 text-center text-sm text-ink-muted">
           {round === "PEER"
             ? "There is nothing to review in this workshop yet. Pieces appear here as they are added to the stage they belong to."
-            : "Nothing in this workshop has been declared finished, so nothing is open to the wider pool yet."}
+            : "Nothing in this workshop has been declared finished, so nothing is open to the wider pool yet. A piece is opened by its “Peer review closed on” date, which is set on the piece’s own stage form, one piece at a time. This page holds no copy of those pieces, so it cannot say how many are waiting."}
         </p>
       ) : null}
 
@@ -625,12 +662,24 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
             still waits, because that one is a single deliberate act and racing it with a queued
             nudge is a genuine conflict.
           */
+          /*
+            THREE REASONS, ASKED IN THE ORDER THE FACTS OVERRIDE EACH OTHER — the round, then the
+            permission, then what this browser holds. It used to be two, and the second of them blamed
+            "no local copy of the stage" for every way `canArrange` could be false, including the two
+            that have nothing to do with this browser. The handset's counterpart carries the same three
+            in the same order, and its own comment records that the ordering is a fix for a shipped
+            defect: a reader who was refused the collection was told the DEVICE was at fault.
+
+            The third names a remedy, because it is the only one of the three a designer can act on.
+          */
           disabledReason={
             canArrange
               ? null
-              : readsStageRows
-                ? "This arrangement cannot be changed from here: this browser has no local copy of the stage these pieces live in."
-                : "The order here is the score order, and it is not yours to rearrange: the placed order is the makers' own stage row order, which only that workshop's designers and an admin can change. Your rating is what you contribute to the ranking on this page."
+              : !readsStageRows
+                ? "The order here is the score order, and it is not yours to rearrange: the placed order is the makers' own stage row order, which only that workshop's designers and an admin can change. Your rating is what you contribute to the ranking on this page."
+                : items !== null && !mayArrange(items)
+                  ? "This list is not yours to rearrange: the placed order is the makers' own stage row order, and the repository sends it as a position only to that workshop's own designers and to an admin. Your rating is what you contribute to the ranking on this page."
+                  : "This arrangement cannot be changed from here: this browser has no local copy of the stage these pieces live in. Open this workshop's stage once with a connection and the arrows and the drag handle come back."
           }
           renderItem={(id) => {
             const item = byId.get(id);
@@ -640,7 +689,19 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
                 item={item}
                 subtitle={rowSubtitle(rowById.get(id))}
                 round={round}
-                showPlaced={readsStageRows}
+                /*
+                  THE SERVER'S DISCLOSURE, NOT THIS SURFACE'S IDENTITY. It read `readsStageRows`, which
+                  is false on /design-review — so a workshop member or an admin reading their own
+                  workshop's pool round was sent the raw ordinal and the card threw it away. The gap
+                  between the two orders IS the feature (see this card's own note beside the two
+                  numbers), and half of it was being deleted on one of the two surfaces.
+
+                  `mayArrange` is the same test the arrows are gated on and means the same thing here:
+                  `RankedItem.ordinal` is sent only to callers who already see the whole collection, so
+                  its presence is the honest answer to "is `placedPosition` a position in the whole
+                  collection" as well as to "may I write a new one back".
+                */
+                showPlaced={items !== null && mayArrange(items)}
                 fixedOrder={fixedBy !== null || arranging}
                 openHref={
                   readsStageRows && stageKey ? `/design-workshops/${workshopId}/stages/${stageKey}` : null

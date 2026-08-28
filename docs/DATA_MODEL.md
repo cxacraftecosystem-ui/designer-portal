@@ -407,7 +407,7 @@ Every enum, and the thing to know about each. The list of names is generated int
 
 | Enum | Values | Note |
 |---|---|---|
-| `UserRole` | the seven tiers, `DESIGNER` at 35 | strictly ordered by rank, but **`can_run_design_workshops` is a SET** (Designer/Admin/Master Admin), so a Professor outranks a Designer and still cannot run a design workshop — see [PERMISSIONS.md](PERMISSIONS.md) |
+| `UserRole` | the eight tiers, `DESIGNER` at 35 and `INSPECTOR` at 37 | strictly ordered by rank, but **`can_run_design_workshops` is a SET** (Designer/Admin/Master Admin), so both a Professor and an Inspector outrank a Designer and still cannot run a design workshop. `INSPECTOR` reaches a workshop only through the read-only per-workshop scope — see [PERMISSIONS.md](PERMISSIONS.md) §1 and §4.5 |
 | `AuthProvider` | `LOCAL`, `GOOGLE` | a Google account has no password hash at all |
 | `RecordStatus` | `DRAFT`, `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_REVISION` | `NEEDS_REVISION` is the "sent back with comments" state |
 | `ReviewRecordType` | artisan, workshop, product, tool, process, questionnaire, media | processes and interviews are reviewable because the late-submission gate can pin them `PENDING` |

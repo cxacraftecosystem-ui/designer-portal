@@ -72,6 +72,11 @@ import com.designprototype.workshop.ui.SelectOption
 // `Text` below resolves to Material's, which inherits whatever family LocalTextStyle happens to
 // carry and quietly sets every heading on this screen in the body face.
 import com.designprototype.workshop.ui.Text
+// The shape rule the artisan form and `FieldRenderer`'s PHONE arm already apply to a stored number
+// (10 digits for +91, 4–14 otherwise). Reused rather than restated: the web's `PhoneField` enforces
+// exactly this through its mirror's `pattern` AND surfaces it inline, so a handset that only checked
+// "not blank" would accept a phone the browser refuses on the same record.
+import com.designprototype.workshop.ui.artisanPhoneValidationError
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.formatFieldDate
 import kotlinx.coroutines.CancellationException
@@ -221,6 +226,126 @@ internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
 internal fun designerProfileHasUnsavedEdits(typed: ProfileForm, saved: ProfileForm): Boolean =
     typed != saved
 
+// --------------------------------------------------------------------------------------
+// The four boxes that must be answered
+// --------------------------------------------------------------------------------------
+
+/**
+ * The mandatory columns, in screen order, each under THE LABEL THIS HANDSET DRAWS ABOVE IT.
+ *
+ * ── WHY THE HANDSET HAS THE RULE AT ALL, WHEN THE SERVER ALREADY REFUSES ────────────────────────
+ *
+ * `DesignerProfileUpdate._mandatory_columns_may_not_be_cleared` (backend/app/schemas/designers.py)
+ * refuses a SUPPLIED null-or-blank name, qualification, phone or e-mail, and
+ * [designerProfileUpdateJson] folds an empty box to an explicit JSON `null` — so a handset save with
+ * the name deleted is ALREADY refused, as a 422 arriving after the request, naming a column. That is
+ * the rule working; it is not the refusal a person should meet. The designer has scrolled past six
+ * cards to reach Save, the box at fault is somewhere above the fold, and a round trip is what they
+ * get for it. This is the same rule met in the box, before anything is sent.
+ *
+ * ── THE LABELS ARE THIS CLIENT'S, NOT THE SERVER'S, AND THAT IS DELIBERATE ──────────────────────
+ *
+ * `REQUIRED_PROFILE_COLUMNS` on the server (and `DESIGNER_PROFILE_LABELS` on the web) call the first
+ * one "Name". The box a designer is looking at HERE says "Name as printed" — this screen has always
+ * named it that, because on your own profile "Name" is ambiguous between the account and the cover
+ * page. A refusal has to name the box the reader can see, so the local sentence uses the local
+ * label and the server's sentence keeps the server's. The four COLUMNS are identical, which is what
+ * has to match, and `DesignerProfileRequiredFieldsTest` pins the keys against the server's list.
+ *
+ * A `LinkedHashMap`, because the order is read: the refusal names the missing boxes in the order
+ * they are passed on the way down the screen, so "Name as printed and Email" sends the designer
+ * upwards once rather than twice.
+ */
+internal val DESIGNER_PROFILE_REQUIRED_LABELS: Map<String, String> = linkedMapOf(
+    "displayName" to "Name as printed",
+    "qualification" to "Qualification",
+    "phone" to "Phone",
+    "email" to "Email",
+)
+
+/** One mandatory box's current contents, by column name. Keyed the way the API keys them. */
+private fun ProfileForm.requiredValue(column: String): String = when (column) {
+    "displayName" -> displayName
+    "qualification" -> qualification
+    "phone" -> phone
+    "email" -> email
+    else -> ""
+}
+
+/**
+ * Which of [DESIGNER_PROFILE_REQUIRED_LABELS] are empty, as column names, in screen order.
+ *
+ * BLANK AND NOT MERELY EMPTY, matching `designerProfileUpdateJson`'s blank-to-null fold on the wire
+ * and `update_profile`'s `value.strip() or None` on the server: a box holding one space is stored as
+ * null, so accepting it here would be a rule a space defeats.
+ */
+internal fun designerProfileMissingRequired(form: ProfileForm): List<String> =
+    DESIGNER_PROFILE_REQUIRED_LABELS.keys.filter { form.requiredValue(it).isBlank() }
+
+/**
+ * The sentence a designer is shown when they press Save with one of the four empty.
+ *
+ * THE SERVER'S OWN SENTENCE, generalised to a list. In the singular it is word for word what
+ * `_mandatory_columns_may_not_be_cleared` raises, so the refusal a designer meets in the box and the
+ * refusal that would have come back over the wire are the same claim rather than two — with only the
+ * label swapped for this client's, per [DESIGNER_PROFILE_REQUIRED_LABELS]. The plural is this
+ * client's: naming the boxes one at a time would mean four taps on Save to discover four blanks.
+ */
+internal fun designerProfileRequiredRefusal(missing: List<String>): String {
+    val labels = missing.mapNotNull { DESIGNER_PROFILE_REQUIRED_LABELS[it] }
+    if (labels.isEmpty()) return ""
+    val named = when (labels.size) {
+        1 -> labels.first()
+        else -> labels.dropLast(1).joinToString(", ") + " and " + labels.last()
+    }
+    return if (labels.size == 1) {
+        "$named is required on a designer profile — it is printed on every report generated under " +
+            "this name, so it cannot be left blank."
+    } else {
+        "$named are required on a designer profile — they are printed on every report generated " +
+            "under this name, so they cannot be left blank."
+    }
+}
+
+/**
+ * Is this an address at all? Null when it is, or when the box is empty.
+ *
+ * ── DELIBERATELY LOOSER THAN THE SERVER, NEVER TIGHTER ──────────────────────────────────────────
+ *
+ * `DesignerProfileUpdate.email` is an `EmailStr`, so the SERVER owns the verdict and this client
+ * must not hold a second opinion — the failure that would cost something is refusing an address the
+ * API would happily have stored, because the designer has no way round it. So this asks only the
+ * question the browser's `type="email"` asks on the other client: one `@`, something on each side of
+ * it, and a dot in the domain. Every one of those is a condition `email-validator` also imposes, so
+ * anything this refuses the server would refuse too; addresses this admits and the server does not
+ * still come back as a 422 naming the field, which is the correct division.
+ *
+ * The empty box is NOT this function's business — [designerProfileMissingRequired] owns it, and
+ * answering here as well would put two sentences under one box.
+ */
+internal fun designerEmailRefusal(email: String): String? {
+    val text = email.trim()
+    if (text.isEmpty()) return null
+    val fault = "An email address needs one @ with a domain after it — meera@nid.ac.in, for example."
+    if (text.any { it.isWhitespace() }) return fault
+    val at = text.indexOf('@')
+    if (at <= 0 || at != text.lastIndexOf('@')) return fault
+    val domain = text.substring(at + 1)
+    if (domain.length < 3 || !domain.contains('.')) return fault
+    if (domain.startsWith('.') || domain.endsWith('.') || domain.contains("..")) return fault
+    return null
+}
+
+/**
+ * `DesignerProfileUpdate.addressLine`'s `max_length`, mirrored so the ceiling is met in the box.
+ *
+ * IT MATTERS BECAUSE THIS BOX NOW HAS A MICROPHONE. Typing past a column bound is slow and visible;
+ * a committed dictation phrase is a state write that arrives all at once, and an over-long value
+ * 422s the WHOLE twenty-one-key body — the designer loses twenty correct answers because they spoke
+ * one sentence too many, and the refusal names a box that looks fine on screen.
+ */
+private const val ADDRESS_LINE_MAX = 300
+
 private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpdateBody(
     displayName = displayName,
     localName = localName,
@@ -253,8 +378,13 @@ private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpd
  * what it is PICKED with (a document picker, not the gallery) and what it is DRAWN as (a rendered
  * first page, not an `Image`). Making it a third member of this enum rather than a parallel mechanism
  * is what keeps the `uploading`, `localPreview` and `remotePreview` maps a single source of truth.
+ *
+ * INTERNAL rather than private, and for the same reason [ProfileForm] is: the two strings hung off
+ * this enum ([caption] and [midSentence]) are the screen's answer to the defect the owner reported,
+ * and an answer that no test can call is an answer that gets re-broken by the next person who
+ * notices there are "two functions doing the same thing". Nothing outside this file constructs one.
  */
-private enum class ProfileMediaSlot { PHOTOGRAPH, SIGNATURE, CV }
+internal enum class ProfileMediaSlot { PHOTOGRAPH, SIGNATURE, CV }
 
 @Composable
 fun DesignerProfileScreen(
@@ -292,6 +422,18 @@ fun DesignerProfileScreen(
     var uploading by remember(targetUserId) { mutableStateOf<ProfileMediaSlot?>(null) }
     var loadFailed by remember(targetUserId) { mutableStateOf(false) }
     var experienceError by remember(targetUserId) { mutableStateOf<String?>(null) }
+    /**
+     * Has Save been pressed and refused? Only then do the four mandatory boxes turn red.
+     *
+     * THE SAME SWITCH `StageScreen` CALLS `enforceRequired`, and for the reason written there: with
+     * it on from the first frame, a profile that has never been filled in opens as a wall of red on
+     * the screen a designer was sent to in order to fill it in, and red that is present before you
+     * have done anything is red that stops meaning anything. It latches ON for the rest of the
+     * sitting once a save has actually been refused, and each box's own error then clears itself the
+     * moment that box is answered — so nothing has to be un-marked by hand and no field added next
+     * year can be forgotten by this bookkeeping.
+     */
+    var enforceRequired by remember(targetUserId) { mutableStateOf(false) }
     var reference by remember { mutableStateOf(AddressReferenceDto()) }
     /**
      * The durable local copy of a photograph captured or picked in THIS session, keyed by slot.
@@ -398,20 +540,47 @@ fun DesignerProfileScreen(
             )
             return
         }
+        /*
+          EVERY FAULT IS COLLECTED AND REPORTED AT ONCE, and that changed here on 2026-08-27.
+          Previously the years bound returned on its own and said nothing but a line under its own
+          box. With four mandatory boxes spread over three cards, one-fault-per-tap would mean
+          pressing Save four times to be told four things, each time scrolling back down to find the
+          button — and a line under a box 800dp above the Save the designer is looking at is a
+          refusal nobody sees at all, which is why every one of these ALSO goes to the host's
+          snackbar rather than only into the form.
+        */
+        val missing = designerProfileMissingRequired(form)
+        val emailFault = designerEmailRefusal(form.email)
+        // The stored value's shape, which is a different question from "is it blank" and is asked of
+        // the composed "+CC number" string — see `artisanPhoneValidationError`. Blank answers null
+        // there, so the two rules compose instead of both firing on an empty box.
+        val phoneFault = artisanPhoneValidationError(form.phone)
         val years = form.experienceYears.trim()
-        if (years.isNotEmpty()) {
-            val parsed = years.toIntOrNull()
-            if (parsed == null || parsed < 0 || parsed > 70) {
-                // Bounded exactly as the server bounds it, and as the registry's `designerExperience`
-                // field is, because this value is COPIED into that field when a workshop is created.
-                // A profile that accepted 400 years would prefill a stage the stage's own validator
-                // then rejects, and the designer would be told their workshop has an error in a box
-                // they never typed in.
-                experienceError = "Years of experience must be a whole number between 0 and 70."
-                return
-            }
+        // Bounded exactly as the server bounds it, and as the registry's `designerExperience` field
+        // is, because this value is COPIED into that field when a workshop is created. A profile
+        // that accepted 400 years would prefill a stage the stage's own validator then rejects, and
+        // the designer would be told their workshop has an error in a box they never typed in.
+        val parsedYears = years.toIntOrNull()
+        val yearsFault = if (years.isNotEmpty() && (parsedYears == null || parsedYears !in 0..70)) {
+            "Years of experience must be a whole number between 0 and 70."
+        } else {
+            null
         }
-        experienceError = null
+        experienceError = yearsFault
+        if (missing.isNotEmpty() || emailFault != null || phoneFault != null || yearsFault != null) {
+            // Latched here and nowhere else: the boxes turn red because a save was actually
+            // refused, never because the profile has not been filled in yet.
+            enforceRequired = true
+            onError(
+                listOfNotNull(
+                    designerProfileRequiredRefusal(missing).takeIf { it.isNotEmpty() },
+                    emailFault,
+                    phoneFault,
+                    yearsFault,
+                ).joinToString(" ")
+            )
+            return
+        }
         saving = true
         scope.launch {
             runCatching { repository.saveDesignerProfile(targetUserId, form.toBody()) }
@@ -493,7 +662,12 @@ fun DesignerProfileScreen(
                 // kilobytes and it is the difference between "tap upload again" and "go back and
                 // photograph the signed sheet again", which on a scanned signature may not be
                 // possible at all.
-                onError(error.apiErrorMessage("Could not upload the ${slot.caption().lowercase()}."))
+                // `midSentence()` AND NOT `caption().lowercase()`, which is what this was and which
+                // printed "Could not upload the cv." — lower-casing an acronym does not sentence-case
+                // it, it reads as a typo. The web carried the identical defect on the identical
+                // string ("the designer cv did not upload") and fixed it the same way: a caption and
+                // a mid-sentence noun are two jobs, so each keeps the case it should have.
+                onError(error.apiErrorMessage("Could not upload the ${slot.midSentence()}."))
             }
             uploading = null
         }
@@ -624,7 +798,9 @@ fun DesignerProfileScreen(
                 ProfileSection("Name and standing") {
                     ProfileText(
                         "Name as printed", form.displayName, canEdit,
-                        help = "How your name appears on the cover and in the signature block."
+                        help = "How your name appears on the cover and in the signature block.",
+                        required = true,
+                        error = requiredRefusal(enforceRequired, form.displayName, "Name as printed")
                     ) { form = form.copy(displayName = it) }
                     ProfileText(
                         "Name in local script", form.localName, canEdit,
@@ -639,7 +815,11 @@ fun DesignerProfileScreen(
                     ProfileText("Department", form.department, canEdit) {
                         form = form.copy(department = it)
                     }
-                    ProfileText("Qualification", form.qualification, canEdit) {
+                    ProfileText(
+                        "Qualification", form.qualification, canEdit,
+                        required = true,
+                        error = requiredRefusal(enforceRequired, form.qualification, "Qualification")
+                    ) {
                         form = form.copy(qualification = it)
                     }
                     ProfileText("Specialisation", form.specialisation, canEdit) {
@@ -711,16 +891,45 @@ fun DesignerProfileScreen(
                     // The ISD-prefix editor, reused whole rather than rebuilt. Its own inner caption
                     // reads "Phone" while nothing sits above it here, so there is no duplication —
                     // and rebuilding it would mean rebuilding the measured dial column, the country
-                    // search and the foreign-resident confirmation it already carries.
+                    // search and the foreign-resident confirmation it already carries. `required`
+                    // puts this app's " *" on that inner caption rather than a second caption above
+                    // it, which is why the flag had to be added to the control instead of drawn here.
+                    //
+                    // TWO RULES, ONE SLOT, AND THE SHAPE ONE WINS. `artisanPhoneValidationError` is
+                    // the rule the artisan form and every stage PHONE field already apply, and the
+                    // web enforces the identical one through its mirror's `pattern`; it answers null
+                    // for a blank box, so "this is not a phone number" and "this box is empty" can
+                    // never both be shown, and the mandatory rule takes the empty case.
                     ArtisanPhoneField(
                         value = form.phone,
-                        error = null,
+                        error = artisanPhoneValidationError(form.phone)
+                            ?: requiredRefusal(enforceRequired, form.phone, "Phone"),
+                        required = true,
                         onValueChange = { if (canEdit) form = form.copy(phone = it) }
                     )
                     ProfileText(
                         "Email", form.email, canEdit,
                         keyboard = KeyboardType.Email,
-                        help = "The address printed on the report, which need not be your sign-in address."
+                        help = "The address printed on the report, which need not be your sign-in address.",
+                        required = true,
+                        /*
+                          BOTH E-MAIL RULES ARE BEHIND THE LATCH, WHILE THE PHONE'S SHAPE RULE ABOVE
+                          IS NOT, AND THAT ASYMMETRY IS THE WEB'S OWN. Its `PhoneField` computes
+                          `phoneValidationError(combined)` on every keystroke and prints it live; its
+                          e-mail box is a plain `type="email"`, and the browser says nothing about a
+                          half-typed address until the form is submitted. Live here would mean
+                          "meera@nid.ac.in" is marked as broken for the first fourteen keystrokes of
+                          typing it correctly — a phone number is a fixed count of digits and an
+                          address is not, which is why one can be judged mid-word and the other
+                          cannot. Shape before blank: `designerEmailRefusal` is silent on an empty
+                          box, so the two can never both fire.
+                        */
+                        error = if (!enforceRequired) {
+                            null
+                        } else {
+                            designerEmailRefusal(form.email)
+                                ?: requiredRefusal(true, form.email, "Email")
+                        }
                     ) { form = form.copy(email = it) }
                     ProfileText("Website", form.website, canEdit, keyboard = KeyboardType.Uri) {
                         form = form.copy(website = it)
@@ -728,9 +937,81 @@ fun DesignerProfileScreen(
                 }
 
                 ProfileSection("Address") {
-                    ProfileText("Address line", form.addressLine, canEdit) {
-                        form = form.copy(addressLine = it)
-                    }
+                    /*
+                     * THE SECOND MICROPHONE ON THIS SCREEN, AND THE LAST.
+                     *
+                     * Dictation is offered where the answer is PROSE — the biography above and this
+                     * address — and nowhere else, which is the split `/artisans/new` already makes on
+                     * both clients (its address and its notes get one; name, phone and e-mail do
+                     * not). A recogniser writes "at" for @, spells digits out in words and punctuates
+                     * a URL, so a microphone under the e-mail, phone, PIN code, website and date
+                     * boxes would be a control that reliably produces a value the field then refuses;
+                     * and a form whose every row carries a button is a form where the button stops
+                     * being noticed. The biography got its mic from `RecordProseField(rich = true)`,
+                     * whose editor carries `DwDictationButton` in its own toolbar; this is the same
+                     * component's plain branch, whose `RecordDictationButton` is the handset's
+                     * counterpart of the web's `OnDeviceDictationButton`.
+                     *
+                     * ── WHY IT IS NO LONGER A `ProfileText` ─────────────────────────────────────
+                     *
+                     * `ProfileText` is a bare `OutlinedTextField` with no microphone and no route to
+                     * one: `RecordDictationButton` and `rememberRecordDictationAvailable` are both
+                     * private to `RecordProseField.kt`, so the choice was to use that component or to
+                     * fork the recogniser. It is used, and the two properties `ProfileText` was
+                     * giving this box are re-supplied at this call site instead — see below.
+                     *
+                     * ── NEWLINES ARE FOLDED TO SPACES, WHICH IS THE ONE THING `singleLine` DID ──
+                     *
+                     * `RecordProseField` has no `singleLine` parameter (its boxes are paragraphs),
+                     * so the IME here offers a newline key that `ProfileText` did not.
+                     * `DesignerProfile.addressLine` has never held newlines — `ArtisanForm` uses a
+                     * textarea for ITS address and `Artisan.address` legitimately does, but this one
+                     * is copied into a registry field and typeset on a report cover, and the web
+                     * deliberately kept it single-line for that reason this same week. Changing the
+                     * stored shape on one client only is the exact drift the parity rule exists to
+                     * prevent, so the column stays one line and the fold is where that is enforced —
+                     * for a typed Return and for a dictated one alike.
+                     */
+                    RecordProseField(
+                        label = "Address line",
+                        value = form.addressLine,
+                        onValueChange = { next ->
+                            form = form.copy(
+                                // The ceiling is applied to the WHOLE value rather than to what
+                                // arrives, because a committed dictation phrase is appended to what
+                                // is already in the box before it reaches this lambda.
+                                addressLine = next
+                                    .replace('\n', ' ')
+                                    .replace('\r', ' ')
+                                    .take(ADDRESS_LINE_MAX)
+                            )
+                        },
+                        enabled = canEdit,
+                        dictate = true,
+                        // Re-seed when an admin steps to the next designer in the roster, exactly as
+                        // the biography above does.
+                        resetKey = targetUserId,
+                        below = {
+                            /*
+                              THE CEILING, SAID ON SCREEN THE MOMENT IT IS REACHED — never clamped
+                              quietly. A box that silently stops accepting words is indistinguishable
+                              from a microphone that has stopped working, and rule 10 of the frontend
+                              contract ("truncation, caps and skipped work must be stated on screen")
+                              is the same rule on this client. `muted` and not the error colour:
+                              nothing is wrong and nothing was lost — what is in the box is exactly
+                              what will be saved. The sentence is the web's, verbatim.
+                            */
+                            if (form.addressLine.length >= ADDRESS_LINE_MAX) {
+                                Text(
+                                    "This box is full — it holds $ADDRESS_LINE_MAX characters, " +
+                                        "which is what the column stores. Anything spoken or typed " +
+                                        "beyond that is not added.",
+                                    color = MaterialTheme.field.muted,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    )
                     // The served list, with a stored value kept at the FRONT until the list arrives —
                     // the same rule the record forms' state dropdown follows. Without it, a profile
                     // that already holds a state shows "Select" over it on a phone that has not
@@ -963,9 +1244,21 @@ fun DesignerProfileScreen(
                     ) {
                         Text(if (saving) "Saving…" else "Save profile")
                     }
+                    /*
+                      THIS SENTENCE BECAME HALF FALSE ON 2026-08-27 AND HAD TO MOVE WITH THE RULE.
+                      It read "An empty box CLEARS that value on the server. Nothing here is left
+                      behind when you delete it." — which is still exactly right for seventeen of the
+                      twenty-one boxes and is now wrong for the four marked with an asterisk: the API
+                      refuses a body that asks to blank any of them
+                      (`_mandatory_columns_may_not_be_cleared`), so emptying one does not clear it,
+                      it stops the save. A screen that promises a designer their deletion will be
+                      honoured and then refuses it is worse than one that never promised, and this is
+                      the line they read immediately before pressing Save.
+                    */
                     Text(
-                        "An empty box CLEARS that value on the server. Nothing here is left behind " +
-                            "when you delete it.",
+                        "An empty box CLEARS that value on the server — nothing here is left behind " +
+                            "when you delete it. The four boxes marked * are the exception: they " +
+                            "cannot be emptied, because every report you generate is signed with them.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -1054,6 +1347,20 @@ private fun ProfileText(
     enabled: Boolean,
     keyboard: KeyboardType = KeyboardType.Text,
     help: String? = null,
+    /**
+     * Draw the app's own required marker — a trailing " *" on the label.
+     *
+     * THE ASTERISK IS THIS APP'S EXISTING SPELLING OF "required" and not a new one:
+     * `FieldRenderer.fieldLabel` appends exactly `" *"` for every required field across all 22
+     * stages, so a designer meets one mark for one meaning wherever they are. The web draws the same
+     * mark from `Field`'s `required` prop.
+     *
+     * Marked whether or not the box is editable, matching the web's read-only view: an admin reading
+     * a colleague's profile needs to see which blank is the one that will stop the next save.
+     */
+    required: Boolean = false,
+    /** The refusal under this box, or null. Also turns the box red. */
+    error: String? = null,
     onValueChange: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1061,14 +1368,30 @@ private fun ProfileText(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text(label) },
+            label = { Text(if (required) "$label *" else label) },
             singleLine = true,
             enabled = enabled,
+            isError = error != null,
+            supportingText = error?.let { message -> { Text(message) } },
             keyboardOptions = KeyboardOptions(keyboardType = keyboard),
             modifier = Modifier.fillMaxWidth()
         )
     }
 }
+
+/**
+ * The refusal under one mandatory box: the app's own "X is required", or nothing.
+ *
+ * SHORT HERE, LONG IN THE SNACKBAR. `StageSchema.validate` already refuses an empty required field
+ * with the field's label followed by "is required", so this is the app's existing sentence rather
+ * than a fifth phrasing of one idea; the reason a blank name matters — that it is printed on every
+ * report — is a paragraph, and a paragraph under each of four boxes is four paragraphs nobody reads.
+ * It is said once, in the refusal that follows the tap ([designerProfileRequiredRefusal]).
+ *
+ * [enforce] is the latch: nothing is marked until a save has actually been refused.
+ */
+private fun requiredRefusal(enforce: Boolean, value: String, label: String): String? =
+    if (enforce && value.isBlank()) "$label is required" else null
 
 /**
  * The town or city, which is a `city` column with a DISTRICT vocabulary behind it.
@@ -1200,9 +1523,30 @@ private fun ProfileMediaRow(
     }
 }
 
-private fun ProfileMediaSlot.caption(): String = when (this) {
+/**
+ * The slot as a HEADING, and as the `caption` stored on the uploaded `MediaFile` row.
+ *
+ * Sentence case for the two nouns, upper case for the acronym — which is why [midSentence] exists
+ * rather than a `lowercase()` at the one call site that needed the other form.
+ */
+internal fun ProfileMediaSlot.caption(): String = when (this) {
     ProfileMediaSlot.PHOTOGRAPH -> "Photograph"
     ProfileMediaSlot.SIGNATURE -> "Signature"
+    ProfileMediaSlot.CV -> "CV"
+}
+
+/**
+ * The same slot NAMED INSIDE A SENTENCE — "Could not upload the photograph." / "… the CV."
+ *
+ * A separate table and not `caption().lowercase()`. "Photograph" and "Signature" are ordinary nouns
+ * that lower-case correctly; "CV" is an acronym, and lower-casing it produces "cv", which reads as a
+ * typo rather than as a word mid-sentence. That is exactly the defect the owner reported on the web
+ * ("Attach cv"), arriving here by the other door — and the reason the two forms are two functions is
+ * that no rule can derive one from the other without knowing which strings are acronyms.
+ */
+internal fun ProfileMediaSlot.midSentence(): String = when (this) {
+    ProfileMediaSlot.PHOTOGRAPH -> "photograph"
+    ProfileMediaSlot.SIGNATURE -> "signature"
     ProfileMediaSlot.CV -> "CV"
 }
 

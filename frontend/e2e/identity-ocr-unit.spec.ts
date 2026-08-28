@@ -112,7 +112,12 @@ test("the form's guard and the reader's guard are different rules, and they do n
   */
   const as = (role: string) => ({ role } as unknown as User);
 
-  for (const role of ["RESEARCHER", "PROFESSOR"]) {
+  // INSPECTOR (37) is in this loop and it is the sharpest case in it: the tier outranks a DESIGNER
+  // and is still outside the set, so every rank-shaped instinct gets this one wrong. It clears
+  // `canCreateRecords` at the Researcher floor, so the artisan form opens for it — and the card
+  // reader must not, or an inspector photographs somebody's Aadhaar card and ships it to a vision
+  // model before the 403 comes back.
+  for (const role of ["RESEARCHER", "INSPECTOR", "PROFESSOR"]) {
     expect(canCreateRecords(as(role)), `${role} may open the artisan form`).toBe(true);
     expect(canRunDesignWorkshops(as(role)), `${role} must NOT be offered the card reader`).toBe(false);
   }

@@ -1374,3 +1374,95 @@ def test_two_entries_for_one_singleton_in_one_payload_make_one_row(client, works
         "a client sending two entries for one singleton is a bug, and the response is where it "
         "becomes findable"
     )
+
+
+# --------------------------------------------------------------------------------------
+# The floored galleries, through the real save
+#
+# `tests/test_stage_schema.py` proves `validate_entry` does not refuse a short gallery. These two
+# prove the claim that actually matters to a designer, against Postgres and through the route: the
+# twenty photographs they have so far are STORED, and they are still stored after a `submit=true`.
+# The unit test cannot see the second one at all, because the way that save loses data is not a
+# refusal — it is `save_stage` restoring the key from `previous` after `validate_entry` errored on
+# it, which only exists once there is a row to restore FROM.
+# --------------------------------------------------------------------------------------
+
+_MOTIF_IDS = [f"cm{i:023d}" for i in range(20)]
+
+
+def _background(client, workshop_id):
+    return client.get(
+        f"/api/design-workshops/{workshop_id}/stages/CLUSTER_CRAFT_BACKGROUND"
+    ).json()
+
+
+async def test_a_gallery_below_its_floor_saves_and_is_reported_incomplete(client, workshop):
+    """Twenty of twenty-five is a 200 with twenty photographs stored — never a 4xx.
+
+    THE FAILURE THIS FORBIDS. Android's `saveOrQueue` does not queue a 4xx: a body the server
+    refuses is a record DROPPED, not retried. Stage 4 is the fourth of twenty-two, so a server that
+    refused a short gallery would block the entire workshop from ever being saved by a designer in a
+    village — and the twenty photographs they had already taken would go with it.
+
+    THE REQUIREMENT IS EXPRESSED IN THE SAME RESPONSE, which is the other half of the design: the
+    save succeeds AND `completeness` says the stage is not complete AND `missing` names the gallery
+    with its count. Nothing is hidden from the designer; nothing is taken from them either.
+    """
+    response = client.put(
+        f"/api/design-workshops/{workshop}/stages/CLUSTER_CRAFT_BACKGROUND",
+        json={"entries": [
+            {"entityKey": "clusterBackground", "data": {"motifPhotos": _MOTIF_IDS}}
+        ]},
+    )
+    assert response.status_code == 200, response.text
+
+    stored = _background(client, workshop)["singleton"]["motifPhotos"]
+    assert stored == _MOTIF_IDS, f"stored {len(stored)} of {len(_MOTIF_IDS)} photographs"
+
+    completeness = response.json()["completeness"]
+    assert completeness["isComplete"] is False
+    assert "Traditional motif photographs (20 of 25)" in completeness["missing"], (
+        f"the shortfall is not named in {completeness['missing']}"
+    )
+
+
+async def test_a_submit_does_not_revert_a_gallery_below_its_floor(client, workshop):
+    """`submit=true` must not take the twenty photographs back off the record.
+
+    THE MECHANISM, WHICH IS WHY THIS IS AN END-TO-END TEST AND NOT A UNIT ONE. `validate_entry`
+    omits a field it errored on, and `save_stage` then restores that key from `previous` — "a
+    rejected field must not destroy the value already stored under it". That rule is correct and it
+    is exactly what would have made a floor enforced at submit time catastrophic: the gallery would
+    have silently REVERTED to its last-saved contents, and the 422 would have been raised after the
+    transaction had already committed. So the floor is scored and never validated, and this asserts
+    the consequence rather than the intention.
+
+    THE STAGE IS SAVED TWICE ON PURPOSE. The revert can only happen when there is a `previous` to
+    restore from, so a single save could pass this test with the rule reinstated.
+    """
+    path = f"/api/design-workshops/{workshop}/stages/CLUSTER_CRAFT_BACKGROUND"
+    first = client.put(path, json={"entries": [
+        {"entityKey": "clusterBackground", "data": {"motifPhotos": _MOTIF_IDS[:5]}}
+    ]})
+    assert first.status_code == 200, first.text
+
+    second = client.put(path, json={
+        "entries": [{"entityKey": "clusterBackground", "data": {"motifPhotos": _MOTIF_IDS}}],
+        "submit": True,
+    })
+    # A 422 is legitimate here — stage 4 has required prose fields this workshop has never filled
+    # in — but the GALLERY must not be among the refusals, and the photographs must be on the record
+    # either way. That is the whole distinction: a submit reports what is outstanding; it does not
+    # confiscate what was sent.
+    assert second.status_code in (200, 422), second.text
+    body = second.json()
+    errors = body.get("detail", body).get("errors", {})
+    assert "motifPhotos" not in errors.get("clusterBackground", {}), (
+        f"the gallery was refused on submit: {errors}"
+    )
+
+    stored = _background(client, workshop)["singleton"]["motifPhotos"]
+    assert stored == _MOTIF_IDS, (
+        f"the submit left {len(stored)} photographs on the record instead of {len(_MOTIF_IDS)} — "
+        "the gallery was reverted to what the first save stored"
+    )

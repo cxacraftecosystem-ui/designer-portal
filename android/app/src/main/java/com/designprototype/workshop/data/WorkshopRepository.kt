@@ -638,8 +638,38 @@ class WorkshopRepository(
         mineOnly = mineOnly
     )
 
-    suspend fun createDesignWorkshop(body: DesignWorkshopCreateBody): DesignWorkshopDto =
-        api.createDesignWorkshop(body)
+    /**
+     * File a new design workshop, with the designer keys FOLDED HERE rather than by the caller.
+     *
+     * ── ONE NORMALISER, AT THE TRANSPORT, BECAUSE THERE ARE TWO WRITERS AND THEY ARE A FORTNIGHT
+     * APART ────────────────────────────────────────────────────────────────────────────────────
+     *
+     * `CreateWorkshopDialog` posts one of these the moment an admin taps Start, and `WorkshopSync`
+     * posts the other for a workshop that was started in a courtyard — possibly days later, from a
+     * draft, on a build that may by then be older than the one that wrote it. Both hand over what
+     * the picker held; exactly what reaches the wire is decided ONCE, here, so those two requests
+     * cannot differ for the same choice.
+     *
+     * And the fold is not cosmetic. [DesignWorkshopCreateBody.designerUserIds] must be OMITTED
+     * unless there is genuinely a second designer: `APIModel` is `extra="forbid"`, so an API that
+     * predates the field answers 422 `extra_forbidden` to a body that merely CARRIES the key, a
+     * 4xx is never queued, and the ordinary one-designer create would take a whole fortnight down
+     * with it. [dwDesignerCreateFields] is that three-way answer and this is the only thing that
+     * asks it. `createDesignWorkshop` in `frontend/lib/designWorkshops.ts` normalises at the same
+     * point and for the same reason.
+     */
+    suspend fun createDesignWorkshop(body: DesignWorkshopCreateBody): DesignWorkshopDto {
+        val designers = dwDesignerCreateFields(
+            chosen = body.designerUserIds,
+            lead = body.designerUserId,
+        )
+        return api.createDesignWorkshop(
+            body.copy(
+                designerUserId = designers.designerUserId,
+                designerUserIds = designers.designerUserIds,
+            )
+        )
+    }
 
     suspend fun designWorkshop(id: String): DesignWorkshopDetailDto = api.designWorkshop(id)
 
@@ -1515,6 +1545,118 @@ class WorkshopRepository(
     ): List<DwViewerDto> =
         api.setDesignWorkshopViewers(workshopId, DwViewersBody(userIds = userIds)).viewers
 
+    // ── THE FIFTH SCOPE: inspections ────────────────────────────────────────────────────────────
+    //
+    // ALL FIVE THROW, AND NOTHING BELOW IS CACHED, QUEUED OR FALLEN BACK TO THE DEVICE. That is a
+    // decision rather than an omission, and it is the opposite of what the 22-stage block above does
+    // — so it is worth the paragraph.
+    //
+    // The stage block degrades to the device because a workshop is a DATED OBSERVATION captured over
+    // a fortnight in a courtyard, and yesterday's copy of it is still true. An inspection is not that
+    // kind of fact, in three separate ways:
+    //
+    //  1. THE SCOPE IS A ROW SOMEBODY ELSE OWNS AND CAN TAKE AWAY. An admin who ends an inspection
+    //     this morning has ended it. A cached read would keep a fortnight of somebody else's
+    //     fieldwork legible on a handset whose access was withdrawn — and no later sync repairs it,
+    //     because the bytes are already on the phone.
+    //  2. AN INSPECTION IS A JUDGEMENT ABOUT WHAT THE RECORD SAYS NOW. The provenance names are
+    //     resolved server-side at read time, so a stale copy would have an inspector reviewing a
+    //     state of the workshop that no longer exists, with nothing on screen saying the two had
+    //     diverged.
+    //  3. THERE IS NOTHING TO QUEUE, AND A QUEUE HERE WOULD LOSE WORK. Every route is a GET; the
+    //     server has no write route on this prefix at all, and `saveOrQueue` does not queue a 4xx —
+    //     so a queued inspector write would be accepted by this app, refused for ever by the server,
+    //     and reported to the inspector as saved. No write path may be added here.
+    //
+    // The screens say "this needs a connection" in words BEFORE anything is attempted, rather than
+    // after it fails, exactly as the three viewer-administration calls above do.
+
+    /**
+     * The accounts that may be assigned an inspection at all, straight off the wire.
+     *
+     * NEVER re-derived from the user directory. The eligible set is `INSPECTION_ROLES` — a set of
+     * ONE — narrowed further by the PLATFORM allow-list, which is a clause this client cannot see;
+     * computing it here would drift within a release, and the drift shows up as an admin assigning an
+     * inspection that the next sign-in refuses, with nothing on either screen saying why.
+     *
+     * The DESIGNER roster is deliberately NOT consulted by the server here, unlike
+     * [eligibleDesignWorkshopViewers]: an inspector is not empanelled to run anything, so requiring a
+     * roster row would refuse every inspector there will ever be.
+     *
+     * [search] is applied by the SERVER inside the same query as the eligibility rule. `truncated`
+     * is carried back rather than dropped because a picker that hides people has to be able to say
+     * so — the answer is capped at `ELIGIBLE_INSPECTOR_LIMIT` and a client that shows a cut list
+     * without saying so is this repository's most repeated bug class.
+     */
+    suspend fun eligibleDesignWorkshopInspectors(search: String? = null): DwEligibleInspectors =
+        api.eligibleDesignWorkshopInspectors(search).let {
+            DwEligibleInspectors(users = it.users, truncated = it.truncated, search = search)
+        }
+
+    /**
+     * Everyone assigned to inspect this workshop, oldest assignment first.
+     *
+     * AN EMPTY LIST MEANS NOBODY IS INSPECTING IT — the literal truth, and the sharp difference from
+     * [designWorkshopViewers], where an empty answer still leaves the creator holding the workshop
+     * through `createdById`. Nobody holds an inspection by any route other than a row in this table,
+     * so a screen over this may say "not under inspection" and be right.
+     */
+    suspend fun designWorkshopInspectors(workshopId: String): List<DwInspectorDto> =
+        api.designWorkshopInspectors(workshopId).inspectors
+
+    /**
+     * REPLACE the inspection set with exactly [userIds], and answer with it as the server now holds it.
+     *
+     * Named for the whole set because that is what the endpoint means — there is deliberately no
+     * `addDesignWorkshopInspector` for somebody to reach for, because such a helper would have to
+     * send a list, and a list built from one name ends everybody else's inspection.
+     *
+     * ADMIN ONLY on the server, AND THAT INCLUDES THE WORKSHOP'S OWN CREATOR. The inspected must not
+     * choose the inspector; if a designer could put somebody on their own workshop as its inspector —
+     * or take somebody off it — the inspection is worth nothing. Nothing here re-derives that; the
+     * screen does, at the moment of the write, and the server does again.
+     */
+    suspend fun setDesignWorkshopInspectors(
+        workshopId: String,
+        userIds: List<String>
+    ): List<DwInspectorDto> =
+        api.setDesignWorkshopInspectors(workshopId, DwInspectorsBody(userIds = userIds)).inspectors
+
+    /**
+     * The design & prototype workshops THIS account has been assigned to inspect, newest first.
+     *
+     * ONE PAGE, ASKED FOR BY NUMBER, and deliberately not the page WALK [visibleDesignWorkshops]
+     * performs. That walk exists because a viewer GRANT widens a designer's own list and lands the
+     * granted workshop — always older than the ones they started themselves — past the end of page
+     * one in a `createdAt desc` ordering, where a single-page client could never see it. This list
+     * has no such second source: every row in it is an assignment, there is no "mine" arm for them to
+     * be buried under, and the whole list is the scope. So the honest shape is a pager the inspector
+     * drives, with the server's `total` on screen, rather than five silent requests on a metered
+     * connection.
+     *
+     * THROWS. See the block comment above: an inspection is not cached.
+     */
+    suspend fun inspectableDesignWorkshops(
+        page: Int = 1,
+        pageSize: Int = 20,
+        search: String? = null
+    ): DesignWorkshopPageDto = api.inspectableDesignWorkshops(
+        page = page,
+        pageSize = pageSize,
+        search = search?.trim()?.takeIf { it.isNotEmpty() }
+    )
+
+    /**
+     * ONE WORKSHOP UNDER INSPECTION — every stage, its completeness and its per-field authorship.
+     *
+     * [workshopId] IS THE SERVER'S ID AND NOT THE DRAFT STORE'S, unlike every other design-workshop
+     * screen on this handset. There is no draft to resolve a `remoteId` from: an inspector never
+     * opened this workshop for editing, has no local copy of it and must not acquire one. The ids
+     * come from [inspectableDesignWorkshops], which is the only list this account can reach.
+     */
+    suspend fun workshopUnderInspection(workshopId: String): DwInspectionDetailDto =
+        api.workshopUnderInspection(workshopId)
+
     /**
      * The admin authorship & divergence report for one workshop — every stage entry, every stamp, and
      * what the shared record behind each hydrated field says TODAY.
@@ -1538,6 +1680,46 @@ class WorkshopRepository(
      */
     suspend fun designWorkshopProvenance(workshopId: String): DwProvenanceReportDto =
         api.designWorkshopProvenance(workshopId)
+
+    /**
+     * The report-history service, built ONCE for the life of this repository.
+     *
+     * `by lazy` and not a fresh service per call, which is what `DwJoinCard` and `DwWorkshopJoin` do
+     * from composables that have no repository to reach: [ApiClient.retrofit] builds a new
+     * OkHttpClient each time it is called, and a screen that re-reads its history on every retry
+     * would leave a connection pool and a dispatcher behind for each one. Lazy rather than eager so a
+     * designer who never opens the screen never pays for it at all. See [DwReportHistoryApi] for why
+     * the service is declared separately instead of as a method on [WorkshopRepositoryApi].
+     */
+    private val reportHistoryApi: DwReportHistoryApi by lazy {
+        ApiClient.retrofit(tokenStore).create(DwReportHistoryApi::class.java)
+    }
+
+    /**
+     * Every report ever generated for one workshop, and the stage timestamps a diff is built from.
+     *
+     * THROWS, AND IS NEVER CACHED OR FALLEN BACK, which puts it with [designWorkshopProvenance] and
+     * the access calls above rather than with the stage reads. The stage block degrades to the device
+     * because a workshop is a DATED OBSERVATION and yesterday's copy of it is still true. This is the
+     * opposite kind of fact: **the export table records files made on OTHER devices by OTHER people**
+     * — a colleague's regeneration, a file the web produced this morning — so a cached answer would
+     * show a designer a history with somebody else's revisions missing from it, on the one screen
+     * whose entire job is to say what the record of revisions contains. There is no offline form of
+     * "what has everybody generated", and inventing one would be a screen that looks complete and is
+     * not. [DW_REPORT_HISTORY_OFFLINE] is what the screen says instead, and it says why.
+     *
+     * NOTHING IS WRITTEN. Recording an export is [recordDesignWorkshopExport], which is queued
+     * through the outbox precisely because it happens with no signal; this is the read side and has
+     * no write beside it. An export row whose size or checksum could be rewritten afterwards would
+     * not be evidence of anything.
+     *
+     * [workshopId] IS THE SERVER'S ID AND NOT THE DRAFT STORE'S, the same requirement
+     * [designWorkshopProvenance] carries: a workshop started in a courtyard has a local id no server
+     * has ever seen. The caller resolves `remoteId` first — and a workshop that has none has no
+     * export log at all, because [recordDesignWorkshopExport] needs a server id to file a row under.
+     */
+    suspend fun designWorkshopReportHistory(workshopId: String): DwReportHistoryDto =
+        reportHistoryApi.designWorkshopReportHistory(workshopId)
 
     // ── DESIGN REVIEW: the rating ledger ─────────────────────────────────────────────────────────
     //
@@ -2688,6 +2870,52 @@ class WorkshopRepository(
     }
 
     /**
+     * Use this questionnaire again, as a template, at another design workshop.
+     *
+     * THE OWNER ASKED FOR THIS IN THESE WORDS: questionnaires "would usually be scoped to the
+     * workshops, but the designers would have the permission to use the same questionnaire later on
+     * for a different workshop as well in case they want to reuse the same template."
+     *
+     * IT COPIES; IT DOES NOT SHARE. Questions and sections come across, sittings and answers do not,
+     * and the original keeps every answer ever recorded against it. An EMPTY call — every argument
+     * left alone — makes an unattached copy this account owns, which is what a designer wants when
+     * they are lifting an instrument now and will decide which workshop it serves later.
+     *
+     * NOT OWNER-GATED ON THE SERVER AND IT MUST NOT BE GATED HERE. The questions of any
+     * questionnaire already leave this system for any designer through
+     * `questionnaires/{id}/question-set.xlsx`, so refusing here would refuse in JSON what that door
+     * hands over — and be routed around by downloading that file and re-uploading it, which
+     * produces the same row with NO provenance recorded at all. What IS gated is the TARGET
+     * workshop: `_require_attachable_workshop` wants workshop creator, admin or a viewer grant, so a
+     * screen should offer only workshops this account can already write to (404 for one it cannot
+     * see, 409 for a soft-deleted one). A DEACTIVATED SOURCE IS STILL REUSABLE, deliberately —
+     * `isActive: false` is this API's stand-in for a delete, and a retired instrument is exactly the
+     * thing a designer wants to lift for a new round, so do not filter it out of whatever list
+     * offers this.
+     *
+     * [changeDescription] is the tri-state's switch and not a redundant flag: leave it false to
+     * carry the source's description across, set it true to decide it — [description] blank then
+     * meaning "start it empty". See [questionnaireReuseJson] for why that needs a JsonObject rather
+     * than a data class, and [QFormReuseResultDto] for what comes back (the upload result's shape,
+     * key for key, so the existing upload-report panel renders it with nothing new to keep in step).
+     */
+    suspend fun reuseQuestionnaire(
+        id: String,
+        designWorkshopId: String? = null,
+        title: String? = null,
+        description: String? = null,
+        changeDescription: Boolean = false,
+    ): QFormReuseResultDto = api.reuseQuestionnaire(
+        id,
+        questionnaireReuseJson(
+            designWorkshopId = designWorkshopId,
+            title = title,
+            description = description,
+            changeDescription = changeDescription,
+        )
+    )
+
+    /**
      * One picked document, as the multipart file part both upload routes take.
      *
      * THE FILENAME IS CARRIED THROUGH, because the server stores it as `sourceFilename` and shows it
@@ -2970,9 +3198,27 @@ class WorkshopRepository(
     /**
      * Every picker the assignment builder needs, in one call. Pass [workshopId] to narrow the artisan
      * list to that workshop; the assignee list is already filtered to who this admin may assign to.
+     *
+     * [search] IS THE ONLY WAY PAST THE THREE CAPS, and two of them are live on this deployment's
+     * measured population (3632 accounts, 731 artisans — docs/OPEN_FINDINGS.md, 2026-08-13). The
+     * server folds the term into the WHERE of all three queries, so it reaches past the ceiling
+     * instead of searching the first 500 names and stopping exactly where the cap already stopped.
+     * ONE term for all three pickers, not three: FastAPI silently DISCARDS a query parameter the
+     * route does not declare, so a handset sending `assigneeSearch` would draw a search box that
+     * narrows nothing — the defect this exists to close, in different clothes.
+     *
+     * `take(120)` IS NOT DECORATION. The route declares `Query(None, max_length=120)`, so a longer
+     * term is a 422 on a request the admin reads as a search that simply failed — and a name pasted
+     * out of a spreadsheet cell is the ordinary way to exceed it. Trimmed first so a term that is
+     * all whitespace becomes "no search" rather than a filter matching nothing, then capped, then
+     * [blankToNull] so the key is omitted rather than sent empty.
+     *
+     * THE RULE THAT TRAVELS WITH IT, for whoever wires the dialog: never read the absence of an
+     * ALREADY-SELECTED id from a narrowed list as "that record is gone" and clear the selection.
+     * `ProductForm` on the web does exactly that against a capped page and unlinks the artisan.
      */
-    suspend fun taskOptions(workshopId: String? = null): TaskOptionsDto =
-        api.taskOptions(workshopId?.blankToNull())
+    suspend fun taskOptions(workshopId: String? = null, search: String? = null): TaskOptionsDto =
+        api.taskOptions(workshopId?.blankToNull(), search?.trim()?.take(120)?.blankToNull())
 
     /**
      * Hand ONE scope to several people at once — the assignment action. All-or-nothing: a bad
@@ -3300,8 +3546,15 @@ class WorkshopRepository(
     suspend fun dataManifest(path: String = "", include: String? = null): DataManifestDto =
         api.dataManifest(path, include?.blankToNull())
 
-    /** Records awaiting review (status PENDING), newest first, across record types. */
-    suspend fun pendingReviews(): List<PendingReviewDto> = api.pendingReviews().items
+    /**
+     * Records awaiting review (status PENDING), newest first, across record types.
+     *
+     * RETURNS THE WHOLE ENVELOPE, not `.items`. It collapsed to the list until 2026-08-27, which
+     * threw away `truncated`, `cap` and `total` — so a queue the server had cut at 200 of each of
+     * six record types reached the screen indistinguishable from a queue that was simply that
+     * length, and the rows dropped are the oldest. See [PendingReviewListDto].
+     */
+    suspend fun pendingReviews(): PendingReviewListDto = api.pendingReviews()
 
     /** Approve a pending record (admins, or users granted the review permission). */
     suspend fun approveRecord(recordType: String, recordId: String) {
@@ -3702,9 +3955,38 @@ class WorkshopRepository(
      * Asked for by name rather than sifted out of the answer, for the reason set out on [artisans]:
      * reading media is open, so page one is the newest hundred rows of the whole archive and a
      * client-side filter silently reports that a designer has uploaded nothing.
+     *
+     * THE FIVE FILTERS ARE THE SAME ARGUMENT, ONE STEP FURTHER. `GET /media` folds [search] into the
+     * WHERE across `originalFilename`, `caption` and `mimeType`, and [mediaType] / [statusFilter] /
+     * [dateFrom] / [dateTo] into it beside them, so a term reaches PAST the hundred-row page rather
+     * than sifting it. Every one of them is defaulted, so a caller that wants the newest hundred
+     * writes exactly what it wrote before this line existed.
+     *
+     * EVERY ARGUMENT GOES THROUGH [blankToNull], AND ONE OF THEM 422s WITHOUT IT. Retrofit omits a
+     * null `@Query` and SENDS an empty one, so a screen handing this an untouched search box would
+     * put `?dateFrom=` on the wire — and `dateFrom` is declared `datetime | None` on the route, so
+     * FastAPI fails to parse "" and answers 422 for a request the designer reads as a filter that
+     * simply found nothing. The enum pair is one `if` away from the same fate: `""` is falsy, so
+     * `list_media` skips it today and `enum_filter_or_422` is never reached, but the difference
+     * between "not filtered" and "filtered by nothing" should not rest on a truthiness test in
+     * another language. Send the key or do not send it.
      */
-    suspend fun mediaList(uploadedBy: String? = null): List<MediaFileDto> =
-        api.media(pageSize = 100, uploadedBy = uploadedBy?.blankToNull()).items
+    suspend fun mediaList(
+        uploadedBy: String? = null,
+        search: String? = null,
+        mediaType: String? = null,
+        statusFilter: String? = null,
+        dateFrom: String? = null,
+        dateTo: String? = null,
+    ): List<MediaFileDto> = api.media(
+        pageSize = 100,
+        uploadedBy = uploadedBy?.blankToNull(),
+        search = search?.blankToNull(),
+        mediaType = mediaType?.blankToNull(),
+        statusFilter = statusFilter?.blankToNull(),
+        dateFrom = dateFrom?.blankToNull(),
+        dateTo = dateTo?.blankToNull(),
+    ).items
 
     /** One media file by id, for the View Data media detail. */
     suspend fun mediaItem(id: String): MediaFileDto = api.getMedia(id)
@@ -5140,6 +5422,12 @@ class WorkshopRepository(
                             queued.id,
                             outcome.reason,
                             skewRun = if (outcome.schemaSkew) APP_RUN else null,
+                            // Passed on EVERY refusal, not only on a clash. An entry that clashed on
+                            // one pass and was refused for a bad field on the next must stop being
+                            // described as a clash, or the tray goes on telling the designer to open
+                            // a record that has nothing to do with what is now standing in the way
+                            // — the same reason `skewRun` is written unconditionally above.
+                            conflict = outcome.conflict,
                         )
                         // SAID WHEN IT CHANGES, NOT ON EVERY PASS THAT REACHES IT. Until a schema
                         // refusal could be re-attempted, an entry was refused exactly once and this
@@ -5208,6 +5496,18 @@ class WorkshopRepository(
              * re-attempted by the next app run rather than held for ever. See [blocksRetry].
              */
             val schemaSkew: Boolean = false,
+            /**
+             * True when the register already holds a record occupying this one's identity — an
+             * answered 409, and an outcome of its own rather than one more anonymous refusal. See
+             * [PendingEntry.conflict] for why this queue needed a sixth kind of "not synced", and
+             * `isConflictRefusal` in `data/WorkshopSync.kt` for the classification.
+             *
+             * MUTUALLY EXCLUSIVE WITH [schemaSkew] by construction — one is a 409 and the other a
+             * 422 carrying `extra_forbidden` — and, unlike it, never re-attempted on its own: a
+             * skew clears when either build is updated, a clash clears when a PERSON resolves it. So
+             * [blocksRetry] parks it and the tray offers the escape instead.
+             */
+            val conflict: Boolean = false,
         ) : ReplayOutcome
     }
 
@@ -5227,10 +5527,41 @@ class WorkshopRepository(
                 throw e
             } catch (e: Throwable) {
                 if (isTransient(e)) return ReplayOutcome.Retry
+                // A 409 IS ITS OWN ANSWER, AND IT IS ASKED FOR BEFORE THE BODY IS READ.
+                // `isConflictRefusal` reads only the status code — the same reason `isTransient`
+                // above it is safe to ask first — because `apiRefusal` below consumes Retrofit's
+                // buffered error body and may be called only once per failure.
+                //
+                // NOTHING HERE DELETES, AND THAT IS THE WHOLE POINT. `frontend/lib/offline.ts` opens
+                // with the incident: a 409 read as "the create already landed and we simply lost the
+                // response" dropped the queued record and its photographs as sent. No endpoint in
+                // this API means that. The lost-response case belongs to `PendingEntry.createdId`,
+                // which knows rather than guesses; see `PendingEntry.conflict` for the argument.
+                val clash = isConflictRefusal(e)
                 // `apiRefusal`, not `apiErrorMessage`: both facts have to come out of ONE read of the
                 // error body, because reading it consumes Retrofit's buffer. `isTransient` above is
                 // safe to ask first — it reads only the status code.
                 val refusal = e.apiRefusal("The server rejected this record.")
+                if (clash) {
+                    return ReplayOutcome.Rejected(
+                        outboxConflictSentence(
+                            said = refusal.message,
+                            // Nothing has been uploaded: this leg only runs while `createdId` is
+                            // null, and a file cannot be attached before the record exists. So every
+                            // staged capture is still on the phone, and the sentence says how many.
+                            files = entry.media.size,
+                            // The same test `outboxKindLabel` uses, so the tray's "— a correction"
+                            // and the sentence under it cannot disagree about what this entry is.
+                            isCorrection = entry.targetId != null && entry.type != OFFLINE_MEDIA_ONLY,
+                        ),
+                        // NOT a skew, explicitly rather than by omission: a 409 is not a 422 carrying
+                        // `extra_forbidden`, and no update to either build clears it. Stamping
+                        // APP_RUN would re-POST the same losing create once per app open, for ever,
+                        // on a prepaid connection — every answer the identical 409.
+                        schemaSkew = false,
+                        conflict = true,
+                    )
+                }
                 return ReplayOutcome.Rejected(
                     if (refusal.schemaSkew) {
                         skewSentence("What this copy of the app sent for this record", refusal.message)
@@ -5781,9 +6112,18 @@ class WorkshopRepository(
     /**
      * Analyse a grid-sheet photo for one dimension (length/breadth/height) and return the estimated
      * inches, or null if the model couldn't read it. A grid photo is small, so reading it into memory
-     * is fine. Used by the "Document using grid" capture to auto-fill the measurement field.
+     * is fine. Used by the "Document using grid" capture to OFFER a reading for the field.
+     *
+     * ── WHY THIS RETURNS A PAIR AND NOT A `Double?` — 2026-08-27 ──────────────────────────────
+     *
+     * It used to return the bare estimate, and the sentence above used to end "to auto-fill the
+     * measurement field". Both changed for the same reason: a number this endpoint produced is a
+     * MODEL'S ESTIMATE, and the row it lands in is stamped with the name of whoever pressed Save. So
+     * the caller needs the [AnalyzeMeasurementResponse.methodMarker] that came back with it, or the
+     * record asserts a named human measured something Gemini guessed. Returning the value alone made
+     * that marker unreachable at the only call site that could send it.
      */
-    suspend fun analyzeMeasurement(context: Context, uri: Uri, dimension: String): Double? {
+    suspend fun analyzeMeasurement(context: Context, uri: Uri, dimension: String): DwMeasurementReading {
         val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
         val bytes = withContext(Dispatchers.IO) {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -5795,15 +6135,24 @@ class WorkshopRepository(
             bytes.toRequestBody(mimeType.toMediaType())
         )
         val response = api.analyzeMeasurement(part, dimension)
-        return response.analysis?.valueInches
+        return DwMeasurementReading(
+            lengthInches = null,
+            breadthInches = null,
+            valueInches = response.analysis?.valueInches,
+            marker = response.methodMarker,
+        )
     }
 
     /**
      * Analyse a single grid-sheet photo for BOTH length and breadth at once (the object's footprint
      * on the grid). Calls the measurement endpoint with no dimension, which returns the legacy
-     * length+breadth pair. Returns (lengthInches, breadthInches); either may be null if unread.
+     * length+breadth pair. Either value may be null if unread.
+     *
+     * ONE MARKER FOR BOTH NUMBERS, and that is correct rather than a shortcut: they came out of a
+     * single inference over a single photograph, so the provider, the model id and the model's own
+     * confidence are the same fact about both. See [analyzeMeasurement] for why the marker travels.
      */
-    suspend fun analyzeMeasurementLengthBreadth(context: Context, uri: Uri): Pair<Double?, Double?> {
+    suspend fun analyzeMeasurementLengthBreadth(context: Context, uri: Uri): DwMeasurementReading {
         val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
         val bytes = withContext(Dispatchers.IO) {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -5816,7 +6165,12 @@ class WorkshopRepository(
         )
         val response = api.analyzeMeasurement(part, null)
         val analysis = response.analysis
-        return (analysis?.lengthInches) to (analysis?.breadthInches)
+        return DwMeasurementReading(
+            lengthInches = analysis?.lengthInches,
+            breadthInches = analysis?.breadthInches,
+            valueInches = null,
+            marker = response.methodMarker,
+        )
     }
 
     /**

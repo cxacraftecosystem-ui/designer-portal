@@ -72,6 +72,24 @@ import kotlinx.coroutines.CancellationException
  * So every row on this screen is two buttons that navigate: one to stage 11, one to stage 13.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE ONE THING IT SAYS THAT IS NOT NAVIGATION, AND WHY THAT IS NOT A CRACK IN THE RULE ABOVE
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * [DW_PROTOTYPE_3D_IN_THE_REPORT] and [DW_TURNTABLE_CAPTURE_ADVICE] tell a designer what the printed
+ * report can and cannot carry off a prototype — that a “3D model” file reaches the officer as the
+ * words "1 document attached" and that a “360° capture” is the only 3D form that is drawn. That is
+ * COPY, not capture: this screen still owns no field, no draft and no store, and adding one here
+ * would be the "second, parallel way to add a prototype" the section above refuses by name.
+ *
+ * It is said on this screen because this screen is the door. The alternative is saying it beside the
+ * two fields on the stage 13 form, which is where it also belongs and where it does not yet exist —
+ * a note that has to be mounted from `FieldRenderer`, which this change does not own. Said only
+ * there it would arrive after the upload; said only here it is missed by the designer who reaches
+ * stage 13 through Design workshops. Both, eventually. The long argument, the three backend files
+ * that are the authority for every clause of it, and why the wording is the web's word for word,
+ * are at the declaration of [DW_PROTOTYPE_3D_IN_THE_REPORT].
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
  * WHERE THE REVIEW HALF NOW LIVES — AND THIS SECTION USED TO SAY IT DID NOT EXIST
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  *
@@ -234,6 +252,25 @@ fun SketchesAndPrototypesScreen(
             color = MaterialTheme.field.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp
+        )
+        /*
+          SAID BEFORE THE BUTTON THAT LEADS TO STAGE 13, NOT AFTER THE UPLOAD. See
+          [DW_PROTOTYPE_3D_IN_THE_REPORT] for what is true and which three files say so. The reason
+          it is HERE is that this screen is the handset's door to prototype work: a designer who
+          reads it on the way in can photograph the piece while it is still in front of them, and a
+          designer who is told after the .glb has gone up has been told too late to act on it.
+        */
+        Text(
+            DW_PROTOTYPE_3D_IN_THE_REPORT,
+            color = MaterialTheme.field.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp
+        )
+        Text(
+            DW_TURNTABLE_CAPTURE_ADVICE,
+            color = MaterialTheme.field.muted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
         )
         // Said once, plainly, and pointing at the destination that now holds it. This line used to
         // read "on the web only for now", which stopped being true the day Design review landed — and
@@ -408,6 +445,124 @@ internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
     "Nothing is lost: this screen only reads, so nothing on this handset has changed. Design " +
         "workshops still lists what is stored on this device, and the sketch and prototype stages " +
         "open from a workshop opened there."
+
+/*
+  ══════════════════════════════════════════════════════════════════════════════════════════════════
+  WHAT A PROTOTYPE'S 3D WORK ACTUALLY BECOMES IN THE DOCUMENT THE OFFICER RECEIVES
+  ══════════════════════════════════════════════════════════════════════════════════════════════════
+
+  THE DEFECT. A designer standing at a workshop can attach a .glb to a prototype on this handset and
+  be told nothing whatsoever about what happens to it. Stage 13's prototype entity declares BOTH
+  halves of the 3D record and they do not end up in the same place:
+
+      f("turntablePhotos", "360° capture", IMGS, A, phase_note="Reviewer: “Kumar da team”."),
+      f("modelFile",       "3D model",     FILE, A, phase_note="Reviewer: “Kumar da team”."),
+
+  (`backend/app/services/stage_definitions.py`, the `STAGE_13` / `prototype` block — read 2026-08-27.
+  Re-check: `grep -n 'turntablePhotos\|modelFile' backend/app/services/stage_definitions.py`.)
+
+  ── THE THREE FILES THAT DECIDE THIS, AND WHY NO CLIENT CAN ────────────────────────────────────────
+
+  `ReportBuilder.attachments_named_but_not_carried` states the rule this comment is under, and it is
+  a rule about SHAPE rather than about any one sentence: *a claim about what a report CONTAINS cannot
+  be verified from any client*, both clients render their help straight off the published registry,
+  so one wrong sentence can be written any number of times without a single surface disagreeing with
+  it. That module counts the passes — `report_annexures` and `report_custom_sections` each record
+  "three surfaces told the designer the office's copy would carry it", `stage_definitions` records the
+  identical false claim made three times in one wave at `surveyDocument`, and correcting two sentences
+  in the builder itself was the fourth pass over one claim in a day. So this copy is written from the
+  three files that ARE the authority, each read on 2026-08-27, and from nothing else:
+
+   1. `backend/app/services/report_builder.py`
+      * `format_value`'s media branch: FILE, AUDIO and VIDEO have no image path to be placed by, so
+        their stored ids become the literal string `"{count} document(s) attached"` and nothing more
+        — deliberately not even a filename, because that module is ALSO the on-device report builder
+        and may not query for one. `"3D model"` is a FILE, so the officer's page reads
+        **3D model — 1 document attached**. That is the whole of it.
+      * `_image_sources` — pass one filters on `FieldType.IMAGE` and `FieldType.IMAGE_LIST` and on
+        the tier, and on NOTHING ELSE. `turntablePhotos` is an IMAGE_LIST, so its frames really are
+        placed on the page, as a named plate captioned with the field's own label. `_images` is "the
+        only placement path there is", which is why the model file has none.
+   2. `backend/app/services/report_templates.py`
+      * `SpecialSection.ANNEXURE_MEDIA` is photographs only and says so at length; it gathers through
+        `_images`, so the contact sheet cannot carry a model file either. A FILE annexure is recorded
+        there as a DECISION with its two reasons, not as an oversight.
+      * `TEMPLATES`: `max_tier` defaults to ADVANCED and only COMPACT_SUMMARY is BASIC, and both of
+        these fields are tier A. `PROTOTYPE_DEVELOPMENT` is a section of DCH_STANDARD, DIC_STANDARD
+        and DETAILED_TECHNICAL (all via `_standard_sections`, where `include_photos` is true and
+        `max_photos` is 0 — uncapped) and of no other template. So on Compact summary, Implementing
+        agency format and Photo catalogue, NEITHER the frames NOR the “1 document attached” line
+        appear at all — the whole prototype stage is absent from those three. The sentence below does
+        not try to say that on a phone: it is the smaller claim, which is true under every template
+        that prints stage 13 at all.
+   3. `backend/app/services/report_annexures.py`
+      * The one annexure that carries something a writer cannot draw carries TRANSCRIPTS of AUDIO,
+        and only under the stage-20 toggle. There is no sibling for FILE. A .glb has no transcript.
+
+  ── WHY THE COPY DOES NOT PROMISE A VIEWER ─────────────────────────────────────────────────────────
+
+  Nothing in this application draws a 3D model, on either surface, and the sentence says so in the
+  web's own words. On this handset that is checkable: `android/app/build.gradle.kts` has no 3D
+  dependency (no sceneview, filament, glTF or model-viewer — checked 2026-08-27; re-check with
+  `grep -in 'sceneview\|filament\|gltf\|model-viewer' android/app/build.gradle.kts`). Coil draws
+  images and video thumbnails and media3 plays video; neither opens a mesh. And a viewer would not
+  change the sentence anyway — the limit is in the document generator, and the person the turntable
+  is for is the officer reading the .docx, not the designer holding the phone.
+
+  ── WHY THE WORDING IS THE WEB'S, WORD FOR WORD ────────────────────────────────────────────────────
+
+  Android owns wording generally. It does not here, because the web already had the accurate sentence
+  and this handset had none: `frontend/components/sketches/upload/PrototypeModelField.tsx` (read
+  2026-08-27) says it on the turntable card, argued from the same three files. Two surfaces telling a
+  designer two different things about one ministry document is the exact failure the rule above
+  exists to prevent, and re-phrasing a correct sentence is how the second version comes to be
+  slightly wrong. ONE substitution was unavoidable — the web ends "rather than in the browser", which
+  is false on a handset — and it is the only word that differs. The handset's own established phrasing
+  for this class of fact is `DesignerProfileScreen`'s CV line — “The report NAMES it — “1 document
+  attached” — but a report file cannot carry a document, so send the CV alongside the report” — and
+  these agree with it rather than inventing a third account.
+*/
+
+/**
+ * WHAT REACHES THE PRINTED PAGE OFF A PROTOTYPE, AND WHAT DOES NOT.
+ *
+ * The middle of this is `PrototypeModelField.tsx`'s sentence verbatim, for the reason set out above;
+ * the last clause reads "rather than in the app" where the web reads "rather than in the browser".
+ *
+ * IT NAMES THE FIELDS BY THEIR REGISTRY LABELS — “3D model” and “360° capture” — because those are
+ * the words the designer will meet on the stage 13 form two taps from here. A sentence about "the
+ * model file" would be advice about a box they cannot find.
+ *
+ * The closing clause is the ACTION, and it is the whole point of saying any of this on the way in: a
+ * designer who knows can photograph the prototype as well, and then the officer sees the piece.
+ */
+internal const val DW_PROTOTYPE_3D_IN_THE_REPORT: String =
+    "On stage 13 a prototype takes a “3D model” file and a “360° capture”, and only one of them " +
+        "prints. The ministry document places image fields as pictures and prints every other kind " +
+        "of attachment as a count — a 3D model appears in it as the words “1 document attached”, " +
+        "and no viewer built into this application can change that, because the limit is in the " +
+        "document generator rather than in the app. The file is kept with the record and stays " +
+        "downloadable for the next designer, but a turn of photographs is the only form of this " +
+        "prototype that reaches the printed page — so photograph the piece as well."
+
+/**
+ * HOW TO SHOOT A TURN THAT IS WORTH PRINTING. `PrototypeModelField.tsx`'s second paragraph, verbatim.
+ *
+ * THE TWO NUMBERS ARE STATED AND NOT ENFORCED, which is that panel's argument and holds here: twelve
+ * frames is one photograph every thirty degrees, the coarsest capture that still reads as rotation
+ * rather than as a handful of unrelated views; twenty-four is every fifteen degrees and is what a
+ * reviewer can actually judge a form from. A prototype photographed eight times is still better than
+ * one photographed never, so nothing on this handset refuses a short turn.
+ *
+ * SEPARATE FROM [DW_PROTOTYPE_3D_IN_THE_REPORT] rather than one long paragraph, because they are two
+ * different kinds of statement: one is a fact about the delivered document that must not drift, the
+ * other is craft advice. A reader who disagrees with the advice must not be given a reason to doubt
+ * the fact, and a test that pins the fact must not be pinning the advice.
+ */
+internal const val DW_TURNTABLE_CAPTURE_ADVICE: String =
+    "Stand the piece still and move around it, one photograph every 30° for 12 frames, or every 15° " +
+        "for 24 — enough that a reviewer can read the form rather than guess it. Keep the light and " +
+        "the background the same for all of them."
 
 /**
  * How many workshops this screen asks for.

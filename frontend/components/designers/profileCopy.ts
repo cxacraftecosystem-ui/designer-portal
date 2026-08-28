@@ -60,10 +60,51 @@ export const DESIGNER_PROFILE_LABELS: Record<DesignerProfileField, string> = {
   empanelmentDate: "Empanelment date"
 };
 
+/**
+ * The four boxes that must be answered before this profile can be saved.
+ *
+ * ── DECLARED ONCE, HERE, BECAUSE FOUR PLACES HAVE TO AGREE ABOUT IT ──────────────────────────────
+ *
+ * The editor reads this array to mark its boxes and to set the native `required` attribute; the
+ * read-only view reads it to say which blanks are the ones that stop a report; the server refuses
+ * the same four columns when a body clears them (`DesignerProfileUpdate` in
+ * `backend/app/schemas/designers.py`, whose `REQUIRED_COLUMNS` is the mirror of this list); and
+ * `frontend/e2e/designer-profile-unit.spec.ts` diffs the two. A rule the client alone enforces is a
+ * rule the API does not have, and the API is what the handset talks to as well.
+ *
+ * ── WHY THESE FOUR AND NOT THE OTHER SEVENTEEN ───────────────────────────────────────────────────
+ *
+ * The owner's instruction: "Name, qualification, email, and phone number should be mandatory fields
+ * as well." Each is a value a report is submitted UNDER or a way of reaching the person who signed
+ * it — the identity half of the record — where the other seventeen are description. Marking every
+ * box required would mean a designer who has not yet been given an empanelment number cannot save
+ * their biography, which is the failure `LocationFields` records as "a field may only be mandatory
+ * where it is answerable".
+ *
+ * ORDER IS SCREEN ORDER, so a reader comparing this array against the form reads them in the same
+ * sequence: name (identity), qualification (qualifications), phone and email (contact).
+ */
+export const DESIGNER_PROFILE_REQUIRED_FIELDS: readonly DesignerProfileField[] = [
+  "displayName",
+  "qualification",
+  "phone",
+  "email"
+];
+
+/** Whether a box on this profile must be answered — the one test both screens ask. */
+export function isDesignerProfileFieldRequired(field: DesignerProfileField): boolean {
+  return DESIGNER_PROFILE_REQUIRED_FIELDS.includes(field);
+}
+
 /** The sentence under a box: what it is for, and where the value ends up. */
 export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>> = {
-  displayName:
-    "Printed as “Designer” on the cover of every report you generate. Left blank, the cover falls back to the name on your account.",
+  // ⚠ THIS SENTENCE ENDED "Left blank, the cover falls back to the name on your account." — which
+  // was true of the SERVER and stopped being true of the FORM the day this box became mandatory.
+  // The fallback still exists for the rows that predate the rule (the profile row is created empty
+  // by the GET itself, so a great many hold no name at all), but a required box whose help text
+  // offers leaving it blank as an option is copy arguing with the control above it, and the reader
+  // believes the copy.
+  displayName: "Printed as “Designer” on the cover of every report you generate.",
   localName: "Printed verbatim, in whatever script you type it in.",
   institution: "Printed as “Designer’s institution” on the report cover.",
   experienceYears: "Whole years, 0 to 70 — the same range the report’s own field accepts.",

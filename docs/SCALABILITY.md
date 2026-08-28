@@ -86,9 +86,11 @@ interpretation:
   688 ms of the difference is the `db.user.find_unique` inside `get_current_user`
   (`backend/app/core/deps.py:127`). An endpoint that reads nothing costs one round trip because
   authentication reads something.
-- `GET /review/pending` (`backend/app/api/routes/review.py::list_pending_reviews`) loops over six
-  record types issuing one `find_many` each. It returns **22 bytes** — the queue is empty — and takes
-  **4,958 ms MEASURED**. That is 7.00 implied round trips against a model that predicted 7.
+- `GET /review/pending` (`backend/app/api/routes/review.py::list_pending_reviews`) looped over six
+  record types issuing one `find_many` each **in the build these numbers were taken against**. It
+  returns **22 bytes** — the queue is empty — and takes **4,958 ms MEASURED**. That is 7.00 implied
+  round trips against a model that predicted 7. The tree gathers those six into one wave now
+  (§3); production does not, which is the whole of §1.4.
 
 ### 1.2 The measured table
 
@@ -172,13 +174,13 @@ Ranked by *when* it bites, not by size of eventual win.
 |---|---|---|---|---|---|
 | 1 | **Sequential round trips per request** | §1.1–1.3, MEASURED | **Now**, at 16 artisans | Gather independent reads; batch relations; delete queries outright | None — strictly faster, no new memory |
 | 2 | **One auth read on every request** | `deps.py:127`; `/reference/address` = 789 ms MEASURED | **Now**, every call | In-process TTL cache of the user row | ~200 KB RAM; role changes lag by the TTL |
-| 3 | **Whole media objects read into RAM** | `s3.py:243`; largest live object **668 MiB** MEASURED | **Now** — that file already exists | Stream to a temp file; cap by free memory, not a constant | Disk instead of RAM; a few lines |
+| 3 | **Whole media objects read into RAM** — **DONE**, §5.1 | was `s3.py:243` (now `:286`), six read sites; largest live object **668 MiB** MEASURED | **Now** — that file already exists | `s3.download_to_temp` + `head_object`; caps derived from free memory (`services/memory_budget`), not constants | Disk instead of RAM; one `HEAD` per gated read; oversized work now refused visibly rather than attempted |
 | 4 | **Write-path N+1** | `questionnaire.py:216-258` = 3 queries per answer | **Now**, at ~14 answers in one save | `db.batch_()` / `create_many` — one round trip | None; strictly fewer queries |
 | 5 | **Connection pool under burst** | Knee at 8 concurrent, MEASURED §6 | **Now**, at ~8 simultaneous users | Remove queries (see 1, 2); make the pool a knob | None |
 | 6 | **Reports and manifests built entirely in RAM** | 284 B/cell MEASURED; caps allow 2.1 M cells | ~10–20× today's records | `write_only` workbook to a temp file; stream rows | Column widths become fixed, not content-fitted |
 | 7 | **Queue throughput: one worker, serial batch** | `media_queue.py::process_next_media_jobs`; `main.py::_acquire_queue_worker_lock` | ~5–10× today's audio | Concurrency as a setting (default 1); DB lease instead of `flock` | None at default |
-| 8 | **Unbounded aggregate responses** | `review.py::list_pending_reviews` (no paging), `data_browser.py:132,143` | ~200 pending per type | Paginate; stream the manifest | None |
-| 9 | **Multi-column `ILIKE '%term%'`** | `records.py:231-244`, 57 call sites | ~100–150 k rows in a searched table, MODELLED | `pg_trgm` GIN indexes — inside Postgres, no new service | Index build + write amplification; kilobytes today |
+| 8 | **Unbounded aggregate responses** | `review.py::list_pending_reviews` (no paging), `data_browser.py::TAKE`, `::REPORT_TAKE` | ~200 pending per type | Paginate; stream the manifest | None |
+| 9 | **Multi-column `ILIKE '%term%'`** | `records.py::contains`, 57 call sites | ~100–150 k rows in a searched table, MODELLED | `pg_trgm` GIN indexes — inside Postgres, no new service | Index build + write amplification; kilobytes today |
 | 10 | **OFFSET pagination depth** | `pagination.py:10` | ~100 k rows **and** deep paging, MODELLED | Cursor alongside page numbers, not instead | None; additive field |
 | 11 | **Exact `COUNT(*)` per list response** | `records.py::count_and_page` | ~1 M rows, MODELLED | Fetch `pageSize + 1`; report `hasMore` above a threshold | None until the threshold |
 
@@ -191,10 +193,12 @@ is the finding, not an oversight; §7 shows the arithmetic.
 
 ### The evidence
 
-`GET /review/pending` returning 22 bytes in 4,958 ms is the cleanest example in the codebase:
+`GET /review/pending` returning 22 bytes in 4,958 ms is the cleanest example in the codebase.
+What follows is the **deployed** shape, which is what the measurement was taken against — the tree no
+longer looks like this, and §1.4 is why that distinction is the whole point of this document:
 
 ```python
-# backend/app/api/routes/review.py:140-147
+# backend/app/api/routes/review.py::list_pending_reviews, AS DEPLOYED
 for record_type, delegate, label_fields in _PENDING_SOURCES:   # six record types
     rows = await delegate.find_many(...)                       # one round trip each, in series
 ```
@@ -202,8 +206,15 @@ for record_type, delegate, label_fields in _PENDING_SOURCES:   # six record type
 Six tables, no dependency between them, awaited one at a time. On a database next door this is
 free. Here it is 4.2 seconds.
 
-`GET /export/dataset` (`export.py:153-170`) does the same with six `find_many` calls plus a media
-query — 12.98 trips MEASURED. `/data/report` does it nineteen times — 19.01 trips MEASURED.
+`GET /export/dataset` (`export.py::dataset_manifest`) does the same with six `find_many` calls plus
+a media query — 12.98 trips MEASURED. `/data/report` does it nineteen times — 19.01 trips
+MEASURED.
+
+Line pins are deliberately absent from this section now, for the reason
+[§6](#6-connection-pool-and-burst-rank-5) gives about its own: these are exactly the lines a
+conversion wave rewrites, and every numeric pin this section carried — `review.py:140-147`,
+`export.py:153`, and `records.py:231-244` in the §2 table — had already come loose from what it
+named before anybody followed it. A symbol survives the edit; a line number does not.
 
 ### The fix, and why it is the right shape
 
@@ -220,10 +231,44 @@ flowchart TB
 ```
 
 `backend/app/services/concurrency.py::gather_reads` already implements exactly this, bounded by the
-Prisma pool so one request cannot drain it. Routes still to convert, from the measurements above:
-`review.py::list_pending_reviews` (7 → 2 trips), `export.py:153` (13 → 3), `media.py` list (`count`
-then `find_many` then `_interview_labels`, still sequential at `media.py` list route), and the
-nineteen queries behind `/data/report`.
+Prisma pool so one request cannot drain it.
+
+**The four routes this paragraph used to list as "still to convert" are now converted IN THE TREE,
+and none of it is deployed.** §1.4 is still the governing fact and §1.2 is still the un-fixed
+baseline that a redeploy has to be re-measured against:
+
+| Route | Was | Now, in the tree |
+|---|---|---|
+| `review.py::list_pending_reviews` | 7 sequential trips, MEASURED 4,958 ms | one wave of six `find_many`; a second wave carries a `count` **only** for the record types that overflowed the cap, so a queue under the cap is one wave and nothing else |
+| `export.py::dataset_manifest` | 12.98 trips MEASURED | the six tables in one wave; the media read stays a second wave because `media_or` is built out of their ids. The two visibility predicates above them were gathered too, but see the note below — that pair is one query either way |
+| `data_browser.py::_report_records` (`/data/report`) | 19.01 trips MEASURED | the eight root reads in one wave; in the workshop branch products/tools/interviews (all keyed off the artisan ids alone) in one wave, with `processes` still below them because it needs the product ids |
+| `media.py::list_media` | `count`, then `find_many`, then `_interview_labels`, then `media_url_scope`, in series | `count`+`find_many` in one wave; `_interview_labels`+`media_url_scope` in the next, inside the shared `_public`, so `GET /media/{id}` and `GET /media/orphans` inherit it |
+
+`data_browser.py::_scope_for` was gathered with them, and **it is the one conversion in this
+list that buys nothing measurable**, which is worth saying rather than leaving to be discovered.
+Only one of its two halves queries: `records.owned_or_granted_where` is dictionary work on a record
+owner column and reads the design-workshop tag ids only for `uploadedById`, and its own comment
+forbids the record variant from growing a lookup to match. So the pair is one query below professor
+and none at Professor and above, gathered or not. The same is true of the identical pair at the top
+of `export.py::dataset_manifest`. Both are written as waves so the pair is stated as a pair — a
+claim about shape, not about latency.
+
+Thirteen smaller sites went the same way in the same pass: the `count`/`find_many` pairs behind
+`/users`, `/tasks`, `/feedback`, the questionnaire-form list, the inspector list and `/media/jobs`;
+the four independent picker reads behind `/tasks/options`; the artisan/section lookups and the
+derived-progress counts inside `tasks.py::serialize_tasks`; the two perspectives of
+`/data-access/grants`; the two reads behind `/design-workshops/{id}/report-history`; the per-kind
+loop in `media.py::_tag_only_orphans`; the per-model loop in
+`services/design_workshops.py::hydrate_entries`; and `questionnaire.py::section_payloads`, which is
+the whole of the 3.41 measured trips on `GET /questionnaire/questions` once auth is subtracted. On
+`/tools` and `/products`, `records.py::media_url_owners` moved from an await *after* `count_and_page`
+into the same wave — a trip that never appears in §1.2 because those rows were measured as an
+admin, for whom that lookup short-circuits without querying.
+
+**One number to keep in view while reading that list**: `gather_reads` is bounded by `pool_width()`,
+which is `Settings.database_connection_limit` = 10. A wave wider than ten does not fail — it
+silently becomes two waves at the semaphore. `/dashboard/stats` is already over that line at sixteen
+coroutines, and its own comment claimed otherwise until this pass corrected it.
 
 **Cost to the small deployment: none.** Fewer wall-clock seconds for the same queries, the same
 memory, no new dependency. This is the fix the brief's design rule was written for.
@@ -275,17 +320,40 @@ With one uvicorn worker the invalidation is exact; with two it is exact only in 
 performed the write, which is an argument for keeping one web worker (which `backend/app/worker.py`
 already documents as load-bearing for other reasons).
 
-A second, smaller instance of the same shape: `records.py::visibility_where` (line 262) reads the
-grant table on every list request for every user below professor. Same cache, TTL 30 s, keyed by
-user id. Admins pay nothing today because `has_rank(user, "PROFESSOR")` returns an empty filter
-without querying — which is why the measurements in §1.2, taken as an admin, do *not* include it.
-**Every researcher pays 694 ms per list request that these numbers do not show.**
+**A second instance of the same shape used to be claimed here, and it is not true of this tree.**
+The paragraph that stood here named `records.py::visibility_where` (line 262) and ended "Every
+researcher pays 694 ms per list request that these numbers do not show." That function no longer
+exists. It was split in two: `records.py::viewable_where`, which is what the LIST routes call and
+which returns `{}` for everybody without issuing a query at all — reading the repository is open to
+every signed-in account, and its docstring says so — and `records.py::owned_or_granted_where`, which
+kept the original grant-table body and is reached only from the paths that take data OUT:
+`/export/dataset`, the `/data` browser and the download routes. So a researcher's list request costs
+what an admin's costs, and the sentence removed here was pricing a query the list path had stopped
+making. `records.py:262` is now a docstring inside `_redact_sensitive` — which is what a stale line
+pin looks like from the other side.
+
+What survives is narrower and still worth caching. `owned_or_granted_where` **is** a real read below
+professor — the media variant resolves design-workshop-tagged ids through
+`records.py::_design_workshop_media_ids` — and `data_browser.py::_scope_for` calls it twice, once
+per owner column, on every `/data` route — though only the media call actually queries, so that
+route pays one of them and not two, and gathering the pair (§3) therefore removed nothing. Deleting
+the query is the whole of the remaining prize: same cache, TTL 30 s, keyed by user id.
+Professors and admins pay nothing either way, because `has_rank(user, "PROFESSOR")` returns an empty
+filter without querying — which is why the measurements in §1.2, taken as an admin, do *not*
+include it, and why nothing in that table moves when this one is done.
 
 ---
 
 ## 5. Memory on a 1 GiB box
 
-### 5.1 Whole media objects in RAM (rank 3) — biting now
+### 5.1 Whole media objects in RAM (rank 3) — **DONE**; it was biting now
+
+> **Status.** All three fixes below have landed, plus a fourth read site this section did not
+> originally name (`POST /design-workshops/{id}/report`, which held *every* referenced photograph at
+> once and was the largest case of all). Two parts are deliberately NOT closed and are marked as
+> such inline rather than left to be rediscovered: the multipart second copy at send time, which
+> needs a dependency this repository has not taken, and pydub's whole-decoded-PCM residency, which
+> needs ffmpeg's segmenter. The measurements below are the "before" and are left as they were.
 
 **MEASURED**, live media table, all 925 rows sampled:
 
@@ -299,42 +367,120 @@ without querying — which is why the measurements in §1.2, taken as an admin, 
 | Five largest | 131.2, 151.4, 156.0, 240.0, 668.4 MiB |
 | Type mix | 568 AUDIO, 305 IMAGE, 52 VIDEO |
 
-Every transcription reads the whole object into the process heap:
+Every transcription read the whole object into the process heap:
 
 ```python
-# backend/app/services/s3.py:243-249
+# backend/app/services/s3.py:286-306  (was :243-249 when this section was written)
 def get_object_bytes(object_key: str) -> bytes:
     response = _client().get_object(...)
     return response["Body"].read()          # the entire object
 ```
 
-called from `media_queue.py:364` and `:243`. It is then handed to the provider as a multipart
-field — `files={"file": (filename, content, mime_type)}` at `ai.py:71` and `:87` — and `requests`
-assembles that multipart body as a second contiguous bytes object. For the 668 MiB file that is
-**~1.34 GiB of live heap on a 1 GiB box** (MODELLED from the MEASURED file size; the doubling is how
-`requests` builds multipart bodies). ElevenLabs' declared ceiling is 1000 MiB (`ai.py:58`), so
-nothing in the code refuses it.
+It was then handed to the provider as a multipart field —
+`files={"file": (filename, content, mime_type)}` — and `requests` assembles that multipart body as a
+second contiguous bytes object. For the 668 MiB file that is **~1.34 GiB of live heap on a 1 GiB
+box** (MODELLED from the MEASURED file size; the doubling is how `requests` builds multipart
+bodies). ElevenLabs' declared ceiling is 1000 MiB (`ai.py:122`), so nothing in the code refused it.
 
-Worse if the chain falls through to Whisper. Above 24 MiB (`ai.py:55`) `_split_audio_into_chunks`
-decodes the entire file to uncompressed PCM via pydub and materialises **every** chunk into a list
-before transcribing any of them (`ai.py:126-152`). Decoded PCM is several times the compressed
-size; for a multi-hundred-megabyte input this cannot fit and never will.
+Worse if the chain fell through to Whisper. Above 24 MiB (`ai.py:119`) `_split_audio_into_chunks`
+decoded the entire file to uncompressed PCM via pydub and materialised **every** chunk into a list
+before transcribing any of them. Decoded PCM is several times the compressed size; for a
+multi-hundred-megabyte input this cannot fit and never will.
 
-The same pattern sits in the *web* process: `/data/media/{id}/download?format=mp4` reads the object
-whole and re-encodes it, guarded only by `MAX_CONVERT_BYTES = 200 MiB` (`data_browser.py:141`).
-Three live files (131, 151, 156 MiB) are under that cap.
+The same pattern sat in the *web* process: `/data/media/{id}/download?format=mp4` read the object
+whole and re-encoded it, guarded only by `MAX_CONVERT_BYTES` (`data_browser.py:163`). Three live
+files (131, 151, 156 MiB) were under that cap.
 
-**Fix, all of which keep the small case working:**
+#### The six read sites, and the one this section did not name
 
-1. Stream the S3 object to a `NamedTemporaryFile` instead of `.read()`; hand the provider an open
-   file handle, which `requests` streams rather than buffers. Peak heap becomes the chunk size.
-2. Make `_split_audio_into_chunks` a generator, and let pydub read from the temp file path so
-   ffmpeg streams from disk rather than from a `BytesIO` of the whole input.
-3. Replace `MAX_CONVERT_BYTES` with a limit derived from free memory, and lower the constant to
-   something a t3.micro can actually hold (32 MiB) until then.
+Traced route function → read. Only the first had a cap of any kind before this work.
 
-**Cost to the pilot:** disk instead of RAM (the box has disk; it does not have RAM), and one extra
-temp-file lifecycle. No new service, no new dependency.
+| # | Entry point | Read site | Process |
+|---|---|---|---|
+| 1 | `GET /data/media/{id}/download?format=mp4` | `data_browser.py::download_media` | web |
+| 2 | Same function, the non-audio fallback when `media.url` is falsy | `data_browser.py::download_media` | web |
+| 3 | **`POST /design-workshops/{id}/report`** | `design_workshops.py::MediaIndex.prefetch` (`:5095`) | **web** |
+| 4 | `POST /media/{id}/transcribe-now` | `media_queue.py::transcribe_media_now` (`:596`) | web |
+| 5 | The queue drain | `media_queue.py::_process_job` (`:795`, `:883`) | worker |
+| 6 | `POST /design-workshops/{id}/ai-layers/{caption,subtitles}` | `design_workshops.py` routes (`:3002`, `:3079`) | web |
+
+**Site 3 is the largest of them and this document did not have it.** `MediaIndex.prefetch` looped
+over every image the built document referenced and accumulated `get_object_bytes(key)` into a dict
+that stayed live across the whole render — no per-object cap, no aggregate cap, no cap on the number
+of images — in the single-worker web process. That is strictly worse than the single 668 MiB read
+this section is built around: one read is one object, this is all of them at once. At the measured
+median of 2.01 MiB a forty-photograph report is ~80 MiB of live heap before ReportLab starts, and
+one p99 object (97 MiB) among them doubles it.
+
+**Fix, all of which keep the small case working — all three DONE, with one part explicitly not:**
+
+1. ~~Stream the S3 object to a `NamedTemporaryFile` instead of `.read()`.~~ **DONE** —
+   `s3.download_to_temp` (`:425`) streams via `download_fileobj` in ranged chunks and returns the
+   path; `s3.discard_temp` (`:470`) is what every caller's `finally` calls. `s3.head_object`
+   (`:334`) is the companion this document's follow-up note asked for: it reads `ContentLength` and
+   no bytes, so an object that understates its size in the `MediaFile.sizeBytes` column is now
+   refused *before* the fetch instead of after it. Sites 1, 2, 4, 5 (transcription) and 6
+   (subtitles) all moved to it. `get_object_bytes` survives for the two callers that genuinely need
+   every byte at once, both of which now have a size gate in front: MEASUREMENT (`media_queue.py`
+   `:883`) and CAPTION (`design_workshops.py:3002`) send base64 of a whole image inside a JSON body,
+   and there is no half of a base64.
+   > **The "hand the provider an open file handle, which `requests` streams rather than buffers"
+   > half of this was only half true, and the code now says so.** It is true for `data=` — Deepgram
+   > posts a raw body, and `requests` hands a file object to urllib3 with a `Content-Length` off the
+   > file, so nothing is resident. It is **false for `files=`**: `PreparedRequest._encode_files`
+   > calls `fp.read()` and assembles the whole multipart body as one contiguous `bytes`, so the
+   > OpenAI and ElevenLabs rungs still make the second copy at send time. What the handle removes
+   > there is the *caller's* copy — the object no longer sits in the heap for the length of the job,
+   > across every rung of the chain and the refinement hop after it, only during the one POST that
+   > is sending it. Closing the rest needs a streaming multipart encoder
+   > (`requests_toolbelt.MultipartEncoder`), which is a **new dependency this repository has not
+   > taken**. Named here rather than done quietly. See `ai._upload_body`.
+2. ~~Make `_split_audio_into_chunks` a generator, and let pydub read from the temp file path.~~
+   **DONE** — `ai.py:667`. Both halves: it yields one chunk at a time instead of returning a list of
+   all of them, and `AudioSegment.from_file` is given the path so ffmpeg opens the file itself.
+   The "can this be split at all" decision stays eager and still returns `None`, because a generator
+   object is truthy whether or not it will ever yield and making the whole function a generator
+   would have turned an undecodable recording into an empty transcript in silence.
+   > **What this does NOT fix, and it is the same sentence as above.** `AudioSegment` holds the
+   > entire *decoded* PCM however it was loaded. Reading from the path removes the compressed copy
+   > and the generator removes the N-chunks accumulation, but a multi-hundred-megabyte input still
+   > will not fit, exactly as this section always said. Closing that needs ffmpeg's own segmenter
+   > (`-f segment`) writing chunk files to disk. The size gates are what keep such a file from
+   > reaching it.
+3. ~~Replace `MAX_CONVERT_BYTES` with a limit derived from free memory, and lower the constant to
+   32 MiB until then.~~ **DONE, both parts.** `MAX_CONVERT_BYTES` is 32 MiB (`data_browser.py:163`)
+   and `convert_ceiling_bytes()` (`:3147`) is what the route actually asks;
+   `services/memory_budget.py` is the derivation — `MemAvailable` from `/proc/meminfo`, **and** the
+   cgroup's own `memory.max - memory.current`, whichever is smaller, because a container does not
+   get its own `/proc/meminfo` and this repository ships a container. `psutil` was avoidable and was
+   avoided. It only ever lowers a caller's constant, never raises it, and returns the constant
+   unchanged where no source exists (every development box), so a roomy machine behaves exactly as
+   it did. Fed to `MAX_CONVERT_BYTES`, `MAX_MEASUREMENT_BYTES`, `MAX_CAPTION_BYTES` and the report
+   image budget.
+
+**And a fourth fix, for site 3 — absent from the three-point list above because this section did
+not have that read site at all:**
+
+4. **DONE** — `MediaIndex.prefetch` now takes a budget: `REPORT_IMAGE_BUDGET_BYTES` (96 MiB) in
+   aggregate and `REPORT_IMAGE_MAX_BYTES` (16 MiB) per image, both lowered by the same free-memory
+   figure. A running total is kept against the REAL length of what arrives; the declared column is
+   used only to skip a fetch that was going to be refused anyway. **The skipped photographs are
+   reported, never dropped in silence** — `render_report` appends a warning naming the count, placed
+   immediately after `_dropped_warnings` because it explains part of the number that sentence just
+   gave. The order of `document.images` is the renderer's placement order, so a budget that runs out
+   costs the LAST pictures in the report and never the first; nothing is sorted by size, because
+   fitting more pictures in would decide which page loses one on a criterion no reader could guess.
+
+**Cost to the pilot:** disk instead of RAM (the box has disk; it does not have RAM), one extra
+temp-file lifecycle, and one `HEAD` round trip per gated read — negligible against a path that is
+about to spend a cross-region provider round trip. No new service, no new dependency.
+
+**The behaviour change worth stating plainly.** These are refusals where there used to be an
+attempt. A recording over the ceiling is now answered `413` (web) or written terminal-UNAVAILABLE on
+the media row with the reason on it (queue), instead of being fetched and OOM-ing the box; a report
+whose photographs exceed the budget comes back with the tail of them missing and a warning saying
+so, instead of not coming back at all. On a machine with memory to spare — every development box,
+and the pilot when it is not under load — none of these fire and nothing changes.
 
 ### 5.2 The report workbook and the manifest (rank 6)
 
@@ -351,7 +497,7 @@ saves into a `BytesIO`, then `buffer.getvalue()` copies the bytes again, and `da
 wraps that copy in another `BytesIO`. Before any of that, `_rendered()` (`data_browser.py:2850`)
 copies every prose row.
 
-The caps allow fourteen sheets at `REPORT_TAKE = 5000` rows each (`data_browser.py:143`,
+The caps allow fourteen sheets at `REPORT_TAKE = 5000` rows each (`data_browser.py::REPORT_TAKE`,
 `:2050-2088`). At the measured ~30 columns:
 
 > 14 × 5,000 × 30 = **2.1 M cells × 284 B ≈ 597 MiB** of workbook alone, plus the Python row lists
@@ -598,7 +744,7 @@ path. That is the whole point of expressing it as a threshold rather than a mode
 **What the code does today**, confirmed:
 
 ```python
-# backend/app/services/records.py:231-244
+# backend/app/services/records.py::contains
 def contains(value: str) -> dict[str, Any]:
     return {"contains": value.translate(_UNSEARCHABLE), "mode": "insensitive"}
 ```
@@ -706,16 +852,33 @@ transaction, which is arguably *more* correct than a partially-applied loop.
 
 | Site | What it loads | What it needs |
 |---|---|---|
-| `review.py:139` | up to 200 rows × 6 tables, no pagination; `total = len(items)` | one page of a merged queue |
-| `export.py:153-225` | 6 tables (≤5,000 each, with includes) + ≤20,000 media | a streamed list of paths |
-| `data_browser.py:132` `TAKE = 500` | 500 rows per folder query | one screen of a tree |
-| `records.py:262` | every grant row for the user, then `{"in": [ids]}` | a predicate |
+| `review.py::list_pending_reviews` | up to 200 rows × 6 tables, no pagination | one page of a merged queue |
+| `export.py::dataset_manifest` | 6 tables (≤5,000 each, with includes) + ≤20,000 media | a streamed list of paths |
+| `data_browser.py::TAKE` (500) | 500 rows per folder query | one screen of a tree |
+| `records.py::owned_or_granted_where` (download paths only, **not** the list routes — see §4) | every grant row for the user, then `{"in": [ids]}` | a predicate |
 | `app_settings.py:25` | the singleton settings row, on **every** queue tick (5 s) and several routes | a cached value |
 
-`/review/pending` is the one to fix first: it has no `page`/`pageSize` at all, so the response grows
-with the backlog until the per-type cap of 200 truncates it — at which point `total` is silently
-wrong and a reviewer's oldest work becomes unreachable. Give it the same
-`{items, total, page, pageSize, pages}` envelope every other list uses, and gather the six queries.
+`/review/pending` still has no `page`/`pageSize` at all, so the response grows with the backlog
+until the per-type cap of 200 truncates it and a reviewer's oldest work becomes unreachable from
+this route. **Two of the three things this paragraph prescribed have since been done, and the
+prose is corrected here rather than left standing:**
+
+- It said `total` goes “silently wrong” past the cap. It does not, and has not since the queue
+  began answering `{items, shown, total, cap, truncated}`: `total` is a real `count`, issued for
+  the record types that actually overflowed and for no others, and `truncated` says on the wire
+  that the ceiling bit. What WAS still silent, until 2026-08-27, was every screen: both clients
+  fetched those fields and discarded them, which was the live half of the defect. They read them
+  now, with the wording decided once rather than per screen:
+  `frontend/components/data/cappedList.ts::queueCutNotice` and its Kotlin twin
+  `android/app/src/main/java/com/designprototype/workshop/ui/ReviewQueueCopy.kt::reviewQueueCutNotice`.
+- It said “gather the six queries”. Done in the tree, **not deployed** — §3 has the shape and
+  §1.4 is why the distinction matters.
+
+What is left is the server-side page itself, and it is harder than the envelope makes it look:
+`items.sort(...)` merges six independently-ordered sources in Python, so a correct page needs a
+merged cursor rather than six offsets. **The measurement says it does not bite yet** — 22 bytes on
+the wire against a threshold of ~200 pending per type — so it is deferred rather than scheduled,
+and the worst case is bounded at 6 × 200 rows.
 
 Two things in this codebase already do it right and are worth copying rather than reinventing:
 `media.py::_interview_labels` (one batched query for a whole page's worth of two-hop labels) and
@@ -730,10 +893,45 @@ Two things in this codebase already do it right and are worth copying rather tha
 > **Default: an in-process TTL cache with no extra service. Optional: a shared backend, off unless
 > configured. A mandatory Redis is forbidden.**
 
-The tree already contains the right skeleton, written by another stream and **not yet wired** —
-`backend/app/scale/flags.py` reads `settings().scale_cache_enabled`, and `backend/app/core/config.py`
-does not define it, so nothing in `app/scale/` is reachable today. Treat the package as the intended
-destination, not as a working feature:
+The tree already contains the right skeleton, written by another stream. **The settings are already
+there**: `backend/app/core/config.py` defines every `SCALE_*` field the package reads, and
+`backend/app/scale/flags.py` reads them — `scale_cache_enabled`, `scale_rate_limit_enabled` and the
+rest — each defaulting to off. An earlier version of this paragraph claimed `config.py` did not
+define them and concluded that nothing in `app/scale/` was reachable at all. It was wrong on both
+halves, and the correction changes what adoption costs from "design a settings surface" to "add a
+call".
+
+**A flag is necessary and not sufficient; the call site is the other half.** Nothing runs until some
+code outside the package invokes it, and the two layers differ in who has to do that:
+
+- **The limiter is a single call, and then it is flag-driven.** `install_rate_limit(app)` in
+  `create_app` installs middleware when `SCALE_RATE_LIMIT_ENABLED` is on and returns `False` without
+  touching the app when it is off — and that line landed on 2026-08-27 (`backend/app/main.py:584`),
+  so on this deployment the switch really is the variable and nothing else.
+  Its docstring pins the position (after `UnhandledErrorMiddleware`, before `CORSMiddleware`) because
+  a 429 raised outside the CORS layer reaches the browser without `access-control-allow-origin` and
+  surfaces as "Failed to fetch" rather than as a rate limit.
+- **The cache cannot be switched on at all from outside a route.** `cached_response` only caches for
+  a caller that wraps its loader in it and supplies an `audience` — there is no middleware and no
+  global switch, by design, because a list response is not the same for two viewers. Turning
+  `SCALE_CACHE_ENABLED` on changes nothing until a route adopts it, and `SCALE_CACHE_*` sizing is
+  then per-process memory, not a service.
+
+So the honest question is never "is the package reachable" but "which call sites exist, and which
+variables are set on that environment". Read the first straight from the tree rather than from this
+paragraph. Counted from the command below on 2026-08-27: **the limiter has a production call site**
+(`backend/app/main.py::create_app`, plus `backend/app/scale/selfcheck.py:152`), and
+**`cached_response` still has no caller outside the package** — beyond its definition in
+`backend/app/scale/cache.py` the only hits are five calls in `backend/app/scale/selfcheck.py` and the
+re-export in `backend/app/scale/__init__.py`. So the limiter is now a variable away, and the cache is
+still a route away:
+
+```bash
+cd backend && grep -rn "install_rate_limit\|cached_response" app/ --include=*.py
+```
+
+Treat the package as the destination each fix below is aimed at, and take the per-endpoint adoption
+recipe from `backend/app/scale/README.md` rather than improvising one:
 
 | File | What it provides |
 |---|---|
@@ -755,7 +953,7 @@ usual caching profile.
 | What | Key | TTL | Saving per hit | Hit rate | Verdict |
 |---|---|---|---|---|---|
 | **Auth user row** | user id | 10 s | **688 ms + 1 conn-sec**, MEASURED | ~100 % | **Do this first** |
-| `visibility_where` grants | user id | 30 s | 694 ms per list request, for every non-professor | ~100 % | **Do this second** |
+| `owned_or_granted_where` grants | user id | 30 s | 694 ms per download/export/`/data` request, for every non-professor — **not** per list request, see §4 | ~100 % | **Do this second** |
 | `load_app_settings()` | singleton | 30 s | 694 ms per queue tick and per settings read | ~100 % | Cheap, obvious |
 | `/questionnaire/questions` | role | 300 s | 2,368 ms MEASURED, 113 kB | high — it changes rarely | Good |
 | `/dashboard/stats` | user id | 30 s | up to 10,400 ms MEASURED | low with few users, high with many | Good **with single-flight** |
@@ -793,21 +991,33 @@ vary per caller, and every cold start of every web session and every handset pay
 single biggest byte saving available to the field client, and it needs no cache at all — only an
 `ETag` and a 304.
 
-**MEASURED 2026-08-22**, driven through `create_app()` — the real middleware stack, not the route in
-isolation — with the identity dependency overridden:
+**MEASURED 2026-08-28**, driven through `create_app()` — the real middleware stack, not the route in
+isolation — with the identity dependency overridden, using the command at the end of this section:
 
 | | Bytes | On the 40 kB/s link of §1 |
 |---|---|---|
-| Registry as JSON | 149,465 | — |
-| 200, gzipped by `SelectiveGZipMiddleware` | 22,875 body / **23,618 on the wire** | 0.59 s |
+| Registry as JSON | 162,717 | — |
+| 200, gzipped by `SelectiveGZipMiddleware` | 25,112 body / **25,855 on the wire** | 0.65 s |
 | 304 to a client that returned the tag | 0 body / **664 on the wire** | 0.017 s |
 
-**35.6x**, and 382 of the 664 bytes are the `Permissions-Policy` and CSP headers that
+**38.9x**, and 382 of the 664 bytes are the `Permissions-Policy` and CSP headers that
 `SecurityHeadersMiddleware` puts on every response — the payload itself is gone.
+
+**Every figure in that table is a dated floor.** It read 149,465 / 22,875 / 23,618 and **35.6x** when
+it was measured on 2026-08-22, and was 8.9% short six days later: the registry gains fields and never
+loses them, and the ratio therefore only ever grows. The drift is not annual — running the command
+below twice within one session on 2026-08-28 returned 162,178 and then 162,717, with
+`backend/app/services/stage_definitions.py` and `stage_schema.py` both carrying modification times
+inside that session: another workstream was writing the registry while it was being measured.
+Re-run it before quoting a
+byte count, and date what you write. The only number enforced anywhere is the order-of-magnitude band
+in `test_the_measured_sizes_are_still_in_the_range_the_docs_claim`, which is deliberately a band and
+not an equality so that adding a field is not a red test.
 
 **The 118 KB in the audit is the uncompressed figure.** No client has received an uncompressed
 registry since `SelectiveGZipMiddleware` landed, so the saving available here was never 118 KB — it
-is 22.9 KB per cold start, which is still the largest single item on this endpoint list.
+is 25.1 KB per cold start (2026-08-28; it was 22.9 KB on 2026-08-22), which is still the largest
+single item on this endpoint list.
 
 **The freshness lifetime is deliberately zero** — `private, max-age=0, must-revalidate`. Conditional
 GET buys the bytes, not the round trip, and that is the right trade here rather than a compromise:
@@ -841,12 +1051,18 @@ describes. Weak rather than strong because the gzip middleware may re-encode tho
 route, so one validator ends up describing two content-codings — which is exactly what weakness
 declares and what strength would misstate.
 
-Pinned by `backend/tests/test_schema_conditional_get.py` — 39 tests, no database, MEASURED green on
-2026-08-23, three times (`39 passed` in 449.22 s, 477.04 s and 533.93 s). The count was 36 before the
-three `Vary` tests below were added. Only **18.60 s** of that is the tests' own call time; the rest is
-the `app.services.stage_definitions` import every backend module pays, which is why the wall figure
-moves by 85 s between runs of an unchanged file and should not be quoted as a bound — the module's own
-header says so at more length.
+Pinned by `backend/tests/test_schema_conditional_get.py` — **41 tests, no database**. The count was 36
+before the three `Vary` tests below, and 39 before the two browser-facing tests above (2026-08-28).
+MEASURED green: `39 passed` in 449.22 s, 477.04 s and 533.93 s on 2026-08-23; `39 passed` in 198.40 s
+on 2026-08-28 immediately before the two were added; and **`41 passed` in 385.03 s on 2026-08-28**
+with them. (A selective run of just the additions took `5 passed, 36 deselected in 686.50 s` on the
+same machine while it was building something else — which is the clearest evidence available that the
+wall figure is about the box and not about the tests.)
+**DO NOT QUOTE ANY OF THOSE AS A BOUND.** Three runs of an unchanged module spread over 85 s, a
+reviewer on another machine recorded ~720 s, and five tests took longer than forty-one. Only **18.60 s** of
+the 2026-08-23 run was the tests' own call time; everything else is the
+`app.services.stage_definitions` import that every backend module pays once — the module's own header
+says so at more length.
 
 Every assertion about the seven rows above is doubled: the ETag moved **and** the version did not, so
 that widening `registry_version()` some day cannot leave the suite green while it silently tests
@@ -895,19 +1111,47 @@ asyncio.run(main())
 EOF
 ```
 
-**NEITHER CLIENT COLLECTS THIS SAVING YET, and that is not a defect in the server half.** Stated
-plainly so nobody reads a measured 35.6x as a shipped 35.6x:
+**ONE CLIENT OF THE TWO COLLECTS IT AS OF 2026-08-28.** Stated as a split rather than a headline so
+nobody reads a measured ratio as a shipped one on both clients:
 
-- The web client cannot. `frontend/lib/api.ts` passes `cache: "no-store"` to every `fetch`, which
-  bypasses the browser HTTP cache entirely — no stored response means no `If-None-Match`. Relaxing
-  that for this one path (`cache: "default"`, or a bare `fetch` for the registry) is all the browser
-  needs; it then revalidates and serves the 304 from its own cache with no further code.
-- The Android client cannot. `WorkshopRepositoryApi.kt` declares `@GET("design-workshops/schema")`
-  through Retrofit, and no `okhttp3.Cache` is installed on the client, so OkHttp never stores a
-  response and never conditions a request. Installing a small disk `Cache` is the whole change.
+- **The web client does, since 2026-08-28.** `frontend/lib/api.ts` still passes `cache: "no-store"`
+  to every `fetch` — that is deliberate and unchanged, because a record list served from a stale
+  store is indistinguishable from a place with no records — but `ApiFetchOptions` now carries an
+  opt-in, `revalidateFromHttpCache`, and **exactly one call in the client sets it**:
+  `fetchStageRegistry` in `lib/designWorkshops.ts`, on this path. The browser then stores the
+  response, revalidates it with `If-None-Match`, and materialises the 304 as an ordinary 200 with
+  the stored body — so no caller in the app sees a 304 or needs to learn what one is.
+  `cache: "no-cache"` rather than `"default"`: under `max-age=0, must-revalidate` the two behave
+  identically today, and putting the demand in the request means the guarantee survives a proxy or a
+  future edit that widens the response's freshness. `frontend/e2e/registry-conditional-get-unit.spec.ts`
+  drives the real `apiFetch` and holds all of it, including a census that fails at a second opt-in.
+- **The Android client still cannot.** `WorkshopRepositoryApi.kt` declares
+  `@GET("design-workshops/schema")` through Retrofit, and no `okhttp3.Cache` is installed on any of
+  them: `data/ApiClient.kt:78` builds the `OkHttpClient` without one, and a grep for `okhttp3.Cache`
+  and `.cache(` across `android/app/src/main/java` on 2026-08-28 matched nothing at all against the
+  six `OkHttpClient.Builder()` call sites it found. OkHttp therefore never stores a response and
+  never conditions a request. Installing a small disk `Cache` is the whole change, and it is the
+  larger half of the remaining saving: a handset is the metered connection §1 is about.
 
-Both are in other files and other workstreams. The server is unconditionally correct without them:
-a request with no `If-None-Match` gets exactly the payload it always got.
+Two properties of the server half became load-bearing the moment a browser started conditioning, and
+neither was asserted before, because every test in the module drives the route with the identity
+dependency overridden and without an `Origin` header — the one shape in which both failures are
+invisible. Both are now pinned in `test_schema_conditional_get.py`:
+
+- **The tag is not a way past the identity dependency.** `If-None-Match: *` is answered True by
+  `_if_none_match_matches` without comparing anything, so the order matters: FastAPI resolves
+  `Depends(get_current_user)` before the handler body runs, and an unauthenticated conditional GET
+  gets `401 Missing bearer token`, never a 304.
+- **The 304 carries `Access-Control-Allow-Origin`.** The web client is served from another origin, and
+  a browser applies the same cross-origin check to a revalidation's answer as to the first response.
+  A 304 the browser cannot read is worse than no 304 at all — `fetch` rejects and the registry never
+  loads. It holds because Starlette's `CORSMiddleware` stamps every response it wraps rather than only
+  those with bodies, which is a fact about a dependency and therefore something to assert rather than
+  assume. `Vary` ends up `Accept-Encoding` + `Origin` on both, in opposite orders; the test compares
+  them as sets.
+
+The server is unconditionally correct without either client: a request with no `If-None-Match` gets
+exactly the payload it always got.
 
 ---
 
@@ -1063,11 +1307,11 @@ size distribution (§5.1) is every row of `GET /api/media?pageSize=100` paged to
 
 ```mermaid
 flowchart TB
-  s1["1. Deploy the gather work already in the tree<br/>dashboard 10.5 s -> ~1.0 s, search 8.6 s -> ~1.4 s"]
+  s1["1. Deploy the gather work already in the tree<br/>dashboard 10.5 s -> ~1.0 s, search 8.6 s -> ~1.4 s,<br/>review/pending 5.0 s -> ~1.4 s"]
   s2["2. Cache the auth user row<br/>-688 ms on EVERY request, at both ends of scale"]
-  s3["3. Gather /review/pending and /export/dataset<br/>5.0 s -> 1.4 s, 9.1 s -> ~2.1 s"]
+  s3["3. Gather /export/dataset<br/>9.1 s -> ~2.1 s"]
   s4["4. batch_() the questionnaire save<br/>852 round trips -> 3"]
-  s5["5. Stream media to a temp file<br/>removes the 668 MiB OOM"]
+  s5["5. Stream media to a temp file — DONE<br/>removes the 668 MiB OOM; six read sites moved,<br/>caps now derived from free memory"]
   s6["6. write_only workbook + temp file<br/>removes the report OOM ceiling"]
   s7["7. Queue concurrency setting + DB lease<br/>default 1, unchanged behaviour"]
   s8["8. pg_trgm on the columns search uses<br/>when a table nears 100k rows"]

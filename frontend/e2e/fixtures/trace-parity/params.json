@@ -1,0 +1,40 @@
+{
+  "_": [
+    "Parameter sets for the parity corpus, as PARTIAL TraceParamsInput trees.",
+    "",
+    "Partial on purpose: both halves run the same engine/params.ts sanitizeTraceParams() over the same",
+    "literal, so every field this file leaves out is filled from the engine's own defaults on both",
+    "sides. Writing out all thirty-two knobs here would freeze a copy of those defaults in a file that",
+    "nothing updates, and the day the vendored engine changes one, this corpus would be testing a",
+    "parameter set the product no longer ships.",
+    "",
+    "THE TRAP THIS FILE SITS ON. Every enum below is a plain string, and sanitizeTraceParams's enumOf",
+    "helper answers an unrecognised string with the documented DEFAULT rather than throwing — so",
+    "'OUTLNE' would silently trace centreline and the corpus would quietly stop covering outline mode.",
+    "e2e/trace-parity-unit.spec.ts asserts the sanitised tree really came out as written, which is the",
+    "only thing that keeps a typo here loud.",
+    "",
+    "Keys are the second half of a caseId: <fixture>/<params>."
+  ],
+
+  "default": {
+    "_": [
+      "What the product actually ships. sanitizeTraceParams({}) is defaultTraceParams(): CENTERLINE",
+      "vector mode and AutoMode.SUGGEST, so this case runs the classifier (engine/classify.ts, Math.log",
+      "and Math.atan2), the thinner and the skeleton tracer. It is the widest parity surface in the",
+      "corpus and the one a designer's trace actually takes."
+    ]
+  },
+
+  "outline": {
+    "_": [
+      "The existing oracle's parameters, copied from e2e/trace-engine-unit.spec.ts's outlineParams():",
+      "OUTLINE rather than CENTERLINE so a filled shape traces its boundary and not its skeleton, and",
+      "auto detection OFF so the note list is a function of the trace rather than of the classifier.",
+      "Reusing them rather than inventing a set means the disc cases here and the geometry assertions",
+      "there are talking about the same run."
+    ],
+    "output": { "vectorMode": "OUTLINE", "fillClosed": true },
+    "auto": { "mode": "OFF" }
+  }
+}

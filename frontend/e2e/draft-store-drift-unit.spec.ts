@@ -389,7 +389,7 @@ test("the two outcomes that were already right are unchanged", () => {
 
 function draftWith(stages: Record<string, DwDraftStage>): DwDraft {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     localId: "dwlocal-1",
     remoteId: "srv-1",
     header: {
@@ -397,8 +397,10 @@ function draftWith(stages: Record<string, DwDraftStage>): DwDraft {
       templateId: "DCH_STANDARD",
       status: "DRAFT",
       // Create-only, and this draft is already on the server (`remoteId` above), so the honest
-      // value is null — see `headerOf` for why an adopted workshop never carries one.
+      // value is null and an empty team — see `headerOf` for why an adopted workshop never carries
+      // either of them.
       designerUserId: null,
+      designerUserIds: [],
       craftName: null,
       clusterName: null,
       state: null,

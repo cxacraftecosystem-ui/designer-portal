@@ -199,7 +199,35 @@ private fun rememberDialFieldWidth(available: Dp): Dp {
  * string in the existing phone field, and parsed back on edit.
  */
 @Composable
-fun ArtisanPhoneField(value: String, error: String?, onValueChange: (String) -> Unit) {
+fun ArtisanPhoneField(
+    value: String,
+    error: String?,
+    /**
+     * Draw this app's required marker — a trailing " *" — on the control's own "Phone" caption.
+     *
+     * ON THE CAPTION AND NOT AS A SECOND LABEL ABOVE IT, which is why the flag has to live here at
+     * all. This control draws its own caption; a caller that wanted to mark it would have to print
+     * "Phone *" above a control that already prints "Phone", and two captions for one field is how a
+     * shared component gets forked. The mark itself is `FieldRenderer.fieldLabel`'s, the same `" *"`
+     * every required field across the 22 stages carries, so one mark means one thing everywhere.
+     *
+     * DEFAULTS FALSE, so every existing caller — the artisan form, `FieldRenderer`'s PHONE arm — is
+     * byte-for-byte unchanged. This does not validate anything: whether a blank number is refused is
+     * the CALLER's rule, passed in through [error], because only the caller knows whether its record
+     * requires one. The designer profile does (2026-08-27, the owner's instruction); an artisan's
+     * phone does not.
+     *
+     * DECLARED BEFORE [onValueChange] AND NOT AFTER IT, and any further parameter belongs above the
+     * lambda too. A Kotlin call may put its LAST argument outside the parentheses, so the action
+     * lambda has to stay last or a caller written that way binds it to whatever now sits at the end
+     * — here a `Boolean`, which is a type error today and would be a silent mis-binding the day two
+     * trailing-position parameters are compatible. Both call sites in this tree pass every argument
+     * by NAME, so neither depends on the order as it stands; the convention is what keeps that true
+     * of the next one. (Written after the compiler refused this call with the flag placed last.)
+     */
+    required: Boolean = false,
+    onValueChange: (String) -> Unit,
+) {
     val initial = remember { parseArtisanPhone(value) }
     var dialCode by remember { mutableStateOf(initial.first) }
     var national by remember { mutableStateOf(initial.second) }
@@ -219,7 +247,7 @@ fun ArtisanPhoneField(value: String, error: String?, onValueChange: (String) -> 
     }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Phone", color = Muted, fontSize = 12.sp)
+        Text(if (required) "Phone *" else "Phone", color = Muted, fontSize = 12.sp)
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val dialWidth = rememberDialFieldWidth(maxWidth)
             // Top, not CenterVertically: an error hangs its supporting text BELOW the number field's

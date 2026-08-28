@@ -82,6 +82,7 @@ import com.designprototype.workshop.data.TaskProgressReportDto
 import com.designprototype.workshop.data.TaskSectionDto
 import com.designprototype.workshop.data.TaskUserDto
 import com.designprototype.workshop.data.apiErrorMessage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -143,9 +144,12 @@ private val TASK_STATUS_LABELS = mapOf(
  * to the designers and no hint that the missing chip is why — the six are still in "Everyone below
  * me", so nothing on screen reads as broken, it just cannot be filtered for.
  */
+// Highest tier first — the display order for the assignment builder's tier chips. It filters BY
+// MEMBERSHIP, so a tier missing from this list simply has no chip: the assignees are still reachable
+// through "Everyone below me" and nothing on screen reads as broken.
 private val ROLES_BY_RANK = listOf(
-    "MASTER_ADMIN", "ADMIN", "PROFESSOR", "DESIGNER", "RESEARCHER", "FIELD_CONTRIBUTOR",
-    "CROWDSOURCE_VOLUNTEER"
+    "MASTER_ADMIN", "ADMIN", "PROFESSOR", "INSPECTOR", "DESIGNER", "RESEARCHER",
+    "FIELD_CONTRIBUTOR", "CROWDSOURCE_VOLUNTEER"
 )
 
 private val ROLE_LABELS = mapOf(
@@ -153,6 +157,7 @@ private val ROLE_LABELS = mapOf(
     "FIELD_CONTRIBUTOR" to "Field Contributor",
     "RESEARCHER" to "Researcher",
     "DESIGNER" to "Designer",
+    "INSPECTOR" to "Inspector / Reviewer",
     "PROFESSOR" to "Professor",
     "ADMIN" to "Admin",
     "MASTER_ADMIN" to "Master Admin"
@@ -336,6 +341,14 @@ private fun LocalDate.toDueInstant(): String =
 // Screen
 // =================================================================================================
 
+/**
+ * How long the picker search box waits after the last keystroke before it asks the server.
+ *
+ * The web's own interval on this screen, and the one `/artisans` debounces its live search at. It is
+ * a constant rather than a literal so the two numbers cannot drift apart inside one app.
+ */
+private const val TASK_PICKER_SEARCH_DEBOUNCE_MS = 350L
+
 private enum class TaskAdminTab(val label: String) {
     ASSIGN("Assign work"),
     PROGRESS("Accountability"),
@@ -355,6 +368,15 @@ private class AssignmentFormState {
     var recordTypes by mutableStateOf<Set<String>>(emptySet())
     var sectionIds by mutableStateOf<Set<String>>(emptySet())
     var artisanIds by mutableStateOf<Set<String>>(emptySet())
+    /**
+     * The workshop [artisanIds] was picked under, so a change of SCOPE can be told from a change of
+     * LIST. Null until the builder has been on screen once.
+     *
+     * It lives here rather than in the builder because the builder is a tab: `remember` inside it is
+     * discarded on a stray tap at "Accountability", and a scope-tracker that forgets on a tab switch
+     * would read the return as a fresh scope and empty the subset the admin had just chosen.
+     */
+    var artisanScope by mutableStateOf<String?>(null)
     var targetCount by mutableStateOf("")
     var title by mutableStateOf("")
     var description by mutableStateOf("")
@@ -412,12 +434,41 @@ fun TaskAdminScreen(
     // Bumped by Refresh and after a write, so the two data effects re-run without a scope change.
     var refreshToken by remember { mutableIntStateOf(0) }
 
+    /*
+     * WHAT THE ADMIN IS TYPING, AND THE SETTLED COPY OF IT THAT ACTUALLY GOES ON THE WIRE.
+     *
+     * WHY THE BOX EXISTS AT ALL. `GET /tasks/options` reads the first 500 accounts, 200 workshops
+     * and 500 artisans and returns whatever fell inside; on this repository's measured population
+     * (3632 accounts, 731 artisans — docs/OPEN_FINDINGS.md, 2026-08-13) two of those cuts are live
+     * today. Every filter box on this screen until now was a filter over WHAT ARRIVED — the tier
+     * dropdown counts the slice, and `MultiSelectField`'s own box filters the list it was handed —
+     * so none of them could reach past the cut by construction, because none of them made a second
+     * request. This one does: the route folds `search` into the same WHERE as the `take`, which is
+     * the only placement that works, since searching after the take searches the first 500 names of
+     * the alphabet and stops at exactly the ceiling the parameter exists to get past.
+     *
+     * WHY TWO PIECES OF STATE. One request per keystroke, against three tables one of which is the
+     * user table, is not a search box but a load generator. 350 ms is the web's own interval on this
+     * screen and the one `/artisans` debounces its live search at; a third number here would make
+     * two clients of one API feel differently responsive for no reason. Only [appliedSearch] is a
+     * key of the options effect, so an abandoned prefix never becomes a request.
+     */
+    var pickerSearch by remember { mutableStateOf("") }
+    var appliedSearch by remember { mutableStateOf("") }
+    LaunchedEffect(pickerSearch) {
+        // LaunchedEffect cancels its previous body when the key changes, so the delay IS the
+        // debounce — no timer to clear and nothing to leak.
+        delay(TASK_PICKER_SEARCH_DEBOUNCE_MS)
+        appliedSearch = pickerSearch.trim()
+    }
+
     val form = remember { AssignmentFormState() }
 
-    // The artisan picker narrows to the chosen workshop, so the options call re-runs on every change.
-    LaunchedEffect(workshopId) {
+    // The artisan picker narrows to the chosen workshop, so the options call re-runs on every change
+    // — and on every SETTLED search term, which narrows all three capped lists at the server.
+    LaunchedEffect(workshopId, appliedSearch) {
         optionsLoading = true
-        runCatching { repository.taskOptions(workshopId.ifBlank { null }) }
+        runCatching { repository.taskOptions(workshopId.ifBlank { null }, appliedSearch.ifBlank { null }) }
             .onSuccess { options = it; optionsError = null }
             .onFailure {
                 val text = it.apiErrorMessage("Unable to load the assignment pickers")
@@ -520,6 +571,63 @@ fun TaskAdminScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            /*
+              The workshop list is capped at 200 and this repository holds 196, measured 2026-08-15 —
+              four rows from the cut, on a list of every workshop ever run, which only grows. Said
+              HERE and not once at the top of the screen, because a notice has to sit at the control
+              it is about: the reader who cannot find their workshop is looking at this picker.
+
+              `localFilter = false` — [SingleSelectField] has no box of its own, unlike the web's
+              workshop dropdown, so this must not tell a reader about one they cannot see.
+            */
+            taskPickerCutNotice(
+                truncated = options?.workshopsTruncated == true,
+                noun = "workshops",
+                term = appliedSearch,
+                localFilter = false,
+            )?.let { WarningLine(it) }
+
+            /*
+              ONE BOX FOR ALL THREE PICKERS, BECAUSE IT IS ONE REQUEST. `GET /tasks/options` takes a
+              single `search` and applies it to the users (name OR email), the workshops (title OR
+              place) and the artisans (name OR place) in the same call — so a box per picker would be
+              three controls posting the same parameter and overwriting each other's terms. The route
+              says so itself, and adds the reason it settled the argument: a parameter FastAPI does
+              not declare is silently DISCARDED, so a client inventing `assigneeSearch` would render
+              a search box that narrows nothing.
+
+              It lives in step 1, with the scope, and not above step 2: the workshop picker directly
+              above it is one of the three lists it narrows, and this screen's other two tabs inherit
+              that picker.
+            */
+            FieldLabel("Find a person, workshop or artisan")
+            OutlinedTextField(
+                value = pickerSearch,
+                onValueChange = { pickerSearch = it },
+                singleLine = true,
+                placeholder = { Text("Name, email or place", color = MaterialTheme.field.placeholder) },
+                // The idiom `StageIndexScreen`'s search box uses — an always-composable slot with the
+                // control inside it — rather than a nullable lambda. Same rendering, one fewer thing
+                // for the compiler to infer.
+                trailingIcon = {
+                    if (pickerSearch.isNotEmpty()) {
+                        IconButton(onClick = { pickerSearch = "" }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Clear the search",
+                                tint = MaterialTheme.field.muted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "Searched at the server, so it reaches names that are not on the lists below.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             OutlinedButton(
                 onClick = { refreshAll() },
                 enabled = !reportLoading && !batchesLoading,
@@ -554,6 +662,11 @@ fun TaskAdminScreen(
                 loading = optionsLoading,
                 workshopId = workshopId,
                 workshopTitle = workshopTitle,
+                // THE SETTLED TERM AND NEVER THE LIVE BOX. The truncation flags below were computed
+                // by the server for the request this term produced; pairing them with something the
+                // admin has typed since would print a sentence about matches for a word the server
+                // never saw. It is also what keeps the notices from flickering per keystroke.
+                appliedSearch = appliedSearch,
                 onSubmit = { body ->
                     scope.launch {
                         form.busy = true
@@ -662,6 +775,8 @@ private fun AssignWorkTab(
     loading: Boolean,
     workshopId: String,
     workshopTitle: String?,
+    /** The term that actually went on the wire — see the call site for why it is not the live box. */
+    appliedSearch: String,
     onSubmit: (AssignmentRequest) -> Unit
 ) {
     val allAssignees = options?.assignees.orEmpty()
@@ -669,9 +784,36 @@ private fun AssignWorkTab(
     val allSections = options?.sections.orEmpty()
     val allRecordTypes = options?.recordTypes.orEmpty()
 
-    // Switching workshop reloads a narrower artisan list; anything picked from the previous workshop
-    // has to go, or the batch would silently carry artisans who are not at this workshop at all.
-    LaunchedEffect(allArtisans) {
+    /*
+     * THE ARTISAN SUBSET FOLLOWS THE SCOPE, AND MUST NOT FOLLOW THE SEARCH.
+     *
+     * Switching workshop reloads a narrower artisan list, and anything picked from the previous
+     * workshop has to go or the batch silently carries artisans who are not at this workshop at all.
+     * That was the whole of this effect, and it was keyed on the LIST — which was correct while the
+     * only thing that could shorten the list was a change of workshop.
+     *
+     * A SEARCH TERM ALSO SHORTENS IT, and the same three lines then read the narrowing as "those
+     * artisans are gone" and unpick a batch the admin had already assembled: type three letters and
+     * every artisan whose name does not contain them is dropped, with no message and no undo. The
+     * route's own docstring names this failure and names where it has already happened — "never read
+     * the absence of an already-selected id from a narrowed list as 'that record is gone' and clear
+     * it. ProductForm's craft-change handler does exactly that against a capped page and unlinks the
+     * artisan; do not repeat it here."
+     *
+     * So: a change of SCOPE empties the subset outright, because nothing picked under the previous
+     * workshop can be assumed to belong to this one and a search-narrowed list is too thin to check
+     * against; and a change of LIST prunes only when no term is live, which is exactly the old
+     * behaviour in the only conditions the old behaviour was right for.
+     * [AssignmentFormState.artisanScope] carries the scope across a tab switch, so returning to this
+     * tab is not read as a new workshop.
+     */
+    LaunchedEffect(workshopId, allArtisans, appliedSearch) {
+        if (form.artisanScope != workshopId) {
+            form.artisanScope = workshopId
+            if (form.artisanIds.isNotEmpty()) form.artisanIds = emptySet()
+            return@LaunchedEffect
+        }
+        if (appliedSearch.isNotBlank()) return@LaunchedEffect
         val available = allArtisans.map { it.id }.toSet()
         val next = form.artisanIds.filterTo(mutableSetOf()) { it in available }
         if (next.size != form.artisanIds.size) form.artisanIds = next
@@ -699,10 +841,22 @@ private fun AssignWorkTab(
 
     // The hierarchy filter: the roles that actually appear below this admin, highest tier first.
     val roleCounts = allAssignees.groupingBy { it.role }.eachCount()
-    val roleOptions = listOf("" to "Everyone below me (${allAssignees.size})") +
+    /*
+     * EVERY COUNT ON THIS CONTROL IS A COUNT OF WHAT ARRIVED, and when the roster was cut that makes
+     * all of them lower bounds — so all of them are marked, not just the total. The cut is taken in
+     * name order across every tier at once, so there is no tier that could be shown as exact while
+     * its neighbour could not. "Everyone below me (500)" reads as a fact about the organisation, and
+     * on this deployment (3632 accounts) it is short by thousands.
+     *
+     * The "+" does not replace the notice under the picker — a suffix cannot say what to do about it
+     * — and the notice does not replace the "+", because a reader who has read the notice still
+     * reads these numbers as numbers.
+     */
+    val cut = if (options?.assigneesTruncated == true) "+" else ""
+    val roleOptions = listOf("" to "Everyone below me (${allAssignees.size}$cut)") +
         ROLES_BY_RANK.filter { roleCounts.containsKey(it) }.map { role ->
             val label = allAssignees.firstOrNull { it.role == role }?.displayRole() ?: roleLabelOf(role)
-            role to "$label (${roleCounts[role]})"
+            role to "$label (${roleCounts[role]}$cut)"
         }
     val visibleAssignees =
         if (form.roleFilter.isBlank()) allAssignees else allAssignees.filter { it.role == form.roleFilter }
@@ -735,6 +889,24 @@ private fun AssignWorkTab(
                 onSelectAll = { form.assigneeIds = form.assigneeIds + visibleAssignees.map { it.id } },
                 onClear = { form.assigneeIds = emptySet() }
             )
+            /*
+              THE SERIOUS HALF OF THE THREE CAPS. `task_options` serves at most 500 accounts against
+              3632 measured on this repository (docs/OPEN_FINDINGS.md, 2026-08-13), so this picker is
+              cut TODAY — and an assignee who cannot be found here is indistinguishable from a
+              colleague who has no account, the exact failure the design-workshop viewer picker cost
+              this repository once already.
+
+              Note what the two controls above do NOT rescue. "Filter by tier" counts what arrived,
+              and the box inside the picker filters the array it was handed. Neither can see past the
+              cut; only the search box in step 1 can, because only that one reaches the WHERE — which
+              is why `localFilter` is true here and the sentence says so.
+            */
+            taskPickerCutNotice(
+                truncated = options?.assigneesTruncated == true,
+                noun = "people",
+                term = appliedSearch,
+                localFilter = true,
+            )?.let { WarningLine(it) }
             if (selectedAssignees.isNotEmpty()) {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
@@ -814,6 +986,17 @@ private fun AssignWorkTab(
                 onSelectAll = { form.artisanIds = allArtisans.map { it.id }.toSet() },
                 onClear = { form.artisanIds = emptySet() }
             )
+            /*
+              731 artisans measured against a cap of 500 (docs/OPEN_FINDINGS.md, 2026-08-13), so this
+              list is cut whenever no workshop narrows it. `localFilter` is true: this picker has its
+              own box, and it filters only what is listed.
+            */
+            taskPickerCutNotice(
+                truncated = options?.artisansTruncated == true,
+                noun = "artisans",
+                term = appliedSearch,
+                localFilter = true,
+            )?.let { WarningLine(it) }
             PickedHint(
                 labels = artisanNames,
                 empty = if (workshopId.isNotBlank()) "Every artisan at this workshop." else "Every artisan in the repository."

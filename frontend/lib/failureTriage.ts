@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api";
+import { ApiError, describeApiDetail } from "@/lib/api";
 
 /**
  * ONE ANSWER TO "IS THIS THE NETWORK?", FOR EVERY WEB SURFACE.
@@ -374,7 +374,13 @@ export type FailureVerdict = {
    */
   status: number | null;
   /**
-   * The `ApiError` the API raised, unwrapped — null when no API answered. Quote its `message`.
+   * The `ApiError` the API raised, unwrapped — null when no API answered.
+   *
+   * DO NOT QUOTE ITS `message` WITHOUT ASKING {@link serverSentence} FIRST. This line used to say
+   * "Quote its `message`", flat, and that instruction is wrong roughly as often as a proxy sits in
+   * front of the API: `apiFetch` fabricates the message from `statusText` when the reply carried no
+   * `detail`, and `statusText` is empty over HTTP/2 — so the sentence a caller obediently quotes is
+   * the literal "The server refused the request (HTTP 503)." See {@link serverSentence}.
    *
    * NULL FOR A STORAGE FAILURE EVEN WHEN {@link status} IS SET, on purpose: S3's body is XML nobody
    * here parses, so there is no sentence worth quoting to a designer. `status` is the whole of what
@@ -619,6 +625,50 @@ export function isSchemaRefusal(error: unknown): boolean {
 export function schemaRefusalError(error: unknown): ApiError | null {
   const verdict = triageFailure(error);
   return verdict.kind === "schema-drift" ? verdict.answered : null;
+}
+
+/**
+ * The sentence the SERVER actually put in this reply — null when it put none there.
+ *
+ * ── WHY "QUOTE THE SERVER'S MESSAGE" NEEDS A GUARD AT ALL ───────────────────────────────────────
+ *
+ * Quoting the server is this repository's house rule and it is the right one: every refusal these
+ * routes raise already names the field, the clash, the limit or the missing setting, and rewording it
+ * on this side gives one rule two voices. `ai.py`'s `_verb_unavailable` is built on it — "NAMES THE
+ * SETTING, ALWAYS. The designer cannot fix it and the administrator can" — and a client that
+ * paraphrases that sentence sends an operator to look for a setting nobody named.
+ *
+ * BUT `ApiError.message` IS NOT ALWAYS THE SERVER'S WORDS, and the two are indistinguishable in the
+ * string. `apiFetch` builds it as `describeApiDetail(detail, response.statusText || "The server
+ * refused the request (HTTP ${status}).")`, and `statusText` is EMPTY over HTTP/2 — which every
+ * deployed request is. So a reply that carried no `detail` at all (a proxy's 502 page, a gateway's
+ * 503 during a deploy, an nginx timeout) arrives with a `message` that is a status code wearing a
+ * sentence, and a caller obeying the house rule prints it. That is how a screen whose whole promise
+ * is "a status code is never shown" shows one.
+ *
+ * The body is the only place the difference is visible, so it is read here — ONCE, next to the
+ * classification, rather than in every module that wants to be a good citizen.
+ *
+ * A `detail` THAT RENDERS TO NOTHING IS ALSO NOTHING. `describeApiDetail` unpacks FastAPI's 422 list
+ * and the structured-object refusals, and falls back when it can make no sentence of what it was
+ * given; a fallback of `""` is how that is asked without inventing a second unpacking rule here.
+ *
+ * ONE MORE COPY OF THIS RULE EXISTS AND SHOULD BECOME A READING OF THIS ONE:
+ * `serverSaidSomething` in `lib/aiLayers.ts` answers the boolean half. It is not merged here in the
+ * same edit because that file belongs to another group — the same reason the `isTransient` /
+ * {@link underlyingIsTransient} split above is recorded rather than collapsed. Re-check whether it is
+ * still separate with `grep -n "function serverSaidSomething" frontend/lib/aiLayers.ts` (still
+ * separate on 2026-08-27).
+ */
+export function serverSentence(error: unknown): string | null {
+  const { answered } = triageFailure(error);
+  if (!answered) return null;
+  const body = answered.payload;
+  if (!body || typeof body !== "object") return null;
+  const detail = (body as { detail?: unknown }).detail;
+  if (detail === undefined || detail === null) return null;
+  const sentence = describeApiDetail(detail, "").trim();
+  return sentence ? sentence : null;
 }
 
 /**

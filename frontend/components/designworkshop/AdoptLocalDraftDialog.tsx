@@ -20,13 +20,42 @@
  * The correctness argument for what adoption clears (and what would be destroyed if it did not) is
  * on `adoptedIntoWorkshop` in `lib/designWorkshopStore.ts`. This file is the choosing.
  *
+ * ── THE PICKER MAY ONLY OFFER WORKSHOPS THE SERVER WOULD ACTUALLY ADMIT THIS ACCOUNT TO ─────────
+ *
+ * A design workshop is visible only to its creator, to admins, and to whoever holds a
+ * `DesignWorkshopViewer` row — enforced in the list query and in the single read, which refuses
+ * with a 404 identical to a nonexistent id. So the SERVER'S list is the answer to "which workshops
+ * may this draft be moved into", and it is the only thing that knows it.
+ *
+ * THIS PICKER USED TO MERGE the workshops this browser had merely CACHED into the server's answer,
+ * so that a workshop which fell off page one did not disappear the moment the network replied. The
+ * merge is gone, and the same reasoning that removed it from the list page on this route removes it
+ * here, only harder: a cached row is the server's answer AS OF THE LAST SYNC and it is stale in the
+ * PERMISSIVE direction — a grant revoked in March is still on this device in September, and offline
+ * there is nobody to ask. On the list page that produced a row that opened to a 404. Here it would
+ * produce a DESTINATION, and adoption is one-way and unrepeatable (`localDraftNeedsAWorkshop`
+ * guards it): a fortnight of fieldwork would be filed against an id this account cannot open, with
+ * nothing in either client able to undo it. The workshop that fell off page one is reached by the
+ * search box instead, which asks the repository rather than this browser.
+ *
+ * ── THE SEARCH BOX IS THE SERVER'S ──────────────────────────────────────────────────────────────
+ *
+ * §11.5 of the frontend contract: a client-side filter over a server-truncated list is the WRONG
+ * search box and looks exactly like the right one. This dialog had that shape — one page of
+ * workshops fetched, `searchable` passed to a control that draws 80 rows, and nothing on screen
+ * saying the list had been cut — so typing the name of a workshop that exists answered "No
+ * matches". `GET /design-workshops` takes `search` over title, craft, cluster and workshop code, so
+ * the box is above the picker, wired to the server, and the picker's own filter is off with a
+ * `capHint` naming the box that DOES reach the rest.
+ *
  * ── IT WORKS WITH NO CONNECTION, WHICH IS THE POINT OF THE WHOLE FEATURE ─────────────────────────
  *
- * The list of workshops to choose from is asked of the server when the server can be reached, and
- * falls back to the workshops THIS DEVICE has already seen (drafts carrying a `remoteId`) when it
- * cannot. A designer in a cluster with one bar of signal, holding a stranded workshop, must not be
- * told to come back when they have wifi — that is the exact situation this app exists to work in.
- * The fallback is honest about being a fallback: it says the list is partial.
+ * With no connection there is no scoped answer to be had, so the picker falls back to the workshops
+ * THIS DEVICE has already seen and says, in words, that the list is partial AND that a workshop on
+ * it may since have been closed to this account. A designer in a cluster with one bar of signal,
+ * holding a stranded workshop, must not be told to come back when they have wifi — that is the
+ * exact situation this app exists to work in. What it must not do is present that fallback as the
+ * scoped answer.
  *
  * ── WHY IT IS NOT A `useConfirm` PROMPT ─────────────────────────────────────────────────────────
  *
@@ -35,13 +64,21 @@
  * names the workshop rather than saying "OK".
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderInput } from "lucide-react";
 
 import { FieldDialog } from "@/components/dialogs";
+import { SearchInput } from "@/components/SearchInput";
 import { Dropdown } from "@/components/ui/Dropdown";
+import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 import { adoptDraftIntoWorkshop, type DwDraft } from "@/lib/designWorkshopStore";
+
+/**
+ * Matches every other server-backed search box in this feature. The list route filters four columns
+ * with `ILIKE`, so each keystroke that escapes this is a scan.
+ */
+const SEARCH_DEBOUNCE_MS = 300;
 
 export type AdoptLocalDraftDialogProps = {
   open: boolean;
@@ -71,17 +108,42 @@ function labelFor(row: Pick<DwSummary, "title" | "craftName" | "clusterName" | "
 
 export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted }: AdoptLocalDraftDialogProps) {
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  /** True while the list on screen is this DEVICE'S memory rather than the repository's answer. */
   const [partial, setPartial] = useState(false);
+  /**
+   * Has the repository answered ONCE for this opening of the dialog?
+   *
+   * THE MOVE IS HELD UNTIL IT HAS, and that is not a spinner — it is the same rule as the removed
+   * merge, applied to the fraction of a second before the first answer lands. The picker's first
+   * paint is this device's cached list, so that somebody with no signal is not staring at "Loading…"
+   * through a request that is going to time out; but a cached row is the server's answer as of the
+   * last sync and stale in the permissive direction, and adoption is one-way. So the list may be
+   * READ early and may not be ACTED ON early. Set by both arms — a failure is an answer too, and
+   * the partial notice then says what the list is.
+   */
+  const [verified, setVerified] = useState(false);
+  /** How many workshops the repository has in scope for this account, or null when it did not answer. */
+  const [total, setTotal] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
   const [chosen, setChosen] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /**
+   * A generation counter rather than an abort: `listDesignWorkshops` takes no signal, and what
+   * matters is IGNORING the late answer. Two searches are in flight whenever somebody types
+   * quickly, and a slow answer for "bar" landing after the fast one for "barpali" would leave the
+   * wrong list under the typed word — which on this dialog is the moment a fortnight of fieldwork
+   * is filed somewhere.
+   */
+  const generation = useRef(0);
+
+  /**
    * The workshops this device already knows about, from the draft store alone.
    *
-   * Used as the offline fallback AND as the immediate first paint, so the picker is never empty
-   * while the network is being tried. A draft with a `remoteId` is a workshop the server owns and
-   * this browser has opened at least once.
+   * THE OFFLINE FALLBACK, AND THE FIRST PAINT — and nothing else. It is never merged into a server
+   * answer; see the file header for the one-way, unrepeatable write that made that merge unsafe.
    */
   const known = useMemo<Candidate[]>(
     () =>
@@ -91,37 +153,79 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
     [drafts]
   );
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      // A generous page: a designer picking between their own workshops should not have to
-      // paginate, and the server scopes a non-admin to what they may open regardless.
-      const found = await listDesignWorkshops({ page: 1, pageSize: 100 });
-      const rows = found.items.map((row) => ({ id: row.id, label: labelFor(row) }));
-      // MERGED WITH WHAT THE DEVICE KNOWS, not replaced by the server's answer. A workshop this
-      // browser has open locally but which fell off page one of the server's list would otherwise
-      // disappear from the picker the moment the network answered — the list would get WORSE when
-      // the connection got better, which nobody would believe was deliberate.
-      const byId = new Map<string, Candidate>([...known, ...rows].map((row) => [row.id, row]));
-      setCandidates([...byId.values()]);
-      setPartial(false);
-    } catch {
-      // The network is the thing that failed, and it is the thing this feature is least allowed to
-      // depend on. Fall back to what is on the device and SAY that the list is partial, rather than
-      // presenting a short list as though it were all of them.
-      setCandidates(known);
-      setPartial(true);
-    }
-  }, [known]);
+  /**
+   * `known` READ THROUGH A REF, so `load` has no dependencies and the search effect below re-runs on
+   * the search term alone.
+   *
+   * `drafts` is the whole live draft store, so it changes on every stage autosave in every other
+   * tab. With `known` in `load`'s dependency array, `load` was a new function on each of those and
+   * the debounced search effect tore itself down and re-issued — a `%term%` scan of the workshop
+   * table every time a colleague typed a sentence into stage 7, and the answer landing under a
+   * choice the designer had already made.
+   */
+  const knownRef = useRef(known);
+  useEffect(() => {
+    knownRef.current = known;
+  });
+
+  const load = useCallback(
+    async (term: string) => {
+      const mine = generation.current + 1;
+      generation.current = mine;
+      setSearching(true);
+      setError(null);
+      try {
+        // `RENDER_CAP` ROWS AND NOT A ROUND NUMBER. The control draws 80; asking for 100 printed two
+        // truncation sentences with two different totals and said nothing at all between 81 and 100.
+        const found = await listDesignWorkshops({ page: 1, pageSize: RENDER_CAP, search: term || undefined });
+        if (generation.current !== mine) return;
+        setCandidates(found.items.map((row) => ({ id: row.id, label: labelFor(row) })));
+        setTotal(found.total);
+        setPartial(false);
+        setVerified(true);
+      } catch {
+        if (generation.current !== mine) return;
+        // The network is the thing that failed, and it is the thing this feature is least allowed to
+        // depend on. Fall back to what is on the device and SAY that the list is partial, rather than
+        // presenting a short list as though it were the scoped answer.
+        setCandidates(knownRef.current);
+        setTotal(null);
+        setPartial(true);
+        setVerified(true);
+      } finally {
+        if (generation.current === mine) setSearching(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!open) return;
     setChosen("");
     setBusy(false);
     setError(null);
-    setCandidates(known.length ? known : null);
-    void load();
-  }, [open, load, known]);
+    setSearch("");
+    setTotal(null);
+    setPartial(false);
+    setVerified(false);
+    // THE FIRST PAINT ONLY, and it cannot be moved on: `verified` above holds the Move button until
+    // the repository has answered. It fetches nothing — the effect below issues the one request.
+    // Read through the REF rather than the value, and that is what keeps `open` the only dependency
+    // here: `known` derives from the whole live draft store, so it changes on every stage autosave in
+    // every other tab, and re-running this effect would reset a choice the designer had already made
+    // mid-thought.
+    setCandidates(knownRef.current.length ? knownRef.current : null);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const term = search.trim();
+    // No debounce on the empty term — that is the read the dialog opens with, and making somebody
+    // wait 300ms to see the list they just opened is a delay with nothing to pay for it. It is also
+    // the ONE place the request is issued, so opening the dialog costs exactly one.
+    const timer = window.setTimeout(() => void load(term), term ? SEARCH_DEBOUNCE_MS : 0);
+    return () => window.clearTimeout(timer);
+  }, [search, open, load]);
 
   const options = useMemo(
     () => [
@@ -132,6 +236,32 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
   );
 
   const chosenLabel = (candidates ?? []).find((row) => row.id === chosen)?.label ?? "";
+  const shown = candidates?.length ?? 0;
+  const searchTerm = search.trim();
+
+  /**
+   * AT MOST ONE LINE ABOUT THE LIST ITSELF: what the search is doing, that the answer was cut, or
+   * that nothing matched. Nothing when the list is whole — a standing note on every visit is
+   * padding.
+   *
+   * The truncation sentence names a TOTAL, because "showing the first 80" without it is a cap that
+   * cannot be reasoned about: the designer cannot tell whether they are missing one workshop or
+   * four hundred.
+   */
+  const listNotice =
+    searching && !verified
+      ? // The first read of this opening, and the Move button is held until it answers — so the
+        // sentence says what is being waited for rather than describing a search nobody ran.
+        "Checking which workshops are open to you…"
+      : searching
+        ? "Searching…"
+        : partial
+          ? ""
+          : total !== null && shown < total
+            ? `Showing ${shown} of ${total} workshops open to you. Search above to reach the rest — it asks the repository, not this device.`
+            : searchTerm && shown === 0
+              ? "No workshop open to you matches that search."
+              : "";
 
   async function move() {
     if (!draft || !chosen) return;
@@ -162,6 +292,17 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
 
   const title = draft.header.title || "Untitled design workshop";
   const stageCount = Object.keys(draft.stages ?? {}).length;
+  /**
+   * The repository answered, it answered with nothing, and no search is narrowing it.
+   *
+   * THE CONTROL MUST NOT OFFER ITSELF WHERE IT WOULD DO NOTHING. An empty picker over an empty
+   * scope is the silent-emptiness state rule 10 forbids — indistinguishable from a list that failed
+   * to load — and on this dialog it is worse than uninformative, because the designer's own reading
+   * of it is "the app has lost my workshops". The honest answer is that no workshop has been opened
+   * for them YET, and the next move is the one thing that changes it: an admin creating one and
+   * naming them on it.
+   */
+  const nothingToMoveInto = verified && !partial && !searching && !searchTerm && shown === 0;
 
   return (
     <FieldDialog
@@ -177,33 +318,82 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
           <button type="button" className="field-button-secondary" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="field-button" onClick={move} disabled={busy || !chosen}>
-            {busy ? "Moving…" : chosenLabel ? `Move into ${chosenLabel}` : "Move"}
-          </button>
+          {nothingToMoveInto ? null : (
+            <button
+              type="button"
+              className="field-button"
+              // `!verified` HOLDS THE ONE-WAY WRITE until the repository has answered — see the
+              // state's own note. Nothing else on this dialog waits for it; the list is readable
+              // from the first frame.
+              disabled={busy || !chosen || !verified}
+              onClick={move}
+            >
+              {busy ? "Moving…" : chosenLabel ? `Move into ${chosenLabel}` : "Move"}
+            </button>
+          )}
         </>
       }
     >
       <div className="grid gap-3 text-sm text-ink-700">
+        {/*
+          WHAT MOVING ACTUALLY DOES, IN THE ORDER IT MATTERS: everything here goes there, nothing is
+          deleted, nothing is retyped, and the workshop keeps its own designers. The last clause is
+          new and it is the one somebody standing in a courtyard needs: a design workshop is visible
+          only to the designers on it, so a designer who cannot see the workshop they were told to
+          move into has not been named on it yet, and the fix is a sentence to an admin rather than
+          anything on this screen.
+        */}
         <p className="leading-6">
           Starting a new design workshop is now done by an admin or the master admin. Ask an admin to create the workshop
-          for this cluster and give you access, then choose it here — everything saved on this device
+          for this cluster and name you as one of its designers, then choose it here — everything saved on this device
           {stageCount ? ` (${stageCount} stage${stageCount === 1 ? "" : "s"}, with their photographs and recordings)` : ""} is
-          sent into it on the next sync. Nothing is deleted by this and nothing is retyped.
+          sent into it on the next sync. Nothing is deleted by this and nothing is retyped, and the workshop keeps whatever
+          is already in it.
         </p>
-        <Dropdown
-          value={chosen}
-          onChange={setChosen}
-          options={options}
-          ariaLabel="The workshop to move this into"
-          searchable
-        />
-        {partial ? (
-          <p className="rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-            There is no connection, so this lists only the workshops already open on this device. If the one you want is
-            not here, move it when you next have signal — nothing on this device expires and nothing will be lost in the
+
+        {nothingToMoveInto ? (
+          <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+            No design workshop is open to this account yet, so there is nothing to move this into. A design workshop can
+            only be seen by the designers named on it — ask an admin to create the workshop for this cluster and name you
+            as one of its designers, then come back here. Nothing on this device expires and nothing will be lost in the
             meantime.
           </p>
+        ) : (
+          <>
+            {/* The one search box, and it asks the REPOSITORY — the only thing that can see past the
+                page this dialog draws, and the only thing that knows which workshops this account
+                may open at all. */}
+            <SearchInput
+              onChange={setSearch}
+              placeholder="Search by title, craft, cluster or workshop code"
+              value={search}
+            />
+            {listNotice ? <p className="text-xs leading-5 text-ink-500">{listNotice}</p> : null}
+            <Dropdown
+              value={chosen}
+              onChange={setChosen}
+              options={options}
+              ariaLabel="The workshop to move this into"
+              // OFF, deliberately: the box above is the search and it reaches every workshop open to
+              // this account, while this control's own filter would search only the rows already
+              // fetched — answering "No matches" about a workshop that exists. §11.5.
+              searchable={false}
+              // `searchable={false}` does not switch the render cap off, so the panel's own notice
+              // still fires; its default last clause would tell the reader to type into a filter box
+              // this control deliberately does not have.
+              capHint="Use the search box above to reach the rest — it asks the repository, so it sees every workshop open to you."
+            />
+          </>
+        )}
+
+        {partial ? (
+          <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+            There is no connection, so this lists only the workshops already open on this device, and the repository
+            cannot be asked whether you are still on them. If the one you want is not here, move it when you next have
+            signal — nothing on this device expires and nothing will be lost in the meantime.
+          </p>
         ) : null}
+
         <p className="text-xs leading-5 text-ink-500">
           Choose carefully: this decides which workshop a fortnight of fieldwork is filed under. It can only be done once
           per workshop — after the move, the stages belong to the workshop you pick.

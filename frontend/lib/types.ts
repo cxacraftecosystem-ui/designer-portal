@@ -1,7 +1,19 @@
+/**
+ * The eight tiers, highest first. THE ROW THAT MATTERS MOST in the whole mirror set: every
+ * `Record<UserRole, …>` in this client is exhaustive against THIS union and nothing else, so a tier
+ * missing here silently un-enforces four self-enforcing mirrors at once — `tsc` keeps passing, the
+ * records stay "complete", and all of them are complete against the wrong ladder.
+ * `backend/tests/test_role_ladder_parity.py` is what compares it to the server; nothing else does.
+ *
+ * `INSPECTOR` (rank 37) is stored as INSPECTOR and LABELLED "Inspector / Reviewer" — see
+ * `lib/permissions.ts::ROLE_LABELS`. "Reviewer" is not available as a token because `canReview`
+ * already means something relational and different here.
+ */
 export type UserRole =
   | "MASTER_ADMIN"
   | "ADMIN"
   | "PROFESSOR"
+  | "INSPECTOR"
   | "DESIGNER"
   | "RESEARCHER"
   | "FIELD_CONTRIBUTOR"
@@ -413,10 +425,34 @@ export type ToolDocumentation = {
   processUsedIn?: string | null;
   material?: string | null;
   yearsInUse?: number | null;
+  /**
+   * TWO HEIGHTS, AND THE PAIR IS DELIBERATE — read both before writing either.
+   *
+   * `height` is the original column and it declares no unit: not in its name, not in
+   * `schema.prisma`, not on the label a designer reads. It holds every number already typed into it,
+   * in whatever unit that person had in mind, and it is NOT being migrated — the tool form still
+   * draws its box and still saves it.
+   *
+   * `heightInches` was added on 2026-08-27 to end the defect that absence caused, and the schema's
+   * own comment states it: an accepted machine reading of a tool's height "landed in the plain
+   * `height` column above, which declares no unit — losing the one fact the column name is there to
+   * carry". It is also the only one of the two a method marker can name, because
+   * `services/measurement_provenance.DIMENSION_FIELDS` is exactly `lengthInches` / `breadthInches` /
+   * `heightInches`. Both measurement routes on `ToolForm` propose into it.
+   *
+   * `string | number | null` like every dimension here, and not `number`: these are Prisma
+   * `Decimal(10, 2)` columns and a `Decimal` arrives over the wire as a JSON STRING. Read one behind
+   * `Number.isFinite(Number(v))`; seed an input with `String(v)`.
+   *
+   * Verified 2026-08-27 against `grep -n heightInches backend/prisma/schema.prisma
+   * backend/app/schemas/records.py backend/app/api/routes/tools.py` — the column, both request
+   * schemas, and `_CLEARABLE_COLUMNS` (which is what lets emptying the box empty the column).
+   */
   height?: string | number | null;
   width?: string | number | null;
   lengthInches?: string | number | null;
   breadthInches?: string | number | null;
+  heightInches?: string | number | null;
   measurementImageId?: string | null;
   measurementAnalysis?: Record<string, unknown> | null;
   measurementAnalysisStatus?: string | null;

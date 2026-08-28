@@ -432,17 +432,22 @@ export const GUIDE_STEPS: GuideStep[] = [
     why:
       "These are the values a new design workshop's stage 1 and stage 3 start pre-filled with, and they stay editable inside the workshop. The report is printed from the stages and never from this page, which is what makes the pre-fill a COPY rather than a link — and it has to be one: a report records who ran a workshop at the time, so moving institution next year must not rewrite a report already submitted. A designer signing in for the first time is brought here once, with that reason on the screen.",
     fields: [
-      "Name",
+      // FOUR OF THE TWENTY-ONE ARE MARKED, AS OF 2026-08-27, and the marks are not decoration on this
+      // card: `fields[]` is documented as the real form labels in screen order with "(required)"
+      // marked, and the `watch` bullet below used to tell the reader in as many words that NONE of
+      // them was. `DESIGNER_PROFILE_REQUIRED_FIELDS` in `designers/profileCopy.ts` is the register
+      // both profile screens and the server read; these four are it.
+      "Name (required)",
       "Name in the local script",
       "Designation",
       "Institution",
       "Department",
-      "Qualification",
+      "Qualification (required)",
       "Specialisation",
       "Designer’s experience",
       "Designer’s profile",
-      "Phone",
-      "Email",
+      "Phone (required)",
+      "Email (required)",
       "Website",
       "Address",
       "City or town",
@@ -455,7 +460,16 @@ export const GUIDE_STEPS: GuideStep[] = [
       "CV"
     ],
     watch: [
-      "Not one of the twenty-one is required, and none of them is guessed for you. Left blank, the report cover falls back to the name on your account — so the cost of skipping this page is a thin cover, not a refusal.",
+      // ⚠ THIS BULLET READ "Not one of the twenty-one is required, and none of them is guessed for
+      // you. Left blank, the report cover falls back to the name on your account — so the cost of
+      // skipping this page is a thin cover, not a refusal." Four of them became required on
+      // 2026-08-27 (owner's instruction: "Name, qualification, email, and phone number should be
+      // mandatory fields as well"), enforced by the web form's native `required`, by the read-only
+      // view's asterisks and by `DesignerProfileUpdate`'s own field validators — so the sentence had
+      // gone from true to the opposite of true on the one card a designer reads BEFORE opening the
+      // page. The fallback it described still exists for rows saved before the rule; what stopped
+      // being true is that skipping those four is free.
+      "Four of the twenty-one are required — name, qualification, phone and email — because they are what a report is submitted under and how the person who signed it is reached. The other seventeen are optional, and none of the twenty-one is guessed for you.",
       // ⚠ THIS BULLET ENDED "Either way it reaches your reports as an annexure." AND THAT WAS FALSE —
       // the FIFTH surface to carry the sentence, and the fourth time it was written from a neighbour's
       // copy rather than from the code. No branch of this codebase puts a FILE in a report annexure:

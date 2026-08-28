@@ -1018,7 +1018,7 @@ async def test_naming_a_designer_the_roster_no_longer_admits_refuses_the_WHOLE_c
 ):
     """422 AND NO WORKSHOP: eligibility is settled ABOVE ``db.designworkshop.create``.
 
-    ``assert_designer_may_be_named`` is ``design_workshop_viewers._assert_every_id_may_be_granted``
+    ``assert_every_designer_may_be_named`` is ``design_workshop_viewers._assert_every_id_may_be_granted``
     IMPORTED rather than copied, so naming somebody on the create is refused by exactly the rule the
     viewers screen enforces. The account here is a DESIGNER whose roster row was revoked — the same
     row that answers their sign-in with the 403 the top of this module is about — so a viewer row

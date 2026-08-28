@@ -799,6 +799,209 @@ def test_price_bands_are_numbers_a_person_would_choose():
     assert all("," not in label or label.count(",") == 2 for label in labels)
 
 
+# --------------------------------------------------------------------------------------
+# The survey figures (stage 8)
+# --------------------------------------------------------------------------------------
+#
+# STAGE 8 IS THE STAGE THAT COLLECTS A DISTRIBUTION AND, UNTIL THESE FIGURES EXISTED, REACHED THE
+# READER AS NOTHING BUT A TABLE. Thirty rows of free text do not say that twenty-six are consumers
+# and the retailer view rests on one person — and stage 9's price bands, its SWOT and its design
+# direction all cite "the survey" as their evidence.
+#
+# BOTH FIGURES CARRY THE SAME OBLIGATION AS EVERY OTHER ONE IN THIS FILE, plus one more that is
+# particular to a survey: the count a chart is built from must be visible, because a survey is the
+# one stage whose summary states a number (``responsesCollected``) that can be far larger than the
+# rows anybody actually entered. A bar chart over twelve rows under a summary claiming a hundred
+# responses is a picture of twelve people presented as a picture of a hundred.
+
+
+def _survey(rows, *, collected=None) -> WorkshopData:
+    singletons = {"MARKET_SURVEY_CAPTURE": {"responsesCollected": collected}} if collected else {}
+    return _data(singletons=singletons,
+                 collections={"MARKET_SURVEY_CAPTURE": {"surveyResponse": rows}})
+
+
+def test_the_survey_is_charted_by_respondent_group():
+    """The figure the survey table raises and never answers: who was actually asked."""
+    document = _build(_survey([
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "RETAILER"},
+    ]))
+    chart = _chart(document, "respondent group")
+    assert chart.series == (("Consumer", 2.0), ("Retailer", 1.0))
+
+
+def test_the_respondent_figure_runs_in_registry_order_not_by_count():
+    """``RESPONDENT_GROUP`` is declared consumer first, then the trade, then the makers, then the
+    institutions, so the same picture has the same shape in every report and two workshops can be
+    compared by eye. Sorting by count would reshuffle the axis for every workshop, which is the one
+    property that makes that comparison possible."""
+    document = _build(_survey([
+        {"respondentGroup": "EXPORTER"},
+        {"respondentGroup": "EXPORTER"},
+        {"respondentGroup": "EXPORTER"},
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "RETAILER"},
+    ]))
+    labels = [label for label, _v in _chart(document, "respondent group").series]
+    assert labels == ["Consumer", "Retailer", "Exporter"], \
+        "registry order is CONSUMER, RETAILER, WHOLESALER, EXPORTER — not 3, 1, 1 by count"
+
+
+def test_a_group_nobody_surveyed_is_absent_rather_than_zero():
+    """"Exporter 0" beside four real bars is read as "exporters were asked and had nothing to
+    say". What the record says is that none were met — the same rule the follow-up line follows."""
+    labels = [label for label, _v in _chart(_build(_survey([
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "RETAILER"},
+    ])), "respondent group").series]
+    assert "Exporter" not in labels and "Wholesaler" not in labels
+
+
+def test_a_respondent_group_this_build_has_never_heard_of_is_still_plotted():
+    """A phone one release ahead of the server can store a token this build does not know.
+    Dropping it would shrink the survey silently; ``enum_label`` already prefers the raw token to
+    failing an export, and this figure prints it after the groups the registry does know."""
+    chart = _chart(_build(_survey([
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "BLOCK_PRINTER_GUILD"},
+    ])), "respondent group")
+    assert chart.series == (("Consumer", 1.0), ("BLOCK_PRINTER_GUILD", 1.0))
+
+
+def test_a_response_with_no_group_is_counted_in_the_caption_not_dropped_in_silence():
+    """THE HOUSE RULE THIS FILE EXISTS FOR, one stage over: a tally that quietly stops short is
+    indistinguishable from a survey that reached fewer people than it did."""
+    chart = _chart(_build(_survey([
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "RETAILER"},
+        {"response": "Said nothing about who they were"},
+        {"respondentGroup": "   "},
+    ])), "respondent group")
+    assert chart.total == 2.0, "only the two rows that stated a group are plotted"
+    assert "2 more recorded no respondent group" in chart.caption, chart.caption
+
+
+def test_responses_the_summary_counts_but_nobody_entered_are_named_in_the_caption():
+    """A hundred people answered in a market and twelve were written up. A figure drawn from the
+    twelve is a figure about twelve people, and no reader can recover that from the picture."""
+    chart = _chart(_build(_survey([
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "RETAILER"},
+    ], collected=100)), "respondent group")
+    assert "98 were never entered as rows" in chart.caption, chart.caption
+    assert "states 100 response(s) collected" in chart.caption, chart.caption
+
+
+def test_a_stated_count_below_the_rows_entered_is_not_reported_as_missing_work():
+    """The designer's typed number going stale is not work skipped, and "-3 were never entered"
+    is worse than saying nothing."""
+    chart = _chart(_build(_survey([
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "RETAILER"},
+        {"respondentGroup": "EXPORTER"},
+        {"respondentGroup": "ARTISAN"},
+    ], collected=2)), "respondent group")
+    assert "never entered" not in chart.caption, chart.caption
+    assert chart.caption.startswith("5 response(s) plotted"), chart.caption
+
+
+def test_a_survey_nobody_filled_in_draws_no_figure_at_all():
+    """Not an empty frame, not a zero-filled one. The stage section prints its own "Not recorded."
+    note; a chart would be a finding derived from nothing."""
+    assert not [c for c in _charts(_build(_survey([]))) if "respondent" in c.title.lower()]
+    assert not [c for c in _charts(_build(_survey([
+        {"response": "A"}, {"response": "B"},
+    ]))) if "respondent" in c.title.lower()], "no row stated a group, so there is no distribution"
+
+
+def test_one_respondent_group_is_a_number_not_a_picture():
+    """The same rule the yield figure follows: a single bar costs a third of a page and carries
+    what the table already carries."""
+    assert not [c for c in _charts(_build(_survey([
+        {"respondentGroup": "CONSUMER"} for _ in range(9)
+    ]))) if "respondent group" in c.title.lower()]
+
+
+def test_what_buyers_would_pay_is_a_different_figure_from_what_the_workshop_charges():
+    """Stage 17's ``expectedPrice`` is what the workshop means to charge; stage 8's
+    ``priceExpectation`` is what a buyer in a market said they would pay. The gap between the two
+    is the most useful thing this report shows a designer, and it exists only because they are two
+    figures rather than one merged distribution."""
+    document = _build(_data(
+        collections={
+            "MARKET_SURVEY_CAPTURE": {"surveyResponse": [
+                {"respondentGroup": "CONSUMER", "priceExpectation": p}
+                for p in ("300.00", "450.00", "800.00", "1200.00")
+            ]},
+            "COSTING_MARKET_LINKAGE": {"costSheet": [
+                {"expectedPrice": p} for p in ("2400.00", "2900.00", "3600.00", "4800.00")
+            ]},
+        }))
+    survey = _chart(document, "would pay")
+    products = _chart(document, "price band")
+    assert survey is not products
+    assert survey.total == 4.0 and products.total == 4.0
+    assert [lab for lab, _v in survey.series] != [lab for lab, _v in products.series], \
+        "two distributions drawn from two different stages must not be the same picture"
+
+
+def test_the_price_figure_states_how_many_respondents_actually_named_a_price():
+    """A price expectation is optional on the survey form, so the bars are built from a subset —
+    and a histogram over four of thirty responses read as thirty is the defect this states away."""
+    chart = _chart(_build(_survey([
+        {"respondentGroup": "CONSUMER", "priceExpectation": "300.00"},
+        {"respondentGroup": "CONSUMER", "priceExpectation": "900.00"},
+        {"respondentGroup": "RETAILER", "priceExpectation": "1800.00"},
+        {"respondentGroup": "RETAILER"},
+        {"respondentGroup": "EXPORTER", "priceExpectation": None},
+    ])), "would pay")
+    assert "3 of 5 response(s) stated a price expectation" in chart.caption, chart.caption
+
+
+def test_a_money_value_arrives_as_a_string_and_is_still_banded_as_a_number():
+    """``priceExpectation`` is a MONEY field, and ``stage_schema.coerce_value`` stores every one as
+    a fixed-2 decimal STRING so it survives the JSON round trip without a binary-float artefact. A
+    figure that compared those as text would band "900.00" beside "1800.00" by their first
+    characters."""
+    chart = _chart(_build(_survey([
+        {"priceExpectation": "300.00"},
+        {"priceExpectation": "1800.00"},
+        {"priceExpectation": "4200.00"},
+        {"priceExpectation": "9100.00"},
+    ])), "would pay")
+    assert chart.total == 4.0
+    assert chart.series[0][0].startswith("0–"), chart.series
+
+
+def test_an_unpriced_survey_draws_the_group_figure_and_no_price_figure():
+    """Half the data present is not a reason to withhold the half that is, and it is not a reason
+    to draw the half that is not."""
+    document = _build(_survey([
+        {"respondentGroup": "CONSUMER"},
+        {"respondentGroup": "RETAILER"},
+        {"respondentGroup": "ARTISAN"},
+    ]))
+    assert _chart(document, "respondent group").total == 3.0
+    assert not [c for c in _charts(document) if "would pay" in c.title.lower()]
+
+
+def test_both_survey_figures_are_placed_by_the_stage_section_not_by_a_template_edit():
+    """The placement this change relies on: ``_standard_sections`` builds every stage section with
+    ``include_figures`` defaulting to True, so owning the stage in ``FIGURES`` is the whole of the
+    placement. If that ever stops being true, these figures vanish from every template silently."""
+    assert FIGURES["SURVEY_RESPONDENTS"][0] == "MARKET_SURVEY_CAPTURE"
+    assert FIGURES["SURVEY_PRICE_EXPECTATIONS"][0] == "MARKET_SURVEY_CAPTURE"
+    rows = [{"respondentGroup": g} for g in ("CONSUMER", "CONSUMER", "RETAILER")]
+    for template_id in ("DETAILED_TECHNICAL", "DCH_STANDARD"):
+        document, _warnings = build_report(_survey(rows), template_id, _resolver, meta=_meta())
+        titles = [c.title.lower() for c in _charts(document)]
+        assert any("respondent group" in t for t in titles), \
+            f"{template_id} prints the survey stage but drew no survey figure: {titles}"
+
+
 def test_the_follow_up_line_runs_in_registry_order_not_alphabetical_order():
     """"M12" sorts before "M3", and a follow-up line that goes 3 → 12 → 6 months reads as a
     collapse and a recovery that never happened."""

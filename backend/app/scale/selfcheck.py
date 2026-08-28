@@ -162,6 +162,24 @@ def _rate_limit_checks() -> None:
     verdicts = [buckets.take("t:selfcheck")[0] for _ in range(5)]
     _check("a burst is allowed up to the limit, then refused", verdicts == [True, True, True, False, False])
 
+    # The refund is what makes the credential budget safe to set as low as it is, so it is worth
+    # proving on the box rather than only in the suite: a bucket that is spent and immediately
+    # refunded lets the next attempt through, which is the difference between counting FAILED
+    # sign-ins and counting sign-ins. See rate_limit.py's module docstring.
+    refunded = rate_limit._TokenBuckets(capacity=1, refill_per_second=1 / 300)
+    spent = refunded.take("ip:selfcheck")[0]
+    refunded.refund("ip:selfcheck")
+    _check(
+        "a refunded credential attempt does not consume the allowance",
+        spent and refunded.take("ip:selfcheck")[0],
+    )
+    _check(
+        f"the sign-in doors are limited separately ({rate_limit._CREDENTIAL_FAILURES} failures "
+        f"per {int(rate_limit._CREDENTIAL_WINDOW_SECONDS)}s, per address)",
+        rate_limit._CREDENTIAL_PREFIXES == ("/api/auth/login", "/api/datasets/token"),
+        ", ".join(rate_limit._CREDENTIAL_PREFIXES),
+    )
+
 
 def _replica_checks() -> None:
     print(f"\nread replica  [{'configured' if replica.replica_configured() else 'unset'}]")

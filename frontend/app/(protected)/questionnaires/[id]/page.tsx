@@ -48,13 +48,13 @@ import { useToast } from "@/components/ui/Toast";
 import { listDesignWorkshops, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
 import { canEditOwnOrAdmin } from "@/lib/permissions";
+import { cachedQuestionnaireNotice, loadQuestionnaireWithCache } from "@/lib/questionnaireFormCache";
 import {
   answeredCount,
   createQuestion,
   createSection,
   downloadQuestionSet,
   downloadQuestionnaireWorkbook,
-  getQuestionnaire,
   patchQuestionnaire,
   patchSection,
   type QForm,
@@ -65,7 +65,7 @@ export default function QuestionnaireDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
   const { toast } = useToast();
 
@@ -87,6 +87,12 @@ export default function QuestionnaireDetailPage() {
    * original with no route to the new row is how a designer presses the button a second time.
    */
   const [reused, setReused] = useState<{ id: string; title: string } | null>(null);
+  /**
+   * Set only while the form on screen came out of this browser's storage because nothing could
+   * reach the server. Null the moment a live read succeeds — a copy that stopped being a copy must
+   * stop saying it is one.
+   */
+  const [cached, setCached] = useState<{ at: string | null; version: number } | null>(null);
 
   /**
    * `includeRetired` is TRUE here and that is the point of the editor.
@@ -95,19 +101,38 @@ export default function QuestionnaireDetailPage() {
    * show a designer four questions and six answers, with nothing saying where the other two went.
    * The answer screen makes the opposite choice for the boxes it offers; both are the same rule read
    * from two sides.
+   *
+   * READ THROUGH THE CACHE, so a designer with no signal can still open a colleague's instrument and
+   * read the questions. `loadQuestionnaireWithCache` serves a stored copy ONLY when nothing reached
+   * the server: a 403, a 404 and a 5xx all still land in the error banner below, because each of
+   * those is the server answering and answering something a stale copy would contradict. Everything
+   * on this page that WRITES still needs the network and still fails loudly when it is not there.
    */
+  const viewerId = user?.id ?? null;
   const load = useCallback(async () => {
     try {
-      setForm(await getQuestionnaire(id, { includeRetired: true }));
+      const read = await loadQuestionnaireWithCache(id, { includeRetired: true, viewerId });
+      setForm(read.form);
+      setCached(read.fromCache ? { at: read.cachedAt, version: read.cachedVersion ?? read.form.version } : null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load that questionnaire");
     }
-  }, [id]);
+  }, [id, viewerId]);
 
+  /**
+   * WAITS FOR THE SESSION, and that wait is what stops the read happening twice.
+   *
+   * `load` depends on the viewer's id, because the stored copy is stamped with whose it is and is
+   * refused to any other account. `AuthProvider` resolves `user` from `GET /me` after mount, so
+   * without this guard the page would read the questionnaire once with no id — a read that can
+   * neither store its answer nor be served from storage — and then read the whole form, its sittings
+   * and every answer a second time the moment the session landed.
+   */
   useEffect(() => {
+    if (authLoading) return;
     load();
-  }, [load]);
+  }, [authLoading, load]);
 
   useEffect(() => {
     let cancelled = false;
@@ -359,6 +384,18 @@ export default function QuestionnaireDetailPage() {
 
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+      {/*
+        THE COPY SAYS IT IS A COPY, and it says it above the questions rather than beside the Save
+        controls — a designer reads the instrument before they use it, and "this is not live" arriving
+        after they have typed a section is the sentence arriving too late to be worth saying. Amber
+        with a static border, not a tint alone: this is a state, and a state carried by colour only is
+        a state a greyscale print and a colour-blind reader never get.
+      */}
+      {cached ? (
+        <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800 dark:bg-amber-500/15 dark:text-amber-100">
+          {cachedQuestionnaireNotice(formatDateTime(cached.at), cached.version)}
+        </div>
       ) : null}
       {notice ? (
         <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>

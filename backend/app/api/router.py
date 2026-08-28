@@ -15,6 +15,7 @@ from app.api.routes import (
     datasets,
     design_ratings,
     design_workshop_access,
+    design_workshop_inspections,
     design_workshop_viewers,
     design_workshops,
     designers,
@@ -86,6 +87,16 @@ api_router.include_router(design_ratings.router)
 # scanned to obtain it. See app/services/design_workshop_access.py, whose header sets out why that
 # one route answers the same thing whether the workshop exists or not.
 api_router.include_router(design_workshop_access.router)
+# The INSPECTOR tier's read-only surface, /api/design-workshop-inspections, and the admin screen
+# that assigns inspections. ITS OWN PREFIX, for the two reasons the three routers above give — and
+# here the second one is the whole feature rather than a filing preference: every caller of the
+# inspector routes is BY DEFINITION somebody load_workshop_or_404 turns away (an inspector is not
+# in DESIGN_WORKSHOP_ROLES), and a route sharing the /design-workshops prefix invites the next
+# reader to widen that shared loader to fit. Widening it grants STAGE WRITES, because
+# load_workshop_or_404(for_edit=True) performs no role check at all. See
+# app/services/design_workshop_inspectors.py, whose header sets out why read-only here has to be
+# structural rather than a flag on a row.
+api_router.include_router(design_workshop_inspections.router)
 # The empanelment roster that gates a designer's sign-in, and the profile their reports are
 # prefilled from. Next to design_workshops because it is the same product surface, and separate
 # from users because the two facts it keeps are deliberately not the role column — see

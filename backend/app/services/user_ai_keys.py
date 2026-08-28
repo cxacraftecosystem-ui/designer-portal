@@ -267,6 +267,36 @@ async def list_for_user(user_id: str) -> list[dict[str, Any]]:
 
 # --- Writes -----------------------------------------------------------------------------------
 
+# THE TWO AUDIT LINES BELOW ARE WARNING AND NOT INFO, AND THAT IS NOT A TASTE QUESTION.
+#
+# The API process configures no root logging handler — ``app/main.py`` takes a module logger and
+# never calls ``basicConfig`` or ``dictConfig``, and the container starts ``uvicorn app.main:app``
+# with no ``--log-config`` and no ``--log-level`` (``backend/Dockerfile``). uvicorn's default config
+# gives handlers to ``uvicorn``/``uvicorn.error``/``uvicorn.access`` and to nothing else, so an
+# ``app.*`` record propagates to a root logger with no handler and falls to ``logging.lastResort``,
+# which is fixed at WARNING. INFO records are therefore DISCARDED ENTIRELY in the deployed API —
+# they exist only when a test rig configures logging itself.
+#
+# These two spent their first life as ``logger.info`` and were consequently an audit trail that had
+# never once been written on the deployed box: coverage that looks present in the source and is
+# absent in the journal, which is worse than no line at all, because nobody goes looking for a
+# record they believe they already have. Every other "AUDIT " line in this backend had already
+# reached this conclusion independently — ``managed_secrets.set_secret``/``delete_secret``,
+# ``routes/secrets.reveal_secret``, ``routes/settings`` on the STT probe, and ``tasks``' withdrawal
+# audit, which puts it plainest: *"it is not a problem, it is a RECORD, and a record nobody can read
+# is not one."* These were the last two at INFO. All of them read "AUDIT " so they grep together.
+#
+# True as of «2026-08-27»; re-check with
+# «grep -rn "AUDIT " --include=*.py backend/app | grep "logger\.info"» — that must stay empty, and
+# «grep -rn "basicConfig\|dictConfig" backend/app/main.py» — a hit there means the API grew a
+# logging config and this reasoning needs re-reading rather than trusting.
+#
+# AND THEY STAY VALUE-FREE, WHICH IS THE SEPARATE RULE. Raising the level puts these lines somewhere
+# a person will actually read them, which makes the absence of the secret matter MORE, not less: a
+# personal credential is the one thing in this module no administrator has any business seeing (see
+# the module header on why there is no reveal endpoint). The line says WHOSE key and WHICH provider
+# changed, and never the key, the hint or the model.
+
 
 async def set_key(
     user_id: str, provider: AiProvider, value: str, model: str | None
@@ -293,8 +323,8 @@ async def set_key(
         },
     )
     # No value, no hint, no model — an audit line about a personal credential says that one changed
-    # and nothing about what it is.
-    logger.info("AUDIT personal AI key set: user=%s provider=%s", user_id, provider.value)
+    # and nothing about what it is. WARNING for the reason argued at the head of this section.
+    logger.warning("AUDIT personal AI key set: user=%s provider=%s", user_id, provider.value)
     return describe(provider, await _row(user_id, provider))
 
 
@@ -317,7 +347,9 @@ async def delete_key(user_id: str, provider: AiProvider) -> dict[str, Any]:
     await db.useraicredential.delete_many(
         where={"userId": user_id, "provider": provider.value}
     )
-    logger.info("AUDIT personal AI key cleared: user=%s provider=%s", user_id, provider.value)
+    # WARNING, value-free: see the head of the Writes section. A cleared key is the half of the
+    # trail that says a designer's work went back to being billed to the deployment.
+    logger.warning("AUDIT personal AI key cleared: user=%s provider=%s", user_id, provider.value)
     return describe(provider, None)
 
 

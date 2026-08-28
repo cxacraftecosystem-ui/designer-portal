@@ -11,15 +11,41 @@ metadata:
 spec:
   # EXACTLY ONE. Not a starting point, not an HPA target, not something to raise under load.
   #
-  # Nothing in the queue claims a job atomically across processes. On EC2 the single-worker property
-  # comes from an fcntl lock on a file in the host temp directory (app/main.py
-  # _acquire_queue_worker_lock), which elects one worker among processes SHARING A FILESYSTEM. Pods do
-  # not share /tmp, so that lock is granted in every pod and elects nobody. Two pods here means two
-  # workers pulling the same rows: duplicate transcriptions, duplicate spend at the STT providers, and
-  # two ffmpeg processes racing over the same media.
+  # THE CLAIM IS ALREADY ATOMIC; IT IS THE RECOVERY THAT IS NOT. An earlier version of this comment
+  # asserted that nothing in the queue claims a job atomically across processes, and sent the next
+  # reader off to build something that already exists: `_lock_job` in app/services/media_queue.py
+  # does a compare-and-set — update_many(where={"id": ..., "status": QUEUED}) — so of two workers
+  # racing for the same row exactly one sees a count of 1 and the loser returns None instead of
+  # double-processing. Two pods cannot claim the same job, and raising replicas to fix that would be
+  # fixing a bug that is not here. The reasons to stay at one are the two below.
   #
-  # The safe way to raise throughput is a database-level claim (SELECT ... FOR UPDATE SKIP LOCKED, or
-  # a lease column) in the queue service. Until that exists, this stays at 1.
+  # WHAT ACTUALLY BREAKS WITH A SECOND POD is `recover_stale_processing_jobs`, which every worker runs
+  # at the top of every pass. It decides a job is dead purely from the age of `lockedAt` against
+  # STALE_PROCESSING_AFTER (30 minutes): there is no liveness check on `lockedBy`, and across two
+  # hosts there cannot be a cheap one. So pod B flips a job pod A is still working on back to QUEUED,
+  # and from there the compare-and-set defends nothing — the row honestly IS queued again, so the
+  # re-lock succeeds legitimately. The same recording goes to the STT provider twice, is billed twice,
+  # and the two results race to write MediaFile.transcriptText. `process_next_media_jobs` documents
+  # that exact sequence as the reason every caller outside the queue process must pass recover=False;
+  # its safety argument is that the queue process is SERIAL, so a job it holds cannot also be a job it
+  # is between batches on. A second pod is precisely what takes that argument away.
+  #
+  # SECOND, SMALLER: the rate-limit backoff is only half shared. The pause itself does cross processes
+  # — `_park_transcription_jobs_until` pushes every queued transcription job's `runAfter` out to the
+  # deadline, and every worker's selection query already filters on `runAfter <= now`. The LADDER does
+  # not: `_consecutive_rate_limits` is a module global, so N pods climb N independent ladders and each
+  # backs off as though it were the only one talking to a provider that is counting all of them.
+  #
+  # AND DO NOT EXPECT THE FILE LOCK TO SAVE YOU. `_acquire_queue_worker_lock` (app/main.py) takes an
+  # fcntl lock on a file in the host temp directory and elects one worker among processes SHARING A
+  # FILESYSTEM — but it is the uvicorn lifespan's guard, and this pod runs `python -m app.worker`,
+  # which never calls it. Even in a pod that did, /tmp is per-pod (see the emptyDir below), so the
+  # lock would be granted in every pod and elect nobody.
+  #
+  # The safe way to raise throughput is to make recovery PROVE the holder is dead instead of inferring
+  # it from a clock — a heartbeat the holder refreshes while it works, and a recovery query that
+  # matches a stale heartbeat rather than `lockedAt` alone — plus somewhere shared for the ladder to
+  # live. Until that exists, this stays at 1.
   replicas: 1
   revisionHistoryLimit: 3
   strategy:

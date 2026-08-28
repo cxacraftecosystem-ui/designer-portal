@@ -31,7 +31,7 @@ are one feature and neither works alone — see the long note above ``REFERENCE_
 
 import logging
 import re
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -1021,11 +1021,18 @@ def _inches_to_cm(value: Any) -> float | None:
 #: THE FIVE UNIT-LESS TOOL COLUMNS ARE ABSENT AND A PAIR FOR ONE OF THEM WOULD BE A FALSE PROMISE.
 #: ``measurement_provenance.DIMENSION_FIELDS`` is ``{lengthInches, breadthInches, heightInches}`` and
 #: ``method_stamps`` drops a marker naming anything outside it, so ``height``, ``width``,
-#: ``thickness``, ``weight`` and ``radius`` never receive a method to copy — that module says so
-#: itself under WHAT THE RECORD HALF STILL CANNOT REACH, and names the tool's missing
-#: ``heightInches`` column as the reason an accepted vision-model tool height is recorded as
-#: nothing. A pair here for one of those five would print a sentence about a stamp nothing writes.
-#: When ``DIMENSION_FIELDS`` widens, this table widens with it and the note starts saying so.
+#: ``thickness``, ``weight`` and ``radius`` never receive a method to copy — the note directly above
+#: ``DIMENSION_FIELDS`` says so itself, under WHAT IS STILL DELIBERATELY OUT. A pair here for one of
+#: those five would print a sentence about a stamp nothing writes. When ``DIMENSION_FIELDS`` widens,
+#: this table widens with it and the note starts saying so.
+#:
+#: THIS PARAGRAPH CITED A SECTION NAMED "WHAT THE RECORD HALF STILL CANNOT REACH" AND "the tool's
+#: missing ``heightInches`` column" UNTIL 2026-08-27, AND NEITHER SURVIVES. That section is now
+#: ``measurement_provenance``'s WHAT THE RECORD HALF CAN NOW REACH, AND THE PARAGRAPH THAT USED TO
+#: SAY OTHERWISE, which quotes the sentence this note was leaning on and then retracts it; and the
+#: column exists — the third pair under ``ToolDocumentation`` below is it. The exclusion rule itself
+#: never changed. Only the reason attached to it did, which is why the citation is corrected here
+#: rather than the rule.
 _METHOD_CARRIED_DIMENSIONS: dict[str, tuple[tuple[str, str], ...]] = {
     "ProductDocumentation": (
         ("lengthCm", "lengthInches"),
@@ -1035,6 +1042,12 @@ _METHOD_CARRIED_DIMENSIONS: dict[str, tuple[tuple[str, str], ...]] = {
     "ToolDocumentation": (
         ("lengthCm", "lengthInches"),
         ("breadthCm", "breadthInches"),
+        # THE THIRD PAIR, 2026-08-27. `ToolDocumentation.heightInches` did not exist until that day,
+        # which is the whole reason this table stopped at two — and the comment below the tool's
+        # carry said so, and called widening it the repo owner's call. The owner made it. The column
+        # now exists, `DIMENSION_FIELDS` already named it, so the note starts saying so here exactly
+        # as the line above this table promised it would.
+        ("heightCm", "heightInches"),
     ),
 }
 
@@ -1868,11 +1881,17 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "artisanName": r.artisanName,
             "improvements": r.suggestionsForToolImprovement,
             "remarks": r.remarks,
-            # ── SEVEN MEASUREMENTS IN TWO DIFFERENT STATES OF KNOWLEDGE ─────────────────────
+            # ── EIGHT MEASUREMENTS IN TWO DIFFERENT STATES OF KNOWLEDGE ─────────────────────
             #
-            # `lengthInches` and `breadthInches` DECLARE their unit in the column name and the
-            # tool form labels them "Length (inches)" / "Breadth (inches)", so they convert — see
-            # `_inches_to_cm`. They keep the word BREADTH here, unlike the product's, because
+            # THIS HEADING SAID SEVEN, AND SO DID ITS TWIN IN `stage_definitions`, until the tool
+            # gained `heightInches` on 2026-08-27. Count the keys emitted below: `lengthCm`,
+            # `breadthCm`, `heightCm` and the five `*AsRecorded` ones — eight. The twin was
+            # corrected the same day; this one was missed in that pass and is corrected here.
+            #
+            # `lengthInches`, `breadthInches` and `heightInches` DECLARE their unit in the column
+            # name and the tool form labels them "Length (inches)" / "Breadth (inches)" /
+            # "Height (inches)", so they convert — see `_inches_to_cm`. They keep the word
+            # BREADTH here, unlike the product's, because
             # `ToolDocumentation` also has a separate unitless `width` column and collapsing the
             # two into one "width" would silently merge two different measurements.
             #
@@ -1885,22 +1904,38 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # `_inches_to_cm` exists to prevent, and guessing one is the same failure with a
             # shrug in front of it.
             #
-            # WHAT CROSSES WITH THE TWO CONVERTED NUMBERS: see the same note on
+            # WHAT CROSSES WITH THE THREE CONVERTED NUMBERS: see the same note on
             # `ProductDocumentation` above. Their METHOD does, now, in `measurementMethodNote` below;
             # the `HydrationSource` author is still the record's `createdById` — the person who saved
             # it, not a claim that they measured it, which is why the method had to travel too.
             #
-            # AND THE FIVE UNIT-LESS ONES CARRY NO METHOD, WHICH IS NOT AN OVERSIGHT IN THIS FILE.
+            # AND THE FIVE UNIT-LESS ONES CARRY NO METHOD, WHICH IS NOT AN OVERSIGHT HERE.
             # `measurement_provenance.DIMENSION_FIELDS` is `{lengthInches, breadthInches,
             # heightInches}`, so `method_stamps` drops a marker naming `height`, `width`,
-            # `thickness`, `weight` or `radius` and nothing ever writes a stamp for them. That module
-            # states the consequence itself — `ToolDocumentation` has no `heightInches`, so an
-            # accepted vision-model tool height "is recorded as nothing" — and calls widening the
-            # list the repo owner's call. These five therefore state neither their unit nor their
-            # method, and the second silence is the record's, not this carry's.
+            # `thickness`, `weight` or `radius` and nothing ever writes a stamp for them. These
+            # five therefore state neither their unit nor their method, and the second silence is
+            # the record's, not this carry's. They are the five keys carried below — `heightAsRecorded`,
+            # `widthAsRecorded`, `thicknessAsRecorded`, `weightAsRecorded`, `radiusAsRecorded` —
+            # counted off those five lines. The note above `_METHOD_CARRIED_DIMENSIONS` says FIVE
+            # of the same columns, and so does the help text on the tool's `measurementMethodNote`
+            # in `stage_definitions`; all three must move together or one of them is lying.
+            #
+            # WHAT CHANGED ON 2026-08-27, AND WHAT DID NOT. Changed: `ToolDocumentation` gained a
+            # `heightInches` column, the pair is in `_METHOD_CARRIED_DIMENSIONS`, and `heightCm`
+            # is carried above WITH its method — so an accepted vision-model tool height is no
+            # longer forced into a unit-less box and "recorded as nothing", which is what the text
+            # here used to say it was, calling the remedy the repo owner's call. The owner made
+            # it. NOT changed: how many unit-less columns there are. `heightAsRecorded` below is
+            # the OLD plain `height` column, which stays because rows already hold values in it
+            # and nothing can say what unit those are in; it is still outside `DIMENSION_FIELDS`
+            # and still carries no method. This paragraph was briefly rewritten to say FOUR on
+            # the strength of the new column, which was wrong in a way worth naming: the new
+            # column is a THIRD UNIT-DECLARED one, not the promotion of one of the five unit-less
+            # ones. Corrected the same day.
             "lengthCm": _inches_to_cm(r.lengthInches),
             "breadthCm": _inches_to_cm(r.breadthInches),
-            # Only ever about the two converted figures above — see `_METHOD_CARRIED_DIMENSIONS`.
+            "heightCm": _inches_to_cm(r.heightInches),
+            # Only ever about the three converted figures above — see `_METHOD_CARRIED_DIMENSIONS`.
             "measurementMethodNote": _measurement_method_note("tool", "ToolDocumentation", r),
             "heightAsRecorded": _decimal(r.height),
             "widthAsRecorded": _decimal(r.width),
@@ -3148,12 +3183,25 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
     # while the row is in hand. Reading it later would mean a second query over records this
     # function has already loaded.
     authors: dict[str, dict[str, str | None]] = {}
-    for model, ids in wanted.items():
+
+    async def _load(model: str, ids: set[str]) -> tuple[str, list[Any], dict[str, Any]]:
+        """One model's rows and their photographs. Two round trips, and the second needs the first."""
         model_spec = REFERENCE_MODELS[model]
         rows = await getattr(db, model_spec.delegate).find_many(
             where={"id": {"in": sorted(ids)}}, include=model_spec.include or None
         )
-        photos = await _reference_photos(model_spec, [r.id for r in rows])
+        return model, rows, await _reference_photos(model_spec, [r.id for r in rows])
+
+    # THE MODELS ARE INDEPENDENT OF ONE ANOTHER, SO THEY OVERLAP. Each one is a genuine two-step —
+    # the photographs are fetched by the ids the first read returns — but nothing in one model's
+    # pair depends on another's, and awaiting them model by model made this 2 x (however many
+    # reference models a workshop's entries name) sequential cross-region round trips. Run together
+    # it is two waits deep whatever that number is. ``REFERENCE_MODELS`` is small and each entry
+    # holds at most 2 reads in flight, so the fan-out stays inside ``pool_width()``.
+    for model, rows, photos in await gather_reads(
+        *(_load(model, ids) for model, ids in wanted.items())
+    ):
+        model_spec = REFERENCE_MODELS[model]
         # `_reference_data` and NOT `model_spec.data`, matching the picker payload above — the
         # two must resolve a record identically or the boxes that fill in at the keyboard disagree
         # with the ones the server writes at save.
@@ -3263,11 +3311,84 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
 # `DesignWorkshopCreate.designerUserId` closes it by naming the designer at creation, and the three
 # functions below are the halves of that: ASK whether this account may be named, PUT them on the
 # workshop, and COPY THEIR profile rather than the caller's.
+#
+# ── AND SINCE 2026-08-27, A WORKSHOP IS NAMED FOR SEVERAL DESIGNERS AT ONCE ─────────────────────
+#
+# The owner's ask: "Designer this workshop is for should be a multi-select … the design workshop
+# would only be visible to those particular designers, admins and master admins would be able to see
+# all the design workshops." The VISIBILITY half of that was already the shipped rule and is not
+# touched by any of this — see `load_workshop_or_404` above and `visible_to_clause` in
+# `design_workshop_viewers`. What was missing was the writing of the rows: an admin had to create the
+# workshop and then remember the viewers panel, and forgetting left a designer facing a 404 they
+# could not tell apart from a workshop that does not exist.
+#
+# TWO QUESTIONS THAT ONLY LOOK LIKE ONE, AND `named_designer_team` IS WHERE THEY ARE SEPARATED:
+#
+#   WHO MAY OPEN IT   -> several accounts -> one `DesignWorkshopViewer` row each.
+#   WHOSE NAME IS ON IT -> exactly one account -> the profile the seed copies, `designerName`,
+#                          the certification signature, and the .docx's `dc:creator`.
+#
+# The second stays singular because the artefacts it feeds are singular: `dc:creator` is not a list
+# and `stage_definitions` declares ONE designer block. Making that block repeatable moves
+# `registry_version()` — every handset treats its bundled 119 KB schema asset as stale and every
+# existing workshop's completeness moves — which is a wave of its own and the owner's call.
 # --------------------------------------------------------------------------------------
 
 
-async def assert_designer_may_be_named(user_id: str) -> None:
-    """Raise the viewers screen's own 422 if this account may not be the workshop's designer.
+def named_designer_team(
+    lead_id: str | None, everyone_ids: Sequence[str] | None
+) -> tuple[str | None, list[str]]:
+    """Read a create body's two designer fields into (the LEAD, everyone who gets a row).
+
+    PURE, AND SEPARATED FROM THE ROUTE ON PURPOSE. Every branch below is a body some client
+    actually sends, and each of them used to be decided by an inline expression that could only be
+    checked by creating a workshop against a live Postgres. ``tests/test_workshop_designer_naming``
+    pins them without one.
+
+    BLANK IS ABSENT, EVERYWHERE. ``""`` — an empty picker, a cleared field, an offline draft that
+    carried the key but never got an answer — means "nobody named", not "an account whose id is the
+    empty string". Without that, an empty string reaches the eligibility check and 422s the create
+    with "No account exists with this id: ", which names nothing and is unactionable on a form
+    where the field is optional.
+
+    THE LEAD IS ``lead_id`` WHEN THE BODY SENT ONE, AND OTHERWISE THE FIRST TICKED NAME. The
+    fallback is not a guess dressed up as a rule: a client that ticked three designers and named no
+    lead still has to have SOME profile seeded, and the only other candidate is the ADMIN who
+    pressed create — which is precisely the wrong-name-on-a-ministry-document defect
+    ``designerUserId`` exists to end. First-ticked is at least a choice a human made, it is what
+    both clients show as the lead line, and an admin who wanted a different one sends ``lead_id``.
+
+    ORDER IS FIRST-SEEN AND DUPLICATES COLLAPSE. The lead is always the first element of the
+    returned list — a body naming a lead who is not in ``everyone_ids`` (a client that sends the two
+    fields from two different pieces of state) grants them anyway, because the workshop is FOR them
+    and a lead who cannot open their own workshop is the worst outcome available here.
+
+    THE CREATOR IS NOT DROPPED HERE, and could not be: this function is not told who they are. An
+    admin naming THEMSELVES is a legitimate answer to both questions — their profile is still what
+    the seed copies — and the two places that do care both know the id. The create route subtracts
+    them from the set it hands the ELIGIBILITY rule (their standing is not that list's business,
+    exactly as ``_deduplicate`` has it on the viewers PUT), and ``attach_the_named_designer``
+    refuses to write a viewer ROW for them (their access comes from ``createdById``, and a second
+    source of truth for it is one an admin could "remove" without anything changing).
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+    lead = (lead_id or "").strip() or None
+    if lead:
+        ordered.append(lead)
+        seen.add(lead)
+    for raw in everyone_ids or ():
+        candidate = (raw or "").strip()
+        if candidate and candidate not in seen:
+            ordered.append(candidate)
+            seen.add(candidate)
+    if lead is None and ordered:
+        lead = ordered[0]
+    return lead, ordered
+
+
+async def assert_every_designer_may_be_named(user_ids: set[str]) -> None:
+    """Raise the viewers screen's own 422 if any of these accounts may not run this workshop.
 
     **THE RULE IS IMPORTED AND NEVER COPIED**, exactly as ``design_workshop_grants`` and
     ``design_workshop_access`` import it. ``_assert_every_id_may_be_granted`` reads the DESIGNER
@@ -3293,8 +3414,20 @@ async def assert_designer_may_be_named(user_id: str) -> None:
     orphan draft behind on every retry until somebody noticed the list filling up with untitled
     duplicates — the same failure the seed's blanket ``except`` exists to prevent, arrived at from
     the other end.
+
+    **A SET, AND ONE CALL FOR THE WHOLE OF IT — NEVER ONE CALL PER ID.** This took a single
+    ``user_id`` until the workshop gained a multi-select, and the plural spelling is not a
+    convenience: the rule refuses the whole set and names EVERY account it objected to, stacking the
+    two restorable refusals (an empanelment that lapsed, an allow-list bar) so an admin learns about
+    both before walking to another screen. Called in a loop it would raise on the first bad id and
+    say nothing about the second, so an admin who ticked four designers and is told about one has
+    been sent on the first of two trips — the exact round trip those sentences are worded to save.
+    It is also the difference between one query and N: the rule reads the user table, the designer
+    roster and the access roster, and the set is what bounds that.
+
+    An empty set is a no-op, so a body that named nobody costs no query at all.
     """
-    await _assert_every_id_may_be_granted({user_id})
+    await _assert_every_id_may_be_granted(user_ids)
 
 
 async def attach_the_named_designer(
@@ -3343,6 +3476,61 @@ async def attach_the_named_designer(
         # an admin made by hand", and this is such a row.
     )
     return True
+
+
+async def attach_the_named_designers(
+    workshop_id: str,
+    designer_ids: Sequence[str],
+    *,
+    granted_by_id: str,
+    creator_id: str,
+) -> list[str]:
+    """Put every named designer on the workshop. Answers with the ids a row was written for.
+
+    A LOOP OVER :func:`attach_the_named_designer`, AND EMPHATICALLY NOT ``replace_viewers``, which
+    is the plural-shaped function standing right beside it and is the wrong one. The whole-set
+    replace DELETES whatever it did not read: used here it would destroy a viewer row a concurrent
+    join-card redemption had just created, and resurrect one an admin had just removed. Every
+    sibling writer of this table — a decided access request, a redeemed card, the singular naming
+    above — funnels through ``add_one_viewer`` for that reason, and a fourth spelling is how the
+    four come to disagree about a column. The set here is at most a hundred ids and is written once
+    per workshop in its whole life, so the loop costs nothing worth trading the property for.
+
+    NOT IN A TRANSACTION WITH THE WORKSHOP CREATE — the singular version says so and the exposure
+    MULTIPLIES here rather than changing shape. The workshop row is already committed when this
+    runs, so a driver-level failure on the third of four ids answers 500 and leaves a workshop two
+    of its four designers cannot open.
+
+    **AND IT IS DELIBERATELY NOT WRAPPED IN A BLANKET ``except``.** That would turn a create which
+    could not honour the body it was given into a silent 201: the admin sees a workshop, the
+    designers see nothing, and no screen anywhere connects the two — the same class of failure as
+    the wrong name on the report, where every automatic check agreed the outcome was fine. Raising
+    is recoverable in two clicks from the viewers panel and is VISIBLE. What is added instead is a
+    log line naming what did land, because the admin's error message cannot: without it, an
+    operator reading the 500 cannot tell a workshop with no designers from one with three of four.
+    """
+    granted: list[str] = []
+    try:
+        for designer_id in designer_ids:
+            if await attach_the_named_designer(
+                workshop_id,
+                designer_id,
+                granted_by_id=granted_by_id,
+                creator_id=creator_id,
+            ):
+                granted.append(designer_id)
+    except Exception:
+        logger.exception(
+            "design workshop %s: naming its designers failed part way through. Rows were written "
+            "for %s of %s named; the workshop exists and the rest must be added from the viewers "
+            "panel. Granted: %s",
+            workshop_id,
+            len(granted),
+            len(designer_ids),
+            ", ".join(granted) or "(none)",
+        )
+        raise
+    return granted
 
 
 async def seed_designer_prefill(
@@ -4612,6 +4800,16 @@ def workshop_completeness(
     is what lets the five call sites be converted without a flag day. Every call site that can reach
     the definition passes it; a caller that could not would silently report a stage as complete that
     the submit gate then refuses, so there is deliberately no third state here to get wrong.
+
+    **THIS IS ALSO WHERE "ALL 25 PHOTOGRAPHS ARE REQUIRED" IS ENFORCED, AND THE ONLY PLACE IT IS.**
+    A field declaring ``min_items`` (stage 4's two motif galleries) is counted as required by
+    ``stage_completeness`` and is not filled until it holds that many, so ``isComplete`` goes false
+    and ``missing`` names it with its shortfall — "Traditional motif photographs (20 of 25)". No
+    save path knows about the floor: ``coerce_value`` and ``validate_entry`` are untouched by it, so
+    a designer with twenty photographs and no signal still saves twenty. Anyone tempted to move the
+    rule closer to the write should read ``stage_schema.FieldSpec.min_items`` first, which records
+    the two ways that would have destroyed field work — Android dropping a 4xx instead of queueing
+    it, and ``save_stage`` restoring the rejected key from ``previous``.
     """
     singletons: dict[str, dict[str, Any]] = {}
     collections: dict[str, dict[str, list[dict[str, Any]]]] = {}
@@ -4996,6 +5194,27 @@ def _media_ids(entries: list[Any]) -> set[str]:
     return found
 
 
+# ── HOW MUCH OF THIS BOX'S MEMORY ONE REPORT'S PHOTOGRAPHS MAY OCCUPY ──────────────────────────
+#
+# `MediaIndex.prefetch` had NO cap in any dimension: not per image, not in aggregate, not on the
+# number of images. It read N whole objects into a dict and that dict stayed live across the whole
+# render, in the single-worker WEB process, reached from `POST /design-workshops/{id}/report`. That
+# is strictly worse than the single oversized read docs/SCALABILITY.md §5.1 is built around — one
+# read is one object, this is all of them at once — and §5.1 did not name it.
+#
+# The aggregate is what actually matters here and the per-image cap is the guard on the tail: a
+# report is dozens of photographs of ordinary size (median 2.01 MiB, p90 14.28 MiB MEASURED across
+# this repository's media), so it is the SUM that reaches into the hundreds of megabytes, and one
+# 668 MiB object among them that finishes the box.
+#
+# Both are lowered further by what the box says is free — see `services/memory_budget`. On a machine
+# with memory to spare (every development box, where no free-memory source exists) these constants
+# ARE the answer and nothing changes. On the 1 GiB pilot under load the budget shrinks and the tail
+# of a large report is left out — VISIBLY, as a warning naming the count, never silently.
+REPORT_IMAGE_BUDGET_BYTES = 96 * 1024 * 1024
+REPORT_IMAGE_MAX_BYTES = 16 * 1024 * 1024
+
+
 class MediaIndex:
     """Every image the record references, resolved once.
 
@@ -5011,6 +5230,12 @@ class MediaIndex:
     row is gone or the caller is not entitled to that uploader's files. The renderer cannot tell
     the difference and neither can this class; what matters is that the caller turns the count into
     a warning instead of printing a report that is quietly short of photographs.
+
+    ``oversize`` is the same idea for a different cause, and :meth:`prefetch` fills it in: every
+    photograph left out because embedding it would have taken this process past its memory budget.
+    A separate list from ``withheld`` because the two need different sentences — a withheld photo is
+    a permission or a deletion and nothing the designer can act on, while an oversize one is this
+    box's ceiling on this run, which a smaller upload or a quieter moment would clear.
     """
 
     def __init__(
@@ -5019,11 +5244,19 @@ class MediaIndex:
         keys: dict[str, str],
         *,
         withheld: tuple[str, ...] = (),
+        sizes: dict[str, int] | None = None,
     ) -> None:
         self._refs = refs
         self._keys = keys
         self._blobs: dict[str, bytes | None] = {}
+        # The DECLARED size of each image, off its media row, where the row carried one. A client's
+        # claim rather than a fact — nothing in this codebase reconciles it against the stored
+        # object — so it is used for one thing only: skipping a fetch that was going to be refused
+        # anyway. The budget is spent against the REAL length of what arrives.
+        self._sizes = sizes or {}
         self.withheld = withheld
+        self.oversize: list[str] = []
+        self.budget_spent = 0
 
     def ref(self, media_id: str) -> ImageRef | None:
         return self._refs.get(media_id)
@@ -5031,15 +5264,45 @@ class MediaIndex:
     def blob(self, image: ImageRef) -> bytes | None:
         return self._blobs.get(image.source)
 
-    def prefetch(self, wanted: tuple[ImageRef, ...]) -> None:
-        """Download the bytes of exactly the images the built document referenced.
+    def prefetch(self, wanted: tuple[ImageRef, ...], *, budget: int | None = None) -> None:
+        """Download the bytes of exactly the images the built document referenced, WITHIN A BUDGET.
 
         Synchronous, and called from inside ``asyncio.to_thread`` along with the render itself.
-        ``get_object_bytes`` is a blocking boto3 call, so running it on the worker thread is
-        both correct and what the rest of this codebase does with S3 reads.
+        ``get_object_bytes`` is a blocking boto3 call, so running it on the worker thread is both
+        correct and what the rest of this codebase does with an S3 read it cannot stream.
+
+        **AND THIS ONE CANNOT BE STREAMED, WHICH IS WHY THE FIX IS A BUDGET AND NOT A TEMP FILE.**
+        The renderers take the bytes through :meth:`blob`, synchronously, one dict read at a time —
+        that is what lets the Kotlin port be a transliteration — so an image has to BE ``bytes`` by
+        the time ``render_pdf`` asks for it. Spooling forty images to forty temp files would move the
+        problem to the disk and still have to read each one back. What was actually wrong here was
+        never the shape of the read; it was that there was no limit on how many of them were held.
+
+        **THIS LOOP USED TO HAVE NO CAP IN ANY DIMENSION** — not per image, not in aggregate, not on
+        the number of images — and everything it fetched stayed live in ``self._blobs`` across the
+        whole render. See the constants above for what that meant on a 1 GiB box. Now a running
+        total is kept and an image that would take it past the budget is left out.
+
+        **LEFT OUT, AND SAID SO.** Every skipped id goes on ``self.oversize``, which
+        ``render_report`` turns into a warning naming the count. Silently returning a report short
+        of photographs is the one outcome this must never have: the designer is about to attach the
+        file to an email, and a picture that is missing without a word is indistinguishable from one
+        that was never taken.
+
+        **THE ORDER OF ``wanted`` IS THE PRIORITY ORDER**, and that falls out of the document rather
+        than being chosen here: ``document.images`` is in the order the renderer will place them, so
+        a budget that runs out costs the LAST pictures in the report and never the first. Nothing is
+        sorted, deliberately — sorting by size would fit more pictures in and would decide which
+        page loses one on a criterion no reader could guess.
         """
+        from app.services.memory_budget import budget_bytes
         from app.services.s3 import get_object_bytes
 
+        # ONE READING OF FREE MEMORY FOR THE WHOLE LOOP, not one per image. The budget is a promise
+        # about this render's total, and re-deriving it mid-loop would let the total drift with
+        # whatever else the box happened to be doing between two photographs.
+        ceiling = budget if budget is not None else budget_bytes(REPORT_IMAGE_BUDGET_BYTES)
+        per_image = min(REPORT_IMAGE_MAX_BYTES, ceiling)
         for image in wanted:
             if image.source in self._blobs:
                 continue
@@ -5047,14 +5310,36 @@ class MediaIndex:
             if not key:
                 self._blobs[image.source] = None
                 continue
+            declared = self._sizes.get(image.source, 0)
+            if declared and (
+                declared > per_image or self.budget_spent + declared > ceiling
+            ):
+                # Refused without a round trip. The declared size is a claim, so it can only be
+                # trusted in this direction: a row that says it is too big is not worth fetching to
+                # find out, while a row that says it is small is checked against what arrives.
+                self._blobs[image.source] = None
+                self.oversize.append(image.source)
+                continue
             try:
-                self._blobs[image.source] = get_object_bytes(key)
+                blob = get_object_bytes(key)
             except Exception:  # noqa: BLE001 - one unreadable photo must not fail the export
                 # Boto3 raises a different class for a missing key, a permission problem and a
                 # timeout, and the answer to all three is the same: leave the picture out and
                 # let the caller report it as a warning. A designer waiting in a field for a
                 # report does not benefit from an exception naming the S3 error code.
                 self._blobs[image.source] = None
+                continue
+            size = len(blob)
+            if size > per_image or self.budget_spent + size > ceiling:
+                # THE REAL LENGTH, WHICH IS THE ONE THE BUDGET IS SPENT AGAINST. Dropping the
+                # reference before continuing so the bytes are collectable immediately rather than
+                # staying alive until the loop variable is rebound on the next photograph.
+                blob = None
+                self._blobs[image.source] = None
+                self.oversize.append(image.source)
+                continue
+            self.budget_spent += size
+            self._blobs[image.source] = blob
 
 
 async def media_resolver(
@@ -5095,6 +5380,9 @@ async def media_resolver(
     rows = await db.mediafile.find_many(where=where)
     refs: dict[str, ImageRef] = {}
     keys: dict[str, str] = {}
+    # Carried through so `MediaIndex.prefetch` can refuse an image the row already says is too big
+    # WITHOUT a round trip. Read off the query that was already being made, so it costs nothing.
+    sizes: dict[str, int] = {}
     for row in rows:
         # Only pictures. A PDF or an audio file linked to a stage is real data, but embedding
         # it as an image would put a broken frame in the report.
@@ -5110,10 +5398,13 @@ async def media_resolver(
             mime_type=row.mimeType or "image/jpeg",
         )
         keys[row.id] = row.objectKey
+        sizes[row.id] = _int_or_zero(getattr(row, "sizeBytes", 0))
     # Asked for and not returned: deleted, or another uploader's file this caller may not take.
     # One query cannot tell those apart and a second one would cost a cross-region round trip on
     # the path `_report_inputs` exists to keep short, so the caller's warning names neither.
-    return MediaIndex(refs, keys, withheld=tuple(sorted(ids - {row.id for row in rows})))
+    return MediaIndex(
+        refs, keys, withheld=tuple(sorted(ids - {row.id for row in rows})), sizes=sizes
+    )
 
 
 def _int_or_zero(value: Any) -> int:
@@ -5176,17 +5467,50 @@ async def attach_report_ai_layers(
 
     A layer's text is a COPY OF A TRANSCRIPT, and a transcript is the CONTENT of a recording. Who may
     read one is decided **per file** by ``owned_or_granted_where(user, owner_field="uploadedById")``
-    and NOT by who may open the workshop — and those two sets genuinely differ, because a
-    ``DesignWorkshopViewer`` grant carries read and stage writes and says nothing whatever about
-    media. ``ai_layers.accepted_layers`` states in capitals that its read is not entitlement-filtered
-    and that its caller must be.
+    and NOT by who may open the workshop. ``ai_layers.accepted_layers`` states in capitals that its
+    read is not entitlement-filtered and that its caller must be.
 
-    This function had no ``viewer`` at all and copied ``row.text`` verbatim. So: designer A uploads
-    the interviews and accepts their layers; designer B holds only a viewer grant and no data-access
-    grant from A. On the AI-layers screen every row comes back ``textWithheld``. ``GET
-    /design-workshops/{id}/transcripts`` refuses B the same text. **And B could tick "Include
-    machine-assisted text", generate, and receive the complete transcripts in a .docx they keep — in
-    the very same file whose transcript annexure correctly omitted them and said so.**
+    WHAT THAT PER-FILE GATE ADMITS WAS CORRECTED HERE ON 2026-08-27, AND THE WORKED EXAMPLE UNDER IT
+    WAS REPLACED, BECAUSE BOTH HAD GONE BACKWARDS. This paragraph used to end "and those two sets
+    genuinely differ, because a ``DesignWorkshopViewer`` grant carries read and stage writes and says
+    nothing whatever about media", and the example was "designer A uploads the interviews and accepts
+    their layers; designer B holds only a viewer grant and no data-access grant from A. On the
+    AI-layers screen every row comes back ``textWithheld``. ``GET /design-workshops/{id}/transcripts``
+    refuses B the same text." Both are FALSE, and had been since ``owned_or_granted_where`` grew a
+    THIRD arm keyed on the media TAG rather than on the uploader
+    (``records._design_workshop_media_branches``): it admits every ``MediaFile`` whose
+    ``linkedRecordType`` is ``designWorkshop`` and whose ``linkedRecordId`` is a workshop this account
+    may open. B, holding a viewer grant on the workshop those interviews are tagged to, is therefore
+    SHOWN them — here, on the transcripts endpoint, in the annexure, and (since 2026-08-27, through
+    ``records.media_url_scope``) as a ``url`` on ``GET /media``.
+    ``backend/tests/test_media_entitlement.py`` pins both directions, in
+    ``test_a_granted_co_designer_is_shown_the_workshops_own_recordings`` and
+    ``test_a_designer_with_no_grant_is_still_refused_the_same_recording``. The stale sentence is
+    recorded rather than merely deleted because of what it cost: it described a real withholding as
+    arbitrary, which is exactly how a reader talks themselves into removing one. It also did not live
+    here alone — the same claim had been copied into the AI-layer services, their tests and both
+    clients, so correcting the one file a bug report named would have left a grep answering the old
+    way from everywhere else. ``api/routes/design_workshops.list_ai_layers`` carries the same
+    correction, written on the same date; the two are meant to be read together and must move
+    together.
+
+    THE TWO SETS STILL DIFFER, IN THE OTHER DIRECTION, AND THAT IS WHY ``viewer`` IS NOT OPTIONAL. A
+    grant admits THIS WORKSHOP'S TAGGED FILES AND NOTHING ELSE. A stage field stores a media id, and
+    nothing obliges that id to name a file tagged to this workshop — so a layer registered here can
+    stand on a recording its uploader filed under a different workshop or under none, typed onto a
+    stage by anybody who may edit one. Those are gated on uploader identity exactly as they were, and
+    the only key to them is a ``DataAccessGrant`` from that uploader — the grant that means "may take
+    that account's data at large", which a workshop grant is not and never becomes.
+
+    So, the example that DOES happen: designer A uploads an interview and files it under a workshop of
+    A's, and its id is typed onto a stage of workshop W; designer B holds a viewer grant on W and no
+    data-access grant from A. The tag arm does not reach it — it is tagged to A's workshop, not to W —
+    so on the AI-layers screen every layer standing on that recording comes back ``textWithheld``, and
+    ``GET /design-workshops/{id}/transcripts`` refuses B the same text (``load_transcript_items``
+    gathers the ids off the stages and then applies the same predicate). This function had no
+    ``viewer`` at all and copied ``row.text`` verbatim: **B could tick "Include machine-assisted
+    text", generate, and receive the complete transcript in a .docx they keep — in the very same file
+    whose transcript annexure correctly omitted it and said so.**
 
     ``readable_media`` is passed IN rather than imported because the predicate lives in the routes
     module beside the endpoint that already applies it (``_readable_media_ids``); one definition,
@@ -5742,6 +6066,10 @@ def render_report(data: WorkshopData, template_id: str, resolver: Any, record: A
     # Only now, when the document is built, is it known which images it actually contains — a
     # template that excludes photographs must not pay to download forty of them.
     resolver.prefetch(document.images)
+    # WHAT THE MEMORY BUDGET REFUSED, read defensively because `resolver` is typed `Any` here and
+    # the report tests pass a stand-in with three methods and no attributes. `MediaIndex.prefetch`
+    # fills this in; anything else answers the empty tuple and this costs nothing.
+    over_budget = tuple(getattr(resolver, "oversize", ()) or ())
 
     if fmt == "PDF":
         blob, dropped = render_pdf(document, resolver.blob)
@@ -5751,6 +6079,19 @@ def render_report(data: WorkshopData, template_id: str, resolver: Any, record: A
         page_count = None
 
     warnings.extend(_dropped_warnings(dropped))
+    # AFTER `_dropped_warnings`, deliberately, because it EXPLAINS PART OF THE COUNT THAT SENTENCE
+    # JUST GAVE. A photograph the budget refused is left as `None` in the resolver, so the renderer
+    # counts it among the ones it could not draw and says "N photograph(s) could not be included";
+    # that is true but it reads as N failed downloads. This says which of them were a decision by
+    # this server rather than a file it could not fetch, and it says so second so the two sentences
+    # are read in that order.
+    if over_budget:
+        warnings.append(
+            f"{len(over_budget)} of those photograph(s) were left out because embedding them would "
+            f"have taken this server past the memory it has available for one report. The record "
+            f"still holds every one of them; generating the report again when the server is less "
+            f"busy, or with a template that prints fewer pictures, will include more."
+        )
     if fmt == "PDF":
         warnings.extend(_font_warnings())
     if fonts and fmt == "PDF":

@@ -19,7 +19,7 @@
  * here would compile perfectly and render an empty figure.
  */
 
-import type { DwBlock, DwRun } from "@/lib/designWorkshops";
+import type { DwBlock, DwPreview, DwRun } from "@/lib/designWorkshops";
 import { DEFAULT_ACCENT, paletteFromAccent, type ReportPalette } from "@/lib/reportTheme";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -256,13 +256,11 @@ export const REPORT_PALETTE: ReportPalette = paletteFromAccent(DEFAULT_ACCENT);
 /**
  * The paper the document will be printed on, in millimetres.
  *
- * Read off `report_model.PageSize.size_mm` and `ReportMeta.margin_mm`. The preview draws its
- * sheets at these exact dimensions and sets its type in POINTS, so a browser Print to PDF from
- * this page lands within a line or two of the server's own .pdf — which is the point of the
- * exercise: a designer on a laptop with no backend needs a presentable file, not a screenshot.
- *
- * ⚠ The margin is NOT on the preview wire. `ReportMeta.margin_mm` defaults to 25 and no template
- * currently overrides it, so 25 is right today and would be silently wrong the day one does.
+ * Read off `report_model.PageSize.size_mm` and `ReportMeta.margin_mm`, which is exactly what
+ * `report_pdf.py` reads to size its own canvas. The preview draws its sheets at these dimensions
+ * and sets its type in POINTS, so a browser Print to PDF from this page lands within a line or two
+ * of the server's own .pdf — which is the point of the exercise: a designer on a laptop with no
+ * backend needs a presentable file, not a screenshot.
  */
 export type PageGeometry = {
   widthMm: number;
@@ -271,27 +269,57 @@ export type PageGeometry = {
   /** What `@page { size: … }` must say for the browser's own print to use the same sheet. */
   cssPageSize: string;
   label: string;
+  /** True when {@link pageGeometry} fell back to the default margin because none was sent. */
+  marginAssumed: boolean;
 };
 
-const A4: PageGeometry = {
-  widthMm: 210,
-  heightMm: 297,
-  marginMm: 25,
-  cssPageSize: "A4 portrait",
-  label: "A4"
-};
+/** `ReportMeta.margin_mm`'s own default, and the value every template in `TEMPLATES` leaves alone. */
+export const DEFAULT_MARGIN_MM = 25;
 
-const LETTER: PageGeometry = {
-  widthMm: 215.9,
-  heightMm: 279.4,
-  marginMm: 25,
-  cssPageSize: "letter portrait",
-  label: "US Letter"
-};
+const A4 = { widthMm: 210, heightMm: 297, cssPageSize: "A4 portrait", label: "A4" };
+const LETTER = { widthMm: 215.9, heightMm: 279.4, cssPageSize: "letter portrait", label: "US Letter" };
 
-export function pageGeometry(pageSize: string | undefined): PageGeometry {
-  return String(pageSize).toUpperCase() === "LETTER" ? LETTER : A4;
+/**
+ * The sheet to draw, for a page size and — where the payload states one — a margin.
+ *
+ * THE MARGIN IS ON THE PREVIEW WIRE, AND IS STILL READ DEFENSIVELY. `preview_report` sends
+ * `marginMm` beside `pageSize` as of 2026-08-28 (`design_workshops.py`), and `ReportMeta.margin_mm`
+ * is what `report_pdf.py` sizes its text column from — a preview paginating against 25 mm while the
+ * file uses 18 puts its breaks in the wrong places and says nothing.
+ *
+ * The fallback stays, because the sender is not the only thing between this function and the value:
+ * an older server, and a response cached before that deploy, both carry `meta` with no such key.
+ * Where that happens `marginAssumed` is true and the sheet says so where it matters, rather than
+ * presenting a default as the document's own geometry.
+ */
+export function pageGeometry(pageSize: string | undefined, marginMm?: number | null): PageGeometry {
+  const paper = String(pageSize).toUpperCase() === "LETTER" ? LETTER : A4;
+  const sent = typeof marginMm === "number" && Number.isFinite(marginMm) && marginMm >= 0;
+  return {
+    ...paper,
+    // Clamped against the paper: a margin that leaves no text column at all would divide by zero in
+    // the packer and draw an empty document, which is a worse answer than an unusual-looking page.
+    marginMm: sent ? Math.min(marginMm as number, paper.widthMm / 3, paper.heightMm / 3) : DEFAULT_MARGIN_MM,
+    marginAssumed: !sent
+  };
 }
+
+/**
+ * `GET /report/preview`'s `meta`, widened by the one key `DwPreview` does not yet declare.
+ *
+ * The same arrangement, and the same reason, as {@link PreviewBlock}: `DwPreview["meta"]` in
+ * `lib/designWorkshops.ts` is the shape that module declares, and this is what the preview reads —
+ * a widening, so the payload assigns into it with no cast.
+ *
+ * THE ROUTE SENDS `marginMm` NOW (2026-08-28). What has not happened is the declaration moving into
+ * `lib/designWorkshops.ts`, and the optionality here is still honest either way — a response from an
+ * older server, or one cached before that deploy, has no such key, which is the case
+ * {@link pageGeometry}'s fallback exists for. When that file is next opened, fold the key into
+ * `DwPreview["meta"]` as `marginMm?: number | null` — NOT as a required `number`, which would make
+ * every one of those responses a type error at the assignment — and delete this type only once
+ * nothing else needs the widening.
+ */
+export type PreviewMeta = DwPreview["meta"] & { marginMm?: number | null };
 
 /**
  * A CSS millimetre in CSS pixels.
@@ -306,75 +334,34 @@ export const PX_PER_MM = 96 / 25.4;
  * Sheets
  * ──────────────────────────────────────────────────────────────────────────── */
 
-export type ReportSheetContent = {
-  /** 1-based: the N in the "Page N of M" every renderer draws in its own foot. */
-  pageNumber: number;
-  /** The cover is drawn as EXACTLY one page by both writers, and carries no running furniture. */
-  isCover: boolean;
-  blocks: PreviewBlock[];
-};
-
 /**
- * The block stream cut into the pages the DOCUMENT declares.
+ * WHERE THE PAGES ARE DECIDED NOW, AND WHAT THE PAGE COUNT IS WORTH.
  *
- * WHAT THIS CAN AND CANNOT KNOW, because getting this wrong is the failure mode the whole screen
- * exists to avoid. A `PAGEBREAK` block is a break the template asked for, and both writers honour
- * it exactly — so a break here is a break in the file. What neither this page nor anything else
- * in a browser can know is where the OTHER breaks fall: those are decided by measuring wrapped
- * text against the remaining height on the page, which Word does on open and ReportLab does by
- * laying the body out twice. A sheet below can therefore be a page and a half of the real
- * document.
+ * This file used to carry `splitIntoSheets`, which cut the block stream ONLY where the template
+ * declared a break — a `PAGEBREAK` block or a `COVER` — because nothing else was knowable without
+ * measuring wrapped text against the room left on a page. Its own docstring conceded that "a sheet
+ * below can therefore be a page and a half of the real document", and the sheet it produced was
+ * `min-height`, so that page and a half was drawn as one sheet taller than the paper.
  *
- * SO THE COUNT THIS RETURNS IS A FLOOR, AND THE SCREEN HAS TO SAY SO. The running foot prints
- * "Page N of M" because all four FILE renderers print exactly that and a designer proofing here
- * must not read a differently-shaped label from the one in the document they hand over — but the
- * M is THIS count, the pages the template declares, not the file's own total. A total quoted out
- * of a preview and into a covering email is the failure this paragraph exists to prevent, and
- * once a number is on the page the only defence left is stating what it is: `ReportSheets` prints
- * the floor in as many words in the strip above the sheets, and that sentence is load-bearing.
+ * The measuring is now done: `ReportSheet.tsx` lays every block out once, off-screen, at exactly
+ * the page's content width, and `reportPagination.packPages` flows the measured heights into
+ * fixed-height pages under the rules `report_pdf.py` uses. So the breaks below are no longer only
+ * the declared ones, and the count is no longer a floor.
  *
- * WHICH IS WHY THE M DOES NOT PRINT. The strip is chrome and `Ctrl+P` drops all of it, so a
- * printed sheet would carry the total with nothing left to qualify it — and print is where the
- * covering email actually comes from. The browser also re-paginates when it prints (a sheet loses
- * its fixed height and only asks for a break after itself), so an overflowing sheet becomes two
- * printed pages and the total stops being even a floor. `ReportSheets` therefore wraps the "of M"
- * in its own element and hides it under `@media print`: the screen gets the label the four file
- * renderers print, and the file a designer hands over gets the ordinal alone.
+ * IT IS ALSO NOT THE FILE'S OWN COUNT, AND THAT DISTINCTION IS THE WHOLE OF WHAT THE SCREEN MUST
+ * SAY. The preview measures with the BROWSER's font metrics — Calibri where the laptop has it,
+ * Carlito or Inter where it does not — while the .pdf is laid out by ReportLab in whichever face
+ * `report_pdf` resolved (its own banner names Noto, DejaVu, Liberation, then Helvetica) and the
+ * .docx is paginated by Word when the file is opened. Those three disagree about where a line
+ * wraps, and a document that disagrees about one line can disagree about one page. `report_pdf`'s
+ * own history is the evidence: a 1.2 mm heading rule moved a 150-section contents by TWO pages
+ * between one host font and another, on the identical commit.
  *
- * The cover is split off on its own because both writers give it exactly one page and neither
- * draws a running head or foot on it.
+ * So the running foot prints "Page N of M" — the label all four FILE renderers print, and the
+ * preview must not show a differently-shaped one — with M a close estimate that can differ from
+ * the file by a page. Making it look authoritative RAISES the cost of overclaiming rather than
+ * removing it, which is why the strip above the sheets says exactly that, and why the "of M" is
+ * still hidden under `@media print`: the qualifying strip is chrome, `Ctrl+P` drops it, and an
+ * unqualified total in the one artefact a designer emails is the number that gets quoted.
  */
-export function splitIntoSheets(blocks: PreviewBlock[]): ReportSheetContent[] {
-  const sheets: ReportSheetContent[] = [];
-  let current: PreviewBlock[] = [];
-  let pageNumber = 1;
 
-  const close = (isCover: boolean) => {
-    if (!current.length) return;
-    sheets.push({ pageNumber, isCover, blocks: current });
-    pageNumber += 1;
-    current = [];
-  };
-
-  for (const block of blocks) {
-    if (block.type === "COVER") {
-      close(false);
-      current = [block];
-      close(true);
-      continue;
-    }
-    if (block.type === "PAGEBREAK") {
-      close(false);
-      continue;
-    }
-    current.push(block);
-  }
-  close(false);
-
-  // A document whose every block was a page break still has to render as something. One empty
-  // sheet reads as "this template produced nothing", which is the truth and is what the designer
-  // needs to see; zero sheets would render as an empty panel indistinguishable from a load that
-  // had not finished.
-  if (!sheets.length) sheets.push({ pageNumber: 1, isCover: false, blocks: [] });
-  return sheets;
-}
