@@ -9,6 +9,7 @@ from app.schemas.records import ProductCreate, ProductUpdate
 from app.services.access import guard_record_edit
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
+from app.services.record_design_workshop import assert_payload_workshop
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -190,6 +191,7 @@ async def list_products(
     artisanId: str | None = None,
     artisanName: str | None = None,
     workshopId: str | None = None,
+    designWorkshopId: str | None = None,
     place: str | None = None,
     marketDemand: str | None = None,
     productType: str | None = None,
@@ -244,6 +246,11 @@ async def list_products(
             ]})
         else:
             where["artisanId"] = artisanId
+    if designWorkshopId:
+        # The design & prototype workshop filter — a plain equality on the column. See
+        # `api/routes/artisans.list_artisans` for why it is not an OR and why the reserved word
+        # "none" is not accepted on a singular filter.
+        where["designWorkshopId"] = designWorkshopId
     if workshopId:
         where["workshopId"] = workshopId
     if place:
@@ -303,6 +310,15 @@ async def create_product(
     data = await attach_location(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
+    # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
+    # its own gate beside the line above rather than instead of it: `workshopId` is
+    # `WorkshopAssignment`, `designWorkshopId` is creator / admin / `DesignWorkshopViewer`.
+    # `assert_payload_workshop` calls `load_workshop_or_404(for_edit=True)` — the same helper the
+    # stage writes and the questionnaire attach use — because filing a record under a workshop
+    # puts it inside that workshop's scoped lists and totals, which is a change to somebody
+    # else's record. Ungated, any client could post a stranger's workshop id and file into it,
+    # which is the hole `_require_attachable_workshop` was written to close one door over.
+    await assert_payload_workshop(data, current_user)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
@@ -346,6 +362,11 @@ async def update_product(
     check = None
     if "workshopId" in data and data.get("workshopId") != product.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
+    # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
+    # afterwards. Keyed on PRESENCE, so an edit that does not mention the workshop is not
+    # re-validated — a record filed under a workshop the designer was later removed from must
+    # still be editable by them.
+    await assert_payload_workshop(data, current_user)
     await guard_record_edit(product, current_user, data, "product")
     await apply_status_policy_update(current_user, product, data)
     # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)

@@ -1,9 +1,13 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -13,9 +17,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -44,6 +49,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -53,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -62,9 +69,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.IntOffset
@@ -83,6 +92,7 @@ import com.designprototype.workshop.data.DwScaleReference
 import com.designprototype.workshop.data.DwSegment
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.FieldDto
+import com.designprototype.workshop.ui.LocalAppPreferences
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt for why a
 // bare Material `Text` here would quietly set this panel's headings in the body face.
 import com.designprototype.workshop.ui.Text
@@ -320,16 +330,239 @@ internal fun dwFormatRounded(rounded: DwRoundedValue): String =
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The whole surface, collapsed until the designer asks for it.
+ * How tall the photograph's viewport is allowed to get, as width ÷ height.
+ *
+ * NEVER TALLER THAN IT IS WIDE ([MIN_VIEWPORT_RATIO] = 1), because a portrait frame drawn at its true
+ * shape is about 450dp of card on the handset this feature exists for, and the report this pair of
+ * constants answers was about a card too tall to get past. NEVER FLATTER THAN 2:1
+ * ([MAX_VIEWPORT_RATIO]), because a panorama drawn at its true shape leaves a strip too shallow to aim
+ * a mark in, and aiming is the whole job. Between those two the viewport is EXACTLY the shape of the
+ * working copy, so there is no letterbox on either edge; outside them the letterbox comes back, which
+ * is the smaller of the two costs and is why the band is as wide as it is.
+ */
+private const val MIN_VIEWPORT_RATIO = 1f
+private const val MAX_VIEWPORT_RATIO = 2f
+
+/**
+ * The floor under the viewport while there is NOTHING in it — decoding, or a photograph this device
+ * could not open. It is the two zoom buttons' own 44dp plus their 6dp padding and a little air, and
+ * nothing more: the box wraps whichever sentence is in it rather than reserving room for a picture
+ * that is not there.
+ */
+private val EMPTY_VIEWPORT_MIN_HEIGHT = 96.dp
+
+/** The mark the cursor sits on when a method is chosen — the first one that method asks for. */
+private fun dwFirstMark(mode: DwMeasureMode): DwMarkId =
+    if (mode == DwMeasureMode.SCALE) DwMarkId.REF_A else DwMarkId.C0
+
+/**
+ * THE ONE WORD BOTH COLLAPSE CONTROLS SAY. Internal so `DwPhotoMeasureFieldTest` can pin that the
+ * header's door and the foot's door are labelled the same thing — two doors out of one card that
+ * disagreed about what they were would read as two different actions.
+ */
+internal const val DW_MEASURE_COLLAPSE_WORD = "Close"
+
+/** What TalkBack is told the press will DO, which a chevron beside the words cannot say. */
+internal const val DW_MEASURE_COLLAPSE_ACTION = "Collapse the measuring card"
+
+/** The other direction of the same sentence. See [DW_MEASURE_COLLAPSE_ACTION]. */
+internal const val DW_MEASURE_EXPAND_ACTION = "Expand the measuring card"
+
+/**
+ * Everything a designer TYPED OR PLACED, held by the panel rather than by the open half.
+ *
+ * ── WHY THIS CLASS EXISTS ─────────────────────────────────────────────────────────────────────
+ *
+ * Until 2026-08-28 every field below was a `remember` inside [DwPhotoMeasureOpen], and the open half
+ * is REMOVED FROM THE COMPOSITION the instant the card collapses. Collapsing therefore destroyed the
+ * four corner marks, the reference length, the chosen photograph and the chosen method, and
+ * re-expanding presented an untouched card. That made the one exit expensive enough that nobody used
+ * it, so the only way past a configured card was to scroll the whole of it — which is precisely the
+ * report this class answers. A collapse is only cheap if nothing is lost.
+ *
+ * ── WHAT IS KEPT AND WHAT IS DELIBERATELY NOT ─────────────────────────────────────────────────
+ *
+ * MARKS AND TEXT ARE CHEAP, SO THEY ARE KEPT. Six marks are six pairs of doubles and a flag; five
+ * strings are five strings. Nothing here is measured in kilobytes, and all of it is work a person did
+ * with their hands that this app has no way to redo for them.
+ *
+ * PIXELS ARE EXPENSIVE, SO THEY ARE NOT. The decoded working copy is NOT a field of this class and
+ * must not become one. It is the largest single allocation the feature makes, and the file header
+ * argues that re-decoding — a few hundred milliseconds, off the main thread — is the right trade on a
+ * phone whose other job right now is the camera. `image`, `bitmap`, `zoom` and `pan` therefore stay
+ * inside [DwPhotoMeasureOpen] and die with it. The split is deliberate: the next reader should be able
+ * to see that what survives a collapse is a person's decisions, and what does not is a bitmap.
+ *
+ * ── `remember` AND NOT `rememberSaveable` ─────────────────────────────────────────────────────
+ *
+ * A collapse does not leave the composition — the panel that holds this stays composed while its open
+ * half comes and goes — so `remember` is exactly the lifetime the requirement asks for. A saveable
+ * would additionally survive process death, and it is not free: `Map<DwMarkId, DwMark>` is not
+ * `Bundle`-writable, so it would need a hand-written `Saver`, and that saver would be a SECOND,
+ * silently-versioned description of what a mark is, sitting beside [DwMark] with nothing keeping the
+ * two in step. Rotation loses the marks today and still does; that is unchanged by this class rather
+ * than caused by it. If somebody wants durability across a rotation later, the saver has to carry the
+ * per-mark sigma as well as the point — a restored mark with a default sigma would quietly widen or
+ * narrow the error bar this whole panel is about.
+ */
+@Stable
+private class DwMeasureConfig(initialPhotoId: String) {
+
+    /** Which photograph is being measured. Written by the chooser chips. */
+    var photoId by mutableStateOf(initialPhotoId)
+
+    /**
+     * The photograph the [marks] were placed on, which is NOT always [photoId].
+     *
+     * It exists so that clearing the marks is a consequence of CHANGING THE PHOTOGRAPH and not a
+     * consequence of the open half being composed. Those used to be the same event — `marks.clear()`
+     * sat in the decode `LaunchedEffect` — and once the state moved up here that effect would have
+     * wiped the marks on every single re-expansion, which is the bug this whole change is about.
+     */
+    var marksPhotoId by mutableStateOf(initialPhotoId)
+        private set
+
+    /** Which geometry the designer chose. Set through [chooseMode] so the cursor follows it. */
+    var mode by mutableStateOf(DwMeasureMode.SCALE)
+        private set
+
+    /** The mark the nudge pad and the next tap are aimed at. */
+    var active by mutableStateOf(dwFirstMark(DwMeasureMode.SCALE))
+
+    val marks = mutableStateMapOf<DwMarkId, DwMark>()
+
+    var referenceLength by mutableStateOf("")
+    var referenceUnit by mutableStateOf("mm")
+    var rectWidth by mutableStateOf("")
+    var rectHeight by mutableStateOf("")
+    var rectUnit by mutableStateOf("mm")
+
+    /**
+     * Which marks the chosen method needs. ONE reading of that question, so the collapsed summary and
+     * the open card can never disagree about how many marks are outstanding.
+     *
+     * Returns one of two shared singleton lists rather than building one, which matters here: it is a
+     * `pointerInput` key in the open half, and a fresh list on each composition would tear the tap
+     * detector down and rebuild it on every frame of a pan.
+     */
+    val needed: List<DwMarkId>
+        get() = if (mode == DwMeasureMode.SCALE) SCALE_MARKS else RECTIFY_MARKS
+
+    /** How many of them are actually placed — the number the collapsed summary quotes. */
+    val placedCount: Int
+        get() = needed.count { marks[it]?.placed == true }
+
+    /**
+     * Choose a geometry, moving the cursor to the first mark that geometry asks for.
+     *
+     * THE MARKS ARE NOT CLEARED, deliberately and exactly as before: the two methods share the
+     * object's own two ends, and the seeding effect fills in whichever of the others the new method
+     * needs. A designer who marked the object and then realised the surface is tilted keeps that work.
+     */
+    fun chooseMode(next: DwMeasureMode) {
+        if (next == mode) return
+        mode = next
+        active = dwFirstMark(next)
+    }
+
+    /**
+     * Adopt [id] as the photograph being measured, clearing the marks ONLY if they were placed on a
+     * different one.
+     *
+     * A mark is a position on ONE photograph, in ONE working copy's pixel grid; carrying it across
+     * would put the reference somewhere nobody chose, on an image of a different size. But RE-ENTERING
+     * THE COMPOSITION IS NOT CHANGING THE PHOTOGRAPH, and the [marksPhotoId] comparison is the guard
+     * that tells those two events apart — an expansion goes no further than the first line.
+     *
+     * [photoId] is written unconditionally, and not only on the clearing path, because the two part
+     * company when the chosen photograph is DETACHED from the field: the panel then falls back to the
+     * first one it still has, and without this the chooser chips would go on showing a selection that
+     * is no longer in the list, with none of the visible chips marked.
+     */
+    fun usePhotograph(id: String) {
+        photoId = id
+        if (id == marksPhotoId) return
+        marksPhotoId = id
+        marks.clear()
+        active = dwFirstMark(mode)
+    }
+}
+
+/**
+ * What the COLLAPSED card says is already set up, in one sentence, or null when nothing is.
+ *
+ * ── WHY THE COLLAPSED CARD HAS TO SAY THIS ────────────────────────────────────────────────────
+ *
+ * A collapsed card that says only its own title is indistinguishable from one nobody has touched, so
+ * the only way to find out whether the four corners are still marked would be to expand it and scroll
+ * — which is the exact cost the accordion exists to remove. This sentence is what makes collapsing
+ * worth doing.
+ *
+ * ── IT NAMES THE TOTAL AND NOT ONLY THE COUNT ─────────────────────────────────────────────────
+ *
+ * "4 of 6 marks placed", never a bare "4 marks placed": the four-corner method needs six and the
+ * same-plane method needs four, so the same figure reads as finished under one and half-done under
+ * the other. The method is named for the same reason. A missing reference length is stated outright
+ * rather than left out, because an omitted clause and a satisfied one look identical.
+ *
+ * Pure, and taking no [DwMarkId] or [DwMeasureMode] — plain counts, flags and strings — so that
+ * `DwPhotoMeasureFieldTest` can pin the wording on the JVM with no composition to run it in.
+ *
+ * @param photographName the chosen photograph, and null where the field holds only one so there is no
+ *   choice to report. Never truncated: this file's most repeated bug class is a line that quietly
+ *   stops, and a summary that abbreviated the filename would be committing it in miniature.
+ */
+internal fun dwMeasureSummary(
+    marksPlaced: Int,
+    marksNeeded: Int,
+    fourCorner: Boolean,
+    referenceLength: String,
+    referenceUnit: String,
+    rectWidth: String,
+    rectHeight: String,
+    rectUnit: String,
+    photographName: String?,
+): String? {
+    val size = if (fourCorner) {
+        val width = rectWidth.trim()
+        val height = rectHeight.trim()
+        if (width.isEmpty() || height.isEmpty()) null else "$width × $height $rectUnit rectangle"
+    } else {
+        val length = referenceLength.trim()
+        if (length.isEmpty()) null else "$length $referenceUnit reference"
+    }
+    // Nothing placed and nothing typed is not a configuration — the card should read as the invitation
+    // it was before anybody opened it, rather than as a set-up nobody made.
+    if (marksPlaced <= 0 && size == null) return null
+
+    val parts = mutableListOf<String>()
+    parts += if (marksPlaced <= 0) "no marks placed yet" else "$marksPlaced of $marksNeeded marks placed"
+    parts += size ?: if (fourCorner) "no rectangle size yet" else "no reference length yet"
+    parts += if (fourCorner) "four-corner method" else "same-plane method"
+    if (!photographName.isNullOrBlank()) parts += "photograph “${photographName.trim()}”"
+    return parts.joinToString(" · ")
+}
+
+/**
+ * The whole surface, collapsed until the designer asks for it — and collapsible again afterwards.
  *
  * [photos] are the IMAGE attachments already on this field — uploaded or still only on this device,
  * both equally measurable, which is what keeps the feature working on a photograph taken thirty
  * seconds ago with no signal. [targets] is what a measurement may be proposed into.
  *
- * COLLAPSED BY DEFAULT AND THE STATE LIVES INSIDE THE OPEN HALF, deliberately: closing the panel drops
- * the reference to the decoded working copy, which is the largest single allocation this feature makes.
- * Re-opening decodes again — a few hundred milliseconds, off the main thread — and that is the right
- * trade on a phone whose other job right now is the camera.
+ * ── IT IS AN ACCORDION, AND IT WAS A ONE-WAY DOOR UNTIL 2026-08-28 ────────────────────────────
+ *
+ * The open card has always had a "Close" button, but it sat at the very top of a card that is a
+ * photograph, a nudge pad, two text fields and a readout tall. A designer who had just placed four
+ * marks and read the answer at the bottom had to scroll all of that back up to reach the only way out
+ * — and found an untouched card waiting if they ever did it again. Three things changed together and
+ * none of them works without the other two: the header row IS the control now (see [DwMeasureHeader]),
+ * there is a second identical door at the FOOT where the work actually ends, and [DwMeasureConfig]
+ * outlives the collapse so that using either door costs nothing.
+ *
+ * COLLAPSED BY DEFAULT, and the DECODED WORKING COPY still lives in the open half: closing drops the
+ * largest single allocation this feature makes, and re-opening decodes again. See [DwMeasureConfig]
+ * for why the marks go the other way.
  */
 @Composable
 internal fun DwPhotoMeasurePanel(
@@ -351,29 +584,54 @@ internal fun DwPhotoMeasurePanel(
 ) {
     if (photos.isEmpty() || targets.isEmpty()) return
     var open by remember { mutableStateOf(false) }
+    // Keyed on nothing, which is the point: this has to survive the open half coming and going. A
+    // photograph that disappears from the field is handled where it is resolved below, by falling back
+    // to the first — never by rebuilding this holder, which would throw the marks away on an attach.
+    val config = remember { DwMeasureConfig(photos.first().id) }
 
-    if (!open) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    Icons.Filled.Straighten,
-                    contentDescription = null,
-                    tint = MaterialTheme.field.muted,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    "Measure a dimension from a photograph",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
+    if (open) {
+        DwPhotoMeasureOpen(
+            photos = photos,
+            targets = targets,
+            rowValues = rowValues,
+            enabled = enabled,
+            config = config,
+            onCollapse = { open = false },
+            onPropose = onPropose,
+        )
+        return
+    }
+
+    val chosen = photos.firstOrNull { it.id == config.photoId }
+    val summary = dwMeasureSummary(
+        marksPlaced = config.placedCount,
+        marksNeeded = config.needed.size,
+        fourCorner = config.mode == DwMeasureMode.RECTIFY,
+        referenceLength = config.referenceLength,
+        referenceUnit = config.referenceUnit,
+        rectWidth = config.rectWidth,
+        rectHeight = config.rectHeight,
+        rectUnit = config.rectUnit,
+        // Only where there is a choice to report. One photograph is not a decision anybody made.
+        photographName = if (photos.size > 1) chosen?.displayName else null,
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        DwMeasureHeader(
+            expanded = false,
+            // The gate the "Measure from a photograph" button has always had. A read-only field must
+            // not be openable, because opening it decodes a photograph.
+            toggleEnabled = enabled,
+            onToggle = { open = true },
+        )
+
+        if (summary == null) {
             Text(
                 "If a ruler, a scale card or a sheet of paper is in one of these photographs, a " +
                     "dimension can be measured off it here and proposed into " +
@@ -383,23 +641,160 @@ internal fun DwPhotoMeasurePanel(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
-            OutlinedButton(onClick = { open = true }, enabled = enabled) {
-                Icon(Icons.Filled.Straighten, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Measure from a photograph", fontSize = 13.sp)
-            }
+        } else {
+            // THE STATE, IN WORDS, WITHOUT EXPANDING ANYTHING — which is the half of the report that
+            // is about scrolling. Drawn in the foreground colour because it is the thing the designer
+            // came back to read, not chrome around it, and it says what is configured in words rather
+            // than by any tint.
+            Text(
+                summary,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+            )
+            Text(
+                "All of that is kept while this is closed. Opening it again comes back to the same " +
+                    "marks — only the photograph itself is decoded a second time, which takes a moment.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
         }
-        return
-    }
 
-    DwPhotoMeasureOpen(
-        photos = photos,
-        targets = targets,
-        rowValues = rowValues,
-        enabled = enabled,
-        onClose = { open = false },
-        onPropose = onPropose,
+        // KEPT RATHER THAN REPLACED BY THE HEADER. The header row is the accordion control now, but a
+        // row that happens to be tappable is not a button anybody can SEE; this is the one that reads
+        // as a door, and removing it would trade one discoverable way in for none.
+        OutlinedButton(
+            onClick = { open = true },
+            enabled = enabled,
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
+            Icon(Icons.Filled.Straighten, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (summary == null) "Measure from a photograph" else "Open the measuring card again",
+                fontSize = 13.sp,
+            )
+        }
+    }
+}
+
+/**
+ * The card's title row, which IS the accordion control — the same one in both states.
+ *
+ * ── ONE COMPOSABLE FOR BOTH STATES ────────────────────────────────────────────────────────────
+ *
+ * Drawn by the collapsed card and by the open one, so the two cannot drift into disagreeing about
+ * where the title sits, which way the chevron points, or what a press announces. A second copy of this
+ * would be a second place for the 48dp floor and the state description to go stale in.
+ *
+ * ── `clickable` PLUS A STATE DESCRIPTION, NOT `selectable` ────────────────────────────────────
+ *
+ * A disclosure is not a choice among options: `selectable` makes TalkBack announce "selected" /
+ * "not selected", which for a section that opens and closes is the wrong noun and gives a reader no
+ * idea that pressing it reveals something. `stateDescription` announces "Expanded" / "Collapsed",
+ * `onClickLabel` says what the press will DO, and [Role.Button] says what kind of thing it is. The
+ * chevron beside the words carries none of the three to somebody who cannot see it. This is the same
+ * arrangement `DesignReviewScreen`'s rating ledger uses, and for the same reason.
+ *
+ * ── THE CHEVRON TURNS, AND IT IS NOT THE ONLY THING SAYING WHICH WAY IS OUT ───────────────────
+ *
+ * The rotation is decoration on top of the state description and, when collapsed, on top of the
+ * summary line underneath it — nothing here exists only as motion, and nothing here is carried by
+ * colour. The turn collapses to [snap] under `LocalAppPreferences.reducedMotion`, exactly as
+ * [DwGalleryFloor]'s fill does.
+ */
+@Composable
+private fun DwMeasureHeader(
+    expanded: Boolean,
+    toggleEnabled: Boolean,
+    onToggle: () -> Unit,
+) {
+    val reduceMotion = LocalAppPreferences.current.reducedMotion
+    val turn by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = if (reduceMotion) snap() else tween(durationMillis = 180),
+        label = "photoMeasureChevron",
     )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+            .clickable(
+                enabled = toggleEnabled,
+                onClickLabel = if (expanded) DW_MEASURE_COLLAPSE_ACTION else DW_MEASURE_EXPAND_ACTION,
+                role = Role.Button,
+                onClick = onToggle,
+            )
+            // The 48dp floor this app applies wherever a control was thought about (see
+            // ISLAND_TOUCH_TARGET in ui/AppNavigation.kt). It is a touch target, not decoration.
+            .heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Filled.Straighten,
+            contentDescription = null,
+            tint = MaterialTheme.field.muted,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            "Measure a dimension from a photograph",
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        // THE EXISTING DOOR, KEPT RATHER THAN REMOVED. A button is a merging semantics node of its
+        // own, so it stays a separate TalkBack target inside this clickable row instead of being
+        // swallowed by it, and it consumes its own taps so pressing it cannot also fire the row.
+        if (expanded) DwMeasureCollapseButton(prominent = false, onClick = onToggle)
+        Icon(
+            Icons.Filled.KeyboardArrowDown,
+            // Decorative: the row's own state description already says which state this is, in words.
+            contentDescription = null,
+            tint = MaterialTheme.field.muted,
+            modifier = Modifier
+                .size(20.dp)
+                .rotate(turn),
+        )
+    }
+}
+
+/**
+ * The way out, drawn TWICE on purpose — once in the header and once at the foot of the contents.
+ *
+ * The report this answers was not "there is no close button"; there was one. It was that the only one
+ * sat at the top of a card the designer had just scrolled to the bottom of. So the second is placed
+ * after the propose buttons, at the point where the work is finished, and BOTH are this one composable
+ * saying [DW_MEASURE_COLLAPSE_WORD], so the two doors can never come to be labelled differently.
+ *
+ * @param prominent the foot's copy is full width and outlined, because it has to be findable at the
+ *   end of a long card; the header's is the compact text button that has always been there. The SHAPE
+ *   differs, the WORD does not.
+ */
+@Composable
+private fun DwMeasureCollapseButton(prominent: Boolean, onClick: () -> Unit) {
+    val content: @Composable RowScope.() -> Unit = {
+        Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(DW_MEASURE_COLLAPSE_WORD, fontSize = 12.sp)
+    }
+    if (prominent) {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp),
+            content = content,
+        )
+    } else {
+        TextButton(
+            onClick = onClick,
+            modifier = Modifier.heightIn(min = 48.dp),
+            content = content,
+        )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -409,29 +804,36 @@ private fun DwPhotoMeasureOpen(
     targets: List<DwMeasureTarget>,
     rowValues: Map<String, JsonElement>,
     enabled: Boolean,
-    onClose: () -> Unit,
+    /** Everything a designer typed or placed. Owned by the panel, so it outlives this composable. */
+    config: DwMeasureConfig,
+    onCollapse: () -> Unit,
     onPropose: (String, JsonElement?, String?) -> Unit,
 ) {
-    var photoId by remember { mutableStateOf(photos.first().id) }
-    val photo = photos.firstOrNull { it.id == photoId } ?: photos.first()
-    var mode by remember { mutableStateOf(DwMeasureMode.SCALE) }
-    val marks = remember { mutableStateMapOf<DwMarkId, DwMark>() }
-    var active by remember { mutableStateOf(DwMarkId.REF_A) }
+    val photo = photos.firstOrNull { it.id == config.photoId } ?: photos.first()
+    val marks = config.marks
+    val needed = config.needed
 
+    /*
+     * THE PIXELS, AND NOTHING ELSE, LIVE HERE.
+     *
+     * These five are the state a collapse destroys and the next expansion rebuilds, and that is the
+     * intended trade rather than an oversight — see [DwMeasureConfig] for the other half of the split.
+     * Marks and text are cheap and are kept up there; a decoded working copy is the largest allocation
+     * this feature makes and is not.
+     */
     var image by remember { mutableStateOf<DwDisplayImage?>(null) }
     var decoding by remember { mutableStateOf(false) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
 
-    var referenceLength by remember { mutableStateOf("") }
-    var referenceUnit by remember { mutableStateOf("mm") }
-    var rectWidth by remember { mutableStateOf("") }
-    var rectHeight by remember { mutableStateOf("") }
-    var rectUnit by remember { mutableStateOf("mm") }
+    /*
+     * NOT HOISTED, DELIBERATELY. This describes the press that just happened — a coercion the registry
+     * refused — and a collapse is a different subject. Carried up into [DwMeasureConfig] it would
+     * outlive the press and reappear minutes later over a card the designer has stopped thinking
+     * about, describing a button they no longer remember touching.
+     */
     var proposeError by remember { mutableStateOf<String?>(null) }
-
-    val needed = if (mode == DwMeasureMode.SCALE) SCALE_MARKS else RECTIFY_MARKS
 
     /**
      * Decode the chosen photograph, off the main thread, one at a time.
@@ -441,14 +843,18 @@ private fun DwPhotoMeasureOpen(
      * thread is an unmistakable freeze. Keyed on the photograph's id, so switching photographs releases
      * the previous working copy before the next is decoded rather than holding two.
      *
-     * THE MARKS ARE CLEARED WITH IT. A mark is a position on ONE photograph, in ONE working copy's
-     * pixel grid; carrying it across would put the reference somewhere nobody chose, on an image of a
-     * different size.
+     * THE PHOTOGRAPH IS ADOPTED RATHER THAN THE MARKS CLEARED. This effect re-runs on every expansion,
+     * because
+     * expanding is what puts this composable back into the composition — so the unconditional
+     * `marks.clear()` that stood here until 2026-08-28 would, now the marks outlive the collapse, wipe
+     * the designer's work every time they reopened the card. That is the whole substance of the
+     * report. Clearing belongs to a CHANGE OF PHOTOGRAPH, and [DwMeasureConfig.usePhotograph] is the
+     * guard that tells the two events apart. The decode itself still happens on every entry, as
+     * intended: the bitmap is the thing this panel does not keep.
      */
     LaunchedEffect(photo.id) {
+        config.usePhotograph(photo.id)
         image = null
-        marks.clear()
-        active = if (mode == DwMeasureMode.SCALE) DwMarkId.REF_A else DwMarkId.C0
         decoding = true
         val decoded = withContext(Dispatchers.Default) { DwImageDecode.decodeForDisplay(photo.absolutePath) }
         decoding = false
@@ -483,14 +889,16 @@ private fun DwPhotoMeasureOpen(
     }
 
     // Re-centre whenever the photograph or the box changes. Without this the marks and the image
-    // disagree the first time the panel is opened after a rotation.
+    // disagree the first time the panel is opened after a rotation. The box also changes shape once
+    // per decode now — it takes the photograph's aspect ratio, see the viewport below — and this is
+    // what re-centres for that.
     LaunchedEffect(image, boxSize) {
         zoom = 1f
         pan = clampPan(Offset.Zero, 1f)
     }
 
     /** Seed any mark this mode needs that does not exist yet, once the working copy's size is known. */
-    LaunchedEffect(image, mode) {
+    LaunchedEffect(image, config.mode) {
         if (imageWidth <= 0f || imageHeight <= 0f) return@LaunchedEffect
         for (id in needed) {
             if (marks[id] != null) continue
@@ -558,30 +966,30 @@ private fun DwPhotoMeasureOpen(
      */
     val result: DwMeasureResult? = when {
         !allPlaced || markSigmaPx == null -> null
-        mode == DwMeasureMode.SCALE -> {
-            val length = referenceLength.trim().replace(",", "").toDoubleOrNull()
+        config.mode == DwMeasureMode.SCALE -> {
+            val length = config.referenceLength.trim().replace(",", "").toDoubleOrNull()
             val refA = marks[DwMarkId.REF_A]
             val refB = marks[DwMarkId.REF_B]
             if (length == null || refA == null || refB == null) {
                 null
             } else {
                 DwPhotoMeasure.measureBySameScale(
-                    reference = DwScaleReference(refA.point, refB.point, length, referenceUnit),
+                    reference = DwScaleReference(refA.point, refB.point, length, config.referenceUnit),
                     target = DwSegment(marks.getValue(DwMarkId.TGT_A).point, marks.getValue(DwMarkId.TGT_B).point),
                     markSigmaPx = markSigmaPx,
                 )
             }
         }
         else -> {
-            val width = rectWidth.trim().replace(",", "").toDoubleOrNull()
-            val height = rectHeight.trim().replace(",", "").toDoubleOrNull()
+            val width = config.rectWidth.trim().replace(",", "").toDoubleOrNull()
+            val height = config.rectHeight.trim().replace(",", "").toDoubleOrNull()
             if (width == null || height == null) {
                 null
             } else {
                 DwPhotoMeasure.measureByRectification(
                     corners = listOf(DwMarkId.C0, DwMarkId.C1, DwMarkId.C2, DwMarkId.C3)
                         .map { marks.getValue(it).point },
-                    rectangle = DwKnownRectangle(width, height, rectUnit),
+                    rectangle = DwKnownRectangle(width, height, config.rectUnit),
                     target = DwSegment(marks.getValue(DwMarkId.TGT_A).point, marks.getValue(DwMarkId.TGT_B).point),
                     markSigmaPx = markSigmaPx,
                 )
@@ -596,31 +1004,14 @@ private fun DwPhotoMeasureOpen(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    Icons.Filled.Straighten,
-                    contentDescription = null,
-                    tint = MaterialTheme.field.muted,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    "Measure a dimension from a photograph",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 48.dp)) {
-                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Close", fontSize = 12.sp)
-            }
-        }
+        DwMeasureHeader(
+            expanded = true,
+            // Collapsing is ALWAYS allowed, even where the field itself is read-only: it writes
+            // nothing, and a designer who can see a configured card must be able to put it away
+            // again. Expanding keeps its gate (see the collapsed half); this is the other direction.
+            toggleEnabled = true,
+            onToggle = onCollapse,
+        )
 
         if (photos.size > 1) {
             DwPanelLabel("Photograph")
@@ -633,7 +1024,7 @@ private fun DwPhotoMeasureOpen(
                         label = candidate.displayName,
                         selected = candidate.id == photo.id,
                         enabled = enabled,
-                        onClick = { photoId = candidate.id },
+                        onClick = { config.photoId = candidate.id },
                     )
                 }
             }
@@ -652,11 +1043,10 @@ private fun DwPhotoMeasureOpen(
             ).forEach { (value, label) ->
                 DwPanelChip(
                     label = label,
-                    selected = mode == value,
+                    selected = config.mode == value,
                     enabled = enabled,
                     onClick = {
-                        mode = value
-                        active = if (value == DwMeasureMode.SCALE) DwMarkId.REF_A else DwMarkId.C0
+                        config.chooseMode(value)
                         proposeError = null
                     },
                 )
@@ -664,7 +1054,7 @@ private fun DwPhotoMeasureOpen(
         }
 
         // THE ASSUMPTION, ON SCREEN. See the file header for why this is not a comment.
-        if (mode == DwMeasureMode.SCALE) {
+        if (config.mode == DwMeasureMode.SCALE) {
             DwPanelNote(
                 warning = true,
                 text = "This is only true when the reference and the thing you are measuring lie in the " +
@@ -692,19 +1082,54 @@ private fun DwPhotoMeasureOpen(
             needed.forEach { id ->
                 DwPanelChip(
                     label = "${MARK_BADGE.getValue(id)} · ${if (marks[id]?.placed == true) "placed" else "not placed"}",
-                    selected = active == id,
+                    selected = config.active == id,
                     enabled = enabled,
-                    onClick = { active = id },
+                    onClick = { config.active = id },
                 )
             }
         }
 
         /* ── The photograph ─────────────────────────────────────────────────────────────────── */
 
+        /*
+         * THE VIEWPORT IS THE SHAPE OF THE PHOTOGRAPH. IT WAS A FLAT `.height(300.dp)` UNTIL
+         * 2026-08-28, AND THAT ONE LITERAL IS WHERE "EXCESSIVE EMPTY SPACE ABOVE AND BELOW" CAME FROM.
+         *
+         * It produced the complaint twice over, which is why trimming the number would not have fixed
+         * it:
+         *
+         *  1. BEFORE THE DECODE LANDS there is nothing to draw — `image` is null for the few hundred
+         *     milliseconds [DwImageDecode] takes, and stays null for good on the branch where this
+         *     device cannot open the bytes at all — and the box still reserved 300dp, most of what is
+         *     left of a handset screen, around one centred line of text.
+         *  2. AFTER IT LANDS the box's own shape (full width by 300dp, so roughly 6:5 on a phone) has
+         *     nothing to do with the photograph's, and `fit` letterboxes the picture inside it. Every
+         *     landscape frame — which is what an object photographed beside a scale card usually is —
+         *     got grey bands top and bottom: about 30dp each at 4:3 and about 60dp each at 16:9.
+         *
+         * So there are two shapes now and neither reserves anything. With a working copy the box takes
+         * that copy's OWN aspect ratio, clamped to [MIN_VIEWPORT_RATIO]..[MAX_VIEWPORT_RATIO], and
+         * inside that band there is no empty band on any edge at all. Without one it wraps whichever
+         * sentence it is showing, over a floor of [EMPTY_VIEWPORT_MIN_HEIGHT] — a floor set by the two
+         * zoom buttons parked in this box's corner, which are the one thing in it that must not be
+         * clipped, and not by any picture.
+         */
+        val viewportRatio = if (imageWidth > 0f && imageHeight > 0f) {
+            (imageWidth / imageHeight).coerceIn(MIN_VIEWPORT_RATIO, MAX_VIEWPORT_RATIO)
+        } else {
+            null
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(300.dp)
+                .then(
+                    if (viewportRatio != null) {
+                        Modifier.aspectRatio(viewportRatio)
+                    } else {
+                        Modifier.heightIn(min = EMPTY_VIEWPORT_MIN_HEIGHT)
+                    }
+                )
                 .clipToBounds()
                 .background(MaterialTheme.field.surface50, RoundedCornerShape(10.dp))
                 .border(1.dp, MaterialTheme.field.hairline, RoundedCornerShape(10.dp))
@@ -719,16 +1144,16 @@ private fun DwPhotoMeasureOpen(
                 // make it eleven actions instead of six. The zoom buttons and the mark handles are
                 // CHILDREN of this box, and a child consumes the event before this detector sees it,
                 // so neither of them can place a mark by accident.
-                // `pan` and `active` are deliberately NOT keys: both are read live through their
-                // state delegates when the tap arrives, so listing them would tear this detector down
-                // and rebuild it on every frame of a pan for no benefit at all.
+                // `pan` and the active mark are deliberately NOT keys: both are read live, through the
+                // state they live in, at the moment the tap arrives — so listing them would tear this
+                // detector down and rebuild it on every frame of a pan for no benefit at all.
                 .pointerInput(enabled, displayScale, needed) {
                     if (!enabled) return@pointerInput
                     detectTapGestures { offset ->
                         if (displayScale <= 0f) return@detectTapGestures
-                        setMark(active, viewToImage(offset))
-                        val index = needed.indexOf(active)
-                        if (index in 0 until needed.size - 1) active = needed[index + 1]
+                        setMark(config.active, viewToImage(offset))
+                        val index = needed.indexOf(config.active)
+                        if (index in 0 until needed.size - 1) config.active = needed[index + 1]
                     }
                 }
                 .pointerInput(enabled, fit, boxSize) {
@@ -783,7 +1208,7 @@ private fun DwPhotoMeasureOpen(
                             ),
                         )
                         val dashes = PathEffect.dashPathEffect(floatArrayOf(14f, 9f))
-                        if (mode == DwMeasureMode.SCALE) {
+                        if (config.mode == DwMeasureMode.SCALE) {
                             val a = marks[DwMarkId.REF_A]
                             val b = marks[DwMarkId.REF_B]
                             if (a != null && b != null) {
@@ -834,11 +1259,11 @@ private fun DwPhotoMeasureOpen(
                             // reference and the target read apart at a glance; the badge says which.
                             outlined = id == DwMarkId.TGT_A || id == DwMarkId.TGT_B,
                             enabled = enabled,
-                            isActive = active == id,
+                            isActive = config.active == id,
                             markColor = markColor,
                             discColor = discColor,
                             positionInView = { imageToView(marks[id]?.point ?: mark.point) },
-                            onSelect = { active = id },
+                            onSelect = { config.active = id },
                             onDrag = { delta ->
                                 val current = marks[id]?.point ?: return@DwMarkHandle
                                 if (displayScale <= 0f) return@DwMarkHandle
@@ -914,14 +1339,16 @@ private fun DwPhotoMeasureOpen(
             }
         }
 
-        if (bitmap != null) DwNudgePad(active = active, enabled = enabled, displayScale = displayScale) { delta ->
-            val current = marks[active]?.point ?: return@DwNudgePad
-            setMark(active, DwPoint(current.x + delta.x, current.y + delta.y))
+        if (bitmap != null) {
+            DwNudgePad(active = config.active, enabled = enabled, displayScale = displayScale) { delta ->
+                val current = marks[config.active]?.point ?: return@DwNudgePad
+                setMark(config.active, DwPoint(current.x + delta.x, current.y + delta.y))
+            }
         }
 
         /* ── The known size ─────────────────────────────────────────────────────────────────── */
 
-        if (mode == DwMeasureMode.SCALE) {
+        if (config.mode == DwMeasureMode.SCALE) {
             DwPanelLabel("How long is the reference, really?")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -933,22 +1360,22 @@ private fun DwPhotoMeasureOpen(
                         selected = false,
                         enabled = enabled,
                         onClick = {
-                            referenceLength = dwTrimNumber(preset.length)
-                            referenceUnit = preset.unit
+                            config.referenceLength = dwTrimNumber(preset.length)
+                            config.referenceUnit = preset.unit
                         },
                     )
                 }
             }
             OutlinedTextField(
-                value = referenceLength,
-                onValueChange = { referenceLength = it },
+                value = config.referenceLength,
+                onValueChange = { config.referenceLength = it },
                 label = { Text("Reference length") },
                 enabled = enabled,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
             )
-            DwUnitChips(selected = referenceUnit, enabled = enabled) { referenceUnit = it }
+            DwUnitChips(selected = config.referenceUnit, enabled = enabled) { config.referenceUnit = it }
         } else {
             DwPanelLabel("How big is the rectangle, really?")
             FlowRow(
@@ -961,16 +1388,16 @@ private fun DwPhotoMeasureOpen(
                         selected = false,
                         enabled = enabled,
                         onClick = {
-                            rectWidth = dwTrimNumber(preset.width)
-                            rectHeight = dwTrimNumber(preset.height)
-                            rectUnit = preset.unit
+                            config.rectWidth = dwTrimNumber(preset.width)
+                            config.rectHeight = dwTrimNumber(preset.height)
+                            config.rectUnit = preset.unit
                         },
                     )
                 }
             }
             OutlinedTextField(
-                value = rectWidth,
-                onValueChange = { rectWidth = it },
+                value = config.rectWidth,
+                onValueChange = { config.rectWidth = it },
                 label = { Text("Width, corner 1 to corner 2") },
                 enabled = enabled,
                 singleLine = true,
@@ -978,15 +1405,15 @@ private fun DwPhotoMeasureOpen(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
-                value = rectHeight,
-                onValueChange = { rectHeight = it },
+                value = config.rectHeight,
+                onValueChange = { config.rectHeight = it },
                 label = { Text("Height, corner 2 to corner 3") },
                 enabled = enabled,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
             )
-            DwUnitChips(selected = rectUnit, enabled = enabled) { rectUnit = it }
+            DwUnitChips(selected = config.rectUnit, enabled = enabled) { config.rectUnit = it }
             Text(
                 "The width is the edge from corner 1 to corner 2; the height is from corner 2 to " +
                     "corner 3. Getting the two the wrong way round measures a real rectangle that is " +
@@ -1002,7 +1429,7 @@ private fun DwPhotoMeasureOpen(
             allPlaced = allPlaced,
             needed = needed,
             marks = marks,
-            mode = mode,
+            mode = config.mode,
             targets = targets,
             rowValues = rowValues,
             enabled = enabled,
@@ -1033,6 +1460,24 @@ private fun DwPhotoMeasureOpen(
                 }
             },
         )
+
+        /* ── The way out, at the point the work ends ────────────────────────────────────────── */
+
+        /*
+         * THE SECOND DOOR. The header's has always been there and is still there; this one exists
+         * because the header's is a whole card away by the time a designer has placed six marks, typed
+         * the reference and read the answer. It sits AFTER the propose buttons on purpose: that is the
+         * moment the work is finished, and it is the moment the report describes somebody scrolling
+         * all the way back up from.
+         */
+        Text(
+            "Everything above is kept when this is closed — the marks, the reference and the " +
+                "photograph you chose. Only the picture itself is decoded again next time.",
+            color = MaterialTheme.field.muted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
+        DwMeasureCollapseButton(prominent = true, onClick = onCollapse)
     }
 }
 

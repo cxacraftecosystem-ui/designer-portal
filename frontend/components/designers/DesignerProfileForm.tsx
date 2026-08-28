@@ -42,7 +42,7 @@
  * — a second Save there POSTs a second record — which is why their wording differs.)
  */
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IdCard, Trash2 } from "lucide-react";
 
@@ -55,7 +55,9 @@ import {
   isDesignerProfileFieldRequired,
   type DesignerProfileGroupKey
 } from "@/components/designers/profileCopy";
-import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
+import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { DateField } from "@/components/forms/DateTimeField";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -99,6 +101,46 @@ const MAX = {
   empanelmentNo: 120
 } as const;
 
+/**
+ * ── DICTATION ON THIS FORM: WHICH BOXES HAVE A MICROPHONE, AND WHY THE REST DO NOT ──────────────
+ *
+ * The owner's instruction (2026-08-28): "Add the existing microphone/dictation functionality to all
+ * applicable fields. Follow the same dictation behavior already used throughout the other record
+ * pages. Exclude calendar fields and any other special fields where dictation is not applicable. All
+ * remaining applicable fields should provide the mic dictation button."
+ *
+ * That REPLACES the rule this form shipped with, which was "two boxes, not twenty-three" — the
+ * biography and the address. The default is now the other way round: a free-text box has a
+ * microphone unless there is a reason it must not, and the reason is written here so that a missing
+ * microphone reads as a decision rather than as an oversight.
+ *
+ * DICTATED (ten): Name · Name in the local script · Designation · Institution · Department ·
+ * Qualification · Specialisation · Designer's profile (the biography) · Address · City or town.
+ *
+ * NOT DICTATED, one line each:
+ *
+ *  - **Designer's experience** — a native number box bounded 0–70. A recogniser spells digits out
+ *    in words ("twelve"), which a number input discards silently, so a spoken answer leaves the box
+ *    empty with nothing on screen to say why.
+ *  - **Phone** — a number, with the same problem, behind a control that also carries a dial-code
+ *    dropdown.
+ *  - **Email** — a recogniser writes "at" for `@` and punctuates a domain, so the box would reliably
+ *    produce a value the column's own `EmailStr` then refuses — and a 422 here costs the other
+ *    twenty answers, because this form saves in one PUT.
+ *  - **Website** — the same, worse: a spoken URL arrives with spaces and spelled-out dots.
+ *  - **State** — a closed list of 36 names behind a themed dropdown, answered by picking. The whole
+ *    dataset is grouped by this column, so a near-miss transcription is the one error that would
+ *    quietly file a designer in a state they have never worked in.
+ *  - **Pincode** — six digits, judged by `pincodeValidationError` on every keystroke.
+ *  - **Empanelment number** — an identifier transcribed from a government order, alphanumeric and
+ *    unique. It is the same class as the artisan form's Aadhaar and Pehchan boxes: a mis-heard
+ *    character is not annoying, it is a wrong number stored against a real person, and nothing
+ *    downstream can tell it from a right one.
+ *  - **Empanelment date** — a calendar field, excluded by name in the instruction. `DateField`
+ *    parses `dd/mm/yyyy`; a recogniser answers "the third of February twenty nineteen", and the two
+ *    readings of an ambiguous spoken date are BOTH valid dates, so the error is unreportable.
+ *  - **Photograph, Signature, CV** — file pickers.
+ */
 export function DesignerProfileForm({
   profile,
   save,
@@ -341,52 +383,81 @@ export function DesignerProfileForm({
       <>
         {/*
           REQUIRED, NATIVELY, ON A PLAIN TEXT INPUT — which is the one control on this form where
-          `required` needs no argument at all. It is a real `<input>` inside the `<form>`, so the
-          browser refuses the submit and anchors its own bubble to the box that is empty. The three
-          other mandatory answers each sit on a themed control and each carries its own note.
+          `required` needs no argument at all. It is still a real `<input>` inside the `<form>` after
+          the dictation sweep (`DictatedTextInput` renders one; the microphone is a sibling button
+          under it, not a replacement for the box), so the browser still refuses the submit and
+          anchors its own bubble to the box that is empty. The three other mandatory answers each sit
+          on a themed control and each carries its own note.
 
-          `Field` prints the asterisk from the same boolean, so the mark a reader sees and the rule
-          the browser enforces cannot drift apart.
+          The control prints the asterisk from the same boolean `required` reads, so the mark a
+          reader sees and the rule the browser enforces cannot drift apart — the guarantee `Field`
+          used to give here.
         */}
-        <Field label={DESIGNER_PROFILE_LABELS.displayName} required={isDesignerProfileFieldRequired("displayName")}>
-          <TextInput
-            name="displayName"
-            defaultValue={profile.displayName ?? ""}
-            maxLength={MAX.displayName}
-            required={isDesignerProfileFieldRequired("displayName")}
-          />
-        </Field>
-        <Field label={DESIGNER_PROFILE_LABELS.localName}>
-          <TextInput name="localName" defaultValue={profile.localName ?? ""} maxLength={MAX.localName} />
-        </Field>
-        <Field label={DESIGNER_PROFILE_LABELS.designation}>
-          <TextInput name="designation" defaultValue={profile.designation ?? ""} maxLength={MAX.designation} />
-        </Field>
+        <DictatedField
+          name="displayName"
+          label={DESIGNER_PROFILE_LABELS.displayName}
+          defaultValue={profile.displayName ?? ""}
+          maxLength={MAX.displayName}
+          required={isDesignerProfileFieldRequired("displayName")}
+          onDirty={markDirty}
+        />
+        {/* The local-script name gets one too: `DICTATION_LANGUAGES` carries Hindi, Odia, Gujarati
+            and the rest, so a designer sets the recogniser's language once (it is remembered across
+            the whole app in one storage key) and speaks their name in the script it belongs in. */}
+        <DictatedField
+          name="localName"
+          label={DESIGNER_PROFILE_LABELS.localName}
+          defaultValue={profile.localName ?? ""}
+          maxLength={MAX.localName}
+          onDirty={markDirty}
+        />
+        <DictatedField
+          name="designation"
+          label={DESIGNER_PROFILE_LABELS.designation}
+          defaultValue={profile.designation ?? ""}
+          maxLength={MAX.designation}
+          onDirty={markDirty}
+        />
       </>
     ),
     institution: (
       <>
-        <Field label={DESIGNER_PROFILE_LABELS.institution}>
-          <TextInput name="institution" defaultValue={profile.institution ?? ""} maxLength={MAX.institution} />
-        </Field>
-        <Field label={DESIGNER_PROFILE_LABELS.department}>
-          <TextInput name="department" defaultValue={profile.department ?? ""} maxLength={MAX.department} />
-        </Field>
+        {/* Both are proper nouns typed in full ("National Institute of Fashion Technology",
+            "Department of Textile Design") and both are printed verbatim on a report cover — which
+            is exactly the length of answer somebody would rather speak than thumb in. */}
+        <DictatedField
+          name="institution"
+          label={DESIGNER_PROFILE_LABELS.institution}
+          defaultValue={profile.institution ?? ""}
+          maxLength={MAX.institution}
+          onDirty={markDirty}
+        />
+        <DictatedField
+          name="department"
+          label={DESIGNER_PROFILE_LABELS.department}
+          defaultValue={profile.department ?? ""}
+          maxLength={MAX.department}
+          onDirty={markDirty}
+        />
       </>
     ),
     qualifications: (
       <>
-        <Field label={DESIGNER_PROFILE_LABELS.qualification} required={isDesignerProfileFieldRequired("qualification")}>
-          <TextInput
-            name="qualification"
-            defaultValue={profile.qualification ?? ""}
-            maxLength={MAX.qualification}
-            required={isDesignerProfileFieldRequired("qualification")}
-          />
-        </Field>
-        <Field label={DESIGNER_PROFILE_LABELS.specialisation}>
-          <TextInput name="specialisation" defaultValue={profile.specialisation ?? ""} maxLength={MAX.specialisation} />
-        </Field>
+        <DictatedField
+          name="qualification"
+          label={DESIGNER_PROFILE_LABELS.qualification}
+          defaultValue={profile.qualification ?? ""}
+          maxLength={MAX.qualification}
+          required={isDesignerProfileFieldRequired("qualification")}
+          onDirty={markDirty}
+        />
+        <DictatedField
+          name="specialisation"
+          label={DESIGNER_PROFILE_LABELS.specialisation}
+          defaultValue={profile.specialisation ?? ""}
+          maxLength={MAX.specialisation}
+          onDirty={markDirty}
+        />
         <Field label={DESIGNER_PROFILE_LABELS.experienceYears}>
           <TextInput
             name="experienceYears"
@@ -406,16 +477,31 @@ export function DesignerProfileForm({
     biography: (
       <div className="md:col-span-2">
         {/*
-          THE ONE NARRATIVE BOX ON THIS FORM, AND THEREFORE THE FIRST OF THE TWO THAT GETS A
-          MICROPHONE. See `DictatedField` below for the whole argument about which boxes do and do
-          not, and why the button cannot live inside `Field`.
+          THE ONE NARRATIVE BOX ON THIS FORM, and the only multi-line one — so it is the shared
+          `DictatedTextArea` rather than `DictatedField` (which is single-line by construction; see
+          its header, and `richtext/DictatedTextInput` for why a textarea in a one-line slot is not a
+          prop away). Same microphone, same joiner, same clamp; the difference is the shape of the
+          box, which follows the shape of the answer.
+
+          DICTATION BUT NOT RICH TEXT, deliberately. This paragraph is copied into a registry field
+          and printed as "Designer's profile" in stage 3 of every report; `DesignerProfile.biography`
+          is a plain `String?` that `format_value` prints as prose, so a `{"blocks":…}` document in
+          it would reach a ministry officer as literal braces. That is a storage decision across
+          three languages, not an input-method fix — the same argument `/crafts` records on its
+          description box.
+
+          `rows={8}` and no height class: the shared control's `min-h-24` is a 6rem FLOOR, and eight
+          rows clears it, so the two do not compete. Adding `min-h-40` alongside it would be two
+          `min-height` utilities on one element resolved by stylesheet order rather than by the class
+          string, which is the trap §3.6 records for `bg-*`.
         */}
-        <DictatedField
+        <DictatedTextArea
           name="biography"
           label={DESIGNER_PROFILE_LABELS.biography}
           defaultValue={profile.biography ?? ""}
           maxLength={MAX.biography}
           rows={8}
+          explainWhenUnavailable={false}
           onDirty={markDirty}
         />
       </div>
@@ -485,7 +571,9 @@ export function DesignerProfileForm({
             newlines; `DesignerProfile.addressLine` has not, and it is copied into a registry field
             and typeset on a report cover. Changing the shape of what is stored is not what the
             owner asked for and is not something this form can verify downstream, so the box stays as
-            it was and only gains the button. `rows` is therefore not passed.
+            it was and only gains the button. `DictatedField` is single-line by construction, which
+            is why this is the control it is: the biography above is the only multi-line answer on
+            the profile and it reaches for `DictatedTextArea` instead.
           */}
           <DictatedField
             name="addressLine"
@@ -495,9 +583,16 @@ export function DesignerProfileForm({
             onDirty={markDirty}
           />
         </div>
-        <Field label={DESIGNER_PROFILE_LABELS.city}>
-          <TextInput name="city" defaultValue={profile.city ?? ""} maxLength={MAX.city} />
-        </Field>
+        {/* A town's name is a free proper noun, so it takes a microphone — unlike the state beside
+            it, which is a closed list of 36 answered by picking, and the pincode, which is six
+            digits a recogniser would hand back as words. */}
+        <DictatedField
+          name="city"
+          label={DESIGNER_PROFILE_LABELS.city}
+          defaultValue={profile.city ?? ""}
+          maxLength={MAX.city}
+          onDirty={markDirty}
+        />
         <FieldBlock label={DESIGNER_PROFILE_LABELS.state}>
           <Select
             name="state"
@@ -736,6 +831,18 @@ export function DesignerProfileForm({
       </p>
 
       <form ref={formRef} onSubmit={submit} onInput={markDirty} onKeyDown={handleFormEnter} className="grid gap-5">
+        {/*
+          THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
+          Ten boxes on this page carry one and every one of them passes
+          `explainWhenUnavailable={false}`, because on Firefox the alternative is the same honest
+          paragraph printed ten times down eight panels, which nobody reads. Removing this line does
+          not remove the sentence from one box; it removes it from all of them, which is the
+          silent-nothing the dictation controls exist to prevent.
+
+          Above the first panel rather than inside one: it is a fact about the whole form, and inside
+          the "Identity" section it would read as a remark about the name box.
+        */}
+        <DictationUnavailableNotice />
         {DESIGNER_PROFILE_GROUPS.map((group) => (
           <section key={group.title} className="panel grid gap-3 p-4">
             <div>
@@ -779,8 +886,7 @@ export function DesignerProfileForm({
 }
 
 /**
- * A free-text box with a microphone under it — the designer profile's half of the control
- * `/artisans/new` calls `DictatedTextArea`.
+ * A single-line free-text box on this profile, seeded from the stored record and dictatable.
  *
  * ── WHY THIS PAGE HAD NO MICROPHONE AT ALL, AND WHAT IT IS COPYING ──────────────────────────────
  *
@@ -788,57 +894,68 @@ export function DesignerProfileForm({
  * stage forms (`FieldInput`'s `DictationButton`), and this screen — twenty-one columns, several of
  * them prose, typed by somebody who is usually not at a desk — was simply never given one. The
  * owner reported it as the page being the odd one out, and it was. `OnDeviceDictationButton` is the
- * exact control the artisan form mounts: on-device recognition, no `MediaRecorder`, no network, no
- * consent model to answer to, and its own sentence on a browser that cannot dictate rather than a
- * control that silently is not there.
+ * control underneath all of them: on-device recognition, no `MediaRecorder`, no network, no consent
+ * model to answer to, and its own sentence on a browser that cannot dictate rather than a control
+ * that silently is not there.
  *
- * ── WHY IT IS NOT `DictatedTextArea` ITSELF ─────────────────────────────────────────────────────
+ * ── WHY IT IS A WRAPPER AND NOT THE SHARED CONTROL DIRECTLY ─────────────────────────────────────
  *
- * That component is a `<textarea>` and nothing else, and one of the two boxes here is single-line
- * (the address — see its call site for why the stored shape is not being changed). It also takes no
- * `maxLength`, and every text column on this profile is bounded by the backend schema, which the
- * `MAX` table at the top of this file mirrors precisely so a designer meets the ceiling in the box
- * rather than as a 422 that discards the other twenty answers. So this renders the same three parts
- * in the same order and keeps the props this form needs.
+ * `richtext/DictatedTextInput` is the shared single-line box and this renders exactly it. What this
+ * adds is one thing: it OWNS the string. That control is controlled by its caller by design (a
+ * self-owned box repaints stale text on a form cleared by `formElement.reset()`), and this form has
+ * ten dictatable single-line columns — ten `useState` declarations and ten setters, none of which
+ * this screen has any use for, because nothing here reads a box's value except `submit`, which reads
+ * `FormData` off the form element. This page never calls `form.reset()` and never remounts its form:
+ * it saves in place and the boxes go on holding what the designer typed, which is correct for a
+ * profile. So the value lives here, one line per field at the call site, and the shared control does
+ * the rest.
  *
  * ── AND IT IS NOT A `Field` ────────────────────────────────────────────────────────────────────
  *
  * `Field` is a `<label>`, and a `<label>` forwards a stray click to the first labelable control
- * inside it. With the microphone under the box, clicking "Dictate" would ALSO focus the textarea —
- * which on a phone throws the on-screen keyboard up over the readout the designer is watching. It
- * is the same reason `DictatedTextArea` writes its own `<label htmlFor>`, and the same reason the
- * empanelment date above this does.
+ * inside it. With the microphone under the box, clicking "Dictate" would ALSO focus the input —
+ * which on a phone throws the on-screen keyboard up over the readout the designer is watching. The
+ * shared control writes its own `<label htmlFor>` for that reason, and the empanelment date above
+ * does the same for a different one.
  *
- * ── WHY TWO BOXES AND NOT TWENTY-THREE ─────────────────────────────────────────────────────────
+ * ── WHY TEN BOXES AND NOT TWO, AND WHY NOT ALL TWENTY-ONE ──────────────────────────────────────
  *
- * Dictation is offered where the answer is PROSE — the biography paragraph and the address — and
- * nowhere else, which is exactly the split `/artisans/new` makes (address and notes get one; name,
- * phone and email do not). A recogniser writes "at" for `@`, spells digits out in words and
- * punctuates a URL, so a microphone under the e-mail, phone, pincode, website and date boxes would
- * be a control that reliably produces a value the field then refuses. And a form whose every row
- * carries a button is a form where the button stops being noticed.
+ * This said "two boxes, not twenty-three" until 2026-08-28, and the owner replaced that rule: "Add
+ * the existing microphone/dictation functionality to all applicable fields… Exclude calendar fields
+ * and any other special fields where dictation is not applicable." So the default is now the other
+ * way round — a free-text box has a microphone unless there is a reason it must not — and the
+ * exclusions are listed in the block above `DesignerProfileForm` itself, field by field, so that a
+ * missing microphone reads as a decision rather than as an oversight.
+ *
+ * The half of the old argument that survives is the noise: a form whose every row repeats the same
+ * grey paragraph is a form where the paragraph stops being read. That is why every control here
+ * passes `explainWhenUnavailable={false}` and the form carries `DictationUnavailableNotice` once.
  */
 function DictatedField({
   name,
   label,
   defaultValue,
   maxLength,
-  rows,
+  required,
   onDirty
 }: {
   name: string;
   label: string;
   defaultValue: string;
+  /**
+   * The column's own ceiling, from the `MAX` table at the top of this file.
+   *
+   * Required rather than optional here, and that is the point of the table: every text column on
+   * this profile is bounded by the backend schema, an over-long value 422s the WHOLE twenty-one-key
+   * body, and the designer would lose twenty correct answers to one sentence too many — with the
+   * refusal naming a box that looks fine on screen. The shared control clamps to it and then SAYS so
+   * when the box is full, which is rule 10 wearing a headset.
+   */
   maxLength: number;
-  /** Omit for a single-line box. A `rows` of 1 is still a textarea, and an address is not one. */
-  rows?: number;
+  required?: boolean;
   /** The form's `markDirty`. A dictated phrase is a React state write, not a typed `input` event. */
   onDirty: () => void;
 }) {
-  const reactId = useId();
-  const boxId = `${reactId}-box`;
-  const fullId = `${reactId}-full`;
-
   /*
     CONTROLLED, which the rest of this form's text boxes deliberately are not.
 
@@ -847,91 +964,28 @@ function DictatedField({
     `submit` reads `FormData` off the form element, so nothing downstream can tell the difference —
     and the save path's note about not re-seeding the uncontrolled boxes is unaffected for the same
     reason: the server normalises nothing here beyond a trim.
-  */
-  const [value, setValue] = useState(defaultValue);
-  const full = value.length >= maxLength;
 
-  /*
-    `onDirty` FIRES FROM THE TWO PLACES THAT CHANGE THE VALUE, never from an effect watching it. An
+    `onDirty` FIRES FROM THE ONE PLACE THAT CHANGES THE VALUE, never from an effect watching it. An
     effect would fire once on mount, when the box is seeded from the stored profile, and every visit
     to this page would then pop the unsaved-changes dialog on the way out of a record nobody touched.
     Designers learn to click through that dialog, and then it stops protecting anything.
-
-    ── AND THE CEILING IS ENFORCED HERE, NOT ONLY BY THE `maxLength` ATTRIBUTE ────────────────────
-
-    A DOM `maxLength` bounds TYPING and PASTING and has no opinion at all about a value written into
-    React state, which is exactly what a committed phrase is. So dictation was the one path that
-    could carry the address past its column's 300 characters, and an over-long value 422s the WHOLE
-    twenty-one-key body — the designer loses twenty correct answers because they spoke one sentence
-    too many, with the refusal naming a box that looks fine on screen.
-
-    IT IS CLAMPED AND THEN SAID, never clamped quietly: a box that silently stops accepting words is
-    indistinguishable from a microphone that stopped working, which is rule 10 wearing a headset.
   */
-  function update(next: string) {
-    setValue(next.slice(0, maxLength));
-    onDirty();
-  }
+  const [value, setValue] = useState(defaultValue);
 
   return (
-    // `min-w-0` for the reason `Field` carries it: a grid item will not shrink below its content's
-    // intrinsic width unless told to, and both of these boxes sit in a `md:col-span-2` cell.
-    <div className="grid min-w-0 gap-1">
-      <label className="field-label" htmlFor={boxId}>
-        {label}
-      </label>
-      {rows === undefined ? (
-        <input
-          id={boxId}
-          name={name}
-          type="text"
-          maxLength={maxLength}
-          value={value}
-          aria-describedby={full ? fullId : undefined}
-          className="field-input"
-          onChange={(event) => update(event.target.value)}
-        />
-      ) : (
-        <textarea
-          id={boxId}
-          name={name}
-          rows={rows}
-          maxLength={maxLength}
-          value={value}
-          aria-describedby={full ? fullId : undefined}
-          className="field-input min-h-40"
-          onChange={(event) => update(event.target.value)}
-        />
-      )}
-      {/*
-        COMMITTING APPENDS, NEVER REPLACES — the recogniser is stopped and started many times across
-        a long answer, and a commit that overwrote the box would delete everything already in it the
-        moment somebody paused for breath. The join is a single space unless the box already ends in
-        whitespace, or a paragraph dictated in five goes comes out as "…the warpis sized…". Copied
-        from `DictatedTextArea` because it is the same rule and it must not be re-derived.
-      */}
-      <OnDeviceDictationButton
-        fieldLabel={label}
-        onCommit={(phrase) => {
-          const joiner = !value || /\s$/.test(value) ? "" : " ";
-          update(`${value}${joiner}${phrase}`);
-        }}
-      />
-      {/*
-        THE CEILING, SAID ON SCREEN WHEN IT IS REACHED — see `update`. Mounted only when it is true
-        rather than swapped to `sr-only`: this is not a live region reporting the outcome of an
-        action a reader is waiting on (which is why the save's two answer boxes are), it is a
-        description of the box, so it is bound with `aria-describedby` and read when the box is
-        focused. `ink-500`, not `error-600`: nothing is wrong and nothing was lost — the value in the
-        box is exactly what will be saved.
-      */}
-      {full ? (
-        <p id={fullId} className="text-xs leading-5 text-ink-500">
-          This box is full — it holds {maxLength.toLocaleString("en-IN")} characters, which is what the
-          column stores. Anything spoken or typed beyond that is not added.
-        </p>
-      ) : null}
-    </div>
+    <DictatedTextInput
+      name={name}
+      label={label}
+      required={required}
+      maxLength={maxLength}
+      // Said once for the whole form — see `DictationUnavailableNotice` above the first section.
+      explainWhenUnavailable={false}
+      value={value}
+      onChange={(next) => {
+        setValue(next);
+        onDirty();
+      }}
+    />
   );
 }
 

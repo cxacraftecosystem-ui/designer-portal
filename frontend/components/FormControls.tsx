@@ -2,6 +2,8 @@
 
 import { Children, isValidElement, useId, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from "react";
 
+import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
+import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
 import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 
@@ -103,6 +105,32 @@ export function MultiNoteField({
               value={note}
               placeholder={notes.length > 1 ? `Note ${index + 1}` : "Note"}
               onChange={(event) => setNotes((prev) => prev.map((n, j) => (j === index ? event.target.value : n)))}
+            />
+            {/*
+              A MICROPHONE PER NOTE — added 2026-08-28 under *"All the record pages should have
+              dictation options available, wherever applicable so as to reduce the friction as much
+              as possible."* This was the last free-text box on `/questionnaire` without one.
+
+              PER NOTE AND NOT PER FIELD, because that is what the control IS: several notes, each a
+              separate observation, joined by a blank line only on the way to the column. One
+              microphone over the group would have to guess which box a phrase belonged in, and
+              collapsing the notes into a single dictated textarea would lose a distinction Android's
+              own `MultiNoteInput` still splits back out.
+
+              `explainWhenUnavailable={false}` — every page that mounts this renders
+              `DictationUnavailableNotice` once. A form whose every row repeats the same grey
+              paragraph is a form where the paragraph stops being read.
+
+              `appendDictatedPhrase` and NOT a bare concatenation: it is what puts the space in
+              between the sentence that is there and the one just spoken. The `ProcessForm` note list
+              is the precedent, line for line.
+            */}
+            <OnDeviceDictationButton
+              fieldLabel={notes.length > 1 ? `${label}, note ${index + 1}` : label}
+              explainWhenUnavailable={false}
+              onCommit={(phrase) =>
+                setNotes((prev) => prev.map((n, j) => (j === index ? appendDictatedPhrase(n, phrase) : n)))
+              }
             />
             {notes.length > 1 ? (
               <button

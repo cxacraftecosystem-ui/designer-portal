@@ -671,11 +671,50 @@ model Artisan {
   /// WorkshopArtisan join (which every existing query reads through and which is kept in lock-step);
   /// nullable, so every row recorded before this column keeps behaving exactly as before.
   workshopId    String?
+  /// THE DESIGN & PROTOTYPE WORKSHOP this record belongs to. Read the long note below once; the five
+  /// sibling record types carry the identical column and point back here rather than restating it.
+  ///
+  /// ── WHY A SECOND COLUMN AND NOT `workshopId` WITH A TYPED WORKSHOP ──────────────────────────
+  ///
+  /// `Workshop.workshopType` already has a `DESIGN_PROTOTYPE` member, and `DesignWorkshop.workshopId`
+  /// optionally points at such a row, so a two-hop link between a record and a design workshop was
+  /// *expressible* before this column existed. It was not USABLE, for three reasons that are facts
+  /// about the data rather than about taste:
+  ///
+  ///  1. THE HOP IS OPTIONAL AT BOTH ENDS. `DesignWorkshop.workshopId` is nullable and its own
+  ///     comment calls the link an optimisation ("so a design workshop held at a documented workshop
+  ///     shares its artisans and location instead of restating them"). A designer who opened a design
+  ///     workshop without first creating a `Workshop` row — which is the ordinary case, since nothing
+  ///     asks them to — has nothing for a record to point at.
+  ///  2. IT IS NOT ONE-TO-ONE. Nothing stops two design workshops naming one `Workshop`, so "which
+  ///     design workshop is this artisan filed under" would have no single answer, and the report
+  ///     builder would have to guess.
+  ///  3. THE TWO SCOPES ARE ENFORCED BY DIFFERENT MACHINERY. Writing against a `Workshop` is
+  ///     `resolve_workshop_access` over `WorkshopAssignment`; reading a `DesignWorkshop` is
+  ///     `load_workshop_or_404` over creator/`DesignWorkshopViewer`. Overloading one column with both
+  ///     meanings would put two access systems on one field, which is how a scope comes to be checked
+  ///     by whichever of them the caller happened to remember.
+  ///
+  /// ── THE SHAPE IS `Questionnaire.designWorkshopId`'s, DELIBERATELY ───────────────────────────
+  ///
+  /// Nullable, indexed, `onDelete: SetNull` and never Cascade — that column's own comment gives the
+  /// reason and it holds for every one of these six: "deleting a workshop must not take a fortnight
+  /// of recorded answers with it". A design workshop is additionally SOFT-deleted (`deletedAt`), so
+  /// the hard-delete path this rule guards is rare; the rule is stated anyway because a nullable FK
+  /// with no `onDelete` defaults to `SetNull` only by accident of the provider.
+  ///
+  /// ── AND IT IS ADDITIVE, WHICH IS WHAT MAKES IT SAFE ON A FORTNIGHT-OLD HANDSET ──────────────
+  ///
+  /// Every existing row keeps NULL and every existing query is unchanged. A client that has never
+  /// heard of the column cannot break on it, which matters because the field handsets run offline
+  /// for a fortnight at a time.
+  designWorkshopId String?
 
   craft     Craft?                 @relation(fields: [craftId], references: [id], onDelete: SetNull)
   location  Location?              @relation(fields: [locationId], references: [id], onDelete: SetNull)
   createdBy User                   @relation("ArtisanCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   workshop  Workshop?              @relation("ArtisanWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  designWorkshop DesignWorkshop?   @relation("DesignWorkshopArtisans", fields: [designWorkshopId], references: [id], onDelete: SetNull)
   workshops WorkshopArtisan[]
   products  ProductDocumentation[]
   tools     ToolDocumentation[]
@@ -696,6 +735,9 @@ model Artisan {
   // so a workshop-filtered page reads n rows straight off the index instead of sorting the whole
   // workshop. The bare [createdAt] serves the same list unfiltered, which is what an admin sees.
   @@index([workshopId, createdAt])
+  /// The same equality-then-sort shape as the pair above, for the same reason: the design-workshop
+  /// scoped list is `ORDER BY createdAt DESC LIMIT n`.
+  @@index([designWorkshopId, createdAt])
   @@index([createdAt])
 }
 
@@ -817,9 +859,15 @@ model ProductDocumentation {
   locationId                 String?
   createdById                String
 
+  /// The design & prototype workshop this product belongs to. See `Artisan.designWorkshopId` for the
+  /// whole argument — why it is a second column rather than a typed `Workshop`, and why the delete
+  /// rule is SetNull.
+  designWorkshopId           String?
+
   artisan   Artisan?    @relation(fields: [artisanId], references: [id], onDelete: SetNull)
   craft     Craft?      @relation(fields: [craftId], references: [id], onDelete: SetNull)
   workshop  Workshop?   @relation(fields: [workshopId], references: [id], onDelete: SetNull)
+  designWorkshop DesignWorkshop? @relation("DesignWorkshopProducts", fields: [designWorkshopId], references: [id], onDelete: SetNull)
   location  Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
   createdBy User        @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   media     MediaFile[]
@@ -831,6 +879,7 @@ model ProductDocumentation {
   @@index([createdById])
   @@index([status])
   @@index([workshopId, createdAt])
+  @@index([designWorkshopId, createdAt])
   @@index([createdAt])
 }
 
@@ -882,9 +931,13 @@ model ToolDocumentation {
   locationId                    String?
   createdById                   String
 
+  /// The design & prototype workshop this tool belongs to. See `Artisan.designWorkshopId`.
+  designWorkshopId              String?
+
   artisan   Artisan?    @relation(fields: [artisanId], references: [id], onDelete: SetNull)
   craft     Craft?      @relation(fields: [craftId], references: [id], onDelete: SetNull)
   workshop  Workshop?   @relation(fields: [workshopId], references: [id], onDelete: SetNull)
+  designWorkshop DesignWorkshop? @relation("DesignWorkshopTools", fields: [designWorkshopId], references: [id], onDelete: SetNull)
   location  Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
   createdBy User        @relation("ToolCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   media     MediaFile[]
@@ -896,6 +949,7 @@ model ToolDocumentation {
   @@index([createdById])
   @@index([status])
   @@index([workshopId, createdAt])
+  @@index([designWorkshopId, createdAt])
   @@index([createdAt])
 }
 
@@ -950,11 +1004,23 @@ model MediaFile {
   toolId           String?
   questionnaireInterviewId String?
   locationId       String?
+  /// The design & prototype workshop this file belongs to. See `Artisan.designWorkshopId`.
+  ///
+  /// IT IS NOT THE SAME THING AS `linkedRecordType`/`linkedRecordId` ABOVE, and the difference is
+  /// worth stating because the pair already carries `designWorkshop` as a value. That pair says
+  /// WHICH RECORD A FILE WAS UPLOADED AGAINST and is written by the upload path itself — a stage
+  /// photograph is tagged `("designWorkshop", <id>)` by `dictation_consent.MEDIA_TAG` and by the
+  /// stage media writer, and `records.owned_or_granted_where` matches on it field for field. This
+  /// column says WHICH WORKSHOP A DESIGNER FILED A MISCELLANEOUS UPLOAD UNDER, which is a choice
+  /// they make in a dropdown on the Miscellaneous Media form, exactly as `workshopId` beside it is.
+  /// A file can legitimately have one, both, or neither.
+  designWorkshopId String?
 
   uploadedBy User                  @relation("MediaUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
   artisan    Artisan?              @relation(fields: [artisanId], references: [id], onDelete: SetNull)
   craft      Craft?                @relation(fields: [craftId], references: [id], onDelete: SetNull)
   workshop   Workshop?             @relation(fields: [workshopId], references: [id], onDelete: SetNull)
+  designWorkshop DesignWorkshop?   @relation("DesignWorkshopMedia", fields: [designWorkshopId], references: [id], onDelete: SetNull)
   product    ProductDocumentation? @relation(fields: [productId], references: [id], onDelete: SetNull)
   tool       ToolDocumentation?    @relation(fields: [toolId], references: [id], onDelete: SetNull)
   questionnaireInterview QuestionnaireInterview? @relation("QuestionnaireMedia", fields: [questionnaireInterviewId], references: [id], onDelete: SetNull)
@@ -983,6 +1049,7 @@ model MediaFile {
   // Composite rather than bare workshopId: a workshop's media is the one parent set big enough that
   // the data browser's `ORDER BY createdAt` over it is worth serving from the index too.
   @@index([workshopId, createdAt])
+  @@index([designWorkshopId, createdAt])
 }
 
 model MediaProcessingJob {
@@ -1135,10 +1202,20 @@ model QuestionnaireInterview {
   /// interview had no path to a workshop at all. Nullable, so every interview recorded before this
   /// column keeps behaving exactly as before.
   workshopId    String?
+  /// The design & prototype workshop this interview was conducted for. See
+  /// `Artisan.designWorkshopId` for the argument.
+  ///
+  /// THIS COLUMN IS ALSO WHAT PUTS THE CONSOLIDATED QUESTIONNAIRE UNDER A DESIGN WORKSHOP. That
+  /// surface reads one artisan's answers back out of every interview they sat in — it stores nothing
+  /// of its own and therefore has no column of its own to carry — so scoping it is scoping the
+  /// interviews it reads. Anything that narrows the consolidated view by design workshop narrows it
+  /// through here.
+  designWorkshopId String?
 
   createdBy User                             @relation("QuestionnaireCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   location  Location?                        @relation(fields: [locationId], references: [id], onDelete: SetNull)
   workshop  Workshop?                        @relation("InterviewWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  designWorkshop DesignWorkshop?             @relation("DesignWorkshopInterviews", fields: [designWorkshopId], references: [id], onDelete: SetNull)
   artisans  QuestionnaireInterviewArtisan[]
   responses QuestionnaireResponse[]
   media     MediaFile[]                      @relation("QuestionnaireMedia")
@@ -1147,6 +1224,7 @@ model QuestionnaireInterview {
   @@index([status])
   @@index([interviewDate])
   @@index([workshopId, createdAt])
+  @@index([designWorkshopId, createdAt])
   @@index([createdAt])
 }
 
@@ -1228,6 +1306,36 @@ model Questionnaire {
   /// deleting a workshop must not take a fortnight of recorded answers with it).
   designWorkshopId String?
   isActive    Boolean @default(true)
+  /// PUBLISHED TO EVERY DESIGNER — the "default questionnaire" an administrator sets up once.
+  ///
+  /// ── THE GAP THIS CLOSES ─────────────────────────────────────────────────────────────────────
+  ///
+  /// `_visible_questionnaire_where` admits exactly three things: a designer's OWN forms, forms
+  /// attached to a workshop they created, and forms attached to a workshop they hold a viewer grant
+  /// on. A form that is deliberately for EVERYBODY — an administrator's standard instrument,
+  /// attached to no workshop because it belongs to all of them — matches none of the three and was
+  /// therefore invisible to every designer in the country, which is what the owner reported on
+  /// 2026-08-28: *"The default questionnaire that was previously discussed/configured is still not
+  /// visible to designers."*
+  ///
+  /// ── WHY A COLUMN AND NOT A CONVENTION ───────────────────────────────────────────────────────
+  ///
+  /// The tempting alternatives are "owned by an admin" and "attached to no workshop", and both are
+  /// accidents rather than decisions: an admin drafting a form for one cluster would publish it to
+  /// the whole country by existing, and a designer's own unattached draft would become everybody's.
+  /// Publication has to be a thing somebody DID, so it is a column somebody set.
+  ///
+  /// ── WHAT IT DOES AND DOES NOT CARRY ─────────────────────────────────────────────────────────
+  ///
+  /// It admits the FORM — its title, its sections, its questions — to every designer's list and
+  /// picker, so they can select it and take sittings on it. It carries NOTHING about the sittings:
+  /// `read_questionnaire` still hands a caller only their OWN entries unless they own the form, are
+  /// an admin, or work on the workshop it is attached to. A shared instrument must not become a
+  /// window onto every respondent's name and answers in the repository, which is precisely the leak
+  /// that route's docstring records having already had to close once.
+  ///
+  /// ADMIN-ONLY TO SET. Default false, so nothing that exists today changes.
+  isShared    Boolean @default(false)
   version     Int     @default(1)
   /// The name of the .xlsx it was uploaded from, shown so a designer can tell two drafts apart.
   sourceFilename String?
@@ -1242,6 +1350,9 @@ model Questionnaire {
   @@index([ownerId, createdAt])
   @@index([designWorkshopId])
   @@index([isActive, createdAt])
+  /// The shared-forms clause every designer's list now ORs in, and it is always paired with
+  /// `isActive` — a retired instrument must not keep appearing in everybody's picker.
+  @@index([isShared, isActive])
 }
 
 /// A section of a custom questionnaire. `code` is unique WITHIN its questionnaire and nowhere else —
@@ -1370,16 +1481,20 @@ model Process {
   /// reach a workshop only through its parent product; both readings still work, and this column is
   /// nullable so every row recorded before it keeps behaving exactly as before.
   workshopId          String?
+  /// The design & prototype workshop this process was documented for. See `Artisan.designWorkshopId`.
+  designWorkshopId    String?
 
   product   ProductDocumentation @relation(fields: [productId], references: [id], onDelete: Cascade)
   createdBy User                 @relation("ProcessCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   workshop  Workshop?            @relation("ProcessWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  designWorkshop DesignWorkshop? @relation("DesignWorkshopProcesses", fields: [designWorkshopId], references: [id], onDelete: SetNull)
   steps     ProcessStep[]
 
   @@index([productId])
   @@index([createdById])
   @@index([status])
   @@index([workshopId, createdAt])
+  @@index([designWorkshopId, createdAt])
   @@index([createdAt])
 }
 
@@ -1881,6 +1996,29 @@ model DesignWorkshop {
   /// Custom questionnaires attached to this workshop through the designer's dropdown. Nullable on
   /// the far side, so an unattached questionnaire is a first-class thing rather than an orphan.
   questionnaires Questionnaire[] @relation("DesignWorkshopQuestionnaires")
+  /// ── THE SIX REPOSITORY RECORD TYPES FILED UNDER THIS WORKSHOP ───────────────────────────────
+  ///
+  /// Added 2026-08-28 so that every record type the owner named can be linked to a design and
+  /// prototype workshop: artisans, products, processes, tools, questionnaire interviews (which is
+  /// also what puts the CONSOLIDATED questionnaire under a workshop, since that surface stores
+  /// nothing of its own) and miscellaneous media. `questionnaires` above — the designer-authored
+  /// forms — already had its link and is the shape all six copy.
+  ///
+  /// EVERY ONE OF THEM IS NULLABLE ON THE FAR SIDE AND `onDelete: SetNull`. An unattached record is
+  /// a first-class thing and not an orphan — the same sentence `questionnaires` carries — and a
+  /// deleted workshop must never take a fortnight of fieldwork with it. `Artisan.designWorkshopId`
+  /// holds the full argument for why these are their own column rather than a typed `Workshop`.
+  ///
+  /// THESE ARE NOT `DwStageEntry` ROWS AND MUST NEVER BE CONFUSED WITH THEM. A stage entry is what
+  /// a designer typed INTO one of the 22 stages of this workshop and is what the report prints. An
+  /// artisan filed here is a REPOSITORY record that happens to belong to this workshop's fieldwork;
+  /// it keeps its own review status, its own creator and its own life after the workshop closes.
+  artisansLinked          Artisan[]                @relation("DesignWorkshopArtisans")
+  productsLinked          ProductDocumentation[]   @relation("DesignWorkshopProducts")
+  toolsLinked             ToolDocumentation[]      @relation("DesignWorkshopTools")
+  processesLinked         Process[]                @relation("DesignWorkshopProcesses")
+  interviewsLinked        QuestionnaireInterview[] @relation("DesignWorkshopInterviews")
+  mediaLinked             MediaFile[]              @relation("DesignWorkshopMedia")
   /// Questions this workshop's designer added to it without a deployment. The DEFINITION is here;
   /// the ANSWERS are `entries` rows under the reserved entityKey "_custom". See DwCustomSection.
   customSections DwCustomSection[] @relation("DesignWorkshopCustomSections")

@@ -524,7 +524,10 @@ export const CHOICES: readonly ChoiceSpec[] = [
  * Upstream's six, unchanged, plus sharpen amount as a seventh — because a photograph taken in a
  * courtyard under one tube light is soft far more often than it is noisy, sharpening is the control
  * the owner asked for by name, and a control nobody can find is the same as a control that does not
- * exist. Everything else stays one press away behind "Show all controls".
+ * exist. Everything else stays one press away behind "Show more options", which is now the panel's
+ * ONE disclosure and holds the frame chooser and the download formats as well — see
+ * `SketchTraceField.tsx`'s sixth property. The label changed with it; this list did not, because what
+ * makes a control essential is what it does to the drawing rather than where the panel puts it.
  */
 export const ESSENTIAL_KEYS: readonly string[] = [
   "output.vectorMode",

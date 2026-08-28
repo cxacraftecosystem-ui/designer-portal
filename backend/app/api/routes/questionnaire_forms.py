@@ -134,7 +134,17 @@ _XLSX_SUFFIXES = (".xlsx", ".xlsm", ".xltx")
 
 #: ``Questionnaire``. ``sourceFilename`` is nullable too but ``QuestionnaireUpdate`` does not accept
 #: it — the uploader names the file, not an editor — and ``title``/``isActive`` are NOT NULL.
-_QUESTIONNAIRE_CLEARABLE_COLUMNS = ("description", "designWorkshopId")
+#:
+#: ``designWorkshopId`` USED TO BE NAMED HERE AND DELIBERATELY IS NOT ANY MORE. When the six record
+#: models gained a ``designWorkshopId`` of their own (2026-08-28), the name went into the GLOBAL
+#: :data:`app.services.records.CLEARABLE_KEYS` so that every one of those routes clears it by the
+#: same rule. ``clearable`` ADDS to that set and can never subtract from it, so repeating the name
+#: here changed nothing about behaviour — and ``test_record_patch_clearing`` refuses the repetition
+#: by name, because a route tuple that lists a column the global set already owns is dead weight the
+#: next reader would take for the mechanism. Detaching a questionnaire from its workshop still
+#: works, and ``test_a_questionnaire_patch_detaches_the_workshop_it_was_filed_under`` still drives
+#: it; the null now arrives through the global door instead of this one.
+_QUESTIONNAIRE_CLEARABLE_COLUMNS = ("description",)
 
 #: ``QuestionnaireFormQuestion``. ``retiredAt`` and ``supersededById`` are nullable as well, but they
 #: belong to the retirement machinery — written by the supersede branch in ``update_question``, never
@@ -249,6 +259,27 @@ def _visible_questionnaire_where(user: Any) -> dict[str, Any]:
                     "is": {"deletedAt": None, "viewers": {"some": {"userId": user.id}}}
                 }
             },
+            # ── THE FOURTH CLAUSE: THE PUBLISHED DEFAULT, added 2026-08-28 ──────────────────────
+            #
+            # An administrator's standard instrument, marked ``isShared``. The other three clauses
+            # are all "yours, or your workshop's", so a form that belongs to EVERY workshop matched
+            # none of them and was invisible to every designer while sitting in the table — which is
+            # what the owner reported. See ``Questionnaire.isShared`` in schema.prisma for why this
+            # is a column somebody SET rather than a convention inferred from the owner's role or
+            # from the absence of a workshop.
+            #
+            # ``isActive`` IS PART OF THE CLAUSE AND NOT LEFT TO THE CALLER. Two of this function's
+            # three callers pass ``activeOnly=True`` and one does not, and a retired instrument must
+            # stop appearing in everybody's picker the moment it is retired — a shared form is the
+            # one row where "still listed after retirement" is wrong for every designer at once
+            # rather than for its author. The pair is indexed together for the same reason.
+            #
+            # IT ADMITS THE FORM AND NOTHING ELSE. ``read_questionnaire`` still narrows ``entries``
+            # to the caller's own sittings unless they own the form, are an admin, or work on its
+            # workshop; that check reads ``ownerId`` / ``_works_on_this_questionnaires_workshop``
+            # and does NOT consult this flag, deliberately. Adding it there would turn one published
+            # instrument into a window onto every respondent's name and answers in the repository.
+            {"isShared": True, "isActive": True},
         ]
     }
 
@@ -682,6 +713,9 @@ async def list_questionnaires(
             "designWorkshopId": row.designWorkshopId,
             "designWorkshopTitle": getattr(row.designWorkshop, "title", None),
             "isActive": row.isActive,
+            # See the same key on `/options`: a designer's list can now contain a form they did not
+            # upload, and a row that cannot say why reads as somebody else's work leaking in.
+            "isShared": row.isShared,
             "version": row.version,
             "sourceFilename": row.sourceFilename,
             "createdAt": row.createdAt,
@@ -705,7 +739,21 @@ async def questionnaire_options(
     _require_designer(current_user)
     where: dict[str, Any] = {"isActive": True}
     if not is_admin(current_user):
-        where["ownerId"] = current_user.id
+        # OWN FORMS **OR THE PUBLISHED DEFAULT**, and this used to be `ownerId` alone.
+        #
+        # That single equality is the other half of the defect the fourth clause of
+        # `_visible_questionnaire_where` closes: even once a designer could SEE the shared
+        # instrument in their list, the dropdown that attaches a questionnaire to a workshop was
+        # still built from `ownerId == me`, so the one control whose whole job is offering could not
+        # offer it. The owner's words are "designers can directly select and utilize it" — the list
+        # is the seeing half and this is the selecting half, and shipping one without the other
+        # would have looked like the feature working right up to the moment it was used.
+        #
+        # Written out here rather than calling `_visible_questionnaire_where`: this dropdown is
+        # deliberately NARROWER than the list. It offers what a designer may ATTACH, and a
+        # colleague's form that happens to hang off a shared workshop is not that — reattaching it
+        # would take it out of the workshop its author put it in.
+        where["OR"] = [{"ownerId": current_user.id}, {"isShared": True}]
     rows = await db.questionnaire.find_many(where=where, order={"title": "asc"}, take=500)
     return [
         {
@@ -713,6 +761,12 @@ async def questionnaire_options(
             "title": row.title,
             "version": row.version,
             "designWorkshopId": row.designWorkshopId,
+            # So a client can label the row "Standard form" rather than leaving a designer to wonder
+            # why a questionnaire they never uploaded is in their list. Also what stops a shared form
+            # being drawn as though it were the designer's own to edit — the PATCH still refuses
+            # anybody but its owner or an admin, and a control that offers an edit it cannot perform
+            # is worse than one that says whose form this is.
+            "isShared": row.isShared,
             # So the dropdown can mark "already attached to another workshop" rather than letting a
             # designer reattach one mid-fieldwork and wonder where it went.
             "attachedElsewhere": bool(
@@ -944,6 +998,29 @@ async def update_questionnaire(
         # The truthiness test is the detach case (`None`) passing through unchecked, on purpose;
         # see the helper.
         await _require_attachable_workshop(data["designWorkshopId"], current_user)
+    if "isShared" in data and not is_admin(current_user):
+        # ── PUBLISHING IS AN ADMIN'S ACT, AND `_require_owner` ABOVE IS NOT THAT CHECK ───────────
+        #
+        # That helper admits the form's OWNER, which is every designer for their own forms. Ticking
+        # this flag does not change the owner's form — it changes what every OTHER designer in the
+        # country sees in their list and their attach dropdown, which is a repository-wide act and
+        # not an edit to a record. Left on `_require_owner` alone, any designer could publish their
+        # own draft to the whole fleet by PATCHing one boolean.
+        #
+        # KEYED ON PRESENCE and not on the value: sending `isShared: false` to UNPUBLISH is the same
+        # act in reverse and needs the same authority, and a designer must not be able to withdraw
+        # the standard instrument from everybody either.
+        #
+        # 403 and not 404, which is the opposite of `_require_attachable_workshop`'s rule and is
+        # right here: this caller already holds the questionnaire and is reading it on screen, so
+        # there is nothing left to conceal — what they need told is that the CONTROL is not theirs.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Only an admin can publish a questionnaire as the default form for every designer. "
+                "Your own questionnaires are unaffected — ask an admin to publish this one."
+            ),
+        )
     if "title" in data:
         data["title"] = data["title"].strip()
     if data:

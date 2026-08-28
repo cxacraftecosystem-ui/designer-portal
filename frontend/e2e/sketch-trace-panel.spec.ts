@@ -455,6 +455,12 @@ async function mount(page: Page, options: { runtimeMs?: number; traceMs?: number
     "traceExport.ts",
     "comparisonPlates.ts",
     "traceStages.ts",
+    // `FramePanel` requires `./frameGeometry` since 2026-08-28 — the crop arithmetic was lifted out
+    // of its private closures so a spec could reach it. A module the panel requires and this
+    // registry does not hold is a `require` that throws AT MOUNT, so every case in this file fails
+    // with the harness's own message rather than with anything about the panel. It must be defined
+    // BEFORE `FramePanel.tsx`.
+    "frameGeometry.ts",
     // The two new pickers. `.tsx`, so the specifier has to be stripped of the whole extension rather
     // than of `.ts` — `"DropCard.tsx".replace(/\.ts$/, "")` is `"DropCard.tsx"`, which is a registry
     // key nothing requires and a `require` that throws at mount with the harness's own message.
@@ -856,6 +862,23 @@ test("a frame reaches the tracer only when it is committed, and the panel says s
     controls. Better to be exact than to reach for `.first()`, which would silently pick whichever the
     DOM happened to order first the next time a control moved.
   */
+  /*
+    OPEN THE FRAME CHOOSER FIRST, added 2026-08-28.
+
+    The panel now opens on its primary path only — the photograph, the presets, the essential
+    controls, the comparator and the two attach actions — and everything else, the frame chooser
+    included, sits behind ONE disclosure. That is the owner's instruction ("advanced/configuration
+    settings are placed inside an internal accordion"), so a case that reaches for a frame control
+    has to press the door first.
+
+    "Choose a frame" IS ALSO THE READINESS GATE it replaces: the button appears as soon as the
+    decode lands, which is exactly what the old `expect(... "Use this frame for the trace"
+    ).toBeVisible()` was waiting for.
+  */
+  const chooseFrame = page.getByRole("button", { name: "Choose a frame" });
+  await expect(chooseFrame).toBeVisible({ timeout: 15_000 });
+  await chooseFrame.click();
+
   const frameWidth = page.getByLabel("Width", { exact: true });
   await frameWidth.fill("32");
   await expect(
@@ -915,6 +938,9 @@ test("the two downloads save the vector trace and the rendered raster, each re-t
   await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
   await pick(page, "sheet.png", 64, 48);
 
+  // The two downloads moved behind the one disclosure with the rest of the advanced controls, as
+  // part of the 2026-08-28 accordion — see the note at the first "Choose a frame" gate in this file.
+  await page.getByRole("button", { name: "Show more options" }).click();
   const downloadTrace = page.getByRole("button", { name: "Download the trace (SVG)" });
   const downloadRender = page.getByRole("button", { name: "Download the rendered image (PNG)" });
 
@@ -1046,6 +1072,12 @@ test("a trace that fails leaves the comparator saying so, and nothing to downloa
   await expect(page.getByRole("slider", { name: "Traced drawing against the photograph" })).toHaveCount(0);
 
   // And no button offers a file it does not have.
+  //
+  // THE DISCLOSURE IS OPENED FIRST, and that is what keeps this assertion meaning anything. The
+  // downloads moved behind it on 2026-08-28, so `toBeDisabled()` against an unmounted control would
+  // fail for the wrong reason and `toHaveCount(0)` would pass for the wrong one — neither would be
+  // testing that a failed trace offers a file it does not have.
+  await page.getByRole("button", { name: "Show more options" }).click();
   await expect(page.getByRole("button", { name: "Download the trace (SVG)" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Download the rendered image (PNG)" })).toBeDisabled();
   await expect(page.getByRole("button", { name: `Add the line art to “${TARGET_LABEL}”` })).toBeDisabled();
@@ -1105,7 +1137,10 @@ test("the picker refuses what is not a photograph, in a sentence, and takes what
   expect(await refusal.evaluate((node) => node.closest('[role="alert"]') !== null)).toBe(true);
   // …and nothing was traced from it, so `validate` is the rule rather than a decoration on one.
   expect(await traces(page)).toEqual([]);
-  await expect(page.getByRole("button", { name: "Use this frame for the trace" })).toHaveCount(0);
+  // NAMES THE DOOR, not the button behind it. Since the disclosure landed, the inner control is
+  // unmounted whether or not there is a photograph, so asserting on it would pass for a reason that
+  // has nothing to do with this case. "Choose a frame" is drawn only once a decode exists.
+  await expect(page.getByRole("button", { name: "Choose a frame" })).toHaveCount(0);
 
   // ── THE SVG, WHICH IS AN IMAGE AND IS STILL REFUSED ───────────────────────
   // `decodeToPixels`'s header: tracing vector art is a round trip that can only lose. It is the one
@@ -1331,7 +1366,22 @@ test("a half-typed number survives being typed, and a clamp that moves one says 
   await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
   // 300 wide, so "150" passes through a first character far below the 16px minimum edge.
   await pick(page, "sheet.png", 300, 200);
-  await expect(page.getByRole("button", { name: "Use this frame for the trace" })).toBeVisible({ timeout: 15_000 });
+  /*
+    OPEN THE FRAME CHOOSER FIRST, added 2026-08-28.
+
+    The panel now opens on its primary path only — the photograph, the presets, the essential
+    controls, the comparator and the two attach actions — and everything else, the frame chooser
+    included, sits behind ONE disclosure. That is the owner's instruction ("advanced/configuration
+    settings are placed inside an internal accordion"), so a case that reaches for a frame control
+    has to press the door first.
+
+    "Choose a frame" IS ALSO THE READINESS GATE it replaces: the button appears as soon as the
+    decode lands, which is exactly what the old `expect(... "Use this frame for the trace"
+    ).toBeVisible()` was waiting for.
+  */
+  const chooseFrame = page.getByRole("button", { name: "Choose a frame" });
+  await expect(chooseFrame).toBeVisible({ timeout: 15_000 });
+  await chooseFrame.click();
 
   const width = page.getByLabel("Width", { exact: true });
   const left = page.getByLabel("Left", { exact: true });
@@ -1407,7 +1457,22 @@ test("the frame's provenance sentence reaches the exported SVG from the editor t
   await mount(page);
   await page.getByRole("button", { name: "Trace a sketch into line art" }).click();
   await pick(page, "sheet.png", 64, 48);
-  await expect(page.getByRole("button", { name: "Use this frame for the trace" })).toBeVisible({ timeout: 15_000 });
+  /*
+    OPEN THE FRAME CHOOSER FIRST, added 2026-08-28.
+
+    The panel now opens on its primary path only — the photograph, the presets, the essential
+    controls, the comparator and the two attach actions — and everything else, the frame chooser
+    included, sits behind ONE disclosure. That is the owner's instruction ("advanced/configuration
+    settings are placed inside an internal accordion"), so a case that reaches for a frame control
+    has to press the door first.
+
+    "Choose a frame" IS ALSO THE READINESS GATE it replaces: the button appears as soon as the
+    decode lands, which is exactly what the old `expect(... "Use this frame for the trace"
+    ).toBeVisible()` was waiting for.
+  */
+  const chooseFrame = page.getByRole("button", { name: "Choose a frame" });
+  await expect(chooseFrame).toBeVisible({ timeout: 15_000 });
+  await chooseFrame.click();
 
   await page.getByLabel("Width", { exact: true }).fill("32");
   await page.getByRole("button", { name: "Use this frame for the trace" }).click();

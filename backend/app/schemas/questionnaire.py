@@ -63,6 +63,10 @@ class QuestionnaireInterviewCreate(APIModel):
     # The workshop this interview was conducted at. Optional: an omitted workshopId behaves exactly as
     # before, while a supplied one is subject to the workshop's assignment + submission-window rules.
     workshopId: str | None = None
+    # The design & prototype workshop this interview is filed under. Optional; an explicit null
+    # unfiles it. Gated on write by ``record_design_workshop.assert_payload_workshop`` — see
+    # ``ArtisanCreate.designWorkshopId`` in schemas/records.py for the whole argument.
+    designWorkshopId: str | None = None
     status: str = "PENDING"
     recordedAt: datetime | None = None
     recordedTimezone: str = "Asia/Kolkata"
@@ -155,6 +159,14 @@ class QuestionnaireUpdate(APIModel):
     # the 500 the empty string produced on all three of the routes that take this field.
     designWorkshopId: str | None = Field(default=None, min_length=1)
     isActive: bool | None = None
+    #: PUBLISH THIS FORM TO EVERY DESIGNER — the "default questionnaire". **Admin only**, enforced in
+    #: :func:`update_questionnaire` and not here, because a schema cannot see who is calling.
+    #:
+    #: Separate from ``isActive`` even though the two are read together, because they answer
+    #: different questions: ``isActive`` is "is this instrument still in use at all", ``isShared`` is
+    #: "is it everybody's". A retired shared form is a real state — it disappears from every
+    #: designer's picker and keeps its recorded sittings — and one boolean could not express it.
+    isShared: bool | None = None
 
 
 class QuestionnaireReuse(APIModel):
@@ -227,6 +239,10 @@ class QuestionnaireInterviewUpdate(APIModel):
     language: str | None = None
     notes: str | None = None
     workshopId: str | None = None
+    # The design & prototype workshop this interview is filed under. Optional; an explicit null
+    # unfiles it. Gated on write by ``record_design_workshop.assert_payload_workshop`` — see
+    # ``ArtisanCreate.designWorkshopId`` in schemas/records.py for the whole argument.
+    designWorkshopId: str | None = None
     status: str | None = None
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None

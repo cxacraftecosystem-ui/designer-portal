@@ -1461,3 +1461,29 @@ field-capture system that defaults a record's location to the device's).
 - `docs/SECURITY.md` — the access-control surface in operational rather than research terms.
 - `backend/prisma/migrations/20260726200000_index_coverage/` — the `EXPLAIN` evidence for §14,
   including the rejected candidates.
+---
+
+## How this document is kept true
+
+This page is unlike every other document in `docs/`: it is a **dated record of measurements**, not a
+description of how the system currently works. That distinction decides how it is maintained — the
+numbers here are not meant to track the code, and correcting them silently would destroy the thing
+they are for.
+
+| Claim | What checks it | What it cannot check |
+|---|---|---|
+| Every repository path and citation | `node docs/tools/check-docs.mjs` | Whether the code at that path still behaves as the result describes |
+| The provenance label on every figure | §0.1 defines the four, and each figure carries one at the point of use | Whether the label is the right one. Only the person who took the measurement knows |
+| The corpus counts in §0 and §2 | They are stated as of the measurement date and are expected to be stale | — |
+
+**A FIGURE HERE IS NEVER UPDATED IN PLACE.** If a measurement is repeated, the new one is added with
+its own date and its own label, beside the old one — §0.1's **MEASURED (cited)** row exists precisely
+so that a replicated figure shows both values. Overwriting a number would turn a research record into
+a claim about today, which is the one thing §0 opens by refusing.
+
+**What a reader must not take from this page:** that any count here describes the repository now. §0
+says so first and in its own words — "this is a working pilot, not a corpus" — and that framing is
+load-bearing rather than modest.
+
+**Re-read this page when** somebody proposes to cite a number from it. Check the label and the date
+before the number leaves this file.

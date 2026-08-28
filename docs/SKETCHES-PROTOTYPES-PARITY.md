@@ -146,7 +146,10 @@ a fact neither client can change: `backend/app/services/report_builder.py` place
 | Reach the two stages without remembering which workshop they are in | `frontend/app/(protected)/sketches-and-prototypes/page.tsx#SketchesAndPrototypesHubPage` · `frontend/components/sketches/SketchesWorkspace.tsx#SketchesWorkspace` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#SketchesAndPrototypesScreen` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#SKETCH_STAGE` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#PROTOTYPE_STAGE` | **BOTH** |
 | Find that destination in the menu, behind the same predicate | `frontend/components/DynamicIslandNav.tsx#NAV_ITEMS` · `frontend/lib/permissions.ts#ROUTE_GUARDS` | `android/app/src/main/java/com/designprototype/workshop/ui/AppNavigation.kt#SKETCHES_AND_PROTOTYPES` | **BOTH** |
 | Tell "you are on none" apart from "I could not ask" | `frontend/app/(protected)/sketches-and-prototypes/page.tsx#ChooseWorkshopThenSketches` · `frontend/lib/offline.ts#isUnreachable` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#DW_SKETCH_CHOOSER_NO_WORKSHOPS` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#DW_SKETCH_CHOOSER_OFFLINE` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#DW_SKETCH_CHOOSER_REFUSED` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#DW_SKETCH_CHOOSER_NOTHING_LOST` | **BOTH** |
-| Attach a file to a chosen sketch or prototype without opening its stage | `frontend/components/sketches/UploadTabHost.tsx#UploadTabHost` · `frontend/components/sketches/stageRows.ts#readStageRows` | The chooser navigates instead, deliberately — see below. Verified 2026-08-27; re-check with `grep -nw "DwMediaCaptureCard" android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt` | **WEB ONLY (deliberate)** |
+| Attach a file to a chosen sketch or prototype without opening its stage | `frontend/components/sketches/UploadTabHost.tsx#UploadTabHost` · `frontend/components/sketches/stageRows.ts#readStageRows` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserUpload.kt#DwSketchChooserUploadTab` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#dwChooserAppendRow` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#dwChooserWriteMedia` | **BOTH** |
+| Pick which workshop, once, instead of scanning a list of all of them | `frontend/app/(protected)/sketches-and-prototypes/page.tsx#ChooseWorkshopThenSketches` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt#SketchesAndPrototypesScreen` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#dwChooserDefaultWorkshop` | **BOTH** |
+| Work under an Upload tab and a Review tab | `frontend/components/sketches/SketchTabs.tsx#SketchTabs` · `frontend/components/sketches/SketchesWorkspace.tsx#SketchesWorkspace` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserTabs.kt#DwSketchChooserTabStrip` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserReview.kt#DwSketchChooserReviewTab` | **BOTH** |
+| Add a NEW sketch or prototype row without opening its stage | `frontend/components/sketches/UploadTabHost.tsx#UploadTabHost` picks an existing row and does NOT add one. Verified 2026-08-28; re-check with `grep -n "Add a sketch\|Add a prototype" frontend/components/sketches/UploadTabHost.tsx` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#dwChooserNewRow` | **ANDROID ONLY (deliberate)** |
 
 Only the handset gives its list answers **names**, which is why only the handset can pin them:
 `android/app/src/test/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserSentenceTest.kt`
@@ -170,12 +173,42 @@ One is settled, one closed on the day this page was written, and one was never w
 > second, parallel way to add a prototype'. A screen here that let a designer add a sketch would be
 > one feature with two stores, and the one it wrote to would be the one the report did not read."
 
-**Quote it for exactly what it says.** It refuses a second way to **add** a row. The web's upload tab
-does not add one either — `frontend/components/sketches/UploadTabHost.tsx` picks an existing row and
-writes through the same draft store the stage form uses, so the web is not the thing this comment
-forbids. What the comment settles for the handset is the narrower question of whether the chooser
-grows controls of its own, and the answer is no. **Do not turn the chooser into an editor**; the
-parity spec asserts that it mounts no capture card.
+**Quote it for exactly what it says.** It refuses a second **store**, not a second control. The web's
+upload tab was never the thing it forbade — `frontend/components/sketches/UploadTabHost.tsx` picks an
+existing row and writes through the same draft store the stage form uses.
+
+**AND ON 2026-08-28 THE HANDSET TOOK THE SAME SHAPE.** This paragraph used to end "the answer is no.
+**Do not turn the chooser into an editor**; the parity spec asserts that it mounts no capture card",
+and both halves of that are now out of date. The owner asked for the capability in terms —
+*"Provide an option to add a Sketch or Prototype directly to the selected workshop from this screen …
+A workshop can contain multiple sketches and multiple prototypes"* — and the screen was rewritten
+around a single workshop with **Upload** and **Review** tabs, which is the web's own shape.
+
+**The refusal above is honoured rather than overruled, and here is the check.** Every write from the
+Upload tab goes to the one place a sketch has always lived:
+
+* the row through `WorkshopDraftStore.updateStage`, whose own KDoc reads *"This is what a stage
+  screen should call"*, into the same `StageDraft.rows` the stage form edits;
+* the bytes through `WorkshopDraftStore.importMedia`, into the workshop's own media directory,
+  exactly as `StageScreen`'s bridge does;
+* the hop to the repository through `WorkshopSyncEngine.pushStage`, the one place a stage becomes a
+  payload.
+
+There is no parallel collection, no second table and no new endpoint. A sketch added from the tab is
+byte for byte the row a designer would have made by walking to stage 11, which is why `ReportFigures`
+finds it.
+
+**The spec that guarded this changed with it, and the old assertion would have passed anyway** —
+which is the part worth remembering. It read `SketchesAndPrototypesScreen.kt` and failed if that file
+named `DwMediaCaptureCard`; the capture card now lives in `DwSketchChooserUpload.kt`, a file the test
+never opened. A green run would have gone on reporting about a screen that no longer exists in that
+shape. It now asserts the property the rule was always about: **writes through the ONE path, and
+mints no second store.**
+
+One thing the handset does that the web does not: it can **add a new row**, where the web can only
+pick an existing one. That is the single `ANDROID ONLY (deliberate)` row in Matrix D, and it is
+deliberate because the alternative on a phone is telling a designer with a drawing in their hand to
+go and open a stage form first.
 
 ### The corner guess — a gap that closed while this page was being written
 

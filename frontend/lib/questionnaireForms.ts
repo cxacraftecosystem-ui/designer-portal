@@ -135,6 +135,8 @@ export type QForm = {
   ownerId: string;
   designWorkshopId: string | null;
   isActive: boolean;
+  /** See {@link QFormSummary.isShared} — the published default, offered to every designer. */
+  isShared: boolean;
   /**
    * Bumped on every supersede and every retire, so a client holding a cached copy can tell it is
    * stale with an integer compare rather than a deep diff.
@@ -157,6 +159,19 @@ export type QFormSummary = {
   ownerName: string | null;
   designWorkshopId: string | null;
   designWorkshopTitle: string | null;
+  /**
+   * PUBLISHED TO EVERY DESIGNER — the "default questionnaire" an administrator sets up once.
+   *
+   * A designer's list can now contain a form they did not upload, and a row that cannot say why
+   * reads as somebody else's work leaking in. It is also what stops a shared form being drawn as
+   * though it were the designer's own to edit: `PATCH /questionnaires/{id}` still refuses anybody
+   * but its owner or an admin, and a control that offers an edit it cannot perform is worse than one
+   * that says whose form this is.
+   *
+   * See `Questionnaire.isShared` in `backend/prisma/schema.prisma` for why it is a column somebody
+   * SET rather than a convention inferred from the owner's role or from having no workshop.
+   */
+  isShared: boolean;
   isActive: boolean;
   version: number;
   sourceFilename: string | null;
@@ -170,6 +185,8 @@ export type QFormOption = {
   title: string;
   version: number;
   designWorkshopId: string | null;
+  /** See {@link QFormSummary.isShared} — the published default, offered to every designer. */
+  isShared: boolean;
   /** True when this questionnaire is already attached to a DIFFERENT workshop than the one asked about. */
   attachedElsewhere: boolean;
 };
@@ -333,6 +350,16 @@ export type QFormUpdateBody = {
   description?: string | null;
   designWorkshopId?: string | null;
   isActive?: boolean;
+  /**
+   * Publish this form to every designer, or withdraw it. **ADMIN ONLY** — the server answers 403 to
+   * anybody else, including the form's own owner, because this changes what every OTHER designer in
+   * the country sees rather than editing a record.
+   *
+   * SEPARATE FROM `isActive` even though the two are read together: `isActive` is "is this
+   * instrument still in use at all", this is "is it everybody's". A retired shared form is a real
+   * state and one boolean could not express it.
+   */
+  isShared?: boolean;
 };
 
 /**

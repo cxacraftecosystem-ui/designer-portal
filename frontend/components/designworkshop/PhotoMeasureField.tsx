@@ -185,7 +185,9 @@ export function PhotoMeasureField({
   targets,
   row,
   onPropose,
-  disabled
+  disabled,
+  open: controlledOpen,
+  onOpenChange
 }: {
   photos: MeasurablePhoto[];
   targets: MeasureTarget[];
@@ -224,9 +226,47 @@ export function PhotoMeasureField({
    */
   onPropose: (key: string, value: DwValue, method: MeasurementMarker) => void;
   disabled?: boolean;
+  /**
+   * DRIVE THE DISCLOSURE FROM OUTSIDE — for a caller that already draws a card around this one.
+   *
+   * ── WHY IT IS OPTIONAL AND NOT A REQUIRED PROP ──────────────────────────────────────────────
+   *
+   * Two of the three mounts have no outer card and must keep owning their own open state: the stage
+   * form (`FieldInput`) and the record forms drop this panel in among a column of fields, where the
+   * collapsed summary IS the control. Only the Sketches Upload tab wraps it
+   * (`sketches/upload/MeasureFromPhotoCard.tsx`), and there the two disclosures were stacked: a
+   * designer opened the card and met a second, identical "Measure a dimension from a photograph"
+   * heading with a second button under it.
+   *
+   * Uncontrolled by default, controlled when both are passed — the ordinary React pair, and the
+   * reason `defaultOpen` alone would not do: the panel's own Close would then collapse the inner
+   * disclosure while the outer card stayed open, leaving an expanded card with nothing in it.
+   */
+  open?: boolean;
+  /**
+   * Told when the panel wants to open or close itself — its own Close button, in practice.
+   *
+   * A CONTROLLED CALLER MUST HONOUR IT. `MeasureFromPhotoCard` collapses the whole card on `false`,
+   * which is what makes the panel's Close and the card's own collapse the same act rather than two
+   * controls that disagree.
+   */
+  onOpenChange?: (open: boolean) => void;
 }) {
   const panelId = useId();
-  const [open, setOpen] = useState(false);
+  /*
+    SELF-OWNED UNLESS THE CALLER SUPPLIES ONE. `controlledOpen ?? selfOpen` is the standard pair; the
+    setter writes BOTH so a controlled caller that re-renders with the same value still gets told,
+    and an uncontrolled one keeps working with no caller at all.
+  */
+  const [selfOpen, setSelfOpen] = useState(false);
+  const open = controlledOpen ?? selfOpen;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      setSelfOpen(next);
+      onOpenChange?.(next);
+    },
+    [onOpenChange]
+  );
   const [photoKey, setPhotoKey] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("SCALE");
   const [marks, setMarks] = useState<Partial<Record<MarkId, Mark>>>({});
@@ -941,6 +981,38 @@ export function PhotoMeasureField({
         disabled={disabled}
         onPropose={onPropose}
       />
+
+      {/*
+        A SECOND WAY OUT, AT THE FOOT — added 2026-08-28 on the owner's report about the handset:
+        *"once Measure a dimension from a photograph is expanded, there is currently no way to
+        minimize/collapse it again after configuration … the configured state should not force the
+        user to repeatedly scroll through the expanded card."*
+
+        The header has carried a Close all along, and that was the whole problem: this panel is a
+        photograph, a method chooser, six mark chips, a nudge pad and a readout, so a designer who
+        has just placed four marks and read the answer at the BOTTOM had to scroll the entire card
+        back up to shut it. The point at which somebody is finished is right here, under the propose
+        buttons, and that is where the control belongs.
+
+        BOTH DOORS, NEVER ONE INSTEAD OF THE OTHER. Removing the header's would take the exit away
+        from a reader who opened the card and immediately changed their mind, before scrolling at
+        all. It is the same act, the same word and the same `setOpen(false)`, so a controlled caller
+        (`MeasureFromPhotoCard`) sees one event whichever is pressed.
+
+        NO `aria-controls` HERE. The header's button already names the region, and a second control
+        claiming the same relationship would announce two disclosures over one panel — and this one
+        is INSIDE the region it would be pointing at, which is the malformed shape §17 warns about.
+      */}
+      <div className="flex justify-end border-t border-line-200 pt-2">
+        <button
+          type="button"
+          className="inline-flex min-h-10 items-center gap-1 px-2 text-xs font-medium text-ink-500 underline"
+          onClick={() => setOpen(false)}
+        >
+          <X className="h-3 w-3" aria-hidden />
+          Close the measuring panel
+        </button>
+      </div>
     </div>
   );
 }

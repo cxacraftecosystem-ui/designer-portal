@@ -1,7 +1,9 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -274,7 +276,11 @@ class DwSketchTraceParamsTest {
             "output.strokeWidth" !in DW_TRACE_PRIMARY_KEYS,
         )
         assertEquals(
-            "the disclosure button prints this number, so it must come from the table",
+            // The BUTTON no longer prints this one — it prints `dwTraceAdvancedRevealed`, which
+            // counts the rows this device's engine will actually draw. This constant is what the
+            // TABLE holds, and it stays because the two must agree on a healthy build; the assertion
+            // that they do is `every hidden control is reachable through exactly one group heading`.
+            "DW_TRACE_ADVANCED_COUNT must come from the table rather than from anybody's memory",
             DW_TRACE_CONTROLS.count { it.tier == DwTraceTier.ADVANCED },
             DW_TRACE_ADVANCED_COUNT,
         )
@@ -446,5 +452,387 @@ class DwSketchTraceParamsTest {
         assertEquals("jewellery", dwTraceSubjectFor("JEWELLERY"))
         assertEquals("textile", dwTraceSubjectFor(" SAREE "))
         assertEquals("carving", dwTraceSubjectFor("DECORATIVE"))
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The one disclosure
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * The panel's own source.
+     *
+     * READ AS TEXT, WHICH IS THE ONLY TOOL THIS MODULE HAS FOR A COMPOSABLE. There is no Robolectric
+     * and no Compose test rule in this source set, so the assertions below about what the panel WIRES
+     * — the click label, the state description, the role, the reduced-motion branch — are grep with a
+     * failure message on it. That is weaker than driving the tree and much stronger than nothing: the
+     * failure mode these guard against is somebody deleting a line during a tidy-up, and a deleted
+     * line is exactly what a substring search finds.
+     */
+    private val panelSource: String by lazy {
+        val file =
+            File("src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTracePanel.kt")
+        assertTrue(
+            "expected the trace panel at ${file.absolutePath}. If the file moved, fix the path — do " +
+                "not delete these assertions; they are what stops the disclosure quietly losing its " +
+                "accessibility wiring.",
+            file.exists(),
+        )
+        file.readText(Charsets.UTF_8)
+    }
+
+    /** The portal's panel, for the one phrase the two clients are not allowed to choose separately. */
+    private val webPanel: String by lazy {
+        repoFile("frontend/components/sketches/upload/SketchTraceField.tsx")
+    }
+
+    /**
+     * A sanitised tree holding one plausible leaf for every control the handset draws.
+     *
+     * The VALUES are arbitrary and the KEYS are the point: every assertion below is about which rows
+     * exist and where they are drawn, and a leaf the engine did not send is the one thing that
+     * changes that answer.
+     */
+    private fun everyLeaf(): Map<String, DwTraceValue> = DW_TRACE_CONTROLS.associate { control ->
+        control.key to when (control) {
+            is DwTraceSlider -> DwTraceValue.Num(control.min)
+            is DwTraceToggle -> DwTraceValue.Flag(false)
+            is DwTraceChoice -> DwTraceValue.Choice(control.options.first().value)
+            is DwTraceNumberChoice -> DwTraceValue.Num(control.options.first().value)
+        }
+    }
+
+    private fun valuesOf(leaves: Map<String, DwTraceValue> = everyLeaf()): DwTraceValues =
+        DwTraceValues(leaves, "{}")
+
+    /**
+     * **THE ASSERTION THAT STOPS A CONTROL FALLING INTO THE GAP BETWEEN TWO LISTS.**
+     *
+     * The panel draws the essential rows above the disclosure and the rest inside it. Those are two
+     * renders of one table, selected by opposite tests on one `tier` field — and that is a property
+     * somebody can break in one word. Setting a row's tier to a third value, or adding a fourth tier
+     * and forgetting one of the two render sites, makes a control that is in the table, is counted by
+     * `DW_TRACE_PARAM_COUNT`, is pinned label-for-label against the portal by the tests above, and is
+     * on no screen anywhere. Nothing else in this file would notice: the count would still be 31 and
+     * every label would still match.
+     *
+     * So the sum is asserted directly. Essential plus advanced is every control except the one this
+     * client deliberately relocated to the export step, and that exception is named here rather than
+     * left as a subtraction a reader has to work out.
+     */
+    @Test
+    fun `the essential set plus the disclosure's set is the whole table`() {
+        val primary = DW_TRACE_CONTROLS.filter { it.tier == DwTraceTier.PRIMARY }.map { it.key }
+        val advanced = DW_TRACE_CONTROLS.filter { it.tier == DwTraceTier.ADVANCED }.map { it.key }
+        val export = DW_TRACE_CONTROLS.filter { it.tier == DwTraceTier.EXPORT }.map { it.key }
+
+        assertEquals(
+            "a control cannot be drawn in two places at once",
+            emptySet<String>(),
+            primary.toSet() intersect advanced.toSet(),
+        )
+        assertEquals(
+            "every control the handset draws must be in exactly one tier, or it is in the table and " +
+                "on no screen",
+            DW_TRACE_PARAM_COUNT,
+            primary.size + advanced.size + export.size,
+        )
+        assertEquals(
+            DW_TRACE_CONTROLS.map { it.key }.toSet(),
+            (primary + advanced + export).toSet(),
+        )
+        assertEquals(
+            "the export step owns exactly one control: the background, which is a property of the " +
+                "file rather than of the tracing",
+            listOf("output.background"),
+            export,
+        )
+        assertEquals(
+            "the panel's two parameter surfaces — what it opens with, and what the one disclosure " +
+                "reveals — must between them reach every control except the relocated one",
+            DW_TRACE_CONTROLS.map { it.key }.toSet() - "output.background",
+            (primary + advanced).toSet(),
+        )
+        assertEquals(DW_TRACE_PRIMARY_KEYS.toSet(), primary.toSet())
+    }
+
+    /**
+     * Every hidden control is reachable through exactly one of the disclosure's group headings.
+     *
+     * The headings are the pipeline's own stages and not a second taxonomy, because a designer looks
+     * for a control by the stage it belongs to — and if the disclosure grouped by importance instead,
+     * finding a cleanup control would require knowing whether somebody had called it essential.
+     *
+     * "Exactly one" is asserted rather than assumed: `dwTraceAdvancedGroups` walks the groups and
+     * filters the table on each, so a control whose `group` is not in `DW_TRACE_GROUPS` at all would
+     * simply never be returned — present in the table, counted nowhere, drawn nowhere.
+     */
+    @Test
+    fun `every hidden control is reachable through exactly one group heading`() {
+        val values = valuesOf()
+        val groups = dwTraceAdvancedGroups(values)
+        val drawn = groups.flatMap { it.second }.map { it.key }
+        val advanced = DW_TRACE_CONTROLS.filter { it.tier == DwTraceTier.ADVANCED }.map { it.key }
+
+        assertEquals("a control is drawn under two headings", drawn.size, drawn.toSet().size)
+        assertEquals(
+            "the disclosure does not reach every advanced control. A control in the table that no " +
+                "heading holds is a setting a designer can never see or reset.",
+            advanced.toSet(),
+            drawn.toSet(),
+        )
+        assertEquals(advanced.size, dwTraceAdvancedRevealed(values))
+        assertEquals(
+            "on a healthy build the rows drawn and the table's own count must agree",
+            DW_TRACE_ADVANCED_COUNT,
+            dwTraceAdvancedRevealed(values),
+        )
+
+        assertTrue(
+            "the disclosure invented a heading that is not one of the table's own: " +
+                "${groups.map { it.first } - DW_TRACE_GROUPS.toSet()}",
+            groups.all { it.first in DW_TRACE_GROUPS },
+        )
+        assertEquals(
+            "the headings must appear in the table's own order, which is the order the panel draws " +
+                "the essential rows in too",
+            groups.map { it.first }.sortedBy { DW_TRACE_GROUPS.indexOf(it) },
+            groups.map { it.first },
+        )
+        assertTrue("a heading was drawn over nothing", groups.none { it.second.isEmpty() })
+        assertFalse(
+            "the export group holds no advanced row, so its heading must not appear here",
+            DW_TRACE_GROUP_EXPORT in groups.map { it.first },
+        )
+    }
+
+    /**
+     * A control this device's engine did not send is neither counted on the toggle nor promised by it.
+     *
+     * `DwTraceControlRow` skips a row whose leaf is missing, so counting the TABLE would put a number
+     * on the button that the press does not produce — `traceParamTable.ts:553-564` records that exact
+     * failure on the portal, where a button read "Show all 32 controls" and revealed 25. The number
+     * here is counted off the rows, and `dwTraceMissingKeys` — which the panel prints in its own
+     * sentence — filters on the same membership test, so the two cannot disagree with each other.
+     */
+    @Test
+    fun `a control this engine did not send is neither counted nor promised`() {
+        val skipped = "edge.blurSigma"
+        val trimmed = valuesOf(everyLeaf() - skipped)
+
+        assertEquals(listOf(skipped), dwTraceMissingKeys(trimmed))
+        assertEquals(DW_TRACE_ADVANCED_COUNT - 1, dwTraceAdvancedRevealed(trimmed))
+        assertTrue(
+            "a skipped row is still being offered by a heading",
+            dwTraceAdvancedGroups(trimmed).none { (_, rows) -> rows.any { it.key == skipped } },
+        )
+        assertTrue(
+            "the toggle promised a row the press would not produce",
+            dwTraceDisclosureLabel(false, dwTraceAdvancedRevealed(trimmed), 0)
+                .contains("${DW_TRACE_ADVANCED_COUNT - 1} settings"),
+        )
+    }
+
+    /**
+     * Both clients call the press the same thing.
+     *
+     * The owner named the control: "an internal accordion with an action such as 'Show more
+     * options'". Android owns wording in this repository and this is the exception — a designer who
+     * has learned where the rest of the settings live on the laptop must not have to find them again
+     * under a different name in a courtyard. The handset's own "Show everything (N more)" is the
+     * better English and lost on that argument alone.
+     */
+    @Test
+    fun `both clients call the press the same thing`() {
+        assertEquals("Show more options", DW_TRACE_DISCLOSURE_ACTION)
+        assertTrue(
+            "the portal no longer says “$DW_TRACE_DISCLOSURE_ACTION”. One of the two clients has " +
+                "renamed the press, and a designer now has to learn the same disclosure twice.",
+            webPanel.contains(DW_TRACE_DISCLOSURE_ACTION),
+        )
+        assertTrue(
+            "the portal no longer prints the open arm of this toggle",
+            webPanel.contains("Hide the other "),
+        )
+        assertTrue(
+            "the portal typed a total into its own label instead of deriving it — the failure its " +
+                "own header records as claiming twenty-nine while the table held thirty-two",
+            webPanel.contains("ADVANCED_COUNT"),
+        )
+
+        assertTrue(dwTraceDisclosureLabel(false, 24, 0).startsWith(DW_TRACE_DISCLOSURE_ACTION))
+        assertTrue(dwTraceDisclosureLabel(false, 24, 0).endsWith("24 settings"))
+        assertTrue(dwTraceDisclosureLabel(false, 24, 3).endsWith("3 changed"))
+        assertEquals("Hide the other 24 settings", dwTraceDisclosureLabel(true, 24, 0))
+        // A version skew can leave exactly one row behind the press, and "1 settings" is a sentence
+        // nobody wrote on purpose.
+        assertTrue(dwTraceDisclosureLabel(false, 1, 0).endsWith("1 setting"))
+        assertEquals("Hide the other 1 setting", dwTraceDisclosureLabel(true, 1, 0))
+    }
+
+    /**
+     * The words and the number are derived, and neither is typed into the panel.
+     *
+     * `DW_TRACE_PARAM_COUNT`'s header records why: the portal's own file "claimed twenty-nine while
+     * the table held thirty-two", and a reader reconciling the two went hunting for three controls
+     * that had never been dropped. A count in a Compose string literal is the same bug with a shorter
+     * fuse, because nothing in a layout file is read by a test that counts anything.
+     */
+    @Test
+    fun `the disclosure's words and count are derived rather than typed into the panel`() {
+        assertFalse(
+            "the disclosure's phrase is typed into the panel. It belongs to DW_TRACE_DISCLOSURE_ACTION " +
+                "so the parity test above can read one place and settle both clients.",
+            panelSource.contains("\"$DW_TRACE_DISCLOSURE_ACTION"),
+        )
+        assertFalse(
+            "the panel still carries the old label; the two clients now name the same press " +
+                "differently",
+            panelSource.contains("Show everything"),
+        )
+        assertFalse(
+            "the advanced count is written into a string in the panel rather than derived",
+            panelSource.contains("$DW_TRACE_ADVANCED_COUNT settings"),
+        )
+        assertTrue(panelSource.contains("dwTraceDisclosureLabel(open, revealed,"))
+        assertTrue(panelSource.contains("dwTraceAdvancedRevealed(values)"))
+    }
+
+    /**
+     * The toggle counts what the toggle reveals, and the sentence names everything out of sight.
+     *
+     * These are two different questions on this client and only one on the portal, because the
+     * handset has a tier that lives on the export step. A count of the export-step control on THIS
+     * toggle would be the press claiming to reveal something it cannot, and a designer who opened it
+     * and could not find the fourth name would be right to distrust the rest of the panel.
+     */
+    @Test
+    fun `the toggle counts only the settings the press reveals`() {
+        val before = valuesOf()
+        val after = valuesOf(
+            everyLeaf() +
+                ("edge.blurSigma" to DwTraceValue.Num(4.0)) +
+                // `Absent` is how a transparent export is spelled, and it is a real value rather than
+                // a missing one — so this is a CHANGE to the export step's own control.
+                ("output.background" to DwTraceValue.Absent),
+        )
+
+        val behind = dwTraceChangedBehindDisclosure(before, after)
+        assertEquals("only the advanced tier is behind this press", listOf("Pre-blur"), behind)
+
+        val notOnScreen = dwTraceChangedHiddenLabels(before, after, setOf(DwTraceTier.PRIMARY))
+        assertTrue(
+            "the sentence must name the export-step control when its card is not composed",
+            "White background" in notOnScreen,
+        )
+        assertFalse(
+            "the export step is never behind this press",
+            "White background" in behind,
+        )
+    }
+
+    /** The sentence under a closed toggle, which the portal prints character for character. */
+    @Test
+    fun `the hidden-changed sentence is the portal's own, and null when nothing moved`() {
+        assertNull(
+            "an empty list must not render an empty notice box",
+            dwTraceHiddenChangedSentence(emptyList()),
+        )
+        assertEquals(
+            "One setting that is not on screen has moved: Pre-blur.",
+            dwTraceHiddenChangedSentence(listOf("Pre-blur")),
+        )
+        assertEquals(
+            "2 settings that are not on screen have moved: Pre-blur, Close gaps.",
+            dwTraceHiddenChangedSentence(listOf("Pre-blur", "Close gaps")),
+        )
+        assertTrue(
+            "the portal stopped printing this sentence, so the two clients now describe the same " +
+                "folded-away change in two different ways",
+            webPanel.contains("that is not on screen has moved") &&
+                webPanel.contains("that are not on screen have moved"),
+        )
+    }
+
+    /**
+     * The disclosure is a real control: a role, an action, and a state a screen reader can hear.
+     *
+     * A chevron carries none of those. `stateDescription` says what the section IS, `onClickLabel`
+     * says what the press will DO — in the verb grammar TalkBack speaks it in, which is why the click
+     * label is not the visible label — and `Role.Button` is what stops it being announced as text
+     * with a mysterious action attached. `mergeDescendants` makes the label, the count and the changed
+     * mark one announcement instead of three stops on the way to the press.
+     */
+    @Test
+    fun `the disclosure exposes its state and its action separately`() {
+        assertEquals("Collapsed", dwTraceDisclosureState(false))
+        assertEquals("Expanded", dwTraceDisclosureState(true))
+        assertEquals("show the other 24 settings", dwTraceDisclosureClickLabel(false, 24))
+        assertEquals("hide the other 24 settings", dwTraceDisclosureClickLabel(true, 24))
+        assertEquals("show the other 1 setting", dwTraceDisclosureClickLabel(false, 1))
+
+        listOf(
+            "stateDescription = dwTraceDisclosureState(open)",
+            "onClickLabel = dwTraceDisclosureClickLabel(open, revealed)",
+            "role = Role.Button,",
+            "mergeDescendants = true",
+        ).forEach {
+            assertTrue(
+                "the disclosure no longer passes `$it`. Without it the section is a row of text that " +
+                    "happens to respond to a press.",
+                panelSource.contains(it),
+            )
+        }
+    }
+
+    /**
+     * The expand animation is held at a constant when reduced motion is on.
+     *
+     * One 18 dp chevron turns and nothing else does — see `DW_TRACE_DISCLOSURE_TURN_MS` for why the
+     * height is deliberately not animated — so this preference has exactly one thing to switch off,
+     * and it must actually switch it off rather than merely shorten it.
+     */
+    @Test
+    fun `the expand animation is held at a constant under reduced motion`() {
+        assertTrue(
+            "the disclosure no longer reads the reduced-motion preference",
+            panelSource.contains("LocalAppPreferences.current.reducedMotion"),
+        )
+        assertTrue(
+            "the chevron's tween no longer collapses to zero under reduced motion",
+            panelSource.contains("if (stillness) 0 else DW_TRACE_DISCLOSURE_TURN_MS"),
+        )
+    }
+
+    /**
+     * Collapsing the disclosure resets nothing.
+     *
+     * The parameters live in the panel's own sanitised tree and the rows only read it, so there is no
+     * state under the press for a collapse to throw away — which is why this client can use a plain
+     * conditional where `SketchTraceField.tsx` needed a mounted-but-hidden subtree. Two things are
+     * pinned: that changing WHICH TIERS ARE VISIBLE never makes the change-reporting functions claim a
+     * value moved, and that the toggle's handler does one thing.
+     */
+    @Test
+    fun `collapsing the disclosure changes no parameter`() {
+        val values = valuesOf()
+        listOf(
+            emptySet<DwTraceTier>(),
+            setOf(DwTraceTier.PRIMARY),
+            setOf(DwTraceTier.PRIMARY, DwTraceTier.ADVANCED),
+            setOf(DwTraceTier.PRIMARY, DwTraceTier.ADVANCED, DwTraceTier.EXPORT),
+        ).forEach { visible ->
+            assertEquals(
+                "opening or closing the disclosure must never look like a parameter moving",
+                emptyList<String>(),
+                dwTraceChangedHiddenLabels(values, values, visible),
+            )
+        }
+        assertEquals(emptyList<String>(), dwTraceChangedLabels(values, values))
+        assertTrue(
+            "the disclosure's handler must flip one Boolean and touch nothing else. A tidy-up that " +
+                "reset a parameter here would discard tuning a designer cannot see from the button " +
+                "they pressed.",
+            panelSource.contains("onToggle = { advancedOpen = !advancedOpen },"),
+        )
     }
 }

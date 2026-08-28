@@ -44,6 +44,10 @@ from app.services.questionnaire_consolidation import (
     consolidate_for_artisan,
     consolidated_rows,
 )
+from app.services.record_design_workshop import (
+    assert_may_file_under,
+    assert_payload_workshop,
+)
 from app.services.record_filters import (
     artisan_workshop_clause,
     resolve_workshop_ids,
@@ -654,6 +658,7 @@ async def list_interviews(
     search: str | None = None,
     artisanId: str | None = None,
     workshopId: str | None = None,
+    designWorkshopId: str | None = None,
     statusFilter: str | None = None,
     dateFrom: datetime | None = None,
     dateTo: datetime | None = None,
@@ -689,6 +694,11 @@ async def list_interviews(
         where["OR"] = [{"title": contains(search)}, {"place": contains(search)}, {"notes": contains(search)}]
     if artisanId:
         where["artisans"] = {"some": {"artisanId": artisanId}}
+    if designWorkshopId:
+        # The design & prototype workshop filter — a plain equality on the column. See
+        # `api/routes/artisans.list_artisans` for why it is not an OR and why the reserved word
+        # "none" is not accepted on a singular filter.
+        where["designWorkshopId"] = designWorkshopId
     if workshopId:
         where["workshopId"] = workshopId
     if statusFilter:
@@ -789,6 +799,13 @@ async def create_interview(
     # Workshop entries: enforce assignment BEFORE the dedupe short-circuit, so folding into an
     # existing interview can never be used to slip past a workshop the user is not assigned to.
     check = await enforce_workshop_submission(current_user, payload.workshopId)
+    # THE DESIGN & PROTOTYPE WORKSHOP, gated for the same reason and BEFORE the dedupe
+    # short-circuit for the same reason as the line above: folding into an existing interview
+    # must not be a way to file a record under a workshop the caller cannot open. It is a
+    # different scope with different machinery — `workshopId` is `WorkshopAssignment`,
+    # `designWorkshopId` is creator / admin / `DesignWorkshopViewer` — so it is a second gate
+    # rather than a replacement. See `services/record_design_workshop.py`.
+    await assert_may_file_under(payload.designWorkshopId, current_user)
     # One interview per exact artisan set: if one already exists for this set, fold into it instead
     # of creating a duplicate. This holds for EVERY client (web + old/new app) regardless of UI.
     set_key = artisan_set_key(payload.artisanIds)
@@ -1122,6 +1139,9 @@ async def update_interview(
     check = None
     if "workshopId" in data and data.get("workshopId") != interview.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
+    # Same gate on the PATCH, keyed on PRESENCE. See the create above and
+    # `services/record_design_workshop.py`.
+    await assert_payload_workshop(data, current_user)
     privileged = await guard_record_edit(interview, current_user, data, "questionnaire")
     await apply_status_policy_update(current_user, interview, data)
     # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)

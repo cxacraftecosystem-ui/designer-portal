@@ -131,9 +131,21 @@ export function wholeFrame(width: number, height: number): CropRect {
  * and silently truncates, a box the drag pushed past the edge reads pixels that are not there, and a
  * zero-width box throws inside `GrayF`'s constructor rather than declining.
  *
- * The order matters. The size is clamped to the frame FIRST, then the origin is clamped so the box
- * still fits, then the size is trimmed again for the case where the frame is smaller than the
- * minimum. Clamping the origin first lets a large box push itself back off the far edge.
+ * The order matters, and it is TWO steps rather than the three this paragraph used to describe. The
+ * size is clamped to the frame FIRST, then the origin is clamped so the box still fits. Clamping the
+ * origin first would let a large box push itself back off the far edge. There is no third pass and
+ * none is owed: `minW`/`minH` are `min(CROP_MIN_EDGE_PX, frame)`, so a frame smaller than the minimum
+ * edge is already handled by the first clamp — a reader who went looking for the trim named here
+ * found nothing and had no way to tell a missing step from a stale sentence. Checked in both
+ * directions by `e2e/sketch-frame-geometry-unit.spec.ts`, whose first case includes a 9px frame.
+ *
+ * ⚠ **THE CLAMP IS TOTAL, AND THAT IS WHY IT MUST NOT BE HANDED A DRAG.** It always answers with a
+ * legal rectangle, so a box that hangs off the edge comes back SLID back inside — which moves the
+ * corner nobody was touching. `FramePanel` did exactly that and every outward corner drag silently
+ * reset the crop to the whole photograph; the fix is
+ * `components/sketches/upload/frameGeometry.moveCropCorner`, which clamps the two edges the dragged
+ * corner owns and only then builds a rectangle. Use this for "make that legal", never for "follow
+ * that finger".
  */
 export function clampCrop(rect: CropRect, width: number, height: number): CropRect {
   const frameW = Math.max(1, Math.floor(width));

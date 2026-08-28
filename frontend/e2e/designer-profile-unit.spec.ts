@@ -270,15 +270,38 @@ test.describe("the mandatory fields", () => {
       Both are driven off `isDesignerProfileFieldRequired(...)` rather than a literal `true`, so the
       mark a reader sees and the rule the browser enforces cannot drift apart — that is what these
       assertions are really pinning.
+
+      ── THIS TEST COUNTED THE READS AND HAD TO STOP, 2026-08-28 ────────────────────────────────
+
+      It asserted EXACTLY TWO reads per field, "once for the label's asterisk and once for the
+      control's own `required` attribute", and that was a true description of a form built from
+      `Field` + a bare input. The dictation sweep replaced the four prose boxes with
+      `DictatedTextInput`, which draws the label AND the input itself and therefore takes ONE
+      `required` and uses it for both (`richtext/DictatedTextInput.tsx` — `{required ? " *" : ""}`
+      beside `required={required}`). One read feeding both is STRICTLY BETTER at the thing this test
+      protects: with two there was something to drift.
+
+      So the assertion is now a FLOOR plus the structural check that makes the floor sufficient —
+      every field reads the predicate at least once, no field is marked with a literal, and the
+      shared control really does spend one `required` on both halves. Counting call sites was
+      measuring the shape of the form; this measures the property.
     */
     for (const field of DESIGNER_PROFILE_REQUIRED_FIELDS) {
       const calls = FORM_CODE.split(`isDesignerProfileFieldRequired("${field}")`).length - 1;
       expect(
         calls,
-        `${field} should read the required flag twice on the form — once for the label's asterisk ` +
-          "and once for the control's own `required` attribute"
-      ).toBe(2);
+        `${field} must take its required-ness from isDesignerProfileFieldRequired, never a literal`
+      ).toBeGreaterThan(0);
+      expect(
+        FORM_CODE,
+        `${field} must not be marked required by a literal anywhere on this form`
+      ).not.toContain(`name="${field}"\n          required={true}`);
     }
+    // The control that spends ONE `required` on both halves. Without this, a single read would be
+    // ambiguous — it could be the asterisk with no rule, or the rule with no asterisk.
+    const dictatedInput = stripComments(read("components/richtext/DictatedTextInput.tsx"));
+    expect(dictatedInput, "the asterisk").toContain('{required ? " *" : ""}');
+    expect(dictatedInput, "the browser's own rule").toContain("required={required}");
     // And the view marks them from the same function, so an admin reading a colleague's profile can
     // see which blank is the one that will stop the next save.
     expect(VIEW_CODE).toContain("isDesignerProfileFieldRequired(field)");
@@ -371,21 +394,58 @@ test.describe("the mandatory fields", () => {
 
 test("the free-text boxes have the microphone the rest of the app has", () => {
   /*
-    The reference is `/artisans/new`, which offers "Dictate Address in English (India)" and "Dictate
-    Notes in English (India)" through `OnDeviceDictationButton` — on-device recognition, no
-    `MediaRecorder`, no network, nothing to obtain consent for. This page had none at all.
+    The reference is `/artisans/new`, which offers dictation through `OnDeviceDictationButton` —
+    on-device recognition, no `MediaRecorder`, no network, nothing to obtain consent for.
 
-    TWO BOXES, NOT TWENTY-THREE, and the split is the artisan form's: dictation goes where the answer
-    is PROSE. A recogniser writes "at" for `@`, spells digits out and punctuates a URL, so a
-    microphone under the e-mail, phone, pincode and date boxes would reliably produce a value the
-    field then refuses — and a form whose every row carries a button is a form where the button stops
-    being noticed.
+    ── THIS TEST SAID "TWO BOXES, NOT TWENTY-THREE" AND THE OWNER OVERRULED IT, 2026-08-28 ───────
+
+    The old assertion pinned exactly two dictated fields, the biography and the address, on the
+    argument that "a form whose every row carries a button is a form where the button stops being
+    noticed". The instruction that replaced it is explicit: *"On My Designer Profile, add the
+    existing microphone/dictation functionality to all applicable fields … Exclude calendar fields
+    and any other special fields where dictation is not applicable. All remaining applicable fields
+    should provide the mic dictation button."*
+
+    So the count is no longer the property. **THE EXCLUSIONS ARE**, and they are what this test now
+    holds, because they are the half that can silently rot: the reasoning the old comment gave for
+    stopping at two is still exactly right about WHICH boxes must not have a microphone. A
+    recogniser writes "at" for `@`, spells digits out and punctuates a URL, so a mic under the
+    e-mail, phone, pincode or date boxes reliably produces a value the field then refuses.
+
+    The noise problem the old argument names has been answered rather than ignored: every control
+    passes `explainWhenUnavailable={false}` and the form carries `DictationUnavailableNotice` once,
+    so the grey paragraph appears a single time instead of once per row.
   */
-  expect(FORM_CODE).toContain("OnDeviceDictationButton");
-  const dictated = FORM_CODE.match(/<DictatedField\b/g) ?? [];
-  expect(dictated.length, "the biography and the address").toBe(2);
+  expect(FORM_CODE).toContain("DictatedTextInput");
+  expect(FORM_CODE).toContain("DictatedTextArea");
+  // The prose boxes the old test named are still dictated — this is a widening, never a move.
   expect(FORM_CODE).toContain('name="biography"');
   expect(FORM_CODE).toContain('name="addressLine"');
+  // ...and there are now MORE than the original two, which is the instruction being carried out.
+  const dictated = FORM_CODE.match(/<DictatedField\b/g) ?? [];
+  expect(dictated.length, "every applicable free-text box, not just the original two").toBeGreaterThan(2);
+
+  /*
+    THE EXCLUSION LIST, ASSERTED BY NAME. `DictatedField` and `DictatedTextArea` are the only two
+    controls on this form that carry a microphone, so "this field has no mic" is checkable as "this
+    field's `name=` does not appear inside one of them".
+  */
+  const dictatedBlocks = [
+    ...FORM_CODE.matchAll(/<DictatedField\b[\s\S]*?\/>/g),
+    ...FORM_CODE.matchAll(/<DictatedTextArea\b[\s\S]*?\/>/g)
+  ]
+    .map((match) => match[0])
+    .join("\n");
+  for (const excluded of ["email", "phone", "pincode", "dateOfBirth"]) {
+    expect(
+      dictatedBlocks,
+      `${excluded} must NOT carry a microphone — a recogniser cannot produce a value it will accept`
+    ).not.toContain(`name="${excluded}"`);
+  }
+  // Said once for the whole form rather than once per row — the answer to the noise half of the old
+  // argument, and the reason widening from two to "every applicable box" is not a regression.
+  expect(FORM_CODE).toContain("DictationUnavailableNotice");
+  expect(FORM_CODE).toContain("explainWhenUnavailable={false}");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────────────────────────

@@ -128,6 +128,20 @@ class MediaCompleteRequest(APIModel):
     transcriptError: str | None = None
     linkedRecordType: str | None = None
     linkedRecordId: str | None = None
+    #: THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload is filed under, from the dropdown on
+    #: that form. Added 2026-08-28 with the column, so that "Miscellaneous Media" can be linked to a
+    #: design workshop like every other record type the owner named.
+    #:
+    #: IT IS NOT THE SAME AS ``linkedRecordType="designWorkshop"`` ABOVE, and it is deliberately not
+    #: derived from it. That pair says which RECORD a file was uploaded against and is written by the
+    #: upload path itself for every stage photograph; this says which workshop a person chose to file
+    #: a loose file under. ``records.media_relation_data`` carries the argument for why deriving one
+    #: from the other would break the orphan-recovery machinery, which is split precisely on whether
+    #: a link has a typed foreign key.
+    #:
+    #: GATED by ``record_design_workshop.assert_may_file_under`` in ``complete_media_upload``: the
+    #: caller must be able to edit that workshop, exactly as the record forms require.
+    designWorkshopId: str | None = None
     processingRequests: list[str] | None = None
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None

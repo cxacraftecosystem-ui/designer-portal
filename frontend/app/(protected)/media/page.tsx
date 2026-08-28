@@ -4,6 +4,13 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { AudioLines, Images, Loader2, QrCode, Upload } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
+import {
+  DesignWorkshopSelect,
+  useDesignWorkshopSelection
+} from "@/components/forms/DesignWorkshopSelect";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -248,7 +255,38 @@ function MediaPageBody() {
   const [codeFor, setCodeFor] = useState<string | null>(null);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  /*
+    ── THIS FORM CALLS `formElement.reset()`, AND THAT IS WHY THESE TWO EXIST ──────────────────────
+
+    `reset()` rewrites the DOM nodes and tells React NOTHING. A box whose value React is holding —
+    which is every dictated box, because dictation writes from outside the keyboard — is therefore
+    re-painted with the PREVIOUS upload's text on the next render, and the researcher's second
+    photograph arrives carrying the first one's caption. `DictatedTextInput`'s header states the
+    rule; this is the form it was written about.
+
+    TWO MECHANISMS BECAUSE THE TWO COMPONENTS HAVE TWO CONTRACTS, not because one was overlooked.
+    `DictatedTextInput` is controlled by its caller, so the title lives here and is cleared in the
+    same block as `reset()`. `DictatedTextArea` owns its value and re-seeds on remount, so the
+    caption is keyed on a nonce that the same block bumps — which is exactly the
+    `key={editing?.id ?? "new"}` shape that component's own doc calls the right one for it.
+  */
+  const [mediaTitle, setMediaTitle] = useState("");
+  const [resetNonce, setResetNonce] = useState(0);
   const [linkedType, setLinkedType] = useState("");
+  /*
+    THE DESIGN & PROTOTYPE WORKSHOP this loose upload is filed under — "Miscellaneous Media" is one
+    of the seven record types the owner named on 2026-08-28.
+
+    IT IS NOT THE SAME QUESTION AS "Linked record type" ABOVE, and the two must not be folded: that
+    pair says which RECORD a file is a picture OF, and is what `linkedRecordType` carries; this says
+    which workshop a designer FILED it under. A file may legitimately have one, both or neither, and
+    `records.media_relation_data` on the server carries the argument for why the column is not
+    derived from the tag.
+
+    `null` and not `undefined`: this form only ever uploads, so there is no stored value to protect
+    and the picker may always prefill.
+  */
+  const designWorkshop = useDesignWorkshopSelection(null);
   const [linkedEntryId, setLinkedEntryId] = useState("");
   const [entryOptions, setEntryOptions] = useState<Array<{ value: string; label: string }>>([]);
   /** How much of the chosen record type the entry dropdown holds — see `loadEntryOptions`. */
@@ -369,6 +407,7 @@ function MediaPageBody() {
         files: renameForUpload(form),
         linkedRecordType: linkedType || null,
         linkedRecordId: linkedEntryId || null,
+        designWorkshopId: designWorkshop.workshopId || null,
         caption: textValue(form, "caption") ?? undefined,
         location: locationFromForm(form),
         onProgress: setProgress
@@ -387,6 +426,9 @@ function MediaPageBody() {
         return;
       }
       formElement.reset();
+      // The two dictated boxes, which `reset()` alone cannot clear. See the note beside their state.
+      setMediaTitle("");
+      setResetNonce((nonce) => nonce + 1);
       setSelectedFiles([]);
       setLinkedType("");
       setLinkedEntryId("");
@@ -467,9 +509,19 @@ function MediaPageBody() {
           description="Images, videos, audio and files upload to the same repository backend. Audio is queued for transcription after upload."
         />
         <div className="grid gap-3 md:grid-cols-2">
-          <Field label="Media title / object name">
-            <TextInput name="mediaTitle" placeholder="Names the uploaded object (optional)" />
-          </Field>
+          {/* DICTATED, and Android has been since the `TextInput` default flipped: this is the
+              name of the object in the photograph — "Bagru indigo block, 4 inch" — spoken by
+              somebody holding both the phone and the object. `MainActivity.kt`'s
+              `TextInput("Media title / object name", mediaTitle)` takes no `dictate = false`, so it
+              carries a microphone; the web drew a bare box. */}
+          <DictatedTextInput
+            name="mediaTitle"
+            label="Media title / object name"
+            value={mediaTitle}
+            onChange={setMediaTitle}
+            placeholder="Names the uploaded object (optional)"
+            explainWhenUnavailable={false}
+          />
           <Field label="Linked record type *">
             <Dropdown
               value={linkedType}
@@ -503,9 +555,27 @@ function MediaPageBody() {
             <CappedListNotice cuts={[entryCut]} />
           </Field>
         ) : null}
-        <Field label="Caption">
-          <TextArea name="caption" />
-        </Field>
+        {/*
+          Under the two link controls and above the caption — see the hook for why it is a separate
+          question from "Linked record type".
+        */}
+        <DesignWorkshopSelect state={designWorkshop} saving={uploading} />
+        {/*
+          THE LAST BARE PROSE BOX ON A WEB RECORD PAGE, dictated 2026-08-28.
+
+          A caption is one sentence describing a photograph, written by somebody standing in front of
+          the thing photographed — the case dictation exists for. Android's own media form has had a
+          microphone here since the record-form sweep, so this was also the last place the two clients
+          disagreed about this control.
+
+          `DictatedTextArea` and not `DictatedTextInput`: a caption runs to a sentence or two, and it
+          is the multi-line box on the handset as well. Uncontrolled, exactly like the `<TextArea>` it
+          replaces, so `FormData` reads it unchanged.
+        */}
+        <DictatedTextArea key={resetNonce} name="caption" label="Caption" explainWhenUnavailable={false} />
+        {/* Once for the form — two microphones, one grey paragraph where a browser has no
+            recogniser. Both boxes above pass `explainWhenUnavailable={false}`. */}
+        <DictationUnavailableNotice />
         <LocationFields />
         <UploadProgress progress={progress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} />
         <div>

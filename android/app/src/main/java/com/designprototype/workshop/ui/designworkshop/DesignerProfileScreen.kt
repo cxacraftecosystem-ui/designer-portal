@@ -346,6 +346,121 @@ internal fun designerEmailRefusal(email: String): String? {
  */
 private const val ADDRESS_LINE_MAX = 300
 
+// --------------------------------------------------------------------------------------
+// Which boxes carry a microphone
+// --------------------------------------------------------------------------------------
+
+/**
+ * THE BOXES ON THIS SCREEN THAT DICTATE, as API column names, in screen order.
+ *
+ * ── THE RULE TURNED ROUND ON 2026-08-28, AND THIS IS THE RECORD OF IT ───────────────────────────
+ *
+ * This screen shipped with two microphones and a comment beside the second one reading "THE SECOND
+ * MICROPHONE ON THIS SCREEN, AND THE LAST": dictation where the answer was PROSE — the biography
+ * and the address — and nowhere else. The owner replaced that rule: *"On My Designer Profile, add
+ * the existing microphone/dictation functionality to all applicable fields. Follow the same
+ * dictation behavior already used throughout the other record pages. Exclude calendar fields and any
+ * other special fields where dictation is not applicable. All remaining applicable fields should
+ * provide the mic dictation button."*
+ *
+ * So the default is now the other way round: a free-text box has a microphone unless there is a
+ * reason it must not, and that reason is written down in [DESIGNER_PROFILE_NOT_DICTATED] rather than
+ * left as an absence. **A later reader has to be able to tell a decision from an omission**, and a
+ * column in neither table is neither — which is why the two together must name every column on
+ * [ProfileForm], and why `DesignerProfileScreenTest` fails when they do not.
+ *
+ * ── WHY A TABLE AND NOT TEN FLAGS WRITTEN OUT AT TEN CALL SITES ─────────────────────────────────
+ *
+ * Every box on this screen asks [dictates] rather than answering for itself, so the classification
+ * and the screen cannot drift: a microphone cannot appear under the e-mail box without an edit to
+ * this list, and a column added next year cannot quietly acquire or miss one. It is also what makes
+ * the WEB comparable — `frontend/components/designers/DesignerProfileForm.tsx` carries the identical
+ * ten, and the test reads them out of its source and compares, because "follow the same dictation
+ * behavior" is a claim about two clients and nobody re-reads a `.tsx` while editing Kotlin.
+ *
+ * ── WHAT DICTATION IS, HERE ─────────────────────────────────────────────────────────────────────
+ *
+ * `RecordProseField(dictate = …)` — the record forms' control, on-device rungs only. It never
+ * uploads a clip: a designer profile has no design workshop behind it and therefore no recorded
+ * consent for a voice to leave the handset, which is the argument `ui/RecordProseText.kt` makes for
+ * every record form and which holds here unchanged.
+ */
+internal val DESIGNER_PROFILE_DICTATED: Set<String> = linkedSetOf(
+    "displayName",
+    "localName",
+    "designation",
+    "institution",
+    "department",
+    "qualification",
+    "specialisation",
+    "biography",
+    "addressLine",
+    "city",
+)
+
+/**
+ * THE COLUMNS WITH NO MICROPHONE, each against the reason it has none.
+ *
+ * A MAP AND NOT A LIST, because the reason is the point. "This box has no microphone" is an
+ * observation anybody can make from the screen; the only thing worth writing down is WHY, and a
+ * reason parked in a comment above one call site is a reason the next person deletes along with the
+ * call site. Every value here is a full sentence and the test requires it to be one — an empty
+ * string would be a way of satisfying "every column is classified" while classifying nothing.
+ *
+ * Read with [DESIGNER_PROFILE_DICTATED]: together they are all twenty-one columns of [ProfileForm].
+ */
+internal val DESIGNER_PROFILE_NOT_DICTATED: Map<String, String> = linkedMapOf(
+    "experienceYears" to
+        "A two-digit number bounded 0..70 behind a number pad. A recogniser spells digits out in " +
+            "words — \"twelve\" — and this box filters to digits at the keystroke, so a spoken " +
+            "answer is discarded and leaves the box empty with nothing on screen to say why.",
+    "phone" to
+        "Digits, inside ArtisanPhoneField's own dial-code column and shape rule. Spoken digits are " +
+            "the least reliable thing a recogniser returns, and artisanPhoneValidationError would " +
+            "refuse most of what came back — a control that reliably produces a refusal.",
+    "email" to
+        "A recogniser writes \"at\" for the @ sign and punctuates a domain, so this box would " +
+            "reliably produce a value designerEmailRefusal then refuses. It also saves in one PUT " +
+            "with twenty other columns, so a refusal here costs the designer twenty correct answers.",
+    "website" to
+        "The same as the e-mail box and worse: a spoken URL arrives with spaces in it and its dots " +
+            "spelled out as words.",
+    "state" to
+        "A closed vocabulary of thirty-six names answered by picking, not by typing. The corpus is " +
+            "grouped by this column, so a near-miss transcription is the one error that would " +
+            "quietly file a designer in a state they have never worked in.",
+    "pincode" to
+        "Six digits, filtered at the keystroke like the years box. A mis-heard digit inside a " +
+            "fixed-length code is invisible — it is still six digits and still looks like a PIN code.",
+    "empanelmentNo" to
+        "An identifier transcribed from a government order. A mis-heard character is not an " +
+            "annoyance, it is a wrong number printed on every report signed under this name, and " +
+            "nothing downstream can tell it from a right one. The same class as the artisan form's " +
+            "Aadhaar and Pehchan boxes, which have no microphone for the same reason.",
+    "empanelmentDate" to
+        "A calendar field, excluded by name in the instruction. FieldDateField reads dd/mm/yyyy; a " +
+            "recogniser answers \"the third of February twenty nineteen\", and both readings of an " +
+            "ambiguous spoken date are valid dates, so the mistake is not reportable.",
+    "photoMediaId" to
+        "A media slot — a camera button and a gallery picker. There is no text here to speak.",
+    "signatureMediaId" to
+        "A media slot, as the photograph above it. There is no text here to speak.",
+    "cvMediaId" to
+        "A media slot: a document picker, a preview and a Remove button. There is no text here to " +
+            "speak, and the filename comes from the file.",
+)
+
+/**
+ * Does the box for [column] draw a microphone?
+ *
+ * FAILS CLOSED, deliberately. A column in neither table answers false — no microphone — rather than
+ * throwing, because this is read during composition and an exception here would take the whole
+ * screen down over a mistyped string. The mistyped string is caught instead by
+ * `DesignerProfileScreenTest`, which requires the two tables to cover every column on [ProfileForm]
+ * and every literal handed to this function to be one of them.
+ */
+private fun dictates(column: String): Boolean = column in DESIGNER_PROFILE_DICTATED
+
 private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpdateBody(
     displayName = displayName,
     localName = localName,
@@ -800,31 +915,74 @@ fun DesignerProfileScreen(
                         "Name as printed", form.displayName, canEdit,
                         help = "How your name appears on the cover and in the signature block.",
                         required = true,
+                        // A MANDATORY BOX AND A DICTATED ONE, which the record forms already pair:
+                        // `RequiredInput` in `MainActivity.kt` defaults `dictate` to true precisely
+                        // because the required boxes — a name, a place, a title — are the ones with
+                        // the most typing friction on a form somebody fills in standing up.
+                        dictate = dictates("displayName"),
+                        resetKey = targetUserId,
                         error = requiredRefusal(enforceRequired, form.displayName, "Name as printed")
                     ) { form = form.copy(displayName = it) }
+                    // THE BOX WHERE THE MICROPHONE EARNS THE MOST ON THIS SCREEN.
+                    // `DW_DICTATION_LANGUAGES` carries nineteen — Hindi, Odia, Gujarati, Manipuri
+                    // and the rest — and the record forms remember the last one chosen for the
+                    // life of the process, so a designer sets the recogniser's language once and
+                    // speaks their own name in the script it belongs in, instead of installing a
+                    // keyboard to type six characters.
+                    // Whatever comes back is stored and printed verbatim, exactly as typing is.
                     ProfileText(
                         "Name in local script", form.localName, canEdit,
-                        help = "Printed verbatim, in whatever script you type it in."
+                        help = "Printed verbatim, in whatever script you type it in.",
+                        dictate = dictates("localName"),
+                        resetKey = targetUserId
                     ) { form = form.copy(localName = it) }
-                    ProfileText("Designation", form.designation, canEdit) {
+                    ProfileText(
+                        "Designation", form.designation, canEdit,
+                        dictate = dictates("designation"),
+                        resetKey = targetUserId
+                    ) {
                         form = form.copy(designation = it)
                     }
-                    ProfileText("Institution", form.institution, canEdit) {
+                    // Both of these are proper nouns typed out in full — "National Institute of
+                    // Design", "Department of Textile Design" — and both are printed verbatim on a
+                    // report cover. That is exactly the length of answer somebody would rather speak
+                    // than thumb in, which is the whole of the case for a microphone on them.
+                    ProfileText(
+                        "Institution", form.institution, canEdit,
+                        dictate = dictates("institution"),
+                        resetKey = targetUserId
+                    ) {
                         form = form.copy(institution = it)
                     }
-                    ProfileText("Department", form.department, canEdit) {
+                    ProfileText(
+                        "Department", form.department, canEdit,
+                        dictate = dictates("department"),
+                        resetKey = targetUserId
+                    ) {
                         form = form.copy(department = it)
                     }
                     ProfileText(
                         "Qualification", form.qualification, canEdit,
                         required = true,
+                        dictate = dictates("qualification"),
+                        resetKey = targetUserId,
                         error = requiredRefusal(enforceRequired, form.qualification, "Qualification")
                     ) {
                         form = form.copy(qualification = it)
                     }
-                    ProfileText("Specialisation", form.specialisation, canEdit) {
+                    ProfileText(
+                        "Specialisation", form.specialisation, canEdit,
+                        dictate = dictates("specialisation"),
+                        resetKey = targetUserId
+                    ) {
                         form = form.copy(specialisation = it)
                     }
+                    // NO MICROPHONE HERE, AND THE REASON IS IN [DESIGNER_PROFILE_NOT_DICTATED]:
+                    // a recogniser answers this box with the word "twelve", and the digit filter on
+                    // the next line discards every letter of it — so a spoken answer would leave the
+                    // box empty with nothing on screen to say why. It is also the one box on this
+                    // card that is not a `ProfileText`, because it keeps its own keystroke filter
+                    // and draws its own bound refusal rather than a required one.
                     OutlinedTextField(
                         value = form.experienceYears,
                         onValueChange = {
@@ -877,7 +1035,13 @@ fun DesignerProfileScreen(
                         enabled = canEdit,
                         minLines = 5,
                         rich = true,
-                        dictate = true,
+                        // Asked of the same table as every other box, though this branch does not
+                        // read it: the rich editor carries `DwDictationButton` in its own toolbar and
+                        // `RecordProseField` therefore ignores `dictate` when `rich` is set. Stated
+                        // anyway, so that the classification and the screen cannot disagree — a
+                        // reader checking "does the biography dictate?" gets one answer from the
+                        // table and the same answer from the call site.
+                        dictate = dictates("biography"),
                         // Re-seed when a different designer's profile is opened into this
                         // composition — an admin stepping through the roster is the case. Without it
                         // the editor would keep the first profile's document open under the second
@@ -912,6 +1076,12 @@ fun DesignerProfileScreen(
                         keyboard = KeyboardType.Email,
                         help = "The address printed on the report, which need not be your sign-in address.",
                         required = true,
+                        // Required AND silent, which is the one combination the record forms do not
+                        // have: `RequiredInput` gives every mandatory box a microphone by default,
+                        // and this is the exception the reason for which is in
+                        // [DESIGNER_PROFILE_NOT_DICTATED] — a dictated address is a value the check
+                        // below reliably refuses, and this form saves twenty-one columns in one PUT.
+                        dictate = dictates("email"),
                         /*
                           BOTH E-MAIL RULES ARE BEHIND THE LATCH, WHILE THE PHONE'S SHAPE RULE ABOVE
                           IS NOT, AND THAT ASYMMETRY IS THE WEB'S OWN. Its `PhoneField` computes
@@ -931,63 +1101,62 @@ fun DesignerProfileScreen(
                                 ?: requiredRefusal(true, form.email, "Email")
                         }
                     ) { form = form.copy(email = it) }
-                    ProfileText("Website", form.website, canEdit, keyboard = KeyboardType.Uri) {
+                    ProfileText(
+                        "Website", form.website, canEdit,
+                        keyboard = KeyboardType.Uri,
+                        dictate = dictates("website")
+                    ) {
                         form = form.copy(website = it)
                     }
                 }
 
                 ProfileSection("Address") {
                     /*
-                     * THE SECOND MICROPHONE ON THIS SCREEN, AND THE LAST.
+                     * DICTATION HERE IS NO LONGER THE LAST WORD ON THIS SCREEN, AND THE COMMENT
+                     * THAT STOOD IN THIS PLACE SAID IT WAS.
                      *
-                     * Dictation is offered where the answer is PROSE — the biography above and this
-                     * address — and nowhere else, which is the split `/artisans/new` already makes on
-                     * both clients (its address and its notes get one; name, phone and e-mail do
-                     * not). A recogniser writes "at" for @, spells digits out in words and punctuates
-                     * a URL, so a microphone under the e-mail, phone, PIN code, website and date
-                     * boxes would be a control that reliably produces a value the field then refuses;
-                     * and a form whose every row carries a button is a form where the button stops
-                     * being noticed. The biography got its mic from `RecordProseField(rich = true)`,
-                     * whose editor carries `DwDictationButton` in its own toolbar; this is the same
-                     * component's plain branch, whose `RecordDictationButton` is the handset's
-                     * counterpart of the web's `OnDeviceDictationButton`.
+                     * It read "THE SECOND MICROPHONE ON THIS SCREEN, AND THE LAST", and argued that
+                     * dictation belonged where the answer was PROSE — the biography and this
+                     * address — and nowhere else. That was the rule this screen shipped with, it was
+                     * a defensible one, and it is not the rule any more: the owner asked on
+                     * 2026-08-28 for "the existing microphone/dictation functionality" on "all
+                     * applicable fields", excluding "calendar fields and any other special fields
+                     * where dictation is not applicable". The default inverted, and the list now
+                     * lives in [DESIGNER_PROFILE_DICTATED] beside the reasons the other eleven
+                     * columns were left out, where a later reader can tell a decision from an
+                     * omission.
                      *
-                     * ── WHY IT IS NO LONGER A `ProfileText` ─────────────────────────────────────
+                     * THE HALF OF THE OLD ARGUMENT THAT SURVIVED IS THE EXCLUSION LIST. Its examples
+                     * were right and are kept in substance: a recogniser writes "at" for the @ sign,
+                     * spells digits out in words and punctuates a URL, so a microphone under the
+                     * e-mail, phone, PIN code, website and date boxes would be a control that
+                     * reliably produces a value the field then refuses. What did not survive is the
+                     * inference from it — that a name, an institution or a town is the same kind of
+                     * box. Those are free proper nouns, and they are precisely what somebody
+                     * standing in a courtyard would rather speak than thumb in.
                      *
-                     * `ProfileText` is a bare `OutlinedTextField` with no microphone and no route to
-                     * one: `RecordDictationButton` and `rememberRecordDictationAvailable` are both
-                     * private to `RecordProseField.kt`, so the choice was to use that component or to
-                     * fork the recogniser. It is used, and the two properties `ProfileText` was
-                     * giving this box are re-supplied at this call site instead — see below.
+                     * ── WHY IT IS NOT A BARE BOX: STILL TRUE, AND STILL THE OBSTACLE ────────────
                      *
-                     * ── NEWLINES ARE FOLDED TO SPACES, WHICH IS THE ONE THING `singleLine` DID ──
+                     * `RecordDictationButton` and `rememberRecordDictationAvailable` are private to
+                     * `RecordProseField.kt`, so a bare `OutlinedTextField` has no microphone and no
+                     * route to one. The answer was, and remains, to use that component rather than
+                     * fork the recogniser — and it is now [ProfileText] itself that forwards to it,
+                     * so this box and the twelve beside it are one control instead of two.
+                     *
+                     * ── NEWLINES ARE STILL FOLDED TO SPACES; THE FOLD HAS MOVED ────────────────
                      *
                      * `RecordProseField` has no `singleLine` parameter (its boxes are paragraphs),
-                     * so the IME here offers a newline key that `ProfileText` did not.
+                     * so the IME offers a newline key that the old bare box did not.
                      * `DesignerProfile.addressLine` has never held newlines — `ArtisanForm` uses a
                      * textarea for ITS address and `Artisan.address` legitimately does, but this one
                      * is copied into a registry field and typeset on a report cover, and the web
-                     * deliberately kept it single-line for that reason this same week. Changing the
-                     * stored shape on one client only is the exact drift the parity rule exists to
-                     * prevent, so the column stays one line and the fold is where that is enforced —
-                     * for a typed Return and for a dictated one alike.
+                     * deliberately kept it single-line for that reason. The rule is unchanged; the
+                     * fold simply lives in [ProfileText] now, where all thirteen single-line
+                     * boxes on this screen get it from one place instead of from thirteen.
                      */
-                    RecordProseField(
-                        label = "Address line",
-                        value = form.addressLine,
-                        onValueChange = { next ->
-                            form = form.copy(
-                                // The ceiling is applied to the WHOLE value rather than to what
-                                // arrives, because a committed dictation phrase is appended to what
-                                // is already in the box before it reaches this lambda.
-                                addressLine = next
-                                    .replace('\n', ' ')
-                                    .replace('\r', ' ')
-                                    .take(ADDRESS_LINE_MAX)
-                            )
-                        },
-                        enabled = canEdit,
-                        dictate = true,
+                    ProfileText(
+                        "Address line", form.addressLine, canEdit,
+                        dictate = dictates("addressLine"),
                         // Re-seed when an admin steps to the next designer in the roster, exactly as
                         // the biography above does.
                         resetKey = targetUserId,
@@ -1011,7 +1180,13 @@ fun DesignerProfileScreen(
                                 )
                             }
                         }
-                    )
+                    ) { next ->
+                        // The ceiling is applied to the WHOLE value rather than to what arrives,
+                        // because a committed dictation phrase is appended to what is already in the
+                        // box before it reaches this lambda. The newline fold that used to sit
+                        // beside it has moved into `ProfileText`, which every box here now shares.
+                        form = form.copy(addressLine = next.take(ADDRESS_LINE_MAX))
+                    }
                     // The served list, with a stored value kept at the FRONT until the list arrives —
                     // the same rule the record forms' state dropdown follows. Without it, a profile
                     // that already holds a state shows "Select" over it on a phone that has not
@@ -1035,15 +1210,30 @@ fun DesignerProfileScreen(
                         value = form.city,
                         enabled = canEdit,
                         reference = reference,
+                        resetKey = targetUserId,
                         onValueChange = { form = form.copy(city = it) }
                     )
-                    ProfileText("PIN code", form.pincode, canEdit, keyboard = KeyboardType.Number) {
+                    ProfileText(
+                        "PIN code", form.pincode, canEdit,
+                        keyboard = KeyboardType.Number,
+                        dictate = dictates("pincode")
+                    ) {
                         form = form.copy(pincode = it.filter { ch -> ch.isDigit() }.take(6))
                     }
                 }
 
                 ProfileSection("Empanelment") {
-                    ProfileText("Empanelment number", form.empanelmentNo, canEdit) {
+                    // NO MICROPHONE, AND THIS IS THE ONE EXCLUSION ON THE SCREEN THAT IS ABOUT
+                    // DATA RATHER THAN ABOUT FRICTION. An empanelment number is transcribed from a
+                    // government order and printed on every report signed under this name; a
+                    // mis-heard character produces a number that is still the right shape and still
+                    // looks correct, and nothing downstream can tell it from a right one. Same class
+                    // as the artisan form's Aadhaar and Pehchan boxes. See
+                    // [DESIGNER_PROFILE_NOT_DICTATED].
+                    ProfileText(
+                        "Empanelment number", form.empanelmentNo, canEdit,
+                        dictate = dictates("empanelmentNo")
+                    ) {
                         form = form.copy(empanelmentNo = it)
                     }
                     FieldDateField(
@@ -1340,6 +1530,75 @@ private fun ProfileSection(title: String, content: @Composable () -> Unit) {
     }
 }
 
+/**
+ * ONE LINE, WHICHEVER WAY THE WORDS ARRIVED. The half of `singleLine` that had to be kept.
+ *
+ * [RecordProseField] has no `singleLine` parameter — its boxes are paragraphs — so every box on this
+ * screen that forwards to it now has an IME with a newline key, and a dictation control that can
+ * commit a phrase containing one. Not one of these columns has ever held a newline: each is copied
+ * into a registry field and typeset on a report cover, and the web keeps every one of them
+ * single-line. Changing the stored shape of a column on ONE client is the exact drift the parity
+ * rule exists to prevent.
+ *
+ * BOTH CHARACTERS, and that is not belt-and-braces. A recogniser's committed text and an IME's
+ * Return key do not agree on what a line break is, and a fold that handled only `\n` would let a
+ * lone carriage return through — which is invisible in a text box, survives the save, and turns up
+ * as a broken line in a report cover somebody has already sent.
+ *
+ * REPLACED WITH A SPACE, NEVER DROPPED. "12 Nagar\nJaipur" becoming "12 NagarJaipur" is a wrong
+ * address that still looks like an address; with the space it is the same address on one line.
+ *
+ * INTERNAL rather than private, so this is a rule a test can call rather than a lambda nobody can
+ * reach. It is applied in exactly one place ([ProfileText]) and must stay that way.
+ */
+internal fun designerProfileOneLine(value: String): String =
+    value.replace('\n', ' ').replace('\r', ' ')
+
+/**
+ * ONE SINGLE-LINE BOX ON THIS PROFILE, with the record forms' microphone where the column takes one.
+ *
+ * ── WHY IT IS NO LONGER A BARE `OutlinedTextField`, CHANGED 2026-08-28 ──────────────────────────
+ *
+ * It was one, and the comment on the address box below said exactly why that mattered:
+ * `RecordDictationButton` and `rememberRecordDictationAvailable` are both private to
+ * `RecordProseField.kt`, so a bare box had "no microphone and no route to one", and the choice was
+ * to use the shared component or to fork the recogniser. Ten boxes on this screen now need a
+ * microphone (see [DESIGNER_PROFILE_DICTATED]), so this forwards to [RecordProseField] exactly as
+ * `MainActivity`'s `TextInput` and `RequiredInput` already do for the ~200 boxes on the record
+ * forms. **No speech plumbing is copied into this file.** A second copy of a dictation control is a
+ * second copy to get wrong, and the half that always drifts is the wording of a refusal.
+ *
+ * ── THE THREE THINGS THAT HAD TO BE RE-SUPPLIED HERE ────────────────────────────────────────────
+ *
+ * 1. **THE ASTERISK.** [RecordProseField] has no `required` flag and must not grow one — it has no
+ *    idea whether a value is required, and pushing the concept down would put a form's rule inside a
+ *    text box. `RequiredInput` in `MainActivity.kt` answers this the same way, by putting the mark
+ *    in the LABEL; the mark is this app's existing trailing asterisk, the one
+ *    `FieldRenderer.fieldLabel` appends for every required field across all 22 stages.
+ *
+ * 2. **THE HELP LINE, ABOVE THE BOX.** [RecordProseField] draws its own `help` UNDER the box at
+ *    11.sp. This screen has always drawn it above at 12.sp, and its help sentences are instructions
+ *    read BEFORE typing ("How your name appears on the cover…") rather than footnotes read after.
+ *    So the line stays where it was and `help` is not forwarded.
+ *
+ * 3. **NEWLINES FOLDED TO SPACES, WHICH IS THE ONE THING `singleLine` DID.** [RecordProseField] has
+ *    no `singleLine` parameter — its boxes are paragraphs — so the IME now offers a newline key that
+ *    this control did not. None of these columns has ever held a newline: each is copied into a
+ *    registry field and typeset on a report cover, and the web keeps every one of them single-line.
+ *    Changing the stored shape on one client only is the exact drift the parity rule exists to
+ *    prevent, so the fold happens HERE, once, for a typed Return and a dictated one alike — rather
+ *    than at the thirteen call sites this control has, twelve of which would eventually forget
+ *    it.
+ *
+ *    WHAT IS NOT RESTORED, SAID PLAINLY RATHER THAN LEFT TO BE DISCOVERED: a value longer than the
+ *    box now WRAPS onto a second line instead of scrolling sideways. That is a real change, and it
+ *    is the better half of the trade on a handset — a box that scrolls sideways hides the end of
+ *    what is in it, and this screen's whole job is values a designer has to be able to proof-read
+ *    before a ministry does. The address box has behaved this way since it moved to
+ *    [RecordProseField] and nothing came of it. Restoring the old behaviour exactly would need a
+ *    `singleLine` parameter on [RecordProseField], which is a file this lane does not own; it is
+ *    reported as a handoff rather than done by forking the control.
+ */
 @Composable
 private fun ProfileText(
     label: String,
@@ -1361,20 +1620,50 @@ private fun ProfileText(
     required: Boolean = false,
     /** The refusal under this box, or null. Also turns the box red. */
     error: String? = null,
+    /**
+     * Draw the record forms' on-device microphone.
+     *
+     * ANSWERED BY [dictates] AT EVERY CALL SITE, never written out by hand — see
+     * [DESIGNER_PROFILE_DICTATED] for why the classification is a table rather than thirteen
+ * arguments written out by hand.
+     * The default is OFF so that a box added without an entry in either table is silent rather than
+     * quietly acquiring a control nobody classified.
+     */
+    dictate: Boolean = false,
+    /**
+     * Re-seed the dictation buffer when a DIFFERENT designer's profile is opened into this
+     * composition — an admin stepping through the roster is the case. Without it, a half-heard
+     * phrase or a dictation refusal raised under one profile would still be on screen under the
+     * next one's box. `targetUserId` is what identifies whose profile this is; null (the signed-in
+     * account's own) is a stable key of its own. The biography and the address have keyed on it
+     * since they got their microphones.
+     */
+    resetKey: Any? = null,
+    /** Drawn under the box, below any dictation sentence — the address box's ceiling notice. */
+    below: @Composable () -> Unit = {},
     onValueChange: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.fillMaxWidth()) {
         help?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
-        OutlinedTextField(
+        RecordProseField(
+            label = if (required) "$label *" else label,
             value = value,
-            onValueChange = onValueChange,
-            label = { Text(if (required) "$label *" else label) },
-            singleLine = true,
+            onValueChange = { next ->
+                // THE FOLD, applied to the WHOLE value and not to what arrives: a committed
+                // dictation phrase is appended to what is already in the box before it reaches this
+                // lambda, so a filter that looked only at the newly spoken words would let a Return
+                // typed earlier through. See [designerProfileOneLine].
+                onValueChange(designerProfileOneLine(next))
+            },
             enabled = enabled,
-            isError = error != null,
-            supportingText = error?.let { message -> { Text(message) } },
-            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
-            modifier = Modifier.fillMaxWidth()
+            dictate = dictate,
+            keyboardType = keyboard,
+            // Material's own supporting-text slot rather than a `Text` underneath, so TalkBack reads
+            // the refusal WITH the box instead of as a stray paragraph after it. It also paints the
+            // box in the error colour, which is why the message and the tint cannot get out of step.
+            errorText = error,
+            resetKey = resetKey,
+            below = below,
         )
     }
 }
@@ -1413,17 +1702,25 @@ private fun DistrictOrTown(
     value: String,
     enabled: Boolean,
     reference: AddressReferenceDto,
+    /**
+     * Whose profile this is, so a half-heard town name is dropped when an admin steps to the next
+     * designer in the roster rather than reappearing under somebody else's box. See [ProfileText].
+     */
+    resetKey: Any?,
     onValueChange: (String) -> Unit,
 ) {
     val districts = remember(state, reference) { reference.districts?.byState?.get(state).orEmpty() }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = value,
+        // A TOWN'S NAME IS A FREE PROPER NOUN, SO IT TAKES A MICROPHONE — unlike the district picker
+        // beneath it, which is a closed vocabulary answered by choosing rather than by typing, and
+        // unlike the state above it. The web's `city` box makes the identical split for the
+        // identical reason, and this box is the escape hatch from the district list rather than a
+        // second copy of it: whichever way the value arrives, one column is written.
+        ProfileText(
+            "Town / city", value, enabled,
+            dictate = dictates("city"),
+            resetKey = resetKey,
             onValueChange = onValueChange,
-            label = { Text("Town / city") },
-            singleLine = true,
-            enabled = enabled,
-            modifier = Modifier.fillMaxWidth()
         )
         if (districts.isNotEmpty()) {
             SearchableSelectField(

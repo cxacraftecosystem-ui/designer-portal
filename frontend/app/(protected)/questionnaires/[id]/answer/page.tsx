@@ -46,9 +46,15 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Archive, ChevronLeft, ChevronRight, ClipboardList, Plus, Save } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { EmptyState } from "@/components/EmptyState";
-import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { Field, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
+import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+// `columnFullSentence` is deliberately NOT imported — see ANSWER_MAX for why its wording would be
+// false about this box.
+import { appendDictatedPhrase, clampToColumn } from "@/components/richtext/dictatedValue";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
@@ -66,6 +72,57 @@ import {
   type QFormEntry,
   type QFormSection
 } from "@/lib/questionnaireForms";
+
+/**
+ * ══ WHICH FIELDS ON THIS SCREEN GOT A MICROPHONE, AND WHICH DID NOT (req 13) ═══════════════════
+ *
+ * GOT ONE — every free-text box a person composes:
+ *   · each answer box            — the longest typing here, and the reason the requirement names
+ *                                  this workflow at all.
+ *   · each per-answer note       — prose about the answer, behind a disclosure so the buttons never
+ *                                  become a wall.
+ *   · the new sitting's Notes    — dictated in the room being described.
+ *
+ * DID NOT, AND WHY:
+ *   · "Who is answering" and "Label for this sitting" — NAMES. A recogniser returns the nearest
+ *     dictionary word for a proper noun, and the respondent's name is the string a designer later
+ *     searches the sittings by. Same split as `/artisans/new` (address and notes yes; name, phone,
+ *     e-mail no); the call sites say it again where they are.
+ *   · The "Sitting" dropdown — a closed list of existing sittings. Speech would have to be matched
+ *     back to a row, and a near-miss switches the screen to somebody else's interview.
+ *   · Retired questions — drawn read-only on purpose (`save_answers` refuses them with a 422), so
+ *     there is no box to dictate into. A microphone there would offer to write where nothing can be
+ *     written.
+ *
+ * Every button here passes `explainWhenUnavailable={false}` and `DictationUnavailableNotice` above
+ * the question list says the sentence once for all of them.
+ */
+
+/**
+ * The ceiling on one answer, named rather than repeated as a literal.
+ *
+ * It was already the textarea's `maxLength={8000}` and nothing else, which was enough while typing
+ * and pasting were the only ways in. Dictation writes into React state, where a DOM `maxLength` has
+ * no opinion at all, so the same number is now needed in three places — the attribute, the clamp in
+ * the commit handler and the sentence the full box says about itself — and three literals are three
+ * chances for the box to refuse at one number while the notice on screen quotes another.
+ *
+ * ── THIS IS A SCREEN'S RULE, NOT A COLUMN'S, AND THE SENTENCE MUST NOT PRETEND OTHERWISE ────────
+ *
+ * Nothing on the server enforces it. `QuestionnaireFormAnswer.answerText` is `String?` — an
+ * unbounded Postgres `text` — and `QuestionnaireFormAnswerIn.answerText` is a bare `str | None` with
+ * no `max_length`. Checked 2026-08-28:
+ *
+ *   grep -n "answerText" backend/prisma/schema.prisma backend/app/schemas/questionnaire.py
+ *
+ * So `dictatedValue.columnFullSentence` is deliberately NOT used for this box: its wording ends
+ * "which is what the column stores", which is true of the designer profile's bounded columns and
+ * false here, and a notice that explains a limit with a reason that does not exist is worse than the
+ * limit. The clamp stays anyway — it keeps a spoken answer and a typed one bounded the same way,
+ * and silently letting the microphone past a ceiling the keyboard is held to is the kind of
+ * difference nobody discovers until an export is ragged.
+ */
+const ANSWER_MAX = 8000;
 
 export default function AnswerQuestionnairePage() {
   return (
@@ -560,6 +617,16 @@ function AnswerPageBody() {
 
         {startOpen && form.isActive ? (
           <form onSubmit={startSitting} className="grid gap-3 rounded-md border border-line-200 bg-surface-50 p-3 md:grid-cols-2">
+            {/*
+              ── NO MICROPHONE ON THESE TWO, AND IT IS NOT AN OVERSIGHT (req 13) ─────────────────
+              Both are NAMES, and a recogniser is at its worst on a proper noun: it returns the
+              nearest dictionary word, and the respondent's name is the one string on this screen a
+              designer will later search the sittings by. The sitting's label defaults to that same
+              name, so it inherits the same argument. This is the split `/artisans/new` already
+              makes — the address and the notes get a microphone, the name, phone and e-mail do not
+              (`components/forms/ArtisanForm.tsx`, and `DesignerProfileForm`'s `DictatedField` doc
+              states the rule) — and this page follows it rather than inventing a second one.
+            */}
             <Field label="Who is answering">
               <TextInput name="respondentName" maxLength={220} placeholder="Ramesh Kumar" />
             </Field>
@@ -567,9 +634,33 @@ function AnswerPageBody() {
               <TextInput name="title" maxLength={220} placeholder="Defaults to the name above" />
             </Field>
             <div className="md:col-span-2">
-              <Field label="Notes">
-                <TextArea name="notes" placeholder="Where and when this was recorded, anything about the conditions" />
-              </Field>
+              {/*
+                THE ONE PROSE BOX ON THIS SUB-FORM, so it is the one that gets a microphone. It is
+                dictated at the START of a sitting, standing in the room being described, which is
+                exactly the moment typing is most awkward.
+
+                `DictatedTextArea` rather than a bare button beside a `TextArea`: it writes its own
+                `<label htmlFor>` instead of the `Field` wrapper it replaces, because `Field` is a
+                `<label>` and a `<label>` forwards a stray click to its first labelable control —
+                pressing "Dictate" would then also focus the box and throw the on-screen keyboard up
+                over the interim readout being watched (SKILL.md §12.3).
+
+                The prompt moved from `placeholder` to `helper` in the same move, and that is an
+                improvement rather than a translation loss: a placeholder is erased by the first
+                word — spoken or typed — so the guidance disappears precisely when a long dictated
+                answer is being checked against it.
+
+                SELF-CONTROLLED IS SAFE HERE, unlike on `/questionnaire`: this sub-form is mounted
+                only while `startOpen` is true and `startSitting` sets it false, so the component
+                unmounts and its state goes with it. There is no `form.reset()` on a still-mounted
+                box to disagree with.
+              */}
+              <DictatedTextArea
+                name="notes"
+                label="Notes"
+                helper="Where and when this was recorded, anything about the conditions"
+                explainWhenUnavailable={false}
+              />
             </div>
             <div className="md:col-span-2">
               <button className="field-button" disabled={starting}>
@@ -618,6 +709,16 @@ function AnswerPageBody() {
             <p className="text-xs text-ink-500">Saved automatically when you move to another section.</p>
           </header>
 
+          {/*
+            The "this browser cannot dictate" sentence, ONCE for the section. Every answer box and
+            every answer note below passes `explainWhenUnavailable={false}`: a twelve-question
+            section would otherwise print the same grey paragraph twenty-four times, which is how a
+            reader learns to skip it. This component self-detects, so nothing on this page holds a
+            second opinion about what the browser can do. It renders nothing at all where dictation
+            works, and the buttons are never drawn dead.
+          */}
+          <DictationUnavailableNotice />
+
           <ol className="grid gap-4">
             {section.questions.map((question, index) => {
               const stored = answersByQuestion(entry).get(question.id);
@@ -657,7 +758,8 @@ function AnswerPageBody() {
                     <textarea
                       className="field-input min-h-16"
                       value={draft[question.id] ?? ""}
-                      maxLength={8000}
+                      maxLength={ANSWER_MAX}
+                      aria-describedby={(draft[question.id] ?? "").length >= ANSWER_MAX ? `${question.id}-full` : undefined}
                       onChange={(event) => {
                         // THE KEYSTROKE THAT ARMS THE GUARDS. `markAnswerDirty`, never a bare
                         // `dirty.current.add(...)`: the ref alone re-renders nothing, so the back
@@ -668,17 +770,90 @@ function AnswerPageBody() {
                       }}
                     />
                   </label>
+                  {/*
+                    ── THE MICROPHONE SITS OUTSIDE THE `<label>`, AND THAT IS LOAD-BEARING ───────
+                    A `<label>` forwards a stray click to the first labelable control inside it
+                    (SKILL.md §12.3), so a "Dictate" button in there would ALSO focus the textarea —
+                    which on a phone throws the on-screen keyboard up over the very interim readout
+                    the person is watching. The `<li>` is a grid, so a sibling here lines up under
+                    the box with no extra wrapper.
+
+                    A QUESTIONNAIRE ANSWER IS THE LONGEST TYPING ON THIS SCREEN and the reason the
+                    dictation requirement names this workflow: it is prose, spoken by a respondent,
+                    typed by a designer holding a phone. `fieldLabel` names the question by its
+                    NUMBER — the accessible label reads "Dictate answer 3 in English (India)" —
+                    because a prompt may run to two thousand characters and an aria-label that long
+                    is spoken in full before the reader learns what the button does.
+                  */}
+                  <OnDeviceDictationButton
+                    fieldLabel={`answer ${index + 1}`}
+                    explainWhenUnavailable={false}
+                    onCommit={(phrase) => {
+                      markAnswerDirty(question.id);
+                      // Functional updater and the two shared rules: APPEND (a long answer arrives
+                      // as many phrases, and replacing the box would empty it at the first pause
+                      // for breath) and CLAMP (a DOM `maxLength` bounds typing and pasting and has
+                      // no opinion at all about a value written into React state, so dictation is
+                      // the one path that could carry an answer past the ceiling this screen holds
+                      // typing to — see ANSWER_MAX, and note the server holds none).
+                      setDraft((prev) => ({
+                        ...prev,
+                        [question.id]: clampToColumn(appendDictatedPhrase(prev[question.id] ?? "", phrase), ANSWER_MAX)
+                      }));
+                    }}
+                  />
+                  {/*
+                    The ceiling, said on screen the moment it is reached — house rule 3. A box that
+                    quietly stops accepting words is indistinguishable from a microphone that
+                    stopped working, and those two need completely different next moves from the
+                    person holding the phone. `ink-500`, not `error-600`: nothing was lost, what is
+                    in the box is exactly what will be saved.
+                  */}
+                  {(draft[question.id] ?? "").length >= ANSWER_MAX ? (
+                    <p id={`${question.id}-full`} className="text-xs leading-5 text-ink-500">
+                      {/* No "carry on in the note below": that box is context ABOUT the answer, and
+                          inviting overflow into it would put answer text in a column no export
+                          reads as one. The cap is stated; where the rest goes is the designer's
+                          call. */}
+                      This box is full — one answer holds {ANSWER_MAX.toLocaleString("en-IN")} characters on this
+                      screen. Anything spoken or typed beyond that is not added.
+                    </p>
+                  ) : null}
                   <details className="text-xs text-ink-500">
                     <summary className="cursor-pointer">Add a note about this answer</summary>
                     <input
                       className="field-input mt-1"
                       value={notes[question.id] ?? ""}
                       placeholder="Context, uncertainty, who said it"
+                      // The `<summary>` above is the only thing naming this box and a `<summary>`
+                      // names nothing: the input had NO accessible name at all, so a screen reader
+                      // announced "edit text, blank" on every question. Fixed in passing while the
+                      // microphone below was added, because the button's own label names the field
+                      // and it would have been the only half of this pair that said what it was.
+                      aria-label={`Note about answer ${index + 1}`}
                       onChange={(event) => {
                         // A note is unsaved work too — it travels in the same payload as the answer
                         // and is lost by the same exits. Same helper, same reason.
                         markAnswerDirty(question.id);
                         setNotes((prev) => ({ ...prev, [question.id]: event.target.value }));
+                      }}
+                    />
+                    {/*
+                      Prose about the answer — "who said it", "she hesitated here" — which is the
+                      kind of remark that is spoken naturally and typed grudgingly, and it is behind
+                      a disclosure so the buttons are never a wall. Inside the `<details>` and not
+                      inside a `<label>`, so the stray-click forwarding described above cannot
+                      happen here either.
+                    */}
+                    <OnDeviceDictationButton
+                      fieldLabel={`the note about answer ${index + 1}`}
+                      explainWhenUnavailable={false}
+                      onCommit={(phrase) => {
+                        markAnswerDirty(question.id);
+                        setNotes((prev) => ({
+                          ...prev,
+                          [question.id]: appendDictatedPhrase(prev[question.id] ?? "", phrase)
+                        }));
                       }}
                     />
                   </details>

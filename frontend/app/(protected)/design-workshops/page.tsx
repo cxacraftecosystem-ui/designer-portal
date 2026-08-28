@@ -118,6 +118,10 @@ import {
 import type { PageResult, Workshop } from "@/lib/types";
 import { listResource } from "@/lib/api";
 import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
+import {
+  designWorkshopDefaultNote,
+  readDesignWorkshopDefault
+} from "@/lib/designWorkshopDefault";
 
 /**
  * The five statuses `DesignWorkshopStatus` declares, plus the reserved empty option.
@@ -239,7 +243,49 @@ function DesignWorkshopsPageBody() {
    * one at the create left the second locked out of a workshop whose stage 1 already carried their
    * colleague's name. The create writes one access row per name here, in the same call.
    */
+  /*
+    SEEDED WITH THE CREATOR WHEN — AND ONLY WHEN — THE CREATOR IS THEMSELVES A DESIGNER.
+
+    The owner's instruction of 2026-08-28: *"The designer initiating the workflow should be the
+    default designer. By default, the designer list/selection should contain that designer
+    themselves."*
+
+    THE GUARD IS NOT CAUTION, IT IS THE ONE CASE THE INSTRUCTION CANNOT MEAN. `create_design_workshop`
+    already argues, at length, that seeding the CREATOR is the wrong behaviour for an admin: "the
+    CREATOR's profile is copied, which for an admin opening a workshop on somebody else's behalf is
+    the wrong person's name on a ministry document". An admin is almost never a participant in the
+    workshop they open — they hold the sanction order — so defaulting them in would put an
+    administrator's name on a report cover, seed their `DesignerProfile` into stage 1 and stage 3,
+    and give them the `dc:creator` of the .docx. The instruction says "the designer initiating the
+    workflow"; an admin initiating it is not a designer, and `role === "DESIGNER"` is the only test
+    that tells those two apart. `canRunDesignWorkshops` would NOT: it is a SET that includes ADMIN
+    and MASTER_ADMIN, which is exactly the case being excluded.
+
+    A SEED AND NOT A LOCK. It is one tick in a multi-select the creator can untick, and the lead is
+    still derived from the first ticked rather than pinned here — so an admin-designer opening a
+    workshop for a colleague unticks themselves and nothing about the old behaviour is lost.
+  */
   const [designerUserIds, setDesignerUserIds] = useState<string[]>([]);
+  /**
+   * Whether the seed above has been applied, so it happens once and never fights the creator.
+   *
+   * A REF AND AN EFFECT RATHER THAN A LAZY `useState` INITIALISER, and the difference is not style:
+   * `useAuth()` resolves the account asynchronously, so on the first render `user` is null and an
+   * initialiser reading it would seed nothing and never run again. The effect fires when the account
+   * lands. It is a ref rather than state because re-rendering on it would change nothing on screen.
+   */
+  const designerSeeded = useRef(false);
+  useEffect(() => {
+    if (designerSeeded.current) return;
+    if (user?.role !== "DESIGNER" || !user.id) return;
+    designerSeeded.current = true;
+    // ONLY INTO AN EMPTY SELECTION. If the creator has already ticked somebody — which they can do
+    // before the account resolves on a slow connection — the app must not add a name underneath them.
+    setDesignerUserIds((current) => (current.length === 0 ? [user.id] : current));
+    // DELIBERATELY NOT `markDirty()`. The app filling a box in is not the creator typing in it, and
+    // a create form that announces unsaved work before anybody has touched it teaches people to
+    // click through the guard that has to still mean something an hour later.
+  }, [user?.id, user?.role]);
   /**
    * Which of them is the LEAD — the one whose `DesignerProfile` is seeded into stage 1 and stage 3
    * and whose name the report cover carries. "" means "derive it", which is the first ticked.
@@ -812,6 +858,25 @@ function DesignWorkshopsPageBody() {
             <div className="grow">
               <p className="font-medium">Starting a new design workshop is an admin’s job</p>
               <p className="mt-1 leading-6">{DESIGN_WORKSHOP_CREATE_REFUSAL}</p>
+              {/*
+                THE LAST CLAUSE OF THAT REFUSAL IS NOW A CONTROL RATHER THAN A CLAIM.
+
+                It ends "Any workshop you already have access to is open to you now", which was true
+                and was not actionable: the designer had to read it, dismiss the panel, and then find
+                the right row in a list that may be paginated. The owner asked for the other half
+                (2026-08-28): *"When a designer selects Start a new workshop, provide a dropdown
+                containing the workshops that the designer is already part of or has been given
+                access to. By default, select the Design and Prototype Workshop that the designer was
+                most recently given access to."*
+
+                So the sentence keeps its words and gains the dropdown it describes, defaulted by the
+                server's own answer to "most recently allocated" — see
+                `lib/designWorkshopDefault.ts` for why that is not computed here.
+
+                IT OPENS A WORKSHOP; IT DOES NOT CREATE ONE. Nothing about this widens
+                `canCreateDesignWorkshops`, and the panel above still says whose job that is.
+              */}
+              <ContinueOnAllocatedWorkshop />
             </div>
             <button
               type="button"
@@ -1355,6 +1420,112 @@ function DesignWorkshopsPageBody() {
         onSave={() => formRef.current?.requestSubmit()}
       />
     </>
+  );
+}
+
+/**
+ * "Carry on with a workshop you were allocated" — the control the create refusal now ends in.
+ *
+ * ── WHY IT IS ITS OWN COMPONENT AND NOT INLINE IN THE PANEL ─────────────────────────────────────
+ *
+ * It fetches. Mounted only when the refusal is on screen, it costs nothing on every other visit —
+ * and the refusal is raised by the `?new=1` intent, which is spent the moment it is read, so this
+ * is the one render where a designer has actually asked the question this answers. Inline, the two
+ * requests would be issued by the page for every visitor, most of whom are admins who never see the
+ * panel at all.
+ *
+ * ── IT LISTS AND IT DEFAULTS, AND THOSE ARE TWO DIFFERENT QUESTIONS ─────────────────────────────
+ *
+ * The LIST is `GET /design-workshops`, whose rows for a non-admin are exactly `visible_to_clause` —
+ * created-by-me OR holding a viewer grant. That is precisely "the workshops the designer is already
+ * part of or has been given access to", asked in list form; there is no second endpoint to write.
+ *
+ * The DEFAULT is `GET /design-workshops/default-for-me`, because "most recently given access to" is
+ * `DesignWorkshopViewer.createdAt` and that column is on no payload any client can see. Ordering
+ * this list by `createdAt` — which is what a client would have to fall back on — answers "most
+ * recently CREATED", which for a workshop the Ministry opened in March and allocated in August is
+ * the wrong row. See `lib/designWorkshopDefault.ts`.
+ *
+ * ── A FAILURE SAYS NOTHING AT ALL ──────────────────────────────────────────────────────────────
+ *
+ * The panel it sits in is already an answer to a refused action, and stacking a second failure
+ * inside it would bury the sentence that matters. If either request fails the control simply does
+ * not appear and the list below the panel — which is this page's whole job — still works.
+ */
+function ContinueOnAllocatedWorkshop() {
+  const router = useRouter();
+  const [rows, setRows] = useState<DwSummary[] | null>(null);
+  const [chosen, setChosen] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [page, fallback] = await Promise.all([
+        listDesignWorkshops({ page: 1, pageSize: 50 }).catch(() => null),
+        readDesignWorkshopDefault()
+      ]);
+      if (cancelled) return;
+      setRows(page?.items ?? []);
+      // THE DEFAULT IS ONLY APPLIED IF IT IS IN THE LIST. A workshop the default names and the page
+      // does not carry would select a value with no option behind it, which every dropdown in this
+      // app draws as nothing selected — a control that silently disagrees with itself.
+      const id = fallback?.workshopId ?? "";
+      if (id && (page?.items ?? []).some((row) => row.id === id)) {
+        setChosen(id);
+        setNote(designWorkshopDefaultNote(fallback));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Nothing to offer: either the list could not be read, or this designer genuinely has none. The
+  // panel's own sentence already covers the second case ("Ask an admin to create it for your
+  // cluster and give you access"), so adding an empty dropdown under it would say less than silence.
+  if (!rows || rows.length === 0) return null;
+
+  return (
+    <div className="mt-3 grid gap-2 sm:max-w-xl">
+      <FieldBlock
+        label="Or carry on with a workshop you already have"
+        hint={note ? <p className="text-[11px] leading-4 text-amber-900/80">{note}</p> : undefined}
+      >
+        <Dropdown
+          value={chosen}
+          onChange={(id) => {
+            setChosen(id);
+            setNote(null);
+          }}
+          options={rows.map((row) => ({
+            value: row.id,
+            label: row.title || "Untitled workshop",
+            hint:
+              [row.craftName, row.clusterName ?? row.state, row.startDate?.slice(0, 10)]
+                .filter((part) => !!part && String(part).trim() !== "")
+                .join(" · ") || undefined
+          }))}
+          placeholder="Choose a workshop"
+          // The options are RECORDS, so §11.5 says the filter box belongs here — and the list is one
+          // page of fifty against a `RENDER_CAP` of eighty, so nothing the box can be typed at is
+          // missing from what it filters.
+          searchable
+          // It navigates, so the panel it lives in must not steal focus back to the next field.
+          advanceOnSelect={false}
+        />
+      </FieldBlock>
+      <div>
+        <button
+          type="button"
+          className="field-button"
+          disabled={!chosen}
+          onClick={() => router.push(`/design-workshops/${chosen}/stages`)}
+        >
+          Open this workshop
+        </button>
+      </div>
+    </div>
   );
 }
 

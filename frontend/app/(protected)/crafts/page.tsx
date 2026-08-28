@@ -8,11 +8,11 @@ import { CollabDialog } from "@/components/CollabDialog";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FieldProvenance } from "@/components/FieldProvenance";
-import { Field, TextInput } from "@/components/FormControls";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
-import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useEditDeepLink } from "@/components/hooks/useEditDeepLink";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
@@ -53,6 +53,29 @@ export default function CraftsPage() {
   );
 }
 
+/**
+ * ── DICTATION ON THIS FORM: WHICH BOXES HAVE A MICROPHONE, AND WHY THE REST DO NOT ──────────────
+ *
+ * The owner's instruction (2026-08-28): "All the record pages should have dictation options
+ * available, wherever applicable so as to reduce the friction as much as possible." So the default
+ * flipped — a free-text box HAS a microphone unless there is a reason it must not — and the reason
+ * is written down here so a later reader can tell a decision from an oversight.
+ *
+ * DICTATED: Craft name · Local name · Category · Place · Description.
+ *
+ * NOT DICTATED, and each is a rule rather than a preference:
+ *
+ *  - **Workshop** — a record picker behind a themed dropdown. Nothing free to speak.
+ *  - **Craft media** — a file picker.
+ *  - **Search crafts, categories or descriptions** — the list's own search box, and NOT part of the
+ *    record form at all. It is not an answer being stored; it re-runs a query on every keystroke,
+ *    and a microphone on it would fire a debounced fetch per committed phrase. If searching by voice
+ *    is wanted it belongs in `SearchInput` once, for every list screen, rather than here for one.
+ *
+ * Category is the one judgement call on this list and it went the dictated way: there is no
+ * vocabulary endpoint behind it, nothing validates it, and what researchers type into it is prose.
+ * The day it becomes a dropdown it leaves this list.
+ */
 function CraftsPageBody() {
   const confirm = useConfirm();
   const { user } = useAuth();
@@ -64,6 +87,40 @@ function CraftsPageBody() {
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Craft | null>(null);
+  /*
+    ── THE FOUR DICTATED ONE-LINE BOXES, IN PAGE STATE ─────────────────────────────────────────────
+
+    `DictatedTextInput` is controlled by its caller and cannot be anything else — the argument is in
+    that file, and it is exactly this page's shape that proves it: `submit` finishes a CREATE with
+    `resetForm(null); formElement.reset();`, and `formElement.reset()` rewrites the DOM and tells
+    React nothing at all. A box that owned its own value would go on holding the craft that was just
+    saved while the DOM showed empty, and the next character typed would bring the old name back.
+
+    So `resetForm` is the ONE place these four are seeded, from the record being loaded or from
+    nothing at all, and every route into the form goes through it: the row Edit button, `?edit=`,
+    `?new=1`, Cancel edit, the saved branch and the queued branch.
+  */
+  const [name, setName] = useState("");
+  const [localName, setLocalName] = useState("");
+  const [category, setCategory] = useState("");
+  const [place, setPlace] = useState("");
+  /*
+    ── AND THE FORM IS REMOUNTED ON EVERY RESET, WHICH IS A BUG FIX AND NOT A TIDY-UP ──────────────
+
+    The `<form>` was keyed `editing?.id ?? "new"` alone, so creating a craft did not change the key
+    and the form was NOT rebuilt: `formElement.reset()` was the whole of the clearing. That reaches
+    uncontrolled DOM inputs and nothing else, and this form has children holding their own state —
+    `DictatedTextArea` (the description) most importantly, and `TitleCasedInput`'s typed shadow. So
+    after saving a craft the description box painted empty while the component still held the saved
+    text, and one keystroke brought the whole previous description back into the next craft. The
+    QUEUED branch was worse: it calls `resetForm(null)` and never called `formElement.reset()` at
+    all, so an offline save left every box filled with the craft that had just been banked.
+
+    Bumping a counter and putting it in the key is the same instrument `ArtisanForm` uses
+    (`formKey`), for the same reason it gives: remounting is what clears the state living inside the
+    field components, "which no amount of `form.reset()` can reach".
+  */
+  const [formKey, setFormKey] = useState(0);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +194,16 @@ function CraftsPageBody() {
     setEditing(next);
     setMediaFiles([]);
     setDirty(false);
+    // The four dictated boxes are page state, so they are seeded here rather than by a `defaultValue`
+    // the remount below would re-read. `next` is the record being loaded into the form, or null for
+    // a blank one — the same source the other boxes' `defaultValue`s use.
+    setName(next?.name ?? "");
+    setLocalName(next?.localName ?? "");
+    setCategory(next?.category ?? "");
+    setPlace(next?.place ?? "");
+    // See `formKey` above: this is what actually empties the description box and every other child
+    // holding its own state. It runs on all six routes into the form, including the offline one.
+    setFormKey((key) => key + 1);
   }
 
   // `/crafts?edit=<id>` loads that craft into the form below; `/crafts?new=1` opens a blank one.
@@ -271,6 +338,11 @@ function CraftsPageBody() {
       }
       resetForm(null);
       setConfirmAction(null);
+      // KEPT, AND NO LONGER THE THING THAT CLEARS THE FORM. `resetForm` above bumps `formKey`, so
+      // React rebuilds this form from scratch — see the `formKey` note at the top of this component
+      // for the children `.reset()` could never reach. This line still runs against the outgoing DOM
+      // node (state updates flush after the handler), which is harmless, and it is what keeps the
+      // browser's own idea of "the default values" in step for anything outside React's view.
       formElement.reset();
       load();
       const after = afterSaveRef.current;
@@ -318,7 +390,7 @@ function CraftsPageBody() {
       {allowManage ? (
       <form
         ref={formRef}
-        key={editing?.id ?? "new"}
+        key={`${editing?.id ?? "new"}-${formKey}`}
         onSubmit={submit}
         onInput={() => setDirty(true)}
         onKeyDown={handleFormEnter}
@@ -345,24 +417,79 @@ function CraftsPageBody() {
             "the web showed nothing, so the value changed silently AFTER saving and the form and the
             record disagreed" — and `ArtisanForm`, `ProductForm`, `ToolForm` and `ProcessForm` all
             already use this control for exactly these columns, as does Android's `CraftForm`
-            (`titleCased = true` on both boxes). It is a drop-in for `TextInput`.
+            (`titleCased = true` on both boxes).
+
+            IT IS STILL THAT COMPONENT, reached through `DictatedTextInput`'s `titleCased` prop
+            rather than mounted directly: the dictation sweep of 2026-08-28 put a microphone under
+            these boxes, and the one thing it was not allowed to do on the way was drop the "Will be
+            saved as …" sentence this comment exists for. The prop mounts `TitleCasedInput` itself,
+            not a copy of its hint.
 
             NOT `localName`, and never: it is Devanagari or Gujarati, where capitalising means
             nothing, and `TITLE_CASE_FIELDS` leaves it out for that reason. `category` is left alone
             too — it is not in that set, so a hint here would promise a normalisation the API does not
-            perform, which is worse than no hint. */}
-        <Field label="Craft name" required>
-          <TitleCasedInput name="name" required defaultValue={editing?.name ?? ""} />
-        </Field>
-        <Field label="Local name">
-          <TextInput name="localName" defaultValue={editing?.localName ?? ""} />
-        </Field>
-        <Field label="Category">
-          <TextInput name="category" defaultValue={editing?.category ?? ""} />
-        </Field>
-        <Field label="Place">
-          <TitleCasedInput name="place" defaultValue={editing?.place ?? ""} />
-        </Field>
+            perform, which is worse than no hint. Each of the two says so at its own call site. */}
+        {/*
+          THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
+          Every dictated box below passes `explainWhenUnavailable={false}`, because on Firefox the
+          same honest paragraph printed five times across one four-column row is grey text nobody
+          reads. It spans the whole grid so it reads as a sentence about the form rather than as the
+          first field's caption.
+        */}
+        <DictationUnavailableNotice className="md:col-span-2 lg:col-span-4" />
+        <DictatedTextInput
+          name="name"
+          label="Craft name"
+          required
+          titleCased
+          explainWhenUnavailable={false}
+          value={name}
+          onChange={(next) => {
+            setName(next);
+            setDirty(true);
+          }}
+        />
+        {/* NOT title-cased, and never — see the block above: it is Devanagari or Gujarati, where
+            capitalising means nothing, and `TITLE_CASE_FIELDS` leaves it out for that reason. It
+            still gets a microphone: the recogniser takes whichever language it is set to, and Hindi,
+            Odia and Gujarati are all in `DICTATION_LANGUAGES`. */}
+        <DictatedTextInput
+          name="localName"
+          label="Local name"
+          explainWhenUnavailable={false}
+          value={localName}
+          onChange={(next) => {
+            setLocalName(next);
+            setDirty(true);
+          }}
+        />
+        {/* CATEGORY IS FREE TEXT ON THIS SCREEN AND NOT A CLOSED LIST — there is no vocabulary
+            endpoint behind it and nothing validates it, so it is prose a researcher types ("textile,
+            hand block printed"). That is what makes it dictatable; if it ever becomes a dropdown it
+            leaves this list, like every other closed vocabulary here. Also NOT title-cased: it is
+            not in `TITLE_CASE_FIELDS`, so a hint would promise a normalisation the API does not
+            perform. */}
+        <DictatedTextInput
+          name="category"
+          label="Category"
+          explainWhenUnavailable={false}
+          value={category}
+          onChange={(next) => {
+            setCategory(next);
+            setDirty(true);
+          }}
+        />
+        <DictatedTextInput
+          name="place"
+          label="Place"
+          titleCased
+          explainWhenUnavailable={false}
+          value={place}
+          onChange={(next) => {
+            setPlace(next);
+            setDirty(true);
+          }}
+        />
         <div className="md:col-span-2 lg:col-span-4">
           {/*
             DICTATION BUT NOT RICH TEXT, and the second half of that is a decision rather than an
@@ -388,6 +515,8 @@ function CraftsPageBody() {
             name="description"
             label="Description"
             defaultValue={editing?.description ?? ""}
+            /* The form says it once, at the top of the grid — see `DictationUnavailableNotice`. */
+            explainWhenUnavailable={false}
             onDirty={() => setDirty(true)}
           />
         </div>

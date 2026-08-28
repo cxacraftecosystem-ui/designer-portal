@@ -1583,6 +1583,34 @@ data class DesignWorkshopPageDto(
     val pages: Int = 0,
 )
 
+/**
+ * `GET /design-workshops/default-for-me` — the workshop every record form opens on.
+ *
+ * ── "NONE" IS AN ANSWER AND NOT A FAILURE ────────────────────────────────────────────────────────
+ *
+ * A newly onboarded designer is on no workshop, which is ordinary, and the endpoint answers 200 with
+ * [workshopId] null rather than 404 — because the callers are dropdowns filling in a default, and a
+ * 404 would arrive at seven forms as a failure to report, each of which would then have to learn
+ * that this particular failure means "nothing to prefill". That is how an empty answer comes to be
+ * drawn as a broken screen, which is the defect class this repository keeps un-shipping.
+ *
+ * ── [reason] EXISTS SO THE PREFILL CAN EXPLAIN ITSELF ───────────────────────────────────────────
+ *
+ * A dropdown that fills itself in and cannot say why reads as a bug. The two doors need different
+ * sentences: `"GRANTED"` is "the workshop you were most recently added to" — which sends a designer
+ * looking for an allocation — and `"CREATED"` is "the one you opened most recently", which does not.
+ * Null only when there is no default at all, so a client cannot print either word over an empty box.
+ */
+@Serializable
+data class DesignWorkshopDefaultDto(
+    val workshopId: String? = null,
+    val title: String? = null,
+    /** ISO. When access began: the grant's own timestamp, or the workshop's creation. */
+    val accessAt: String? = null,
+    /** `"GRANTED"`, `"CREATED"`, or null. See the class note. */
+    val reason: String? = null,
+)
+
 /** The server's per-stage score. Field-for-field the same numbers [DwStageCompleteness] computes. */
 @Serializable
 data class StageCompletenessDto(

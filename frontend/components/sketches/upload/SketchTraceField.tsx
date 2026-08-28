@@ -75,6 +75,30 @@
  *      and these are photographs. They are revoked when they are replaced, when the photograph changes
  *      and when this component unmounts — see `compareUrlsRef` and the dispose effect.
  *
+ * 6. **IT OPENS ON THE PRIMARY PATH, AND EVERYTHING ELSE IS ONE PRESS AWAY BEHIND ONE DISCLOSURE.**
+ *    The owner's report was that "selecting this functionality exposes all settings simultaneously,
+ *    which can overwhelm the user", and it did: the frame chooser, `PARAM_COUNT` controls in five
+ *    fieldsets, five download buttons and five paragraphs of format copy all arrived at once, above
+ *    the one button most designers came to press. What is on screen when the panel opens is now the
+ *    photograph, one line saying what the trace is framed to, the style and subject presets, the
+ *    {@link ESSENTIAL_KEYS} controls, the traced result, the comparison and "Add the line art".
+ *
+ *    THE THREE PROPERTIES THAT MAKE THAT SAFE RATHER THAN MERELY TIDIER:
+ *
+ *    · **NOTHING IS DROPPED, BY CONSTRUCTION.** `ControlGroups` filters on `isEssential` and is called
+ *      twice with the two answers, so the two halves are exhaustive and disjoint and a control added
+ *      to the table lands in one of them without anybody choosing. `ADVANCED_COUNT` counts the same
+ *      predicate, so the number on the button is the number the press reveals.
+ *
+ *    · **WHAT IS HIDDEN CAN STILL SPEAK.** A non-essential setting moved away from its preset says so
+ *      on the toggle ("· 3 changed") and names itself underneath, and the FRAME — the one setting that
+ *      is destructive — keeps a line on the primary path whether the section is open or not. §1.10:
+ *      a control whose effect is invisible is indistinguishable from one that does nothing.
+ *
+ *    · **COLLAPSING DESTROYS NOTHING.** The contents are mounted on the first press and thereafter
+ *      hidden rather than unmounted — see {@link advancedMounted} — because `Accordion` and a plain
+ *      conditional both unmount, and either would throw away a rectangle a designer was aiming.
+ *
  * ────────────────────────────────────────────────────────────────────────────
  * THE SEAM
  * ────────────────────────────────────────────────────────────────────────────
@@ -95,6 +119,7 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  Crop,
   Download,
   Image as ImageIcon,
   Loader2,
@@ -312,6 +337,13 @@ const COMPARE_MAX_ZOOM = 6;
 
 export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSource }: SketchTraceFieldProps) {
   const panelId = useId();
+  /*
+    DERIVED FROM THE ONE `useId`, exactly as `${panelId}-style-hint` and its siblings below are. Two
+    `useId()` calls would be two independent ids for one component, which is how a `for`/`id` pair and
+    an `aria-controls` end up naming different things after a refactor moves one of them.
+  */
+  const advancedId = `${panelId}-advanced`;
+  const advancedToggleId = `${panelId}-advanced-toggle`;
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>({ status: "idle" });
 
@@ -386,7 +418,46 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  /**
+   * Whether the one "Show more options" disclosure is open.
+   *
+   * ── WHY THERE IS EXACTLY ONE OF THESE, AND WHAT IS BEHIND IT ────────────────────────────────────
+   *
+   * The owner's report: "selecting this functionality exposes all settings simultaneously, which can
+   * overwhelm the user." It did. Opening the panel put the frame chooser, {@link PARAM_COUNT}
+   * controls in five fieldsets, five download buttons and five paragraphs about file formats on
+   * screen at once, above a single button that is the only thing most designers came to press.
+   *
+   * So the panel now opens on the PRIMARY PATH only — the photograph, what the trace is framed to,
+   * the style and subject presets, the {@link ESSENTIAL_KEYS} controls, the result, the comparison and
+   * "Add the line art" — and everything else is one press away behind one disclosure. Nothing was
+   * dropped: `ADVANCED_COUNT` is measured off the table, so a control that is not essential is inside
+   * this section by construction rather than by anybody remembering to put it there.
+   */
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  /**
+   * Whether the disclosure's contents have EVER been rendered.
+   *
+   * ── THE TWO THINGS THIS BUYS, AND WHY NEITHER `Accordion` NOR A PLAIN CONDITIONAL GIVES BOTH ────
+   *
+   * The shared `Accordion` primitive unmounts its children on collapse — a stated contract (§11.3),
+   * not an optimisation — and so does a plain `{open ? … : null}`. Either would destroy `FramePanel`'s
+   * in-progress state every time this section closed: the rectangle being aimed, the half-typed number
+   * in a box, the sharpening sliders. A designer who closed the section to look at the preview would
+   * come back to the whole photograph, with nothing saying why.
+   *
+   * And mounting it ALWAYS is not free either. `FramePanel` reads the entire decoded photograph — up
+   * to 16.7 million pixels — to draw its preview, on the commit that first shows it. Paying that for
+   * every designer who never opens this section is the allocation `DwSketchTraceCropPanel.kt` collapses
+   * its own crop tool to avoid.
+   *
+   * So: nothing until the first press, and after that the contents stay mounted and are hidden with
+   * `hidden` (Tailwind's preflight makes it `display: none`, which also takes the subtree out of the
+   * accessibility tree and out of the tab order). This is also what makes `aria-controls` honest —
+   * §17's "only while the panel is mounted" — because the id it names exists from the first press
+   * onwards and never afterwards points at nothing.
+   */
+  const [advancedMounted, setAdvancedMounted] = useState(false);
   /*
     THE CHOOSER HOLDS AN `AttachFormatId`, NOT AN `ExportFormatId`, AND THE TYPE IS THE ENFORCEMENT.
     Three of the five formats are take-away only (`traceExport.ts`'s header: a `.dxf` filed on the
@@ -521,6 +592,19 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   /** Whether the panel was open on the previous render, so focus is returned only on a real close. */
   const wasOpenRef = useRef(false);
+  /** The disclosure's own container, so opening it can put focus inside what just appeared. */
+  const advancedRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * True between "a press asked for the frame chooser" and "focus has been moved into it".
+   *
+   * A REF AND AN EFFECT RATHER THAN A `requestAnimationFrame` INSIDE THE HANDLER. The press both
+   * mounts the section and opens it, so the element focus is owed to does not exist yet when the
+   * handler runs; an effect keyed on `advancedOpen` runs after the commit that created it, which is
+   * the first moment the ref is populated. The flag is what keeps the effect from stealing focus on
+   * an open the designer did not ask to be moved for — the "Show more options" toggle sits directly
+   * above its own panel, so a reader is already where they need to be.
+   */
+  const focusAdvancedRef = useRef(false);
 
   /* ──────────────────────────────────────────────────────────────────────────
    * Loading the engine — only once the panel is opened
@@ -624,6 +708,22 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     wasOpenRef.current = false;
     triggerRef.current?.focus();
   }, [open]);
+
+  /**
+   * Move focus into the disclosure when a press asked for something INSIDE it.
+   *
+   * "Choose a frame" sits at the top of the panel and the frame chooser is at the bottom of a section
+   * further down: opening it and leaving focus on the button would make a keyboard user tab through
+   * every preset, every essential control and the toggle to reach the thing they just asked for. The
+   * "Show more options" toggle deliberately does NOT set the flag — it is directly above its own
+   * panel, so the next Tab already lands inside it and moving focus would be taking a reader
+   * somewhere they were about to arrive.
+   */
+  useEffect(() => {
+    if (!advancedOpen || !focusAdvancedRef.current) return;
+    focusAdvancedRef.current = false;
+    advancedRef.current?.focus();
+  }, [advancedOpen]);
 
   /**
    * A worker outlives the component that forgot it — and so does an object URL.
@@ -1148,6 +1248,35 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   }
 
   /**
+   * Open or close the one disclosure.
+   *
+   * `setAdvancedMounted(true)` on every press rather than only the first: it is already true after
+   * that, React skips a write of the same value, and a guard here would be a second place for the two
+   * flags to disagree. See {@link advancedMounted} for why the contents are never unmounted again.
+   */
+  function toggleAdvanced() {
+    setAdvancedMounted(true);
+    setAdvancedOpen((value) => !value);
+  }
+
+  /**
+   * The "Choose a frame" press — the handset's own control, and the direct route to the frame chooser.
+   *
+   * It drives the SAME disclosure the toggle does rather than a second one, because two disclosures
+   * over one region is two states that can disagree about whether it is open. What it adds is the
+   * focus move: see the effect above.
+   */
+  function chooseFrame() {
+    if (advancedOpen) {
+      setAdvancedOpen(false);
+      return;
+    }
+    focusAdvancedRef.current = true;
+    setAdvancedMounted(true);
+    setAdvancedOpen(true);
+  }
+
+  /**
    * Ask the running trace to stop.
    *
    * REAL WORK-STOPPING, NOT HIDING. The abort posts a cancel to the worker, whose `CancellationToken`
@@ -1464,6 +1593,148 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     </button>
   );
 
+  /**
+   * The take-away formats, lifted out of the panel's JSX so the ONE disclosure can hold them.
+   *
+   * A `const` rather than a component, because it closes over nine values from this body — the
+   * five running flags, the traced result, the chosen file, the frame and the saved sentence — and
+   * a component taking nine props would be nine chances for one of them to stop being passed. It is
+   * rendered in exactly one place; see the disclosure above.
+   *
+   * WHY IT IS INSIDE THE DISCLOSURE AT ALL. The owner's primary path is the photograph, the
+   * presets, the essential controls, the comparison and "Add the line art"; a download is a copy
+   * for the person at the keyboard and reaches no field, no upload queue and no draft store. The
+   * rule below still separates the two promises, and the sentence that used to point at "the row
+   * above" now points at the button below this section, which is where it moved to.
+   */
+  /*
+    ── Downloads ──────────────────────────────────────────────────────────────────────────────
+    SEPARATED FROM THE ATTACH BY A RULE, BECAUSE THEY ARE DIFFERENT PROMISES. Everything outside
+    this block writes to the record; nothing inside it does. A download is a copy for the person
+    at the keyboard — it reaches no field, no upload queue and no draft store — and the sentence
+    underneath says so, along with the two facts a designer cannot see: that the press re-traces
+    at full resolution rather than saving the preview, and that the trace itself is not kept
+    anywhere once this panel closes.
+  */
+  const downloads = (
+  <div className="mt-4 border-t border-line-200 pt-3">
+    <span className="field-label">Download a copy to this device</span>
+    {/*
+      ONE BUTTON PER TABLE ROW, WHICH IS THE WHOLE OF THE FIX. This row was two hard-coded
+      buttons while `EXPORT_FORMATS` held two entries and `engine/exportFormats.ts` held three
+      more finished writers nobody could reach — a designer could trace a sketch and had no way
+      to take the vector result away in a format their printer or their cutter would open.
+      Rendering from the table means the two facts are one fact: a row without a control cannot
+      exist, and `e2e/sketch-export-formats-unit.spec.ts` fails if a writer the engine can run
+      is neither in the table nor in `NOT_OFFERED` with a reason.
+
+      The words come from `entry.download` rather than from here, so the two labels
+      `sketch-trace-panel.spec.ts` pins live beside the format they belong to.
+    */}
+    <div className="mt-1 flex flex-wrap gap-2">
+      {EXPORT_FORMATS.map((entry) => (
+        <button
+          key={entry.id}
+          type="button"
+          className="field-button-secondary"
+          onClick={() => void downloadDerived(entry.id)}
+          disabled={disabled || busy || result === null || file === null}
+        >
+          {running === `download-${entry.id}` ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Download className="h-4 w-4" aria-hidden />
+          )}
+          {entry.download}
+        </button>
+      ))}
+    </div>
+    {/* HONEST NAMING, ONE LINE EACH. The audience is a designer, not a developer: nobody
+        should have to know what a `.dxf` is before pressing a button that makes one, and the
+        sentence that says what a format is FOR is the same string the "Attach as" chooser
+        shows, so the two surfaces cannot describe one format differently. */}
+    <ul className="mt-2 grid max-w-prose gap-1 text-xs leading-5 text-ink-500">
+      {EXPORT_FORMATS.map((entry) => (
+        <li key={entry.id}>
+          <span className="font-medium text-ink-700">{entry.label}</span> — {entry.hint}
+        </li>
+      ))}
+    </ul>
+    <p className="mt-2 max-w-prose text-xs leading-5 text-ink-500">
+      Every one of these is re-traced at full resolution when you press it, so none of them is the
+      smaller preview above. None of them is filed on the record, none is uploaded, and none reaches
+      the report: the ministry document prints the sketch photograph, and a drawing downloaded here is
+      a copy for you, your printer or your CAD operator. Attaching to the record is the “Add the line
+      art” button below this section.
+    </p>
+    <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
+      Nothing here is stored: the trace lives only while this panel is open, so closing it, choosing
+      another photograph or reloading the page discards it, and a download after that means tracing
+      again.
+    </p>
+    {/*
+      WHAT IS WRITTEN INSIDE THE FILE ABOUT WHO MADE IT — the handset's
+      `DW_TRACE_EXPORT_ENGINE_NAME_SENTENCE`, copied back here because it is true of the portal's
+      downloads too and no web surface said it.
+
+      SCOPED TO THE TWO FORMATS IT IS ACTUALLY TRUE OF, which is where the two clients genuinely
+      differ. `exportVectorFile` passes `includeMetadata: true`, so `pdfWriter` emits
+      `/Producer (Offline Tracer) /Creator (Offline Tracer)` and `epsWriter` emits
+      `%%Creator: Offline Tracer`. The SVG is NOT among them here: this page writes its own
+      through `geometryToSvg.buildSvg` rather than through the engine's writer, and that
+      function emits no producer line at all.
+
+      THE HANDSET'S SET IS NARROWER STILL, AND THIS COMMENT USED TO GET IT BACKWARDS. It said
+      the handset's SVG carries the line because the engine's own writer produces it. It does
+      not: `dwTraceKotlinSvgOf` and `DwTraceKotlinExporter` both pass `includeMetadata: false`
+      for exactly the branding reason, which leaves ONE branded file on that client — the EPS,
+      whose `%%Creator` the vendored writer emits outside that flag. So the honest comparison
+      is two formats here against one there, and the difference is a deliberate option this
+      page has not taken rather than a capability it has. Re-check with
+      `grep -rn "Offline Tracer" frontend/lib/trace frontend/components/sketches/upload` and
+      `grep -rn "includeMetadata" android/app/src/main/java`.
+    */}
+    <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
+      The PDF and the EPS record that they were made by the Offline Tracer engine, which is the
+      tracing library this app uses on the device. That is a note about the software — not about the
+      drawing, and not about you. The SVG this page writes carries no such line, because this page
+      writes it rather than the engine.
+    </p>
+    {/* Mounted whether or not anything has been saved, so the sentence is a CHANGE to a region
+        already in the document — the same reason the success sentence at the bottom of this
+        component lives outside the open/closed switch. */}
+    {/*
+      THE SAME GAP AS THE ATTACH'S, SAID IN THE OTHER HALF OF THE PANEL.
+
+      `provenanceFor` reaches every format that has somewhere to put it, and three of the five
+      do: the SVG carries it as an XML comment, the PDF in its `/Title` and the EPS in its
+      `%%Title:`. `exportPngFile` takes no provenance argument — a PNG has no comment channel
+      this code writes — and `writeDxf` has no metadata parameter at all, because DXF R12 has
+      nowhere to keep one. The copy under the format buttons above says this for the file that
+      reaches the RECORD; the download block said nothing at all until 2026-08-24, so a designer
+      who cropped and then pressed "Download the rendered image" got a file whose frame is
+      recorded nowhere and was told nothing about it. `traceExport.ts` sets the standard this
+      meets: stated in the copy beside the button rather than quietly tolerated.
+    */}
+    {edited !== null ? (
+      <p className="mt-2 max-w-prose text-xs leading-5 text-amber-800">
+        The frame you chose is written into the SVG&apos;s provenance note, the PDF&apos;s title and
+        the EPS&apos;s header, so those three say how they were made. The PNG and the DXF have
+        nowhere to carry it: saved on their own, neither records that the drawing was cropped or
+        sharpened.
+      </p>
+    ) : null}
+    <p aria-live="polite" aria-atomic="true" className="mt-1 text-xs leading-5 text-ink-500">
+      {saved ? (
+        <span className="flex items-start gap-2">
+          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+          <span>{saved}</span>
+        </span>
+      ) : null}
+    </p>
+  </div>
+  );
+
   const panel = (
     <div id={panelId} className="rounded-lg border border-line-200 bg-surface-50 p-3">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -1559,16 +1830,57 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
             </DropCard>
           </div>
 
-          {/* ── The frame and the sharpening ────────────────────────────────── */}
+          {/* ── What the trace is framed to ─────────────────────────────────── */}
           {/*
-            `onEdited={setEdited}` IS THE WHOLE WIRING, and it is a bare setter deliberately. That
-            panel resets the frame in an effect whose dependency array contains this callback, so an
-            inline arrow function would give it a new identity on every render and the effect would
-            reset the frame, on a loop, forever. A `useState` setter is stable for the life of the
-            component — and an `EditedFrame` is an object rather than a function, so React cannot read
-            it as an updater.
+            ── THE FRAME'S ONE LINE STAYS ON THE PRIMARY PATH; THE CHOOSER DOES NOT ──────────────
+            The chooser itself is a configuration surface and lives in the disclosure below with
+            everything else the owner asked to have folded away. This row does not, and the handset
+            argues why in a comment beside its own copy of it (`DwSketchTraceCropPanel.kt:188`): "TRUE
+            WHETHER OR NOT THIS IS OPEN. A closed control that says nothing about its own state is a
+            control a designer has to open to find out whether they touched it, and this one changes
+            what the drawing IS." A crop is destructive — everything outside it is absent from the
+            drawing — so it is the one setting that may never be invisible. §1.10.
+
+            "Choose a frame" is the handset's word for the control that opens it
+            (`DwSketchTraceCropPanel.kt:207`), and it opens the SAME disclosure the toggle below does
+            rather than a second one; it only differs in moving focus, because the chooser is a long
+            way down inside it.
+
+            THE MULTIPLICATION SIGN HERE AND A LETTER `x` IN THE CHOOSER IS A KNOWN DIVERGENCE, not a
+            slip: this is the handset's screen typography (`dwTraceCropReadout`), and `FramePanel`'s
+            own readout keeps the letter because `e2e/sketch-trace-panel.spec.ts:1348` pins that
+            string. Reconciling them is that spec's owner's edit, not this file's.
           */}
-          {pixels ? <FramePanel pixels={pixels} disabled={disabled} onEdited={setEdited} /> : null}
+          {pixels ? (
+            <div className="mb-3 flex flex-wrap items-start gap-3 rounded-md border border-line-200 bg-card p-3">
+              <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-field-200 text-field-600">
+                <Crop className="h-4 w-4" aria-hidden />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-ink-900">The part of the photograph to trace</p>
+                <p className="mt-0.5 text-xs leading-5 text-ink-500">
+                  {edited === null
+                    ? "The whole photograph."
+                    : `${edited.crop.width}×${edited.crop.height} of ${pixels.width}×${pixels.height}.`}
+                  {edited !== null && edited.sharpen.amount > 0
+                    ? " Sharpened on this device before tracing."
+                    : ""}{" "}
+                  The photograph itself is never altered.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="field-button-secondary"
+                onClick={chooseFrame}
+                disabled={disabled}
+                aria-expanded={advancedOpen}
+                aria-controls={advancedMounted ? advancedId : undefined}
+              >
+                <Crop className="h-4 w-4" aria-hidden />
+                {advancedOpen ? "Done" : "Choose a frame"}
+              </button>
+            </div>
+          ) : null}
 
           {/* ── The preview ────────────────────────────────────────────────── */}
           {pixels ? (
@@ -1993,94 +2305,145 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
             </p>
           ) : null}
 
-          {/* ── Controls ───────────────────────────────────────────────────── */}
+          {/* ── Controls: the seven that decide what KIND of drawing comes out ── */}
+          {/*
+            `ESSENTIAL_KEYS`, AND THE TABLE DECIDES WHICH THEY ARE. Its own comment gives the rule —
+            "each of the six changes the KIND of drawing that comes out, while the rest tune a drawing
+            the designer already has" — plus sharpening as a seventh, because a courtyard photograph
+            under one tube light is soft far more often than it is noisy. Grouped rather than flat for
+            the reason the disclosure below is grouped: "which stage of the pipeline is this" is how a
+            designer looks for a control.
+          */}
           {params ? (
             <div className="mb-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="field-label">Controls</span>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-xs font-medium text-purple-700 transition hover:text-purple-800"
-                  onClick={() => setShowAll((value) => !value)}
-                  aria-expanded={showAll}
-                >
-                  <Sliders className="h-3.5 w-3.5" aria-hidden />
-                  {/*
-                    THE HANDSET'S TWO LABELS, AND ITS NUMBER RATHER THAN THIS PANEL'S.
-                    `DwSketchTracePanel` reads "Show everything (N more)" and "Hide the other N
-                    settings", counting the controls NOT on screen. The portal counted the TOTAL — the
-                    button said "Show all 32 controls" while seven of the thirty-two were already in
-                    front of the designer, so the press revealed twenty-five and the label had promised
-                    thirty-two. `ADVANCED_COUNT` is measured off the table; nothing here writes a
-                    figure of its own.
-                  */}
-                  {showAll ? `Hide the other ${ADVANCED_COUNT} settings` : `Show everything (${ADVANCED_COUNT} more)`}
-                  <ChevronDown className={showAll ? "h-3.5 w-3.5 rotate-180" : "h-3.5 w-3.5"} aria-hidden />
-                </button>
-              </div>
+              <span className="field-label mb-2 block">Controls</span>
+              <ControlGroups
+                params={params}
+                advanced={false}
+                disabled={disabled}
+                modifiedSet={modifiedSet}
+                onPatch={patchParams}
+                idPrefix={panelId}
+              />
+            </div>
+          ) : null}
+
+          {/* ── The one disclosure ─────────────────────────────────────────── */}
+          {/*
+            ══ EVERYTHING ELSE, BEHIND ONE PRESS ═══════════════════════════════════════════════════
+
+            The owner's brief for this change names the control: "advanced/configuration settings are
+            placed inside an internal accordion with an action such as 'Show more options'". So the
+            closed label is that phrase rather than the handset's "Show everything (N more)" — a
+            deliberate deviation from §1.3, on the owner's own words — while the OPEN label stays the
+            handset's sentence, which reads correctly on both clients and already shipped here.
+
+            THE NUMBER IS `ADVANCED_COUNT` AND IS WRITTEN NOWHERE ELSE. This file's header records what
+            a hand-typed total costs: it "claimed twenty-nine while the table held thirty-two", and the
+            button before this one said "Show all 32 controls" while seven of the thirty-two were
+            already on screen. `ADVANCED_COUNT` is `SLIDERS + TOGGLES + CHOICES` filtered on
+            `!isEssential`, so it is the count of what this press actually reveals, by construction.
+
+            AND THE SETTINGS ARE NOT ALL THAT IS IN HERE, so the line under the toggle says what else
+            is — the frame chooser and the take-away formats. A disclosure that names only part of what
+            it holds is the same silence as a list that stops without saying so (§1.10).
+
+            NO HEIGHT ANIMATION, AND THAT IS A DECISION. The contents must survive being collapsed
+            (see `advancedMounted`), which rules out the `AnimatePresence` height spring the guide's
+            cards use — that primitive animates a subtree in and out of existence. What is left is the
+            chevron, whose `transition-transform` is CSS and is therefore already reached by BOTH
+            reduced-motion sources in `globals.css`; there is no framer-written inline style here for
+            `useAppReducedMotion()` to have to branch on (§8.4).
+          */}
+          {params ? (
+            <div className="mb-3 rounded-md border border-line-200 bg-surface-50 p-3">
+              <button
+                type="button"
+                id={advancedToggleId}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700 transition hover:text-purple-800"
+                onClick={toggleAdvanced}
+                aria-expanded={advancedOpen}
+                /* ONLY WHILE THE PANEL IS MOUNTED (§17). Before the first press the id names nothing,
+                   and pointing at a missing element is worse than not pointing. */
+                aria-controls={advancedMounted ? advancedId : undefined}
+              >
+                <Sliders className="h-3.5 w-3.5" aria-hidden />
+                {advancedOpen
+                  ? `Hide the other ${ADVANCED_COUNT} settings`
+                  : `Show more options · ${ADVANCED_COUNT} settings` +
+                    (hiddenModified.length > 0 ? ` · ${hiddenModified.length} changed` : "")}
+                <ChevronDown
+                  className={
+                    advancedOpen
+                      ? "h-3.5 w-3.5 rotate-180 transition-transform"
+                      : "h-3.5 w-3.5 transition-transform"
+                  }
+                  aria-hidden
+                />
+              </button>
+
+              {!advancedOpen ? (
+                <p className="mt-2 text-xs leading-5 text-ink-500">
+                  Inside: the part of the photograph to trace, the {ADVANCED_COUNT} settings that are
+                  not above, and the formats you can download a copy in. Nothing in there is required —
+                  the trace runs on the settings shown above.
+                </p>
+              ) : null}
 
               {/* Progressive disclosure is only honest if what it hides can still announce itself.
                   THE HANDSET'S SENTENCE, VERBATIM — "not on screen" rather than "hidden", which is
                   its deliberate choice and the better one on both clients: "hidden" points a designer
                   at this one disclosure, and on the handset one whole tier of controls lives on a
                   different step of the panel entirely. What is true on both is that the control is not
-                  in front of them. */}
-              {!showAll && hiddenModified.length > 0 ? (
-                <p className="mb-2 text-xs text-ink-500">
+                  in front of them. The count is on the toggle as well, because a designer who has
+                  learned to skip a paragraph still reads the button they are about to press. */}
+              {!advancedOpen && hiddenModified.length > 0 ? (
+                <p className="mt-2 text-xs leading-5 text-amber-800">
                   {hiddenModified.length === 1
                     ? `One setting that is not on screen has moved: ${hiddenModified[0]}.`
                     : `${hiddenModified.length} settings that are not on screen have moved: ${hiddenModified.join(", ")}.`}
                 </p>
               ) : null}
 
-              <div className="grid gap-4">
-                {PARAM_GROUPS.map((group) => {
-                  const sliders = SLIDERS.filter((s) => s.group === group && (showAll || isEssential(s.key)));
-                  const toggles = TOGGLES.filter((t) => t.group === group && (showAll || isEssential(t.key)));
-                  const choices = CHOICES.filter((c) => c.group === group && (showAll || isEssential(c.key)));
-                  if (sliders.length + toggles.length + choices.length === 0) return null;
-                  return (
-                    <fieldset key={group} className="rounded-md border border-line-200 bg-card p-3">
-                      <legend className="field-label px-1">{group}</legend>
-                      <div className="grid gap-3">
-                        {choices.map((spec) => (
-                          <ChoiceRow
-                            key={spec.key}
-                            spec={spec}
-                            params={params}
-                            disabled={disabled}
-                            modified={modifiedSet.has(spec.label)}
-                            onPatch={patchParams}
-                            idPrefix={panelId}
-                          />
-                        ))}
-                        {sliders.map((spec) => (
-                          <SliderRow
-                            key={spec.key}
-                            spec={spec}
-                            params={params}
-                            disabled={disabled}
-                            modified={modifiedSet.has(spec.label)}
-                            onPatch={patchParams}
-                            idPrefix={panelId}
-                          />
-                        ))}
-                        {toggles.map((spec) => (
-                          <ToggleRow
-                            key={spec.key}
-                            spec={spec}
-                            params={params}
-                            disabled={disabled}
-                            modified={modifiedSet.has(spec.label)}
-                            onPatch={patchParams}
-                            idPrefix={panelId}
-                          />
-                        ))}
-                      </div>
-                    </fieldset>
-                  );
-                })}
-              </div>
+              {advancedMounted ? (
+                <div
+                  id={advancedId}
+                  ref={advancedRef}
+                  /* `tabIndex={-1}` makes it focusable by script and not by Tab — what a deliberate
+                      focus move needs, and what a tab stop on a container would get wrong. Named by
+                      the toggle, so a reader who lands here is told which press opened it. */
+                  tabIndex={-1}
+                  aria-labelledby={advancedToggleId}
+                  hidden={!advancedOpen}
+                  className="mt-3 grid gap-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-600/40"
+                >
+                  {/*
+                    `onEdited={setEdited}` IS THE WHOLE WIRING, and it is a bare setter deliberately.
+                    That panel resets the frame in an effect whose dependency array contains this
+                    callback, so an inline arrow function would give it a new identity on every render
+                    and the effect would reset the frame, on a loop, forever. A `useState` setter is
+                    stable for the life of the component — and an `EditedFrame` is an object rather
+                    than a function, so React cannot read it as an updater.
+                  */}
+                  {pixels ? <FramePanel pixels={pixels} disabled={disabled} onEdited={setEdited} /> : null}
+
+                  {/* The same five group headings as above, holding the controls that were not
+                      essential. Two fieldsets can therefore carry one legend — "Edges" appears in both
+                      — and that is right rather than confusing: the taxonomy is the pipeline's, and
+                      splitting it by importance instead would mean a designer looking for a cleanup
+                      control had to know whether somebody had called it essential. */}
+                  <ControlGroups
+                    params={params}
+                    advanced
+                    disabled={disabled}
+                    modifiedSet={modifiedSet}
+                    onPatch={patchParams}
+                    idPrefix={panelId}
+                  />
+
+                  {downloads}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -2191,130 +2554,6 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
               : "Declining costs nothing: the photograph you attached stays exactly as it is, and a drawing can be traced from it later."}
           </p>
 
-          {/* ── Downloads ──────────────────────────────────────────────────── */}
-          {/*
-            SEPARATED FROM THE ATTACH BY A RULE, BECAUSE THEY ARE DIFFERENT PROMISES. Everything above
-            this line writes to the record; nothing below it does. A download is a copy for the person
-            at the keyboard — it reaches no field, no upload queue and no draft store — and the sentence
-            underneath says so, along with the two facts a designer cannot see: that the press re-traces
-            at full resolution rather than saving the preview, and that the trace itself is not kept
-            anywhere once this panel closes.
-          */}
-          <div className="mt-4 border-t border-line-200 pt-3">
-            <span className="field-label">Download a copy to this device</span>
-            {/*
-              ONE BUTTON PER TABLE ROW, WHICH IS THE WHOLE OF THE FIX. This row was two hard-coded
-              buttons while `EXPORT_FORMATS` held two entries and `engine/exportFormats.ts` held three
-              more finished writers nobody could reach — a designer could trace a sketch and had no way
-              to take the vector result away in a format their printer or their cutter would open.
-              Rendering from the table means the two facts are one fact: a row without a control cannot
-              exist, and `e2e/sketch-export-formats-unit.spec.ts` fails if a writer the engine can run
-              is neither in the table nor in `NOT_OFFERED` with a reason.
-
-              The words come from `entry.download` rather than from here, so the two labels
-              `sketch-trace-panel.spec.ts` pins live beside the format they belong to.
-            */}
-            <div className="mt-1 flex flex-wrap gap-2">
-              {EXPORT_FORMATS.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  className="field-button-secondary"
-                  onClick={() => void downloadDerived(entry.id)}
-                  disabled={disabled || busy || result === null || file === null}
-                >
-                  {running === `download-${entry.id}` ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  ) : (
-                    <Download className="h-4 w-4" aria-hidden />
-                  )}
-                  {entry.download}
-                </button>
-              ))}
-            </div>
-            {/* HONEST NAMING, ONE LINE EACH. The audience is a designer, not a developer: nobody
-                should have to know what a `.dxf` is before pressing a button that makes one, and the
-                sentence that says what a format is FOR is the same string the "Attach as" chooser
-                shows, so the two surfaces cannot describe one format differently. */}
-            <ul className="mt-2 grid max-w-prose gap-1 text-xs leading-5 text-ink-500">
-              {EXPORT_FORMATS.map((entry) => (
-                <li key={entry.id}>
-                  <span className="font-medium text-ink-700">{entry.label}</span> — {entry.hint}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2 max-w-prose text-xs leading-5 text-ink-500">
-              Every one of these is re-traced at full resolution when you press it, so none of them is the
-              smaller preview above. None of them is filed on the record, none is uploaded, and none reaches
-              the report: the ministry document prints the sketch photograph, and a drawing downloaded here is
-              a copy for you, your printer or your CAD operator. Attaching to the record is the row above.
-            </p>
-            <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
-              Nothing here is stored: the trace lives only while this panel is open, so closing it, choosing
-              another photograph or reloading the page discards it, and a download after that means tracing
-              again.
-            </p>
-            {/*
-              WHAT IS WRITTEN INSIDE THE FILE ABOUT WHO MADE IT — the handset's
-              `DW_TRACE_EXPORT_ENGINE_NAME_SENTENCE`, copied back here because it is true of the portal's
-              downloads too and no web surface said it.
-
-              SCOPED TO THE TWO FORMATS IT IS ACTUALLY TRUE OF, which is where the two clients genuinely
-              differ. `exportVectorFile` passes `includeMetadata: true`, so `pdfWriter` emits
-              `/Producer (Offline Tracer) /Creator (Offline Tracer)` and `epsWriter` emits
-              `%%Creator: Offline Tracer`. The SVG is NOT among them here: this page writes its own
-              through `geometryToSvg.buildSvg` rather than through the engine's writer, and that
-              function emits no producer line at all.
-
-              THE HANDSET'S SET IS NARROWER STILL, AND THIS COMMENT USED TO GET IT BACKWARDS. It said
-              the handset's SVG carries the line because the engine's own writer produces it. It does
-              not: `dwTraceKotlinSvgOf` and `DwTraceKotlinExporter` both pass `includeMetadata: false`
-              for exactly the branding reason, which leaves ONE branded file on that client — the EPS,
-              whose `%%Creator` the vendored writer emits outside that flag. So the honest comparison
-              is two formats here against one there, and the difference is a deliberate option this
-              page has not taken rather than a capability it has. Re-check with
-              `grep -rn "Offline Tracer" frontend/lib/trace frontend/components/sketches/upload` and
-              `grep -rn "includeMetadata" android/app/src/main/java`.
-            */}
-            <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
-              The PDF and the EPS record that they were made by the Offline Tracer engine, which is the
-              tracing library this app uses on the device. That is a note about the software — not about the
-              drawing, and not about you. The SVG this page writes carries no such line, because this page
-              writes it rather than the engine.
-            </p>
-            {/* Mounted whether or not anything has been saved, so the sentence is a CHANGE to a region
-                already in the document — the same reason the success sentence at the bottom of this
-                component lives outside the open/closed switch. */}
-            {/*
-              THE SAME GAP AS THE ATTACH'S, SAID IN THE OTHER HALF OF THE PANEL.
-
-              `provenanceFor` reaches every format that has somewhere to put it, and three of the five
-              do: the SVG carries it as an XML comment, the PDF in its `/Title` and the EPS in its
-              `%%Title:`. `exportPngFile` takes no provenance argument — a PNG has no comment channel
-              this code writes — and `writeDxf` has no metadata parameter at all, because DXF R12 has
-              nowhere to keep one. The copy under the format buttons above says this for the file that
-              reaches the RECORD; the download block said nothing at all until 2026-08-24, so a designer
-              who cropped and then pressed "Download the rendered image" got a file whose frame is
-              recorded nowhere and was told nothing about it. `traceExport.ts` sets the standard this
-              meets: stated in the copy beside the button rather than quietly tolerated.
-            */}
-            {edited !== null ? (
-              <p className="mt-2 max-w-prose text-xs leading-5 text-amber-800">
-                The frame you chose is written into the SVG&apos;s provenance note, the PDF&apos;s title and
-                the EPS&apos;s header, so those three say how they were made. The PNG and the DXF have
-                nowhere to carry it: saved on their own, neither records that the drawing was cropped or
-                sharpened.
-              </p>
-            ) : null}
-            <p aria-live="polite" aria-atomic="true" className="mt-1 text-xs leading-5 text-ink-500">
-              {saved ? (
-                <span className="flex items-start gap-2">
-                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
-                  <span>{saved}</span>
-                </span>
-              ) : null}
-            </p>
-          </div>
         </>
       ) : null}
     </div>
@@ -2354,6 +2593,94 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
  * ──────────────────────────────────────────────────────────────────────────── */
 
 type PatchFn = (patch: Parameters<typeof applyParamPatch>[1]) => void;
+
+/**
+ * The parameter table, drawn group by group — one half of it per call.
+ *
+ * ── ONE RENDERER FOR BOTH HALVES, WHICH IS WHAT KEEPS THEM ONE TABLE ────────────────────────────
+ *
+ * The panel draws the essential controls on the primary path and the rest inside the disclosure, and
+ * the obvious way to write that is two blocks of JSX. Two blocks is two places to forget the
+ * "you changed this" ring, the `aria-describedby`, or the `InertNote` — which is the same argument the
+ * Rows section above makes for having one component per control KIND rather than one per control.
+ * `advanced` is the ONLY difference between the two calls.
+ *
+ * THE FILTER IS `isEssential` AND NOTHING ELSE, so the two halves are exhaustive and disjoint by
+ * construction: every row in `SLIDERS`/`TOGGLES`/`CHOICES` is drawn exactly once, and a control added
+ * to the table lands in one of the two without anybody choosing. That is the property the count on the
+ * disclosure's button depends on — `ADVANCED_COUNT` counts the same predicate.
+ *
+ * A group with nothing in it renders nothing, so "Sharpening" does not appear twice with one empty
+ * fieldset; a group with controls on both sides appears in both, under the same legend, because the
+ * taxonomy is the pipeline's stages and not this panel's idea of importance.
+ */
+function ControlGroups({
+  params,
+  advanced,
+  disabled,
+  modifiedSet,
+  onPatch,
+  idPrefix
+}: {
+  params: TraceParams;
+  advanced: boolean;
+  disabled?: boolean;
+  modifiedSet: ReadonlySet<string>;
+  onPatch: PatchFn;
+  idPrefix: string;
+}) {
+  return (
+    <div className="grid gap-4">
+      {PARAM_GROUPS.map((group) => {
+        const wanted = (key: string) => (advanced ? !isEssential(key) : isEssential(key));
+        const sliders = SLIDERS.filter((s) => s.group === group && wanted(s.key));
+        const toggles = TOGGLES.filter((t) => t.group === group && wanted(t.key));
+        const choices = CHOICES.filter((c) => c.group === group && wanted(c.key));
+        if (sliders.length + toggles.length + choices.length === 0) return null;
+        return (
+          <fieldset key={group} className="rounded-md border border-line-200 bg-card p-3">
+            <legend className="field-label px-1">{group}</legend>
+            <div className="grid gap-3">
+              {choices.map((spec) => (
+                <ChoiceRow
+                  key={spec.key}
+                  spec={spec}
+                  params={params}
+                  disabled={disabled}
+                  modified={modifiedSet.has(spec.label)}
+                  onPatch={onPatch}
+                  idPrefix={idPrefix}
+                />
+              ))}
+              {sliders.map((spec) => (
+                <SliderRow
+                  key={spec.key}
+                  spec={spec}
+                  params={params}
+                  disabled={disabled}
+                  modified={modifiedSet.has(spec.label)}
+                  onPatch={onPatch}
+                  idPrefix={idPrefix}
+                />
+              ))}
+              {toggles.map((spec) => (
+                <ToggleRow
+                  key={spec.key}
+                  spec={spec}
+                  params={params}
+                  disabled={disabled}
+                  modified={modifiedSet.has(spec.label)}
+                  onPatch={onPatch}
+                  idPrefix={idPrefix}
+                />
+              ))}
+            </div>
+          </fieldset>
+        );
+      })}
+    </div>
+  );
+}
 
 /** The ring that says "you changed this". A ring and not only a colour — colour never carries meaning alone. */
 const MODIFIED_RING = "rounded-md ring-2 ring-purple-600/15";

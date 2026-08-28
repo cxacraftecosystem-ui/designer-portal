@@ -254,6 +254,21 @@ data class MediaCompleteRequest(
     val caption: String? = null,
     val linkedRecordType: String? = null,
     val linkedRecordId: String? = null,
+    /**
+     * THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload is filed under, from that form's own
+     * dropdown. Added 2026-08-28.
+     *
+     * NOT THE SAME AS `linkedRecordType = "designWorkshop"` ABOVE, and deliberately not derived from
+     * it. That pair says which RECORD a file was uploaded against and is written by the upload path
+     * for every stage photograph; this says which workshop a person CHOSE to file a loose file
+     * under. `records.media_relation_data` carries the argument for why deriving one from the other
+     * would break the server's orphan-recovery machinery, which is split precisely on whether a link
+     * has a typed foreign key. A file may carry one, both or neither.
+     *
+     * Null is omitted from the body (`explicitNulls = false`), so every upload that has no workshop
+     * to declare sends exactly the bytes it always sent.
+     */
+    val designWorkshopId: String? = null,
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null,
@@ -747,6 +762,24 @@ data class ArtisanCreateRequest(
     // The workshop this artisan was documented at (see [CraftCreateRequest.workshopId]).
     val workshopId: String? = null,
     /**
+     * THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Added 2026-08-28 with the column.
+     *
+     * A SECOND LINK BESIDE [workshopId] AND NOT A REPLACEMENT FOR IT. `workshopId` is the ordinary
+     * field workshop, gated by `WorkshopAssignment`; this is the 22-stage design and prototype
+     * record, gated by `load_workshop_or_404` — creator, admin, or a `DesignWorkshopViewer` grant.
+     * Two tables, two access systems; a record may carry either, both or neither.
+     * `Artisan.designWorkshopId` in schema.prisma carries the whole argument.
+     *
+     * NULL MEANS "LEAVE IT ALONE" AND NOT "UNFILE", and that limitation is inherited rather than
+     * introduced: `ApiClient.json` sets `explicitNulls = false`, so a null field is OMITTED from the
+     * body entirely and the API's `exclude_unset=True` reads an absent key as "do not touch". The
+     * server DOES accept an explicit null as "unfile" ([`records.CLEARABLE_KEYS`]) — the web sends
+     * one — and this client cannot express it, exactly as it cannot for [workshopId] today. Say so
+     * here rather than letting the next reader discover it from a save that reports success and
+     * changes nothing.
+     */
+    val designWorkshopId: String? = null,
+    /**
      * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
      * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
      * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
@@ -816,6 +849,8 @@ data class ProductCreateRequest(
     val artisanId: String? = null,
     val craftId: String? = null,
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     /**
      * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
      * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
@@ -893,6 +928,8 @@ data class ToolCreateRequest(
     val artisanId: String? = null,
     val craftId: String? = null,
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     /**
      * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
      * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
@@ -1092,6 +1129,8 @@ data class QuestionnaireInterviewCreateRequest(
     val responses: List<QuestionnaireResponseRequest> = emptyList(),
     // The workshop this interview was conducted at (see [CraftCreateRequest.workshopId]).
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null
@@ -1161,6 +1200,8 @@ data class ArtisanDetailDto(
     val craft: CraftDto? = null,
     // The workshop this artisan was documented at (see [CraftDto.workshopId]).
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val status: String = "PENDING",
     val location: LocationDto? = null,
     val createdById: String? = null,
@@ -1218,6 +1259,8 @@ data class ProductDetailDto(
     val artisanId: String? = null,
     val craftId: String? = null,
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val status: String = "PENDING",
     val measurementAnalysisStatus: String? = null,
     val location: LocationDto? = null,
@@ -1258,6 +1301,8 @@ data class ToolDetailDto(
     val artisanId: String? = null,
     val craftId: String? = null,
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val status: String = "PENDING",
     val measurementAnalysisStatus: String? = null,
     val location: LocationDto? = null,
@@ -1360,6 +1405,8 @@ data class QuestionnaireInterviewDetailDto(
     val responses: List<InterviewResponseDto> = emptyList(),
     // The workshop this interview was conducted at (see [CraftDto.workshopId]).
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val location: LocationDto? = null,
     val createdById: String? = null,
     val createdAt: String? = null,
@@ -1409,6 +1456,8 @@ data class ProcessCreateRequest(
     val steps: List<ProcessStepRequest> = emptyList(),
     // The workshop this process was documented at (see [CraftCreateRequest.workshopId]).
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata"
 )
@@ -1436,6 +1485,8 @@ data class ProcessDetailDto(
     val media: List<MediaFileDto> = emptyList(),
     // The workshop this process was documented at (see [CraftDto.workshopId]).
     val workshopId: String? = null,
+    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
@@ -1494,6 +1545,8 @@ data class QuestionnaireInterviewUpdateRequest(
     val artisanIds: List<String>? = null,
     val responses: List<QuestionnaireResponseRequest>? = null,
     val workshopId: String? = null,
+    /** The design & prototype workshop this interview is filed under. See [ArtisanCreateRequest]. */
+    val designWorkshopId: String? = null,
     val recordedTimezone: String? = null,
     val location: LocationRequest? = null
 )
@@ -1658,6 +1711,31 @@ data class WorkshopMappingBucketDto(
     val rows: List<WorkshopMappingRowDto> = emptyList(),
     val rowsTruncated: Boolean = false,
     val applied: Int? = null
+)
+
+/** The body of `POST /workshops/unmapped/{bucket}/{recordId}` — the one workshop an admin named. */
+@Serializable
+data class FileUnmappedRecordBody(
+    val workshopId: String,
+)
+
+/**
+ * What `DELETE /workshops/unmapped/{bucket}/{recordId}` answers.
+ *
+ * [mediaKept] IS THE WHOLE REASON THIS ROUTE RETURNS A BODY where every per-type delete answers 204.
+ * Every `MediaFile` relation is `onDelete: SetNull`, so deleting a parent record DETACHES its
+ * attachments rather than removing them, and a screen that said only "deleted" would be leaving out
+ * the half an admin has to act on: nine photographs still in the repository with nothing pointing at
+ * them. The count is what lets the sentence be true.
+ */
+@Serializable
+data class DiscardUnmappedRecordDto(
+    val bucket: String = "",
+    val id: String = "",
+    /** The server's own noun for the type, so the two clients cannot word one deletion two ways. */
+    val noun: String = "",
+    val title: String = "",
+    val mediaKept: Int = 0,
 )
 
 @Serializable
@@ -3233,6 +3311,20 @@ data class CustomQuestionnaireSummaryDto(
      * and hid the row outright would leave a fortnight of somebody's fieldwork unreachable from the
      * app that recorded it.
      */
+    /**
+     * PUBLISHED TO EVERY DESIGNER — the "default questionnaire" an administrator sets up once.
+     *
+     * A designer's list can now contain a form they did not upload, and a row that cannot say why
+     * reads as somebody else's work leaking in. It is also what stops a shared form being drawn as
+     * though it were this designer's to reword: the server refuses a PATCH from anybody but the
+     * owner or an admin, and a control that offers an edit it cannot perform is worse than one that
+     * says whose form this is.
+     *
+     * DEFAULTS FALSE, so a handset a release behind — which on this fleet is a fortnight in a
+     * courtyard — decodes a payload that carries the key and simply treats every form as unshared,
+     * which is exactly how the world looked before the column existed.
+     */
+    val isShared: Boolean = false,
     val isActive: Boolean = true,
     val version: Int = 1,
     val sourceFilename: String? = null,
@@ -3321,6 +3413,8 @@ data class CustomQuestionnaireDto(
     val ownerId: String? = null,
     val designWorkshopId: String? = null,
     val isActive: Boolean = true,
+    /** See [CustomQuestionnaireSummaryDto.isShared] — the published default, offered to everyone. */
+    val isShared: Boolean = false,
     val version: Int = 1,
     val sourceFilename: String? = null,
     val createdAt: String? = null,
@@ -3337,6 +3431,8 @@ data class CustomQuestionnaireOptionDto(
     val title: String = "",
     val version: Int = 1,
     val designWorkshopId: String? = null,
+    /** See [CustomQuestionnaireSummaryDto.isShared] — the published default, offered to everyone. */
+    val isShared: Boolean = false,
     val attachedElsewhere: Boolean = false,
 )
 

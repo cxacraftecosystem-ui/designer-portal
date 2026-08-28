@@ -3,7 +3,11 @@ package com.designprototype.workshop.ui.designworkshop
 // The panel holds the three display plates as platform bitmaps, because that is what the runtime
 // hands back and what `DwSketchTracePlates` takes. Nothing here reads a pixel.
 import android.graphics.Bitmap
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,7 +27,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,8 +49,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -58,6 +63,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
 import com.designprototype.workshop.data.FieldDto
+import com.designprototype.workshop.ui.LocalAppPreferences
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt for why a
 // bare Material `Text` here would quietly set this panel's headings in the body face.
 import com.designprototype.workshop.ui.Text
@@ -175,6 +181,26 @@ const val DW_TRACE_PREVIEW_DEBOUNCE_MS: Long = 450L
  * has already looked away.
  */
 const val DW_TRACE_AUTO_PREVIEW_BUDGET_MS: Long = 2500L
+
+/**
+ * How long the disclosure's chevron takes to turn over.
+ *
+ * ── THE CHEVRON IS THE ONLY THING THAT MOVES, AND THAT IS A DECISION ──────────────────────────
+ *
+ * The obvious animation for an accordion is the height of the thing it opens, and this one has none.
+ * A height animation on this section would run a measure pass over up to twenty-four control rows on
+ * every frame for the length of the tween — on the phone class this whole feature is hardest on, at
+ * the moment a designer has just asked to see more — and `DwTraceSliderRow` re-seeds a remembered
+ * thumb position from the committed value, so an animated row is also a row being laid out while its
+ * slider is being re-created. `SketchTraceField.tsx` reaches the same answer from the other side and
+ * says so at its own disclosure: "NO HEIGHT ANIMATION, AND THAT IS A DECISION."
+ *
+ * So one 18 dp icon turns, which costs a draw-time rotation and nothing else, and it is the only
+ * place `LocalAppPreferences.current.reducedMotion` has anything to switch off — where it collapses
+ * this tween to zero and the chevron simply IS at its new angle, exactly as
+ * `DwSketchTraceCompare.kt:247` and `MapScreen.kt:1793` read the same preference.
+ */
+const val DW_TRACE_DISCLOSURE_TURN_MS: Int = 180
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The export slot
@@ -976,11 +1002,31 @@ private fun DwSketchTraceOpen(
         val changedFromPreset = remember(baseline, current) {
             baseline?.let { dwTraceChangedLabels(it, current) }.orEmpty().toSet()
         }
-        val visibleTiers = remember(advancedOpen) {
-            if (advancedOpen) setOf(DwTraceTier.PRIMARY, DwTraceTier.ADVANCED) else setOf(DwTraceTier.PRIMARY)
+        /*
+          WHICH TIERS ARE ACTUALLY IN FRONT OF THE DESIGNER RIGHT NOW.
+
+          PRIMARY always; ADVANCED while the disclosure is open; and EXPORT only while the export card
+          is really composed, which it is not until a trace has finished AND a host has passed one.
+          That third condition used to be missing, and the bug it produced is small and exactly the
+          class this panel is disciplined against: a style that moved `output.background` while the
+          card WAS on screen made the panel print "One setting that is not on screen has moved: White
+          background" directly above the chips that were showing it.
+        */
+        val exportVisible = traced != null && exportCard != null
+        val visibleTiers = remember(advancedOpen, exportVisible) {
+            setOfNotNull(
+                DwTraceTier.PRIMARY,
+                DwTraceTier.ADVANCED.takeIf { advancedOpen },
+                DwTraceTier.EXPORT.takeIf { exportVisible },
+            )
         }
         val hiddenChanged = remember(baseline, current, visibleTiers) {
             baseline?.let { dwTraceChangedHiddenLabels(it, current, visibleTiers) }.orEmpty()
+        }
+        // What THIS press would reveal, which is a narrower question than "what is out of sight" —
+        // see `dwTraceChangedBehindDisclosure` for why the toggle must not count the export tier.
+        val changedBehindDisclosure = remember(baseline, current) {
+            baseline?.let { dwTraceChangedBehindDisclosure(it, current) }.orEmpty()
         }
 
         DW_TRACE_CONTROLS.filter { it.tier == DwTraceTier.PRIMARY }.forEach { control ->
@@ -994,71 +1040,21 @@ private fun DwSketchTraceOpen(
             )
         }
 
-        if (hiddenChanged.isNotEmpty() && !advancedOpen) {
-            // PROGRESSIVE DISCLOSURE IS ONLY HONEST IF WHAT IT HIDES CAN STILL ANNOUNCE ITSELF.
-            // `traceParamTable.ts:624-632`. A style that moved four folded-away values must say so, or
-            // the panel is lying about what the trace is doing.
-            DwPanelNote(
-                warning = false,
-                // "Not on screen" rather than "under Show everything", because one of the tiers this
-                // measures lives on the export card rather than behind the disclosure, and a sentence
-                // that sent a designer to the wrong place to look would be its own small lie.
-                text = if (hiddenChanged.size == 1) {
-                    "One setting that is not on screen has moved: ${hiddenChanged.first()}."
-                } else {
-                    "${hiddenChanged.size} settings that are not on screen have moved: " +
-                        hiddenChanged.joinToString(", ") + "."
-                },
-            )
-        }
-
-        OutlinedButton(
-            onClick = { advancedOpen = !advancedOpen },
+        DwTraceAdvancedSection(
+            values = current,
+            availability = availability,
+            open = advancedOpen,
+            changedFromPreset = changedFromPreset,
+            hiddenChanged = hiddenChanged,
+            changedBehindDisclosure = changedBehindDisclosure,
+            // THE PRESS STAYS LIVE WHILE A TRACE RUNS and the rows inside it do not. Reading what a
+            // style just did to a folded-away setting is exactly what somebody watching a twenty-
+            // second trace wants to do, and it changes nothing; moving a slider mid-run would.
             enabled = enabled,
-            modifier = Modifier.heightIn(min = 48.dp),
-        ) {
-            Icon(
-                if (advancedOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            // The count comes from the table and is never written into a string by hand — see
-            // [DW_TRACE_PARAM_COUNT]'s header for the incident that rule exists to prevent.
-            Text(
-                if (advancedOpen) "Hide the other $DW_TRACE_ADVANCED_COUNT settings"
-                else "Show everything ($DW_TRACE_ADVANCED_COUNT more)",
-                fontSize = 13.sp,
-            )
-        }
-
-        if (advancedOpen) {
-            DW_TRACE_GROUPS.forEach { group ->
-                val rows = DW_TRACE_CONTROLS.filter { it.group == group && it.tier == DwTraceTier.ADVANCED }
-                if (rows.isEmpty()) return@forEach
-                DwPanelLabel(group)
-                rows.forEach { control ->
-                    DwTraceControlRow(
-                        control = control,
-                        values = current,
-                        availability = availability,
-                        changed = control.label in changedFromPreset,
-                        enabled = enabled && running == null,
-                        onPatch = { patch(it) },
-                    )
-                }
-            }
-            DW_TRACE_CUT.forEach { (key, why) ->
-                // The cut list is DRAWN, not merely commented. Somebody looking for the thinning
-                // control needs to find the answer where they looked for the control.
-                Text(
-                    "“$key” is deliberately not offered here. $why",
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                )
-            }
-        }
+            rowsEnabled = enabled && running == null,
+            onToggle = { advancedOpen = !advancedOpen },
+            onPatch = { patch(it) },
+        )
 
         /* ── Previews ───────────────────────────────────────────────────────────────────────── */
 
@@ -1244,10 +1240,17 @@ internal fun dwTraceCostRefusal(
             "resolution is set to $longEdge px. Choose a lower resolution."
     }
     if (values.choice("edge.engine") == "FDOG" && longEdge > availability.fdogMaxWorkingLongEdge) {
+        // THE REMEDY NAMES THE PRESS BY ITS CURRENT NAME, and takes that name from the constant both
+        // clients share rather than from a copy of it here. This sentence used to spell the
+        // disclosure's OLD label out by hand, and that label stopped existing the day the two clients
+        // agreed on one — a refusal that sends a designer to a control the screen does not have is
+        // worse than one that names no control at all, because it reads as the application describing
+        // a different version of itself. `DwSketchTraceParamsTest` fails if the old name comes back.
         return "The Flow edge engine at $longEdge px is far slower than this phone can finish in a " +
             "reasonable time — it has been measured up to ${availability.fdogMaxWorkingLongEdge} px. " +
-            "Either lower the trace resolution, or choose a different edge engine under “Show " +
-            "everything”. The portal will produce the same drawing from whichever you choose."
+            "Either lower the trace resolution, or choose a different edge engine under " +
+            "“$DW_TRACE_DISCLOSURE_ACTION”. The portal will produce the same drawing from whichever " +
+            "you choose."
     }
     return null
 }
@@ -1381,6 +1384,219 @@ private fun DwTraceStatsRow(result: DwTraceResult) {
         color = MaterialTheme.field.muted,
         fontSize = 11.sp,
     )
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The one disclosure
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * **EVERYTHING THAT IS NOT ESSENTIAL, BEHIND ONE PRESS.**
+ *
+ * ── THE REPORT THIS ANSWERS ───────────────────────────────────────────────────────────────────
+ *
+ * The owner's words: "selecting this functionality exposes all settings simultaneously, which can
+ * overwhelm the user". A 6" screen makes that worse than a laptop does rather than better, because
+ * every row costs a scroll and a designer looking for the one control they came for has to read past
+ * two dozen they did not. What the panel opens with is now the photograph, the frame summary, the
+ * style and subject presets, the six controls that change the KIND of drawing that comes out
+ * ([DW_TRACE_PRIMARY_KEYS]), the comparison, the preview controls and the two full-resolution
+ * buttons. Everything else is in here.
+ *
+ * ── THE FOUR PROPERTIES THAT MAKE THAT SAFE RATHER THAN MERELY TIDIER ─────────────────────────
+ *
+ *  1. **NOTHING BECOMES UNREACHABLE, BY CONSTRUCTION.** The rows above this section and the rows
+ *     inside it are selected from ONE `tier` field by opposite tests, so the two halves are
+ *     exhaustive and disjoint and a control added to `DW_TRACE_CONTROLS` lands in one of them without
+ *     anybody choosing. `DwSketchTraceParamsTest` asserts exactly that sum, because the way a later
+ *     tidy-up loses a control is not by deleting it — it is by leaving a gap between two lists that
+ *     somebody maintains by hand.
+ *
+ *  2. **THE COUNT IS DERIVED, AND IT COUNTS ROWS RATHER THAN TABLE ENTRIES.**
+ *     [dwTraceAdvancedRevealed] drops a control whose leaf this device's engine copy did not send —
+ *     the same set [dwTraceMissingKeys] reports in its own sentence further up — so the toggle cannot
+ *     promise a row the press does not produce. `traceParamTable.ts:553-564` records what the other
+ *     kind of number cost the portal: a button reading "Show all 32 controls" that revealed 25.
+ *
+ *  3. **WHAT IS HIDDEN CAN STILL ANNOUNCE ITSELF.** A folded-away control that no longer holds its
+ *     preset's value says so ON THE TOGGLE — the press a designer is about to make — and names itself
+ *     in a sentence underneath it. A setting quietly affecting the drawing from out of sight is the
+ *     single defect class this panel is most written against.
+ *
+ *  4. **COLLAPSING DESTROYS NOTHING.** Every parameter lives in `DwSketchTraceOpen`'s own `params`,
+ *     which is the sanitised tree the runtime handed back; these rows only read it, and the toggle
+ *     writes one Boolean. There is no state under this press for a collapse to throw away — which is
+ *     why this can be a plain conditional where `SketchTraceField.tsx` needed a mounted-but-hidden
+ *     subtree to protect a rectangle its designer was aiming at.
+ *
+ * ── AND WHAT IS DELIBERATELY NOT IN HERE, WHERE THE PORTAL PUT IT ─────────────────────────────
+ *
+ * The portal's one disclosure swallowed its frame chooser and its download buttons too. Neither is in
+ * this one. `DwTraceFramePanel` is ALREADY a single row with a summary line that is true whether it
+ * is open or shut — it is the thing this section is being built to be, so nesting it would be a
+ * second disclosure over a surface that has one, and unmounting it on collapse would throw away an
+ * aimed rectangle for no gain. The export card is a slot on the step that writes the file. See
+ * [dwTraceDisclosureBlurb], which is worded to claim neither of them.
+ */
+@Composable
+private fun DwTraceAdvancedSection(
+    values: DwTraceValues,
+    availability: DwTraceAvailability,
+    open: Boolean,
+    changedFromPreset: Set<String>,
+    /** Everything out of sight anywhere, for the sentence. Named, so a designer can go and look. */
+    hiddenChanged: List<String>,
+    /** Only what THIS press reveals, for the count on the toggle. The two are different questions. */
+    changedBehindDisclosure: List<String>,
+    enabled: Boolean,
+    /** The rows are frozen mid-trace; the press is not. See the call site. */
+    rowsEnabled: Boolean,
+    onToggle: () -> Unit,
+    onPatch: (Map<String, DwTraceValue>) -> Unit,
+) {
+    val groups = remember(values) { dwTraceAdvancedGroups(values) }
+    // ONE DERIVATION SITE FOR THE NUMBER, in the file that owns the table — not a second sum here
+    // that could disagree with it after somebody changes what counts as a drawn row.
+    val revealed = remember(values) { dwTraceAdvancedRevealed(values) }
+
+    // The one animation on this surface, and the only thing reduced motion has to switch off. See
+    // [DW_TRACE_DISCLOSURE_TURN_MS] for why the height is not animated and the chevron is.
+    val stillness = LocalAppPreferences.current.reducedMotion
+    val turn by animateFloatAsState(
+        targetValue = if (open) 180f else 0f,
+        animationSpec = tween(durationMillis = if (stillness) 0 else DW_TRACE_DISCLOSURE_TURN_MS),
+        label = "trace-advanced-chevron",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // A BORDER AND A GROUND, so this reads as one section rather than as a button with some
+            // loose rows under it. "An internal accordion" is the owner's own noun and a press
+            // followed by unbounded content is not one — nothing on screen would say where the
+            // revealed settings stop and the preview controls begin.
+            .background(MaterialTheme.field.surface50, RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.field.hairline, RoundedCornerShape(8.dp))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (revealed == 0) {
+            /*
+              AN EMPTY SECTION AND A SECTION THAT IS NOT THERE ARE DIFFERENT STATES, and so are an
+              empty one and a broken one. This can only happen on a build whose engine is far enough
+              apart to have dropped every advanced leaf, which is the same skew the missing-keys note
+              above is already reporting in detail — but a toggle offering nought settings is a
+              control that does nothing, and silently omitting the section would leave a designer who
+              used it on the portal unable to tell it from a feature this application lacks.
+            */
+            DwPanelLabel("The other settings")
+            Text(
+                "None of this app's other $DW_TRACE_ADVANCED_COUNT settings were offered by the " +
+                    "tracing engine on this device, so there is nothing behind this section. The " +
+                    "trace still runs on the settings above; this app and the engine are a version " +
+                    "apart.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+            return@Column
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                /*
+                  A REAL CONTROL, AND THREE SEPARATE THINGS A SCREEN READER IS OWED.
+
+                  `mergeDescendants` makes the label, the count and the changed mark ONE announcement
+                  instead of three stops on the way to the press. `stateDescription` says what the
+                  section IS — "Expanded" / "Collapsed", the same two words `DesignReviewScreen.kt`
+                  uses, because a reader who has met one disclosure in this application should not
+                  have to learn that another calls the same state something else. `onClickLabel` says
+                  what the press will DO, in the verb grammar TalkBack speaks it in. And `Role.Button`
+                  is what stops it being announced as plain text with a mysterious action on it.
+
+                  The chevron carries none of that to somebody who cannot see it, which is the whole
+                  reason all three are written out.
+                */
+                .semantics(mergeDescendants = true) {
+                    stateDescription = dwTraceDisclosureState(open)
+                }
+                .clickable(
+                    enabled = enabled,
+                    onClickLabel = dwTraceDisclosureClickLabel(open, revealed),
+                    role = Role.Button,
+                ) { onToggle() }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.field.muted,
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = turn },
+            )
+            Text(
+                // Never assembled here. The words and the number both come from the table's own
+                // file — see [DW_TRACE_PARAM_COUNT]'s header for the incident that rule exists to
+                // prevent, and [DW_TRACE_DISCLOSURE_ACTION] for why the phrase is not this client's
+                // to choose.
+                dwTraceDisclosureLabel(open, revealed, changedBehindDisclosure.size),
+                color = MaterialTheme.field.body,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        if (!open) {
+            Text(
+                dwTraceDisclosureBlurb(revealed),
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+            // PROGRESSIVE DISCLOSURE IS ONLY HONEST IF WHAT IT HIDES CAN STILL ANNOUNCE ITSELF —
+            // `traceParamTable.ts:639-645`, and the portal prints this sentence character for
+            // character. The toggle carries the COUNT because a designer who has learned to skip a
+            // paragraph still reads the button they are about to press; this NAMES them, because a
+            // count on its own cannot be acted on.
+            dwTraceHiddenChangedSentence(hiddenChanged)?.let {
+                DwPanelNote(warning = false, text = it, polite = true)
+            }
+            return@Column
+        }
+
+        groups.forEach { (group, rows) ->
+            // THE TABLE'S OWN HEADINGS, UNCHANGED. A designer looks for a control by the pipeline
+            // stage it belongs to, so the taxonomy inside the disclosure is the same one outside it.
+            DwPanelLabel(group)
+            rows.forEach { control ->
+                DwTraceControlRow(
+                    control = control,
+                    values = values,
+                    availability = availability,
+                    changed = control.label in changedFromPreset,
+                    enabled = rowsEnabled,
+                    onPatch = onPatch,
+                )
+            }
+        }
+        DW_TRACE_CUT.forEach { (key, why) ->
+            // The cut list is DRAWN, not merely commented. Somebody looking for the thinning
+            // control needs to find the answer where they looked for the control.
+            Text(
+                "“$key” is deliberately not offered here. $why",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
+    }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import com.designprototype.workshop.ui.RecordProseField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -436,6 +437,25 @@ private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> U
                 Text(trail, color = MaterialTheme.field.muted, fontSize = 11.sp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                /*
+                  THE PUBLISHED DEFAULT, NAMED — added 2026-08-28 with the `isShared` column.
+
+                  A designer's list can now contain a form they did not upload: the standard
+                  instrument an administrator published to everybody. Until this chip existed nothing
+                  on the row said why it was there, and a row a designer cannot account for reads as
+                  somebody else's fieldwork leaking into their list.
+
+                  A WORD AND NOT ONLY A TINT, which is this app's rule for every chip beside it: the
+                  distinction has to survive greyscale, a colour-blind reader and a printed
+                  screenshot. It says what the row is FOR rather than repeating the column's name.
+                */
+                if (row.isShared) {
+                    QChip(
+                        "Standard form",
+                        MaterialTheme.field.surface200,
+                        MaterialTheme.colorScheme.onSurface
+                    )
+                }
                 if (!row.isActive) {
                     QChip(
                         "Deactivated",
@@ -471,6 +491,10 @@ private fun CreateQuestionnaireDialog(
     onError: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    // The APPLICATION context, so a create that is still writing into the outbox when the designer
+    // dismisses this dialog cannot hold an Activity alive behind it — the same reason the list above
+    // takes one for its workbook download.
+    val appContext = LocalContext.current.applicationContext
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var workshopId by remember { mutableStateOf("") }
@@ -484,17 +508,25 @@ private fun CreateQuestionnaireDialog(
         title = { Text("New questionnaire") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
+                /* Both prose, both dictated — the same two boxes and the same two microphones as
+                   the rename dialog in `QuestionnaireDetailScreen` and the web's authoring form.
+                   The SEARCH box at the top of this screen is deliberately left bare: it is a filter
+                   over a list already on screen, not a record anybody is composing, and the record
+                   forms draw the same line (nothing in `SearchScreen` dictates either). */
+                RecordProseField(
+                    label = "Title *",
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Title *") },
-                    singleLine = true,
+                    enabled = !busy,
+                    dictate = !busy,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                RecordProseField(
+                    label = "Description",
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Description") },
+                    enabled = !busy,
+                    dictate = !busy,
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -514,13 +546,37 @@ private fun CreateQuestionnaireDialog(
                 onClick = {
                     busy = true
                     scope.launch {
+                        /*
+                          SENT OR BANKED, and the transport decides which — see
+                          `createCustomQuestionnaireOrQueue`. The owner asked for this to *"work
+                          correctly offline as well"*, and until 2026-08-28 it was a bare POST: a
+                          designer in a courtyard pressed Start, watched it fail, and had nothing.
+
+                          A NULL IS A SUCCESS AND MUST BE SAID SO. It means the questionnaire is on
+                          this handset and goes up with the next sync pass — a different fact from
+                          "the repository has it", and the two have different next moves. The screen
+                          cannot open a form that has no server id yet, so it stays on the list and
+                          says where the row went rather than navigating into nothing.
+                        */
                         runCatching {
-                            repository.createCustomQuestionnaire(
+                            repository.createCustomQuestionnaireOrQueue(
+                                context = appContext,
                                 title = title,
                                 description = description,
                                 designWorkshopId = workshopId.takeIf { it.isNotBlank() },
                             )
-                        }.onSuccess { onCreated(it.id) }
+                        }.onSuccess { created ->
+                            if (created != null) {
+                                onCreated(created.id)
+                            } else {
+                                onError(
+                                    "“${title.trim()}” is saved on this handset. It is sent to the " +
+                                        "repository when there is a connection, and its sections and " +
+                                        "questions can be written once it has arrived."
+                                )
+                                onDismiss()
+                            }
+                        }
                             .onFailure { error ->
                                 if (error !is CancellationException) {
                                     onError(error.apiErrorMessage("The questionnaire could not be created."))

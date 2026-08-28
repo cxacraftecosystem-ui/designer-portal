@@ -293,4 +293,107 @@ class DwSketchTraceCropTest {
         assertTrue("a size refusal must name the range: $size", size.contains("between 16 and 4000 pixels"))
         assertTrue("a size refusal must say where it ended up: $size", size.contains("It was set to 16."))
     }
+
+    /* ────────────────────────────────────────────────────────────────────────────────────────────
+     * THE GESTURE THAT FEEDS THE ARITHMETIC — pinned by reading the panel, 2026-08-28
+     * ──────────────────────────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * The crop was reported as "not really functional" while every case above was passing, and both
+     * halves of that are true: the arithmetic was correct and the drag never delivered it.
+     *
+     * `Modifier.pointerInput(keys) { … }` restarts its suspend block only when a KEY changes, and the
+     * lambda captures the composition's values BY VALUE. `DwTraceCropOverlay` did not list `box` as a
+     * key — it must not, because a restart mid-gesture CANCELS the drag — so the lambda read the
+     * rectangle as it stood when the finger went down, for the whole gesture, and threw away every
+     * event's result but the first. The frame moved about one step and then sat still however far the
+     * finger travelled; on a 4096 px photograph shown ~1024 px wide that is four pixels out of four
+     * thousand.
+     *
+     * WHY THIS IS A SOURCE READ AND NOT A BEHAVIOUR TEST. The defect is in modifier wiring, and
+     * reproducing it needs a Compose UI harness this module does not run. What CAN be checked, and is
+     * exactly what was missing, is that the panel takes the two precautions the fix turns on:
+     *
+     *   1. it reads the current box through `rememberUpdatedState`, so nothing captures a stale one;
+     *   2. it snapshots at `onDragStart` and applies the gesture's TOTAL delta to that snapshot —
+     *      `useDragReorder`'s first rule, which `DwRankableList` already follows on this client.
+     *
+     * A per-event `carry`/`step` accumulator is what the broken version had, so its return is refused
+     * by name rather than left to whoever reads the diff.
+     */
+    @Test
+    fun `the crop drag reads a live box and applies the whole gesture, not a per-event step`() {
+        val panel = cropPanelSource()
+
+        assertTrue(
+            "DwTraceCropOverlay must hold the current box in a rememberUpdatedState — without it the " +
+                "drag lambda captures the rectangle from the composition that started it and every " +
+                "event after the first is computed against a stale origin",
+            panel.contains("rememberUpdatedState(box)"),
+        )
+        assertTrue(
+            "the drag must snapshot the box at onDragStart",
+            panel.contains("start = latestBox"),
+        )
+
+        // BOTH gestures — the box move and the corner resize — take the total, so neither can drift.
+        val totals = Regex("""total[XY]\.toInt\(\)""").findAll(panel).count()
+        assertEquals(
+            "both dwTraceMoveCrop and dwTraceMoveCorner must be handed the gesture's total delta " +
+                "(two arguments each, four in all)",
+            4,
+            totals,
+        )
+
+        // THE BROKEN SHAPE, REFUSED BY NAME. `carryX -= stepX` is the per-event accumulator that
+        // applied one step at a time to a rectangle it could not re-read.
+        assertFalse(
+            "the per-event carry/step accumulator is back; it applies a step to whatever rectangle " +
+                "the lambda captured, which is the defect this test exists for",
+            panel.contains("carryX -= stepX"),
+        )
+    }
+
+    /**
+     * A 44 dp handle centred on a frame corner hangs half outside its parent, and Compose hit-tests a
+     * child against the PARENT's bounds — so the part outside receives no touch at all.
+     *
+     * The crop OPENS as the whole photograph, so all four handles start on the picture's own corners
+     * and three-quarters of each target was unreachable: a designer pressing exactly on the visible
+     * mark was pressing a dead quarter of it. The offset is clamped so the target stays inside while
+     * the drawn mark stays where it belongs.
+     */
+    @Test
+    fun `the corner handles keep their touch target inside the preview`() {
+        val panel = cropPanelSource()
+        assertTrue(
+            "the handle offset must be clamped into the preview, or the part of the target outside " +
+                "the parent is not touchable — which is most of it while the crop is the whole frame",
+            panel.contains("coerceIn(0f, maxX)") && panel.contains("coerceIn(0f, maxY)"),
+        )
+    }
+
+    /**
+     * The panel's source, found by walking up from wherever the test runner started.
+     *
+     * The working directory of a Gradle test worker is not something to depend on, and a test that
+     * SKIPPED when it could not find its subject would prove nothing on the day somebody moves it.
+     * Missing is a failure, loudly — the same helper and the same reasoning as `DashboardTileParityTest`.
+     */
+    private fun cropPanelSource(): String {
+        val relative = listOf(
+            "src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTraceCropPanel.kt",
+            "app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTraceCropPanel.kt",
+            "android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTraceCropPanel.kt",
+        )
+        var dir: java.io.File? = java.io.File(".").absoluteFile
+        while (dir != null) {
+            for (path in relative) {
+                val candidate = java.io.File(dir, path)
+                if (candidate.isFile) return candidate.readText(Charsets.UTF_8)
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("DwSketchTraceCropPanel.kt not found from ${java.io.File(".").absolutePath}")
+    }
 }

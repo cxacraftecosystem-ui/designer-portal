@@ -627,6 +627,17 @@ def jsonify_metadata(data: dict[str, Any], *fields: str) -> dict[str, Any]:
 CLEARABLE_KEYS = frozenset(
     {
         "workshopId",
+        # THE DESIGN & PROTOTYPE WORKSHOP a record is filed under, added 2026-08-28 with the column
+        # itself. Clearable for exactly the reason ``workshopId`` above is: a record filed under the
+        # wrong workshop has to be retractable from the form that filed it, and without this entry
+        # ``{"designWorkshopId": null}`` would be stripped as an unset optional, the save would
+        # return 200, the form would show it unfiled, and the old link would survive in the database.
+        #
+        # SAFE AS A GLOBAL ENTRY — the two hazards this set's own comment names do not apply. The
+        # column is NULLABLE on all six models that have it (and absent from the rest, where the key
+        # can never be sent because ``APIModel`` forbids extra keys), so a create path dumping an
+        # explicit NULL for a caller who did not fill it in writes exactly what the default would.
+        "designWorkshopId",
         "craftId",
         "artisanId",
         "productId",
@@ -1599,6 +1610,24 @@ def media_relation_data(record_type: str | None, record_id: str | None) -> dict[
         "tool": "toolId",
         "questionnaire": "questionnaireInterviewId",
         "questionnaireinterview": "questionnaireInterviewId",
+        # ── "designWorkshop" IS DELIBERATELY NOT HERE, THOUGH MediaFile NOW HAS THE COLUMN ───────
+        #
+        # ``MediaFile.designWorkshopId`` landed on 2026-08-28 so a designer can file a MISCELLANEOUS
+        # upload under a design and prototype workshop, and the obvious-looking next step is to
+        # derive it here from the tag both clients already send
+        # (``dictation_consent.MEDIA_TAG`` == "designWorkshop"). That is refused, and the reason is
+        # in `api/routes/media.py`: the orphan-recovery machinery is split in two by exactly this
+        # question. ``ORPHAN_FK_FIELDS`` asks "tagged, but the typed FK is NULL"; ``ORPHAN_TAG_TYPES``
+        # exists for links that have NO typed FK and lists both spellings of the design-workshop tag
+        # because of it. Deriving the column here would put every stage photograph in scope of BOTH
+        # halves at once — counted twice by the recovery screen, and newly matchable by a condition
+        # written on the assumption that it could never match.
+        #
+        # So the column is written only where a person CHOSE it: ``MediaCompleteRequest``'s own
+        # ``designWorkshopId`` field, from the dropdown on the Miscellaneous Media form. A stage
+        # photograph keeps carrying the tag and nothing else, exactly as before. The two facts are
+        # different — see ``MediaFile.designWorkshopId`` in schema.prisma — and a file may hold one,
+        # both or neither.
     }
     field = field_map.get(normalized)
     return {field: record_id} if field else {}

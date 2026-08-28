@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Search
@@ -571,6 +572,42 @@ enum class NavDestination {
     TASKS,
     BROWSE_RECORDS,
     /**
+     * SCAN A CODE — the destination whose whole job is reading a card, a tag or a screenshot.
+     *
+     * ── WHY IT EXISTS WHEN [BROWSE_RECORDS] ALREADY MOUNTS THE SCANNER ───────────────────────────
+     *
+     * `RecordCodeLookup.kt`'s header argues, correctly, that a scan is a search whose query happens
+     * to be exact, and that hosting it on the search screen meant "no new destination has to be
+     * invented in the navigation on one client and mirrored on the other". That is an argument about
+     * where the CONTROL belongs and it still holds — `RecordCodeLookupPanel` stays exactly where it
+     * is on `SearchScreen`, and nothing here replaces it.
+     *
+     * What the argument did not weigh is the ROUTE, and the owner reported the cost of that on
+     * 2026-08-28: scanning was *"buried underneath a lot of pages"*. It was. To read a tag a designer
+     * had to open the drawer, find "Browse records" — a row named after reading a LIST, which is not
+     * what somebody holding a printed card is doing — and then notice a panel above the search box.
+     * On this client that is worse than on the web, because Search carries `onDashboard = false` and
+     * so has no tile at all: the drawer was the only way in. Three deliberate steps, none of them
+     * named after the action, to reach the one control whose entire purpose is to save typing.
+     *
+     * A destination is the cheapest fix and it takes nothing away: both scanners stay, and this adds
+     * a door named after what the designer is doing, in the menu AND on the dashboard.
+     *
+     * ── BROWSE, AND DIRECTLY UNDER "Browse records" ──────────────────────────────────────────────
+     *
+     * Beside the row it used to hide behind, in the same group the web's own entry sits in. The two
+     * clients' grids are held to each other tile for tile by `DashboardTileParityTest` and
+     * `frontend/e2e/dashboard-tile-parity-unit.spec.ts`, so this could not be added on one client
+     * without the other in the same change — which is the point.
+     *
+     * UNGATED, matching [BROWSE_RECORDS]. Every endpoint behind the lookup takes a signed-in caller
+     * and scopes its answer per viewer on the server, and `require_record` raises **404** — never
+     * 403 — for a record the caller may not have, precisely so that a code cannot be used to
+     * enumerate the repository one photograph at a time. A predicate here would be a client-side
+     * rule the API does not have.
+     */
+    SCAN_CODE,
+    /**
      * The web's `/map` — the repository read as geography. The third way of reading the whole corpus
      * and it sits next to the other two: `/search` reads it as a list, `/data` as a folder tree,
      * `/map` as a place. Ungated, because `GET /map/points` asks for nothing but a login: reading the
@@ -700,6 +737,11 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // Everyone can be a task assignee; the "assign" half is gated inside the screen.
     NavEntry(NavDestination.TASKS, "Tasks", Icons.AutoMirrored.Filled.Assignment, NavGroup.BROWSE, everyone, "get_current_user"),
     NavEntry(NavDestination.BROWSE_RECORDS, "Browse records", Icons.Filled.Search, NavGroup.BROWSE, everyone, "get_current_user"),
+    // Directly under the row that used to be the only way in. Label is the web's, verbatim — both
+    // clients' menus and both dashboards say "Scan a code", so a designer moving between the phone
+    // and the laptop mid-workshop reads one name. See [NavDestination.SCAN_CODE] for why a
+    // destination was added rather than the panel moved.
+    NavEntry(NavDestination.SCAN_CODE, "Scan a code", Icons.Filled.QrCodeScanner, NavGroup.BROWSE, everyone, "get_current_user"),
     // The third way of reading the whole corpus, in the web's own position in this group: /search reads
     // it as a list, /data as a folder tree, /map as a place. Ungated to match /search, because
     // GET /map/points asks for nothing but a login — reading the repository is open to every signed-in

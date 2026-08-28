@@ -9,6 +9,9 @@ import {
   reviewValuesFrom,
   type ReviewField
 } from "@/components/review/reviewEditFields";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
+import { Dropdown } from "@/components/ui/Dropdown";
+import { INTERVIEW_LANGUAGE_PLACEHOLDER, interviewLanguageOptions } from "@/lib/interviewLanguages";
 import { readableError } from "@/components/review/reviewErrors";
 
 /**
@@ -123,6 +126,46 @@ export function ReviewEditPanel({
     const dirty = baseline ? value !== (baseline[field.key] ?? "") : false;
     const empty = field.required && dirty && !value.trim();
     const inputClass = `field-input ${dirty ? "border-purple-300" : ""}`;
+    /*
+      A CLOSED VOCABULARY IS A DROPDOWN, AND A DROPDOWN MAY NOT LIVE IN A `<label>`.
+
+      Every other field here is an `<input>` or a `<textarea>`, which is exactly what a `<label>` is
+      for. A themed dropdown's trigger is a `<button>`, and §12.3 of the frontend contract states
+      both halves of why that cannot be wrapped: a stray click inside a `<label>` is forwarded to the
+      first labelable control, and a wrapping `<label>` folds every named descendant into the
+      control's accessible name. So this branch returns early with a `FieldBlock`, which names the
+      slot through `role="group"` instead — the same treatment the record forms give their pickers.
+    */
+    if (field.vocabulary === "interviewLanguage") {
+      return (
+        <FieldBlock
+          key={field.key}
+          label={field.label}
+          required={field.required}
+          hint={
+            empty ? <span className="text-xs text-error-600">{field.label} cannot be left empty.</span> : undefined
+          }
+        >
+          <Dropdown
+            value={value}
+            // WHATEVER IS STORED STAYS SELECTABLE. `interviewLanguageOptions` puts an unrecognised
+            // value at the front of the list rather than dropping it, so an interview recorded
+            // before this vocabulary existed does not silently lose its language the first time
+            // somebody fixes a typo in the notes beside it.
+            options={interviewLanguageOptions(value)}
+            placeholder={INTERVIEW_LANGUAGE_PLACEHOLDER}
+            disabled={busy}
+            onChange={(next) => setValues((prev) => ({ ...prev, [field.key]: next }))}
+            // A vocabulary written in this repository rather than a list of records, so no filter
+            // box — §11.5's rule is about where the options came from, not how many there are.
+            searchable={false}
+            // It does not filter the screen it sits on, so advancing to the next field on select is
+            // the ordinary, wanted behaviour here.
+          />
+          {dirty ? <span className="text-xs font-semibold text-purple-700">changed</span> : null}
+        </FieldBlock>
+      );
+    }
     return (
       <label key={field.key} className="grid gap-1">
         <span className="field-label">

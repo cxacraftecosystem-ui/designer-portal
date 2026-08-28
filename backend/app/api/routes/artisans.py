@@ -14,6 +14,7 @@ from app.services.access import guard_record_edit
 from app.services.artisan_identity import mask_aadhaar, normalize_aadhaar
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
+from app.services.record_design_workshop import assert_payload_workshop
 from app.services.record_filters import artisan_workshop_clause, resolve_workshop_ids
 from app.services.records import (
     RECORD_STATUSES,
@@ -312,6 +313,7 @@ async def list_artisans(
     craft: str | None = None,
     craftId: str | None = None,
     workshopId: str | None = None,
+    designWorkshopId: str | None = None,
     place: str | None = None,
     statusFilter: str | None = None,
     # WHOSE RECORDS. Reading is open to every signed-in account, so "the records I filed" is no
@@ -362,6 +364,14 @@ async def list_artisans(
             {"workshopId": workshopId},
             {"workshops": {"some": {"workshopId": workshopId}}},
         ]})
+    if designWorkshopId:
+        # THE DESIGN & PROTOTYPE WORKSHOP filter. A plain equality on the column and never an OR
+        # like `workshopId` above, because there is no second reading of this link: `workshopId`
+        # has a join table that predates the column, and this one has never had anything but the
+        # column. The reserved word "none" is deliberately NOT accepted here — that vocabulary
+        # belongs to the plural `workshopIds` scope, and inventing a second spelling of it on a
+        # singular filter is how two filters come to disagree about what "unfiled" means.
+        where["designWorkshopId"] = designWorkshopId
     resolved_workshops = resolve_workshop_ids(workshopIds)
     if resolved_workshops is not None:
         and_filters.append(artisan_workshop_clause(*resolved_workshops))
@@ -399,6 +409,15 @@ async def create_artisan(
     data = await attach_location(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
+    # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
+    # its own gate beside the line above rather than instead of it: `workshopId` is
+    # `WorkshopAssignment`, `designWorkshopId` is creator / admin / `DesignWorkshopViewer`.
+    # `assert_payload_workshop` calls `load_workshop_or_404(for_edit=True)` — the same helper the
+    # stage writes and the questionnaire attach use — because filing a record under a workshop
+    # puts it inside that workshop's scoped lists and totals, which is a change to somebody
+    # else's record. Ungated, any client could post a stranger's workshop id and file into it,
+    # which is the hole `_require_attachable_workshop` was written to close one door over.
+    await assert_payload_workshop(data, current_user)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
@@ -458,6 +477,11 @@ async def update_artisan(
     check = None
     if "workshopId" in data and data.get("workshopId") != artisan.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
+    # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
+    # afterwards. Keyed on PRESENCE, so an edit that does not mention the workshop is not
+    # re-validated — a record filed under a workshop the designer was later removed from must
+    # still be editable by them.
+    await assert_payload_workshop(data, current_user)
     await guard_record_edit(artisan, current_user, data, "artisan")
     await apply_status_policy_update(current_user, artisan, data)
     # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)

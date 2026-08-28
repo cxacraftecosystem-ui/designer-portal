@@ -49,17 +49,30 @@ IDEMPOTENCE
 ``where`` of every write, so running it twice is a no-op and a row somebody assigned by hand in
 between is never overwritten. Nothing here clears or moves an existing link: a record that names its
 workshop is the authority on its own workshop.
+
+AND THE ROWS THE LADDER REFUSES
+-------------------------------
+Reporting a row as "needs a person" is only half a handover; the other half is somewhere for that
+person to press. :func:`file_one_unmapped` and :func:`discard_one_unmapped` at the foot of this
+module are it — ONE named row each, decided by a human looking at the record, and both refused for a
+row that is no longer unfiled. They obey every rule above: the assign carries the same
+``workshopId: None`` guard the bulk writes carry, and neither of them re-runs the ladder or touches a
+second row. The discard is a real delete, with the reasoning on the function.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from fastapi import HTTPException, status
+
 from app.core.db import db
 from app.services.concurrency import gather_reads
+from app.services.s3 import delete_object
 
 # The rung names, as they travel to the client. Constants because both platforms render them, and a
 # typo'd string would silently become an unrecognised rung with no label rather than an error.
@@ -108,6 +121,46 @@ BUCKETS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 BUCKET_KEYS: tuple[str, ...] = tuple(bucket for bucket, _, _, _ in BUCKETS)
+
+# The same table, indexed the two ways the SINGLE-ROW actions at the foot of this module need it.
+# Derived rather than retyped, so a bucket added to ``BUCKETS`` cannot be reachable by the report and
+# unreachable by the buttons the report renders — which is the shape this file's own header warns
+# about, one screen further on.
+BUCKET_DELEGATES: dict[str, str] = {bucket: delegate for bucket, delegate, _s, _p in BUCKETS}
+BUCKET_NOUNS: dict[str, str] = {bucket: singular for bucket, _d, singular, _p in BUCKETS}
+
+# WHICH COLUMNS A ROW'S DISPLAY NAME IS READ OFF, in priority order, per bucket.
+#
+# This was four literal argument lists inside ``run_ladder``'s lambdas, and it is a map now for one
+# reason: an admin who presses "discard" on a card reading ``IMG_2841.jpg`` must be asked about
+# ``IMG_2841.jpg``. The single-row actions name the record back to the person in the confirmation and
+# in the notice afterwards, and if they read a different column from the one the plan read, a
+# destructive prompt would name a record the admin never clicked on. One table, both readers.
+BUCKET_TITLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "interviews": ("title",),
+    "media": ("originalFilename", "caption"),
+    # Products and tools share a list because they share a lambda below — a tool row carries
+    # ``toolkitName`` and a product row ``productName``, and neither has the other's column, so one
+    # ordered list answers for both without either falling through to ``Untitled record``.
+    "products": ("productName", "toolkitName", "englishName", "craftName"),
+    "tools": ("productName", "toolkitName", "englishName", "craftName"),
+    "processes": ("name",),
+    "artisans": ("name", "localName"),
+}
+
+# WHICH COLUMN ON MediaFile POINTS AT A ROW OF THIS BUCKET. Read only by :func:`_media_kept_by`, to
+# say out loud how many attachments survive a discard — see that function for why the answer is
+# never "they are deleted too".
+#
+# ``processes`` is absent on purpose and ``media`` is absent on purpose: a Process has no column on
+# MediaFile at all (the same gap ``run_ladder`` works around with ``linkedRecordId``), and a media
+# row is not a parent of anything.
+_MEDIA_PARENT_COLUMN: dict[str, str] = {
+    "interviews": "questionnaireInterviewId",
+    "products": "productId",
+    "tools": "toolId",
+    "artisans": "artisanId",
+}
 
 # How many rows of per-row detail travel per bucket. The plan renders on a phone as well as a laptop,
 # and 924 filenames is a payload nobody reads: the COUNTS are the answer, the rows are the evidence for
@@ -521,7 +574,7 @@ async def run_ladder() -> LadderRun:
         list(loose_artisans),
         lambda row: decide(
             row.id,
-            title_of(row, "name", "localName"),
+            title_of(row, *BUCKET_TITLE_COLUMNS["artisans"]),
             [
                 (RUNG_PARENT, [link.workshopId for link in (getattr(row, "workshops", None) or [])]),
                 rung_window(row, "recordedAt", "createdAt"),
@@ -541,7 +594,7 @@ async def run_ladder() -> LadderRun:
         list(interviews),
         lambda row: decide(
             row.id,
-            title_of(row, "title"),
+            title_of(row, *BUCKET_TITLE_COLUMNS["interviews"]),
             [
                 (
                     RUNG_ARTISANS,
@@ -562,9 +615,15 @@ async def run_ladder() -> LadderRun:
         record(
             bucket,
             list(rows),
-            lambda row: decide(
+            # ``bucket`` is BOUND AT DEFINITION through the default argument, not read from the
+            # enclosing loop at call time. ``record`` does invoke this synchronously for every row
+            # before the loop turns over, so the late-bound version happened to give the same answer —
+            # but "correct because of when the caller happens to run it" is a property of a function
+            # two hundred lines away, and ruff's B023 flags it precisely because that property is
+            # invisible here and free to break. The default costs nothing and makes the binding local.
+            lambda row, bucket=bucket: decide(
                 row.id,
-                title_of(row, "productName", "toolkitName", "englishName", "craftName"),
+                title_of(row, *BUCKET_TITLE_COLUMNS[bucket]),
                 [
                     (RUNG_PARENT, [first_parent_workshop(row, "artisanId")]),
                     rung_window(row, "recordedAt", "createdAt"),
@@ -583,7 +642,7 @@ async def run_ladder() -> LadderRun:
         list(processes),
         lambda row: decide(
             row.id,
-            title_of(row, "name"),
+            title_of(row, *BUCKET_TITLE_COLUMNS["processes"]),
             [
                 (RUNG_PARENT, [first_parent_workshop(row, "productId")]),
                 rung_window(row, "recordedAt", "createdAt"),
@@ -597,7 +656,7 @@ async def run_ladder() -> LadderRun:
         list(media),
         lambda row: decide(
             row.id,
-            title_of(row, "originalFilename", "caption"),
+            title_of(row, *BUCKET_TITLE_COLUMNS["media"]),
             [
                 (
                     RUNG_PARENT,
@@ -704,6 +763,9 @@ def payload_for(run: LadderRun, applied: dict[str, int] | None = None) -> dict[s
         )
 
     return {
+        # THE WINDOWS the WINDOW rung was decided against — dated workshops ONLY, because
+        # ``build_windows`` skips a workshop with neither ``startDate`` nor ``date``. It is the
+        # evidence for the report's own arithmetic, which is why it carries the bounds.
         "workshops": [
             {
                 "id": window.id,
@@ -712,6 +774,17 @@ def payload_for(run: LadderRun, applied: dict[str, int] | None = None) -> dict[s
                 "end": window.end.isoformat(),
             }
             for window in run.windows
+        ],
+        # EVERY workshop that exists, dated or not, and it is a SECOND list rather than a widening of
+        # the first because the two answer different questions. A hand-assignment picker has to offer
+        # all of them: a workshop with no dates can never win the WINDOW rung, and is therefore
+        # exactly the kind of workshop whose records end up on this report needing a person — so
+        # driving the picker off ``workshops`` above would have hidden the one destination an admin
+        # was most likely to be reaching for, with nothing on screen to say it had been left out.
+        # Titles come from ``workshopTitles``, which is built from an unfiltered ``find_many``.
+        # Order is the database's; every consumer re-sorts, as ``WorkshopSelect``'s callers do.
+        "allWorkshops": [
+            {"id": workshop_id, "title": title} for workshop_id, title in titles.items()
         ],
         "buckets": buckets,
         "totals": {
@@ -766,6 +839,198 @@ async def apply_workshop_mapping() -> dict[str, Any]:
                 changed += int(result or 0)
         applied[bucket] = changed
     return payload_for(run, applied)
+
+
+# ---------------------------------------------------------------------------------------------
+# THE TWO SINGLE-ROW ACTIONS — the person's half of the handover the ladder makes
+# ---------------------------------------------------------------------------------------------
+#
+# WHY THESE EXIST BESIDE THE BULK PAIR ABOVE, AND WHY THEY ARE NOT MORE POWERFUL THAN THEY LOOK.
+#
+# The ladder's whole design is that AMBIGUITY LOSES: a row whose evidence names two workshops, or
+# names none, is reported BY NAME and left alone, because picking one of the two would be a wrong
+# answer dressed as a decision (module header). That refusal is right, and for as long as it has
+# existed it has ended in the same place — a list of names on an admin screen with nothing to press.
+# The person the ladder deferred to had to go and find each record by hand, in another list, on
+# another page, and a record that should never have been recorded at all could not be got rid of from
+# here whatsoever.
+#
+# So these two are that person's half of the handover, and they are deliberately NARROW. One named
+# row, one named workshop, decided by a human who is looking at the record. Neither re-runs the
+# ladder, neither touches a second row, and neither is reachable for a row that is already filed —
+# see :func:`_require_unfiled`. What is emphatically NOT offered here is "set this row's workshop to
+# that id" over arbitrary records: :func:`apply_workshop_mapping`'s docstring explains why a
+# client-supplied plan is a much wider power than closing a gap the server found, and the same
+# reasoning is what keeps these two bound to rows the server itself reported as unfiled.
+
+
+def resolve_bucket(bucket: str) -> tuple[Any, str]:
+    """The Prisma delegate and the singular noun for a bucket key off the wire.
+
+    422 rather than 404 for an unknown key. The bucket vocabulary is a fixed list this module
+    publishes (``BUCKET_KEYS``), so an unrecognised one is a malformed request rather than a missing
+    record — and naming the six in the refusal is what lets a client author see at once that they
+    sent ``interview`` where the report says ``interviews``.
+    """
+    delegate_name = BUCKET_DELEGATES.get(bucket)
+    if delegate_name is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"bucket must be one of {', '.join(BUCKET_KEYS)}",
+        )
+    return getattr(db, delegate_name), BUCKET_NOUNS[bucket]
+
+
+async def _require_unfiled(bucket: str, record_id: str) -> tuple[Any, Any, str, str]:
+    """The delegate, the row, its noun and its title — refusing anything that is not still unfiled.
+
+    BOTH ACTIONS BELOW ARE OFFERED FROM A LIST OF RECORDS THAT CARRY NO WORKSHOP, and both are
+    refused the moment that stops being true. The window between an admin reading the report and
+    pressing a button is real: another admin may be reading the same report, and the bulk button
+    beside these cards writes hundreds of rows at once. A row that was filed in between is a row the
+    admin was told something untrue about, so the honest answer is to stop and say who filed it — not
+    to move it somewhere else, and above all not to delete it. The client re-reads the plan on the
+    refusal and the row simply is not there any more.
+
+    409 rather than 422: nothing about the request is malformed, the world moved.
+    """
+    delegate, noun = resolve_bucket(bucket)
+    row = await delegate.find_unique(where={"id": record_id})
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"That {noun} no longer exists. Re-check the report to see what is left.",
+        )
+    title = title_of(row, *BUCKET_TITLE_COLUMNS[bucket])
+    filed_under = getattr(row, "workshopId", None)
+    if filed_under:
+        where_now = await db.workshop.find_unique(where={"id": filed_under})
+        name = "another workshop"
+        if where_now is not None:
+            name = str(getattr(where_now, "title", "") or "another workshop")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"“{title}” has been filed under {name} since this report was read, so it is no "
+                "longer one of the records that need a person. Re-check to see the current state; "
+                "open the record itself to change where it is filed."
+            ),
+        )
+    return delegate, row, noun, title
+
+
+async def _media_kept_by(bucket: str, record_id: str) -> int:
+    """How many media rows point at this record and will SURVIVE its deletion.
+
+    THE ANSWER IS NEVER "they go too", and that is the schema's decision rather than this module's:
+    every MediaFile relation to a parent record is ``onDelete: SetNull``
+    (``prisma/schema.prisma``), so deleting an artisan, a product, a tool or an interview DETACHES
+    its attachments and leaves the rows and their S3 objects exactly where they are. A process is
+    worse and is counted the same way for the same reason: a clip attached to one carries only the
+    ``linkedRecordId`` tag (there is no ``processId`` column on MediaFile — see ``run_ladder``), so
+    it is not even detached, it keeps pointing at an id nothing answers to.
+
+    Counted BEFORE the delete and reported to the caller, because "delete this record" and "delete
+    this record and its nine photographs" are two different acts, and an admin who presses the first
+    is entitled to be told which one happened. A surviving row is stated, never left to be inferred.
+    """
+    if bucket == "media":
+        return 0
+    column = _MEDIA_PARENT_COLUMN.get(bucket)
+    if column:
+        return await db.mediafile.count(where={column: record_id})
+    return await db.mediafile.count(where={"linkedRecordId": record_id})
+
+
+async def file_one_unmapped(bucket: str, record_id: str, workshop_id: str) -> dict[str, Any]:
+    """File ONE named record under ONE named workshop, chosen by a person.
+
+    This is the rung the ladder does not have and cannot have: somebody who knows where they were.
+
+    THE WRITE STILL CARRIES ``workshopId: None`` IN ITS ``where``, exactly as every write in
+    :func:`apply_workshop_mapping` does, and for the same reason — it is what makes losing the race
+    a visible refusal instead of an overwrite. ``_require_unfiled`` has already read the row and
+    answered 409 for the ordinary case; this second guard closes the gap between that read and this
+    write, which the bulk button can cross in one press.
+
+    The workshop is looked up rather than trusted: a stale picker (a workshop deleted while the
+    report was on screen) would otherwise fail on the foreign key with a 500 and no sentence anybody
+    can act on.
+    """
+    delegate, _row, noun, title = await _require_unfiled(bucket, record_id)
+    workshop = await db.workshop.find_unique(where={"id": workshop_id})
+    if workshop is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That workshop no longer exists. Re-check the report for the current list.",
+        )
+    workshop_title = str(getattr(workshop, "title", "") or "Untitled workshop")
+    changed = await delegate.update_many(
+        where={"id": record_id, "workshopId": None},
+        data={"workshopId": workshop_id},
+    )
+    if not int(changed or 0):
+        # Nothing matched, so the row was filed (or deleted) between the guard above and this write.
+        # Re-running the guard turns that into the same sentence the ordinary case gets, rather than
+        # a silent success that files nothing.
+        await _require_unfiled(bucket, record_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"“{title}” could not be filed just now. Re-check the report and try again.",
+        )
+    return {
+        "bucket": bucket,
+        "id": record_id,
+        "noun": noun,
+        "title": title,
+        "workshopId": workshop_id,
+        "workshopTitle": workshop_title,
+    }
+
+
+async def discard_one_unmapped(bucket: str, record_id: str) -> dict[str, Any]:
+    """Delete ONE named record permanently. There is no undo and nothing here pretends otherwise.
+
+    WHY A HARD DELETE. The other half of "this record needs a person" is that some of these records
+    should not exist — a test row, a duplicate sync, a file uploaded twice — and the reason they are
+    on this report at all is that nothing in the repository claims them. A soft delete would leave
+    them exactly where they are: still in the corpus, still counted by every unscoped list, still on
+    this report. ``design_workshops.decide_identity_photograph`` is the precedent and carries the
+    same reasoning in longer form — a row hidden behind a flag is a row that is still there, and the
+    person who pressed "delete permanently" is entitled to believe it is not.
+
+    IT IS THE SAME PREDICATE AS EVERY OTHER DELETE IN THIS API. The route gates on ``require_admin``,
+    which is the check ``deps.assert_can_delete`` performs on ``DELETE /artisans/{id}``,
+    ``/products/{id}``, ``/tools/{id}``, ``/processes/{id}`` and ``/questionnaire/interviews/{id}``.
+    So this is not a second, looser door onto the same act — it is the same door, opened from the
+    screen where the record is visible.
+
+    THE S3 OBJECT, for the media bucket only, is dropped after the row and only once no other
+    MediaFile references the key — the order and the best-effort swallow are copied deliberately from
+    ``media.delete_media``, so the two paths to deleting a media file cannot leave the bucket in two
+    different states. A storage failure does not fail the request: the row (the user-visible record)
+    is gone, and the alternative is a request that reports failure after succeeding.
+    """
+    delegate, row, noun, title = await _require_unfiled(bucket, record_id)
+    kept = await _media_kept_by(bucket, record_id)
+    object_key = getattr(row, "objectKey", None) if bucket == "media" else None
+    changed = await delegate.delete_many(where={"id": record_id, "workshopId": None})
+    if not int(changed or 0):
+        # Same race, same treatment as the assign: re-run the guard so a row filed in between is
+        # refused by name instead of reported as deleted when it is still there.
+        await _require_unfiled(bucket, record_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"“{title}” could not be deleted just now. Re-check the report and try again.",
+        )
+    if object_key:
+        still_referenced = await db.mediafile.find_first(where={"objectKey": object_key})
+        if still_referenced is None:
+            try:
+                await asyncio.to_thread(delete_object, object_key)
+            except Exception:  # noqa: BLE001 - best-effort storage cleanup, as in media.delete_media
+                pass
+    return {"bucket": bucket, "id": record_id, "noun": noun, "title": title, "mediaKept": kept}
 
 
 async def count_unassigned_interviews(artisan_ids: Iterable[str] | None = None) -> int:

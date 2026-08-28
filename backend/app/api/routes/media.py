@@ -47,6 +47,7 @@ from app.services.media_queue import (
     transcribe_media_now,
 )
 from app.services.pagination import normalize_pagination, page_payload
+from app.services.record_design_workshop import assert_may_file_under
 from app.services.records import (
     MEDIA_TYPES,
     RECORD_STATUSES,
@@ -771,6 +772,13 @@ async def complete_media_upload(
     # linkedRecordId), which is why this runs after the update above and before the metadata is
     # Json-wrapped — stamp_workshop_submission writes a plain dict into extraMetadata.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
+    # THE DESIGN & PROTOTYPE WORKSHOP a designer FILED this upload under, which is a different scope
+    # with different machinery from the line above and therefore a second gate rather than a
+    # replacement. It comes straight off the payload — this is the one link on MediaFile that is NOT
+    # derived from `linkedRecordType`, and `records.media_relation_data` carries the argument for why
+    # deriving it would break the orphan-recovery split. Ungated, any client could file a loose file
+    # into a stranger's workshop and have it appear in that workshop's scoped media list.
+    await assert_may_file_under(data.get("designWorkshopId"), current_user)
     stamp_workshop_submission(data, check=check)
     # The column already defaults to PENDING and the payload carries no status, so seed the key the
     # pin acts on: a late upload must be pinned to PENDING even if a client ever starts sending one.
@@ -800,6 +808,11 @@ async def list_media(
     mediaType: str | None = None,
     linkedRecordType: str | None = None,
     linkedRecordId: str | None = None,
+    # THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload was filed under — the column, never
+    # the tag. `linkedRecordType=designWorkshop` above still answers "which stage photographs
+    # belong to this workshop", and the two questions are different; see
+    # `MediaFile.designWorkshopId` in schema.prisma.
+    designWorkshopId: str | None = None,
     statusFilter: str | None = None,
     dateFrom: datetime | None = None,
     dateTo: datetime | None = None,
@@ -823,6 +836,8 @@ async def list_media(
         where["linkedRecordType"] = linkedRecordType
     if linkedRecordId:
         where["linkedRecordId"] = linkedRecordId
+    if designWorkshopId:
+        where["designWorkshopId"] = designWorkshopId
     if statusFilter:
         where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
     if uploadedBy:

@@ -280,3 +280,26 @@ Three things make this an easy change rather than a risky one:
 - [docs/DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) — §7.7 for the upload-timeout symptom.
 - [docs/SECURITY.md](SECURITY.md) — risk P1: the CloudFront→origin hop is plaintext HTTP.
 - [backend/DEPLOY_AWS.md](../backend/DEPLOY_AWS.md) — how the distribution was created.
+---
+
+## How this document is kept true
+
+Everything here is a claim about a distribution that lives outside this repository, which makes it
+the page most able to drift without any file changing. Two of its facts are pinned mechanically and
+the rest need a person with a shell.
+
+| Claim | What checks it | What it cannot check |
+|---|---|---|
+| The distribution's own hostname | `node docs/tools/check-docs.mjs` — it holds the handset default and `docs/ENVIRONMENT.md`'s infrastructure table to the same value, and reports which one it confirmed | Which distribution is actually in front of production today |
+| Every repository path and relative link named here | The same command | — |
+| The origin timeout, the cache behaviour and the header table | The `curl` block under "Verifying what is actually happening", run against the live distribution. It is written to be pasted | Nothing. That block IS the check, and it has to be run |
+| The invalidation runbook | Run it. An invalidation is observable within a minute through `Age:` and `X-Cache:` | — |
+
+**THE ONE ANSWER THIS REPOSITORY CANNOT GIVE ITSELF** is which CloudFront distribution belongs to
+this portal; the checker's own header says it "does not pick a side" and holds the question open in
+both directions. Do not close it here from memory — close it from the AWS console, and say which
+console and when.
+
+**Re-read this page when** the origin moves, when a cache policy changes, or when
+`AWS_S3_PUBLIC_BASE_URL` is set for the first time — the last of those turns the "If media ever goes
+behind a CDN" section from a plan into a description.

@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -483,6 +484,23 @@ private fun DwTraceCropOverlay(
     var viewWidth by remember { mutableFloatStateOf(0f) }
     var viewHeight by remember { mutableFloatStateOf(0f) }
 
+    /*
+      THE BOX AS IT IS RIGHT NOW, READABLE FROM INSIDE A GESTURE — and the reason the drag below
+      works at all.
+
+      `Modifier.pointerInput(keys) { … }` restarts its suspend block only when a KEY changes, and its
+      lambda closes over the enclosing composition's values BY VALUE. `box` is a parameter of this
+      composable and is deliberately NOT a key (making it one would restart — and therefore CANCEL —
+      the gesture on the first pixel of movement), so a lambda that read `box` directly would read the
+      rectangle as it stood when the drag began, for the whole drag. That is precisely what it did:
+      the frame moved about one step and then sat still however far the finger travelled.
+
+      `rememberUpdatedState` is the standard answer — the holder is stable, so it can be captured
+      once, and `.value` is always the latest composition's. It is read at `onDragStart` and nowhere
+      else, which is the other half of the fix; see the snapshot rule there.
+    */
+    val latestBox by rememberUpdatedState(box)
+
     val aspect = if (preview.height > 0) preview.width.toFloat() / preview.height.toFloat() else 1f
     val toFrameX = if (viewWidth > 0f) frameWidth / viewWidth else 0f
     val toFrameY = if (viewHeight > 0f) frameHeight / viewHeight else 0f
@@ -549,21 +567,33 @@ private fun DwTraceCropOverlay(
                 .size(width = boxWidthDp, height = boxHeightDp)
                 .pointerInput(enabled, frameWidth, frameHeight, toFrameX, toFrameY) {
                     if (!enabled) return@pointerInput
-                    var carryX = 0f
-                    var carryY = 0f
+                    /*
+                      SNAPSHOT AT PRESS, TOTAL DELTA APPLIED TO THE SNAPSHOT — `useDragReorder`'s
+                      first rule, which `DwRankableList` already follows on this client: "rectangles
+                      are snapshotted once, at pointerdown".
+
+                      The delta is the WHOLE gesture's, not this event's, so nothing is lost to
+                      rounding between events and nothing drifts: the frame is always exactly where
+                      the finger has taken it from where it started. A per-event step applied to a
+                      value read back from the parent would be the version that lost a fractional
+                      pixel on every frame of a slow drag.
+                    */
+                    var start = latestBox
+                    var totalX = 0f
+                    var totalY = 0f
                     detectDragGestures(
-                        onDragStart = { carryX = 0f; carryY = 0f },
+                        onDragStart = {
+                            start = latestBox
+                            totalX = 0f
+                            totalY = 0f
+                        },
                     ) { change, drag ->
                         change.consume()
-                        carryX += drag.x * toFrameX
-                        carryY += drag.y * toFrameY
-                        val stepX = carryX.toInt()
-                        val stepY = carryY.toInt()
-                        if (stepX != 0 || stepY != 0) {
-                            carryX -= stepX
-                            carryY -= stepY
-                            onBox(dwTraceMoveCrop(box, stepX, stepY, frameWidth, frameHeight))
-                        }
+                        totalX += drag.x * toFrameX
+                        totalY += drag.y * toFrameY
+                        onBox(
+                            dwTraceMoveCrop(start, totalX.toInt(), totalY.toInt(), frameWidth, frameHeight)
+                        )
                     }
                 }
                 .semantics {
@@ -579,7 +609,28 @@ private fun DwTraceCropOverlay(
             val cy = (if (atBottom) box.y + box.height else box.y) * toViewY
             Box(
                 modifier = Modifier
-                    .offset { IntOffset((cx - half).roundToInt(), (cy - half).roundToInt()) }
+                    /*
+                      KEPT INSIDE THE PARENT'S BOUNDS, which is the second half of why the corners
+                      were hard to grab.
+
+                      Compose hit-tests a child against its PARENT's layout bounds, so the part of a
+                      44 dp target that hangs outside this Box receives no touch at all. The crop
+                      OPENS as the whole photograph, so all four handles start centred on the picture's
+                      own corners and three-quarters of each target was outside — a designer pressing
+                      exactly on the visible mark was pressing a dead quarter of it.
+
+                      Clamping the OFFSET rather than shrinking the target keeps the full 44 dp
+                      touchable while the drawn 14 dp mark stays centred on the corner it names, which
+                      is what a designer is aiming at.
+                    */
+                    .offset {
+                        val maxX = (viewWidth - half * 2f).coerceAtLeast(0f)
+                        val maxY = (viewHeight - half * 2f).coerceAtLeast(0f)
+                        IntOffset(
+                            (cx - half).coerceIn(0f, maxX).roundToInt(),
+                            (cy - half).coerceIn(0f, maxY).roundToInt(),
+                        )
+                    }
                     // 44 dp of TARGET around a 14 dp mark. Material's minimum is 48 dp and this is
                     // under it deliberately: four 48 dp targets on a small frame overlap in the middle
                     // of a box a designer is trying to pull to a corner, and an overlapping target is
@@ -588,25 +639,29 @@ private fun DwTraceCropOverlay(
                     .size(44.dp)
                     .pointerInput(enabled, frameWidth, frameHeight, toFrameX, toFrameY) {
                         if (!enabled) return@pointerInput
-                        var carryX = 0f
-                        var carryY = 0f
+                        // The same snapshot-and-total rule as the box drag above, and it matters more
+                        // here: a corner applied per-event to a stale rectangle does not merely lag,
+                        // it fights the clamp — `dwTraceMoveCorner` holds the OPPOSITE edge still, so
+                        // repeatedly re-deriving from the same origin pins the handle a step away
+                        // from where it began and refuses to go further.
+                        var start = latestBox
+                        var totalX = 0f
+                        var totalY = 0f
                         detectDragGestures(
-                            onDragStart = { carryX = 0f; carryY = 0f },
+                            onDragStart = {
+                                start = latestBox
+                                totalX = 0f
+                                totalY = 0f
+                            },
                         ) { change, drag ->
                             change.consume()
-                            carryX += drag.x * toFrameX
-                            carryY += drag.y * toFrameY
-                            val stepX = carryX.toInt()
-                            val stepY = carryY.toInt()
-                            if (stepX != 0 || stepY != 0) {
-                                carryX -= stepX
-                                carryY -= stepY
-                                onBox(
-                                    dwTraceMoveCorner(
-                                        box, corner, stepX, stepY, frameWidth, frameHeight,
-                                    ),
-                                )
-                            }
+                            totalX += drag.x * toFrameX
+                            totalY += drag.y * toFrameY
+                            onBox(
+                                dwTraceMoveCorner(
+                                    start, corner, totalX.toInt(), totalY.toInt(), frameWidth, frameHeight,
+                                ),
+                            )
                         }
                     }
                     .semantics { contentDescription = dwTraceCornerName(corner) },

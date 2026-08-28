@@ -1380,6 +1380,16 @@ type CompleteParams = {
   caption?: string;
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
+  /**
+   * THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload is filed under, from that form's dropdown.
+   *
+   * NOT DERIVED FROM `linkedRecordType`, deliberately: a stage photograph already carries the tag
+   * `"designWorkshop"` and must keep carrying only the tag. `records.media_relation_data` on the
+   * server holds the argument — the orphan-recovery machinery is split precisely on whether a link
+   * has a typed foreign key, and deriving this would put every stage photograph in scope of both
+   * halves at once. Every caller but the Miscellaneous Media page leaves it undefined.
+   */
+  designWorkshopId?: string | null;
   location?: unknown;
   extraMetadata?: Record<string, unknown>;
   recordedAt?: string;
@@ -1416,6 +1426,7 @@ async function completeUpload(
         caption: params.caption,
         linkedRecordType: params.linkedRecordType,
         linkedRecordId: params.linkedRecordId,
+        designWorkshopId: params.designWorkshopId,
         location: params.location,
         extraMetadata: params.extraMetadata,
         recordedAt: params.recordedAt,
@@ -1479,6 +1490,7 @@ export async function uploadMediaFile({
   file,
   linkedRecordType,
   linkedRecordId,
+  designWorkshopId,
   caption,
   location,
   extraMetadata,
@@ -1491,6 +1503,8 @@ export async function uploadMediaFile({
   file: File;
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
+  /** See `CompleteParams.designWorkshopId`. */
+  designWorkshopId?: string | null;
   caption?: string;
   location?: unknown;
   extraMetadata?: Record<string, unknown>;
@@ -1509,6 +1523,7 @@ export async function uploadMediaFile({
       caption,
       linkedRecordType,
       linkedRecordId,
+      designWorkshopId,
       location,
       extraMetadata,
       recordedAt,
@@ -1699,6 +1714,7 @@ export async function uploadMediaBatch({
   files,
   linkedRecordType,
   linkedRecordId,
+  designWorkshopId,
   caption,
   location,
   extraMetadata,
@@ -1714,6 +1730,8 @@ export async function uploadMediaBatch({
   // path instead of keeping its own upload implementation.
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
+  /** See `CompleteParams.designWorkshopId`. */
+  designWorkshopId?: string | null;
   caption?: string;
   location?: unknown;
   extraMetadata?: Record<string, unknown>;
@@ -1777,6 +1795,7 @@ export async function uploadMediaBatch({
           caption,
           linkedRecordType,
           linkedRecordId,
+          designWorkshopId,
           location,
           extraMetadata,
           recordedAt,

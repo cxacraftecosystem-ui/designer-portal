@@ -19,13 +19,18 @@ import type { InlineHostSeed, InlineRecordSurfaceProps, UseExistingArtisan } fro
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
-import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
+import {
+  DesignWorkshopSelect,
+  useDesignWorkshopSelection
+} from "@/components/forms/DesignWorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { RecordCodeCard } from "@/components/RecordCode";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
@@ -324,6 +329,45 @@ function StatusField({
   );
 }
 
+/**
+ * ── DICTATION ON THIS FORM: WHICH BOXES HAVE A MICROPHONE, AND WHY THE REST DO NOT ──────────────
+ *
+ * The owner's instruction (2026-08-28): "All the record pages should have dictation options
+ * available, wherever applicable so as to reduce the friction as much as possible." So the default
+ * flipped — a free-text box HAS a microphone unless there is a reason it must not, and the reason is
+ * written down here so that a later reader can tell a decision from an oversight. The one-line boxes
+ * use `DictatedTextInput`, the multi-line non-narrative ones `DictatedTextArea`, and the narrative
+ * ones `RichTextField` (whose editor carries the microphone at the caret).
+ *
+ * DICTATED: Name · Local name · Or new craft name · Place · Address · Notes.
+ *
+ * NOT DICTATED, one line each, and each is a rule rather than a preference:
+ *
+ *  - **Workshop, Craft, Gender, Status** — closed vocabularies behind a themed dropdown. There is no
+ *    free text to speak; the answer is picked, and the native type-ahead (focus Gender, press "f",
+ *    get Female) is already faster than a sentence.
+ *  - **Date of birth, Practising since** — calendar fields. `DateField` parses `dd/mm/yyyy`, and a
+ *    recogniser hands back "the fourth of March nineteen seventy one" or "4 3 1971", neither of
+ *    which that parser accepts. Worse, the two readings of an ambiguous date are BOTH valid dates,
+ *    so a mis-transcribed birthday is a defect nothing anywhere reports.
+ *  - **Experience (years)** — a numeric box bounded 0–90. Recognisers spell digits out in words
+ *    ("thirty"), which a native number box discards silently, leaving it empty after a spoken answer.
+ *  - **Phone** — a number, and the same digits-as-words problem, with a dial-code dropdown beside it.
+ *  - **Email** — a recogniser writes "at" for `@` and punctuates a domain, so the box would reliably
+ *    produce a value its own `pattern` then refuses.
+ *  - **Aadhaar number, Pehchan card number** — regulated identity fields (§12.8). Beyond the digit
+ *    problem, these are the two boxes on this form where a transcription error is not merely
+ *    annoying: an Aadhaar failing its checksum is refused by the server, and a wrong Pehchan number
+ *    is stored against the wrong person and then blocks the artisan who genuinely holds that card on
+ *    a unique index. There is also a photograph route for the card, which is the right offer here.
+ *  - **Do's / Don'ts** — `DosDontsField` is a numbered-list control whose whole interaction is
+ *    "press Enter for each new point"; a microphone appending into one row would fight it. Worth
+ *    revisiting as a per-row control the way `ProcessForm`'s notes did, but that is a change to that
+ *    component and not to this form.
+ *  - **Media capture, GPS and the location card** — file pickers and coordinates. `LocationFields`
+ *    is a separate component with its own owner; its stated-address boxes are named as a handoff
+ *    rather than reached into from here.
+ */
 export function ArtisanForm({
   initial,
   seed,
@@ -407,6 +451,26 @@ export function ArtisanForm({
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
   const [savedRecord, setSavedRecord] = useState<Artisan | null>(null);
   const [email, setEmail] = useState(initial?.email ?? "");
+  /*
+   * ── THE FOUR DICTATED ONE-LINE BOXES, IN REACT STATE FOR THE SAME REASON THE DATES ARE ───────
+   *
+   * `DictatedTextInput` is controlled by its caller and cannot be anything else — the argument is
+   * written out in that file, and the short version is that a self-controlled box repaints stale
+   * text on a form cleared by `formElement.reset()`. That is not this form (it clears by remounting
+   * on `formKey`), but one contract for the control across the app is worth more than a second mode
+   * here.
+   *
+   * SO THEY JOIN `email` AND THE TWO DATES ON THE LIST OF THINGS `discardEntry` MUST CLEAR BY HAND.
+   * State declared here lives OUTSIDE `<form key={formKey}>`, so bumping that key rebuilds the DOM
+   * and leaves these four exactly as they were — which would carry a discarded artisan's name into
+   * the form that replaced it. The same applies to "Add another artisan" below, and `email` is the
+   * proof that this is a real trap rather than a theoretical one: it is on that button's list
+   * already, and the two dates were not. They are now.
+   */
+  const [name, setName] = useState(initial?.name ?? "");
+  const [localName, setLocalName] = useState(initial?.localName ?? "");
+  const [newCraftName, setNewCraftName] = useState("");
+  const [place, setPlace] = useState(initial?.place ?? "");
   /*
    * ── THE TWO DATES, IN REACT STATE RATHER THAN LEFT UNCONTROLLED ─────────────────────────────
    *
@@ -501,6 +565,20 @@ export function ArtisanForm({
     isEdit: Boolean(initial),
     resetKey: initial?.id ?? null
   });
+
+  /*
+    THE DESIGN & PROTOTYPE WORKSHOP this artisan is filed under. Its own hook beside the ordinary
+    workshop's, never folded into it: `workshopId` is gated by `WorkshopAssignment` and carries a
+    submission window and a late-submission dialog; `designWorkshopId` is gated by
+    `load_workshop_or_404` and has neither. Two access systems on one control is how a scope comes to
+    be checked by whichever of them the caller remembered.
+
+    `initial` is `undefined` on a CREATE and the stored value (or null) on an EDIT, which is what
+    tells the picker whether it may prefill — the same convention `LocationFields` uses to decide
+    whether it may auto-capture, and for the same reason: a record filed last month must not be
+    silently re-filed under this month's workshop because somebody fixed a typo.
+  */
+  const designWorkshop = useDesignWorkshopSelection(initial?.designWorkshopId ?? null);
 
   /*
    * THE ONE EMAIL RULE, READ RATHER THAN RESTATED.
@@ -659,6 +737,13 @@ export function ArtisanForm({
     // `email` is on this list. Back to what the record said, which for a new artisan is blank.
     setDateOfBirth(initial?.dateOfBirth ? String(initial.dateOfBirth).slice(0, 10) : "");
     setCraftStartDate(initial?.craftStartDate ? String(initial.craftStartDate).slice(0, 10) : "");
+    // And the four dictated boxes, for exactly that reason: they are React state outside the keyed
+    // form, so without these four lines "Discard this entry" would leave the discarded artisan's
+    // name, local name and place standing in the form that replaced it.
+    setName(initial?.name ?? "");
+    setLocalName(initial?.localName ?? "");
+    setNewCraftName("");
+    setPlace(initial?.place ?? "");
     resetDirty();
     setFormKey((key) => key + 1);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -761,6 +846,7 @@ export function ArtisanForm({
         craftId,
         craftName: craftId ? null : newCraftName,
         workshopId: workshop.workshopId || null,
+        designWorkshopId: designWorkshop.workshopId || null,
         // Below professor no status control is rendered: create submits PENDING, edit resubmits the
         // current status (the backend drops unauthorized changes either way).
         status: requiredText(form, "status") || initial?.status || "PENDING",
@@ -893,7 +979,37 @@ export function ArtisanForm({
             Saved &ldquo;{savedRecord.name}&rdquo;. Continue documenting with the same context, or add another artisan.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className="field-button-secondary" onClick={() => { setSavedRecord(null); setMediaFiles([]); setEmail(""); }}>
+            {/*
+              EVERY BOX THIS FORM KEEPS IN REACT STATE HAS TO BE CLEARED HERE, and the list used to
+              be one item long.
+
+              Dismissing this panel re-renders the form, and the boxes that are ordinary uncontrolled
+              inputs come back blank because the whole `<form>` unmounted while the panel was up and
+              re-seeds from `defaultValue` (which is "" on a create form). Anything held in THIS
+              component's state does not: `ArtisanForm` never unmounted, so it survives. `email` was
+              on this list; the two dates were not, so "Add another artisan" carried the previous
+              artisan's date of birth and joining date into the next person's record — silently, and
+              onto two boxes whose readouts then explained the wrong person's age. Bug found and
+              fixed during the dictation sweep, 2026-08-28.
+
+              Blank literals rather than `initial?.…`: this panel is only ever reached from the
+              create path, so "what the record said" is by definition nothing.
+            */}
+            <button
+              type="button"
+              className="field-button-secondary"
+              onClick={() => {
+                setSavedRecord(null);
+                setMediaFiles([]);
+                setEmail("");
+                setDateOfBirth("");
+                setCraftStartDate("");
+                setName("");
+                setLocalName("");
+                setNewCraftName("");
+                setPlace("");
+              }}
+            >
               Add another artisan
             </button>
             <button type="button" className="field-button-secondary" onClick={() => { router.push("/artisans"); router.refresh(); }}>
@@ -995,18 +1111,61 @@ export function ArtisanForm({
             </p>
           </div>
         ) : null}
+        {/*
+          THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
+          Every dictated box below passes `explainWhenUnavailable={false}`, because on Firefox the
+          same honest paragraph printed six times down one form is a block of grey text nobody reads.
+          Removing this line does not remove the sentence from one box; it removes it from all of
+          them, which is the silent-nothing the dictation controls exist to prevent.
+        */}
+        <DictationUnavailableNotice />
         <div className="grid gap-3 md:grid-cols-2">
           {/* Android parity (ArtisanForm): the workshop opens the form, because it is the context
               every other answer belongs to — not merely the first dropdown. */}
           <WorkshopSelect state={workshop} onDirty={markDirty} saving={saving} />
-          <Field label="Name" required>
-            {/* Name, new craft name and place are title-cased by the API on write, so the box says
-                what will actually be stored (Android parity — see components/forms/TitleCasedInput). */}
-            <TitleCasedInput name="name" required defaultValue={initial?.name ?? ""} />
-          </Field>
-          <Field label="Local name">
-            <TextInput name="localName" defaultValue={initial?.localName ?? ""} />
-          </Field>
+          {/*
+            THE DESIGN & PROTOTYPE WORKSHOP, directly under the ordinary one and never instead of it.
+            Two tables, two access systems, and a record may carry either, both or neither — see
+            `Artisan.designWorkshopId` in schema.prisma. The default it opens on is the server's
+            answer to "most recently allocated" rather than this form's guess, so all seven forms and
+            both clients agree; see `lib/designWorkshopDefault.ts`.
+
+            `markDirty` BY HAND, as every themed control on this form must: the picker is a
+            `<button>` and fires no native input event for the form's `onInput` to catch.
+          */}
+          <DesignWorkshopSelect
+            state={designWorkshop}
+            initial={initial ? (initial.designWorkshopId ?? null) : undefined}
+            onDirty={markDirty}
+            saving={saving}
+          />
+          {/* Name, new craft name and place are title-cased by the API on write, so the box says
+              what will actually be stored (Android parity — see components/forms/TitleCasedInput);
+              `titleCased` mounts that exact component inside the dictated box rather than a copy of
+              its hint. `markDirty` by hand because a dictated phrase is a React state write and
+              fires no native input event for the form's `onInput` to catch. */}
+          <DictatedTextInput
+            name="name"
+            label="Name"
+            required
+            titleCased
+            explainWhenUnavailable={false}
+            value={name}
+            onChange={(next) => {
+              setName(next);
+              markDirty();
+            }}
+          />
+          <DictatedTextInput
+            name="localName"
+            label="Local name"
+            explainWhenUnavailable={false}
+            value={localName}
+            onChange={(next) => {
+              setLocalName(next);
+              markDirty();
+            }}
+          />
           <Field label="Craft" required>
             {/* `searchable`: crafts are records and this list is capped (see the notice below it).
                 Nine crafts today is one either side of the option-count threshold, so without this
@@ -1034,12 +1193,30 @@ export function ArtisanForm({
             </Select>
             <CappedListNotice cuts={[craftCut]} />
           </Field>
-          <Field label="Or new craft name">
-            <TitleCasedInput name="newCraftName" placeholder="Used when no existing craft is selected" />
-          </Field>
-          <Field label="Place" required>
-            <TitleCasedInput name="place" required defaultValue={initial?.place ?? ""} />
-          </Field>
+          <DictatedTextInput
+            name="newCraftName"
+            label="Or new craft name"
+            titleCased
+            placeholder="Used when no existing craft is selected"
+            explainWhenUnavailable={false}
+            value={newCraftName}
+            onChange={(next) => {
+              setNewCraftName(next);
+              markDirty();
+            }}
+          />
+          <DictatedTextInput
+            name="place"
+            label="Place"
+            required
+            titleCased
+            explainWhenUnavailable={false}
+            value={place}
+            onChange={(next) => {
+              setPlace(next);
+              markDirty();
+            }}
+          />
           <Field label="Gender">
             {/* NO `searchable` here, on Status, or on the Pehchan Yes/No — deliberately, and it is
                 the same decision every fixed vocabulary in this app makes. Four options are read at
@@ -1239,6 +1416,8 @@ export function ArtisanForm({
             name="address"
             label="Address"
             defaultValue={initial?.address ?? ""}
+            /* The form says it once, at the top — see `DictationUnavailableNotice` there. */
+            explainWhenUnavailable={false}
             onDirty={markDirty}
           />
           {/*
@@ -1262,6 +1441,9 @@ export function ArtisanForm({
             join="paragraph"
             className="md:col-span-2"
             onDirty={markDirty}
+            // Said once at the top of this form by `DictationUnavailableNotice`; a copy under
+            // every editor is the same paragraph over again. See the prop on `RichTextEditor`.
+            explainWhenUnavailable={false}
           />
           {/* Android parity (ArtisanForm): the three identity answers sit after the contact and
               notes fields and before Do's/Don'ts. Grouping them makes the dependency between

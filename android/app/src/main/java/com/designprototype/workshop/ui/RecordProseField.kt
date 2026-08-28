@@ -40,6 +40,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -898,6 +900,38 @@ fun RecordProseField(
     resetKey: Any? = null,
     /** Drawn under the box, above any dictation sentence. The form's own help for this field. */
     help: String? = null,
+    /**
+     * A VALIDATION REFUSAL for this field, or null. Non-null also paints the box in the error colour.
+     *
+     * ── WHY THIS EXISTS, ADDED 2026-08-28 ────────────────────────────────────────────────────────
+     *
+     * The owner asked that every record page offer dictation "wherever applicable, so as to reduce
+     * the friction as much as possible". The boxes with the MOST typing friction on a record form
+     * are the REQUIRED ones — an artisan's name, a product's name, a tool's toolkit name, an
+     * interview's title — and those were the only boxes on the whole form that could not have a
+     * microphone. `RequiredInput` in `MainActivity.kt` drew its own bare `OutlinedTextField`
+     * because this component had nowhere to put an error message or a focus target, and
+     * [RecordDictationButton] is private to this file.
+     *
+     * The two ways out were a second dictation control in `MainActivity.kt` — a second copy of the
+     * partial/commit/refusal machinery, and the half that always drifts is the refusal wording — or
+     * these three parameters. `TextInput` already forwards to this component precisely so the plain
+     * and enriched paths cannot diverge in padding, label placement or keyboard type;
+     * `RequiredInput` now does the same, and required and optional boxes stay one control.
+     *
+     * NULL IS NOT "VALID", IT IS "NOTHING TO SAY". This component performs no validation of its own
+     * and must not start: the form owns the rule, this draws the answer.
+     */
+    errorText: String? = null,
+    /**
+     * Where a form's "you missed this one" focus call lands.
+     *
+     * Attached to the plain box only. The rich editor manages its own focus across a document and a
+     * toolbar, and pointing a caller's `FocusRequester` into it would put the caret somewhere the
+     * caller cannot reason about — so a rich box that is also required keeps the form's error
+     * message and loses only the jump, which is the safe half to lose.
+     */
+    focusRequester: FocusRequester? = null,
     /** Drawn under the box — `TitleCaseHint` and friends, so a caller keeps its existing extras. */
     below: @Composable () -> Unit = {},
 ) {
@@ -1023,6 +1057,12 @@ fun RecordProseField(
                 // middle of a stream is overwritten by the next partial, so the alternative is a box
                 // that silently discards typing — which reads as a broken keyboard.
                 readOnly = spoken.isNotBlank(),
+                // The form's refusal, drawn where Material draws one and in the colour a reader
+                // already associates with it. `supportingText` and not a `Text` underneath, so the
+                // message is part of the field's own semantics node and TalkBack reads it WITH the
+                // box rather than as a stray paragraph after it.
+                isError = errorText != null,
+                supportingText = errorText?.let { message -> { Text(message) } },
                 minLines = minLines,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 trailingIcon = if (!showMic) null else {
@@ -1043,7 +1083,11 @@ fun RecordProseField(
                         )
                     }
                 },
-                modifier = Modifier.fillMaxWidth()
+                // The caller's focus target, where there is one. `.let` rather than a nullable
+                // modifier expression so a box with no requester carries no extra node at all.
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .let { base -> focusRequester?.let { base.focusRequester(it) } ?: base }
             )
             help?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp) }
         }

@@ -109,6 +109,35 @@ internal const val OFFLINE_EXPORT_RECORD = "designWorkshopExport"
 internal const val OFFLINE_DESIGN_RATING = "designRating"
 
 /**
+ * A DESIGNER'S OWN QUESTIONNAIRE, STARTED WITH NO CONNECTION.
+ *
+ * ── WHY THIS TYPE EXISTS, AND WHY IT IS NOT `"questionnaire"` ─────────────────────────────────────
+ *
+ * `"questionnaire"` above is a questionnaire INTERVIEW — a sitting with an artisan, posted to
+ * `/questionnaire/interviews`. This is the designer-authored FORM, posted to `/questionnaires`. Two
+ * tables, two routes, two families of screen; the plural/singular pair this product deliberately
+ * keeps apart (`docs/`'s own note: "Do NOT unify them"). One outbox type covering both would replay
+ * a form against the interview route and lose it to a 422 nobody sees.
+ *
+ * ── WHAT IT CARRIES, AND WHAT IT DELIBERATELY DOES NOT ────────────────────────────────────────────
+ *
+ * The questionnaire ROW only — its title, its description and the workshop it is attached to. NOT
+ * its sections and NOT its questions, and that is a decision rather than a first instalment: those
+ * are separate creates against `/questionnaires/{id}/sections` and `.../questions`, and the id they
+ * need does not exist until the row above them lands. The offline pass has no way to thread a
+ * server-minted id from one queued entry into the next — `PendingEntry.targetId` addresses a record
+ * that ALREADY exists — so queuing a whole tree would produce sections pointing at nothing.
+ *
+ * So what a designer gets offline is what they actually asked for in a courtyard: the form EXISTS,
+ * with its name and its workshop, and it is on the server the moment there is signal. Writing the
+ * questions is the part that wants a screen and a connection, and the list says so.
+ *
+ * NO MEDIA, ever. A questionnaire form has no attachment, so the entry is queued with an empty item
+ * list and reaches Synced the moment the POST returns.
+ */
+internal const val OFFLINE_CUSTOM_QUESTIONNAIRE = "customQuestionnaire"
+
+/**
  * [PendingEntry.type] for an entry that CREATES NOTHING and only carries files to a record that is
  * already on the server. [PendingEntry.targetId] holds that record's id and [PendingEntry.label]
  * names it for the tray.
@@ -637,6 +666,17 @@ class WorkshopRepository(
         state = state?.takeIf { it.isNotBlank() },
         mineOnly = mineOnly
     )
+
+    /**
+     * The design workshop this account was most recently given access to. See the API declaration.
+     *
+     * NO CACHING AND NO FALLBACK. It is one small read that every record form issues once on open,
+     * and a stale answer here would prefill a workshop the designer has since been removed from —
+     * wrong in the permissive direction, which is the one direction a picker must never be wrong in
+     * (`WorkshopSelect.tsx` states the rule for the ordinary workshop list and it holds here).
+     * A failure is the caller's to swallow: a record form must open on a bad connection.
+     */
+    suspend fun designWorkshopDefaultForMe(): DesignWorkshopDefaultDto = api.designWorkshopDefaultForMe()
 
     /**
      * File a new design workshop, with the designer keys FOLDED HERE rather than by the caller.
@@ -2588,6 +2628,54 @@ class WorkshopRepository(
         return fresh.maxByOrNull { it.sortOrder }?.id
     }
 
+    /**
+     * Start a questionnaire, sending it now or banking it for when there is signal.
+     *
+     * ── THE DECISION IS MADE HERE AND NOT AT THE SCREEN ───────────────────────────────────────────
+     *
+     * Every record form on this handset asks `isOnline` and then either posts or queues, and each of
+     * them got that wrong once. Deciding it in the transport means the questionnaire list has one
+     * call to make and cannot forget the second branch — which is the same argument
+     * `createDesignWorkshop` makes for folding its designer keys here rather than at its two callers.
+     *
+     * ── `isOnline` IS A HINT AND THE POST IS THE TRUTH ────────────────────────────────────────────
+     *
+     * A courtyard with one bar answers "online" and then times out, so a failure that
+     * [isConnectionFailure] recognises falls through to the queue rather than to a red sentence. The
+     * refusals do NOT: a 403 or a 422 is the server having answered, and banking it would replay a
+     * rejection for ever while telling the designer it was saved. Same split, same reason, as
+     * `saveOrQueue` on the web.
+     *
+     * @return the created row, or null when it was banked — which the caller must say out loud,
+     *         because "it is on this device" and "the repository has it" are different facts.
+     */
+    suspend fun createCustomQuestionnaireOrQueue(
+        context: Context,
+        title: String,
+        description: String?,
+        designWorkshopId: String?,
+    ): CustomQuestionnaireDto? {
+        val body = CustomQuestionnaireCreateBody(
+            title = title.trim(),
+            description = description?.trim()?.takeIf { it.isNotEmpty() },
+            designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
+        )
+        if (isOnline(context)) {
+            val sent = runCatching { api.createCustomQuestionnaire(body) }
+            sent.getOrNull()?.let { return it }
+            val error = sent.exceptionOrNull()
+            if (error != null && error !is CancellationException && !isConnectionFailure(error)) throw error
+        }
+        queueOfflineEntry(
+            context = context,
+            type = OFFLINE_CUSTOM_QUESTIONNAIRE,
+            payloadJson = offlineJson.encodeToString(body),
+            label = "Questionnaire · ${body.title}",
+            items = emptyList(),
+        )
+        return null
+    }
+
     suspend fun createCustomQuestionnaire(
         title: String,
         description: String? = null,
@@ -3873,6 +3961,27 @@ class WorkshopRepository(
      */
     suspend fun mapUnmappedRecords(): WorkshopMappingPlanDto = api.mapUnmappedRecords()
 
+    /**
+     * File ONE record the ladder could not settle, under the workshop an admin named.
+     *
+     * THROWS, like [unmappedRecords] and for the same reason: this is a write somebody pressed a
+     * button for, and a silent null would leave the screen showing the row still unfiled with no
+     * account of why. The 409 the server answers when the row was filed since the report was read is
+     * the one refusal a caller must render rather than swallow — it names the workshop it went to.
+     */
+    suspend fun fileOneUnmappedRecord(bucket: String, recordId: String, workshopId: String): WorkshopMappingPlanDto =
+        api.fileOneUnmappedRecord(bucket, recordId, FileUnmappedRecordBody(workshopId = workshopId))
+
+    /**
+     * Delete ONE unfiled record permanently. Admin and master admin only, enforced on the server.
+     *
+     * THE ANSWER CARRIES `mediaKept` AND A CALLER MUST SAY IT. Every `MediaFile` relation is
+     * `onDelete: SetNull`, so this detaches a record's attachments rather than removing them; a
+     * screen that reported only "deleted" would be leaving out the half an admin has to act on.
+     */
+    suspend fun discardUnmappedRecord(bucket: String, recordId: String): DiscardUnmappedRecordDto =
+        api.discardUnmappedRecord(bucket, recordId)
+
     suspend fun createArtisan(body: ArtisanCreateRequest): ArtisanDto = api.createArtisan(body)
 
     suspend fun artisan(id: String): ArtisanDetailDto = api.artisan(id)
@@ -4631,6 +4740,17 @@ class WorkshopRepository(
         stageStep: Int? = null,
         customSegment: String? = null,
         overrideBaseName: String? = null,
+        /**
+         * THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload is filed under, straight from that
+         * form's dropdown. Every other caller leaves it null and sends nothing.
+         *
+         * NOT DERIVED FROM [linkedRecordType], deliberately — a stage photograph already carries the
+         * tag "designWorkshop" and must keep carrying only the tag. `records.media_relation_data` on
+         * the server holds the argument: the orphan-recovery machinery is split precisely on whether
+         * a link has a typed foreign key, and deriving this would put every stage photograph in scope
+         * of both halves at once.
+         */
+        designWorkshopId: String? = null,
         /** Stored verbatim on the media row. Today only `{"purpose": …}` - see [MEASUREMENT_GRID_PURPOSE]. */
         extraMetadata: JsonObject? = null,
         onProgress: ((sent: Long, total: Long) -> Unit)? = null
@@ -4655,6 +4775,7 @@ class WorkshopRepository(
             customSegment = customSegment,
             overrideBaseName = overrideBaseName,
             extraMetadata = extraMetadata,
+            designWorkshopId = designWorkshopId,
             onProgress = onProgress
         )
     }
@@ -4677,6 +4798,8 @@ class WorkshopRepository(
         customSegment: String?,
         overrideBaseName: String? = null,
         extraMetadata: JsonObject? = null,
+        /** See [uploadMedia]'s parameter of the same name. */
+        designWorkshopId: String? = null,
         onProgress: ((sent: Long, total: Long) -> Unit)?
     ): MediaFileDto {
         val resolvedProcessing = processingRequests
@@ -4719,6 +4842,7 @@ class WorkshopRepository(
                     caption = caption.blankToNull(),
                     linkedRecordType = linkedRecordType.blankToNull(),
                     linkedRecordId = linkedRecordId.blankToNull(),
+                    designWorkshopId = designWorkshopId.blankToNull(),
                     recordedAt = Instant.now().toString(),
                     location = location,
                     processingRequests = resolvedProcessing,
@@ -5915,6 +6039,14 @@ class WorkshopRepository(
         "questionnaire" -> CreatedRecord(
             api.createQuestionnaireInterview(
                 offlineJson.decodeFromString<QuestionnaireInterviewCreateRequest>(entry.payloadJson)
+            ).id
+        )
+        // The designer's own FORM, not a sitting. See [OFFLINE_CUSTOM_QUESTIONNAIRE] for why this is
+        // a second type rather than a branch inside the one above, and for why it carries the row
+        // alone.
+        OFFLINE_CUSTOM_QUESTIONNAIRE -> CreatedRecord(
+            api.createCustomQuestionnaire(
+                offlineJson.decodeFromString<CustomQuestionnaireCreateBody>(entry.payloadJson)
             ).id
         )
         // Steps come back in submit order, so `stepIndex` on a queued file selects the matching one.

@@ -838,7 +838,16 @@ val DW_TRACE_CONTROLS: List<DwTraceControl> = DW_TRACE_GROUPS.flatMap { group ->
  */
 val DW_TRACE_PARAM_COUNT: Int = DW_TRACE_CONTROLS.size
 
-/** What the disclosure button reveals — the honest number for the words "show everything". */
+/**
+ * How many controls the disclosure holds, **as the TABLE has them**.
+ *
+ * NOT WHAT THE TOGGLE PRINTS, and the distinction earns its keep on a handset. This is the count of
+ * rows this build knows about; [dwTraceAdvancedRevealed] is the count this device's engine will
+ * actually draw, and on a build whose vendored engine is a version apart the two differ by exactly
+ * the leaves [dwTraceMissingKeys] is reporting. The copy uses the second; the parity tests use this
+ * one, because a test asking "did somebody quietly retier a control" must not be able to be answered
+ * by a runtime that simply failed to send it.
+ */
 val DW_TRACE_ADVANCED_COUNT: Int = DW_TRACE_CONTROLS.count { it.tier == DwTraceTier.ADVANCED }
 
 /**
@@ -855,6 +864,181 @@ val DW_TRACE_ADVANCED_COUNT: Int = DW_TRACE_CONTROLS.count { it.tier == DwTraceT
  */
 val DW_TRACE_PRIMARY_KEYS: List<String> =
     DW_TRACE_CONTROLS.filter { it.tier == DwTraceTier.PRIMARY }.map { it.key }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The one disclosure — what is behind it, and what the press is called
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The words on the press, and the one string in this file that is NOT this client's own choice.
+ *
+ * ── WHY A CONSTANT, AND WHY THIS PARTICULAR WORDING ───────────────────────────────────────────
+ *
+ * Android owns wording in this repository, and [DwTraceControl.handsetNote] exists precisely so this
+ * client can say things the portal has no reason to. **This phrase is the exception, and it is the
+ * owner's own**: "advanced/configuration settings are placed inside an internal accordion with an
+ * action such as 'Show more options'". Both clients had to be given the SAME name for the same press,
+ * because a designer who has learned where the rest of the settings live on the laptop must not have
+ * to find them again under a different name in a courtyard.
+ *
+ * It replaced this client's earlier "Show everything (N more)", which is the better English and still
+ * lost, for that reason alone. `SketchTraceField.tsx` prints the same phrase, and
+ * `DwSketchTraceParamsTest` reads that file and fails if either side drifts.
+ */
+const val DW_TRACE_DISCLOSURE_ACTION: String = "Show more options"
+
+/** "1 setting" / "24 settings", so no copy below has to guess a plural off a derived number. */
+private fun dwTraceSettings(count: Int): String = if (count == 1) "1 setting" else "$count settings"
+
+/**
+ * The advanced rows the disclosure will ACTUALLY draw, grouped, in the table's own group order.
+ *
+ * ── ONE SECTION, THE SAME GROUP HEADINGS, AND NOTHING ALLOWED TO FALL BETWEEN THEM ────────────
+ *
+ * The panel draws [DwTraceTier.PRIMARY] above the disclosure and this list below it, and the two are
+ * derived from the SAME `tier` field by opposite tests — so they are exhaustive and disjoint by
+ * construction and a control added to [DW_TRACE_CONTROLS] lands in one of them without anybody
+ * remembering to put it there. That is the property `DwSketchTraceParamsTest` pins, because the way a
+ * later tidy-up loses a control is not by deleting it: it is by maintaining two hand-written lists
+ * that stop adding up.
+ *
+ * The headings are the table's own [DW_TRACE_GROUPS], unchanged — a designer looks for a control by
+ * the pipeline stage it belongs to, and splitting the taxonomy by importance instead would mean
+ * knowing whether somebody had called a cleanup control essential before you could find it.
+ *
+ * ── AND WHY A CONTROL THE ENGINE DID NOT SEND IS NOT COUNTED HERE ─────────────────────────────
+ *
+ * `DwTraceControlRow` skips a row whose leaf the runtime's engine copy has no value for (see
+ * [DwTraceSlider.read]). If this returned it anyway, the toggle would promise a row the press does
+ * not produce — the exact failure `traceParamTable.ts:553-564` records for the portal's own button,
+ * which "read 'Show all 32 controls' while 7 of the 32 were already in front of the designer". The
+ * membership test is `key in values.keys`, character for character what [dwTraceMissingKeys] filters
+ * on, so the number on the toggle and the number in the version-skew note cannot disagree.
+ *
+ * A group with nothing left in it is dropped rather than drawn as a heading over nothing.
+ */
+fun dwTraceAdvancedGroups(values: DwTraceValues): List<Pair<String, List<DwTraceControl>>> =
+    DW_TRACE_GROUPS.mapNotNull { group ->
+        val rows = DW_TRACE_CONTROLS.filter {
+            it.group == group && it.tier == DwTraceTier.ADVANCED && it.key in values.keys
+        }
+        if (rows.isEmpty()) null else group to rows
+    }
+
+/**
+ * How many rows this press reveals, on this device, right now.
+ *
+ * **THE NUMBER IN THE COPY IS THIS ONE AND IS NEVER TYPED.** [DW_TRACE_PARAM_COUNT]'s header records
+ * what typing it costs — the portal's own file "claimed twenty-nine while the table held thirty-two",
+ * and a reader reconciling the two went hunting for three controls that had never been dropped.
+ *
+ * NOT [DW_TRACE_ADVANCED_COUNT], and the difference is the point: that constant is what the TABLE
+ * holds, which is the right number for a parity test and the wrong one for a button, because on a
+ * handset whose engine is a version apart some of those rows will not be drawn.
+ */
+fun dwTraceAdvancedRevealed(values: DwTraceValues): Int =
+    dwTraceAdvancedGroups(values).sumOf { it.second.size }
+
+/**
+ * What the toggle says, in both states.
+ *
+ * The closed arm is `SketchTraceField.tsx`'s own template — [DW_TRACE_DISCLOSURE_ACTION], the count,
+ * and the changed count when there is one — and the open arm is the sentence this client wrote and the
+ * portal adopted. Both are pinned against the TypeScript by `DwSketchTraceParamsTest`.
+ *
+ * [changedHidden] is the count of controls BEHIND THIS PRESS that no longer hold their preset's value
+ * — see [dwTraceChangedBehindDisclosure] for why that is a narrower question than "what is not on
+ * screen", and why the two are allowed to be different numbers.
+ */
+fun dwTraceDisclosureLabel(open: Boolean, revealed: Int, changedHidden: Int): String = if (open) {
+    "Hide the other ${dwTraceSettings(revealed)}"
+} else {
+    DW_TRACE_DISCLOSURE_ACTION + " · ${dwTraceSettings(revealed)}" +
+        (if (changedHidden > 0) " · $changedHidden changed" else "")
+}
+
+/**
+ * What TalkBack reads after "double tap to".
+ *
+ * A VERB PHRASE, because that is the grammar `onClickLabel` is spoken in. The visible label is a noun
+ * phrase with a count in it and would be read as "double tap to Show more options · 24 settings",
+ * which is a heading and not an action. `DesignReviewScreen.kt:1557-1571` states the same split for
+ * its own disclosure: `stateDescription` says what the section IS, `onClickLabel` says what the press
+ * will DO, and the chevron beside the words carries neither to somebody who cannot see it.
+ */
+fun dwTraceDisclosureClickLabel(open: Boolean, revealed: Int): String = if (open) {
+    "hide the other ${dwTraceSettings(revealed)}"
+} else {
+    "show the other ${dwTraceSettings(revealed)}"
+}
+
+/**
+ * "Expanded" / "Collapsed" — the state a screen reader is owed and a chevron does not give it.
+ *
+ * The same two words `DesignReviewScreen.kt` uses, deliberately: a reader who has met one disclosure
+ * in this application should not have to learn that another one calls the same state something else.
+ * NOT `selectable`, which would announce "selected" — the wrong noun for a section that opens.
+ */
+fun dwTraceDisclosureState(open: Boolean): String = if (open) "Expanded" else "Collapsed"
+
+/**
+ * The line under a CLOSED toggle saying what is inside it.
+ *
+ * **NOT THE PORTAL'S SENTENCE, AND THE DIFFERENCE IS A FACT RATHER THAN A PREFERENCE.** The portal's
+ * reads "Inside: the part of the photograph to trace, the N settings that are not above, and the
+ * formats you can download a copy in", because its one disclosure swallowed its frame chooser and its
+ * download buttons as well. On this client it holds settings and nothing else: `DwTraceFramePanel` is
+ * already one collapsed row with a summary that is true whether it is open or shut, and the export
+ * card is a slot on the step that writes the file. Claiming them here would send a designer looking
+ * for the frame tool inside a section it is not in.
+ */
+fun dwTraceDisclosureBlurb(revealed: Int): String =
+    "Inside: the ${dwTraceSettings(revealed)} that are not above, under the same headings as the " +
+        "portal. Nothing in there is required — the trace runs on what is on screen now."
+
+/**
+ * The sentence naming the folded-away controls a preset has moved, or null when it has moved none.
+ *
+ * **PROGRESSIVE DISCLOSURE IS ONLY HONEST IF WHAT IT HIDES CAN STILL ANNOUNCE ITSELF.** A setting
+ * that is quietly affecting the drawing while out of sight is the defect class this panel exists to
+ * not ship; `traceParamTable.ts:639-645` states the same rule for the portal, which prints this
+ * sentence character for character.
+ *
+ * "Not on screen" rather than "hidden", and that word was chosen on this client: "hidden" points a
+ * designer at the one disclosure, and one of the tiers this measures lives on the export step
+ * entirely. What is true of all of them is that the control is not in front of the designer.
+ *
+ * Null rather than an empty string so a caller cannot render an empty notice box — the same contract
+ * [dwTraceOverwriteNotice] holds itself to.
+ */
+fun dwTraceHiddenChangedSentence(labels: List<String>): String? = when {
+    labels.isEmpty() -> null
+    labels.size == 1 -> "One setting that is not on screen has moved: ${labels.first()}."
+    else ->
+        "${labels.size} settings that are not on screen have moved: ${labels.joinToString(", ")}."
+}
+
+/**
+ * The changed controls THIS PRESS would reveal — the count that goes on the toggle itself.
+ *
+ * ── WHY THIS IS A NARROWER QUESTION THAN [dwTraceChangedHiddenLabels] ─────────────────────────
+ *
+ * That function answers "what has moved that the designer cannot see", which on this client includes
+ * [DwTraceTier.EXPORT] whenever the export card is not composed — before the first trace finishes,
+ * there is no card. A count of THAT on the toggle would be the toggle claiming to reveal a control
+ * that lives on another step, and a designer who pressed it and could not find the fourth name would
+ * be right to distrust everything else the panel says.
+ *
+ * So the toggle counts what the toggle produces, and the sentence under it NAMES everything that is
+ * out of sight wherever it lives. The two are equal in the ordinary case and are each true when they
+ * are not.
+ */
+fun dwTraceChangedBehindDisclosure(before: DwTraceValues, after: DwTraceValues): List<String> =
+    dwTraceChangedHiddenLabels(
+        before = before,
+        after = after,
+        visible = setOf(DwTraceTier.PRIMARY, DwTraceTier.EXPORT),
+    )
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The cut list

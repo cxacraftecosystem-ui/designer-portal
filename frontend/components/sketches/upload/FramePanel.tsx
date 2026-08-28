@@ -78,6 +78,45 @@
  * plainly when what is on screen is no longer what the trace is using. That sentence is the §1.10 rule
  * — a control whose effect has silently gone stale is indistinguishable from a control that does
  * nothing.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY THE OWNER REPORTED THIS AS NON-FUNCTIONAL, AND WHAT WAS ACTUALLY WRONG (2026-08-28)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The numeric route worked throughout — `e2e/sketch-trace-panel.spec.ts` case 10 types four numbers,
+ * presses the button and checks the rectangle that reaches the editor, and it passed. Everything a
+ * designer reaches for FIRST did not, and each failure was silent:
+ *
+ *  1. **A DRAG ON THE PHOTOGRAPH DID NOTHING AT ALL.** The frame opens as the whole photograph, so the
+ *     frame's own box covered the entire picture and every press on it was read as "move this box" —
+ *     a box that cannot move, because it already fills the frame. Pressing and pulling out a rectangle,
+ *     which is what a crop tool IS to most people, was a gesture with no possible effect. A drag on
+ *     the picture now DRAWS (see `boxGesture` and the draw layer in the render).
+ *
+ *  2. **DRAGGING A CORNER OUTWARDS SILENTLY RESET THE CROP TO THE WHOLE PHOTOGRAPH.** `moveCorner`
+ *     built a rectangle and clamped the FINISHED thing, and a clamp slides a too-large box back inside
+ *     the frame — which moves the corner nobody is touching. Measured on the shipped code, 1000x800
+ *     frame, crop {100,100,200,200}: one pixel past the edge gave {99,99,901,701} (the anchored corner
+ *     moved), and a real drag gave {0,0,1000,800} — the crop gone. Pulling a corner out to the edge of
+ *     the sheet is the commonest gesture this tool has. `frameGeometry.moveCropCorner` clamps the two
+ *     edges the corner OWNS, which is `DwSketchTraceCrop.dwTraceMoveCorner`'s rule and its argument.
+ *
+ *  3. **THE ARROW KEYS MOVED ONE PHOTOGRAPH PIXEL A PRESS.** On a 4032px sheet drawn 360px wide that
+ *     is a ninth of a drawn pixel, so the keyboard route — the one this header calls primary — showed
+ *     nothing for thirty presses. The step is now one DRAWN pixel, and the handle says what that is.
+ *
+ *  4. **THE POINTER MATHS DIVIDED BY AN ASSUMPTION.** A delta was converted with the scale the preview
+ *     was laid out at, which is only the scale it is drawn at while nothing constrains its width. It
+ *     is now measured off the element, and the overlay is positioned in percentages — which is also
+ *     what let the picture become `max-w-full` and stop scrolling a 360px handset sideways.
+ *
+ *  5. **"CHOOSE A FRAME" DID NOT EXIST HERE.** `grep -rn "Choose a frame" --include=*.kt --include=*.tsx .`
+ *     on 2026-08-28 matched one line, `DwSketchTraceCropPanel.kt:207`, on the handset. The preset row
+ *     is that control, writing rectangles in the same pixels the drag and the boxes write in.
+ *
+ * The arithmetic that was wrong now lives in `frameGeometry.ts` with no React around it, because the
+ * comment that used to sit above it said exactly why nothing caught this: "it is not exported and this
+ * spec suite has no React renderer to reach it through."
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -85,6 +124,31 @@ import { AlertTriangle, Check, Crop, Loader2, Sparkles } from "lucide-react";
 
 import { resampleRgbaInBands } from "./comparisonPlates";
 import type { DecodedPixels } from "./decodeToPixels";
+/*
+  THE RECTANGLE'S ARITHMETIC, MOVED OUT SO SOMETHING CAN TEST IT.
+
+  Every function below used to be a closure in this component, and the comment above the one that
+  mattered said what that cost: "WHAT KEEPS THE TWO HONEST IS NOT A TEST OF THIS FUNCTION — it is not
+  exported and this spec suite has no React renderer to reach it through." `moveCorner` had been
+  shipping a defect the whole time, nothing could see it, and the owner reported the crop as
+  non-functional. `frameGeometry.ts`'s header names the three measured failures and
+  `e2e/sketch-frame-geometry-unit.spec.ts` pins them.
+
+  It imports nothing at run time, so this stays inside the bundle rule the constants below obey.
+*/
+import {
+  FRAME_PRESETS,
+  clampCropRect,
+  cropRectFromPoints,
+  isWholeCropRect,
+  matchingPresetId,
+  moveCropBy,
+  moveCropCorner,
+  nudgeStepFor,
+  presetCropRect,
+  sourcePerDisplayPixel,
+  type FrameCorner
+} from "./frameGeometry";
 import {
   loadImageEditor,
   type CropRect,
@@ -143,19 +207,53 @@ export interface FramePanelProps {
   onEdited: (frame: EditedFrame | null) => void;
 }
 
-type Corner = "nw" | "ne" | "sw" | "se";
+/**
+ * What a pointer gesture on the picture is doing.
+ *
+ * "draw" IS THE ONE THAT WAS MISSING, and its absence is half of why this tool read as broken. The
+ * frame opens as the whole photograph, so the frame's own box covers the entire picture, and every
+ * press on it was "move this box" — a box that cannot move, because it already fills the frame. The
+ * first gesture anybody makes on a crop tool therefore did nothing at all and said nothing about why.
+ */
+type DragMode = FrameCorner | "move" | "draw";
 
 interface Drag {
   readonly pointerId: number;
-  readonly corner: Corner | "move";
+  readonly mode: DragMode;
+  /** Where the gesture started, in client pixels. Every move is measured from here, never accumulated. */
   readonly startX: number;
   readonly startY: number;
   readonly start: CropRect;
+  /**
+   * The picture's own box at pointerdown, and the conversion out of it.
+   *
+   * SNAPSHOTTED, WHICH IS `useDragReorder`'s FIRST RULE AND ITS REASON HOLDS HERE. Re-measuring
+   * mid-gesture feeds the layout the gesture is changing back into the measurement. It is also the
+   * fix for the second half of the coordinate defect: the delta used to be divided by the scale the
+   * preview was LAID OUT at, which is only the scale it is DRAWN at while nothing constrains its
+   * width — and the preview is `max-w-full`, so on a handset it is drawn smaller than it was laid out
+   * and every drag framed a different region from the one under the finger.
+   */
+  readonly originX: number;
+  readonly originY: number;
+  readonly perPxX: number;
+  readonly perPxY: number;
 }
+
+/** How far a "draw" gesture must travel before it replaces the frame, in drawn pixels. */
+const DRAW_SLOP_PX = 3;
 
 export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
   const fieldId = useId();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /**
+   * The box the picture is DRAWN in, which is the only authority on how big a drawn pixel is.
+   *
+   * Read at pointerdown for a drag and on demand for an arrow press, and watched by a `ResizeObserver`
+   * for the two labels that have to print the step. Never inferred from `PREVIEW_BOX_PX`: that is what
+   * the preview was ASKED to be, and a `max-w-full` picture on a 360px handset is not it.
+   */
+  const pictureRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<ImageEditor | null>(null);
   const goneRef = useRef(false);
 
@@ -206,6 +304,15 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  /**
+   * How wide the picture is actually drawn, in CSS pixels, or 0 before it has been measured.
+   *
+   * IN STATE AS WELL AS IN A REF BECAUSE TWO SENTENCES PRINT IT. The handles' spoken labels and the
+   * hint under the picture both name the arrow-key step in photograph pixels, and that number is a
+   * function of the magnification — so it has to be a value a render can read. The gestures themselves
+   * measure at pointerdown and never read this, for `useDragReorder`'s snapshot reason.
+   */
+  const [shownWidth, setShownWidth] = useState(0);
 
   /**
    * A NEW PHOTOGRAPH RESETS THE FRAME, AND SAYS SO UPWARDS.
@@ -237,9 +344,47 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
    * Drawing the photograph
    * ──────────────────────────────────────────────────────────────────────────── */
 
+  /*
+    `scale` SIZES THE BITMAP AND NOTHING ELSE ANY MORE.
+
+    It used to be the conversion a drag divided by as well, which made it a claim about how big the
+    picture is DRAWN — true only while nothing constrains the preview's width. The preview is now
+    `max-w-full` (a fixed 360px box inside a padded card overflowed a 360px handset and scrolled the
+    page sideways, which §"Responsive" forbids), so the drawn size and the laid-out size are different
+    numbers on exactly the devices this application is used from. Everything that converts between
+    pointer and photograph now measures the element: `measurePicture` for a gesture, the observer below
+    for the two sentences that print the step, and PERCENTAGES for the overlay, which needs no
+    conversion at all.
+  */
   const scale = Math.min(1, PREVIEW_BOX_PX / Math.max(pixels.width, pixels.height));
   const boxWidth = Math.max(1, Math.round(pixels.width * scale));
   const boxHeight = Math.max(1, Math.round(pixels.height * scale));
+
+  /** Photograph pixels per arrow press, from the size the picture is actually drawn at. */
+  const nudgeStep = nudgeStepFor(pixels.width, shownWidth > 0 ? shownWidth : boxWidth);
+
+  /**
+   * Watch how wide the picture is drawn, so the printed step is the real one.
+   *
+   * A `ResizeObserver` rather than a window `resize` listener: the picture shrinks whenever its
+   * COLUMN does — the panel is inside a card inside a page that reflows at three breakpoints, and a
+   * disclosure opening above it changes nothing about the window. Guarded because the constructor is
+   * absent in some test environments, and the fallback (`boxWidth`) is the laid-out size, which is
+   * right everywhere the picture is not constrained.
+   */
+  useEffect(() => {
+    const node = pictureRef.current;
+    if (node === null) return;
+    const read = () => {
+      const width = node.getBoundingClientRect().width;
+      if (width > 0) setShownWidth(width);
+    };
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [pixels]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -310,32 +455,19 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
   /**
    * Clamp a rectangle to the photograph, in whole pixels, at least {@link CROP_MIN_EDGE_PX} on a side.
    *
-   * A LOCAL COPY OF `imageEdit.clampCrop`, and the duplication is deliberate for the reason the
-   * constants above are: importing that module here would pull the convolution code onto this page's
-   * bundle.
+   * NOW A CALL RATHER THAN A CLOSURE, and that is the whole of what made the defect above invisible.
+   * The arithmetic lives in `frameGeometry.ts`, which imports nothing at run time — so it stays inside
+   * the bundle rule the constants above obey — and `e2e/sketch-frame-geometry-unit.spec.ts` runs a
+   * table of rectangles through it AND through the real `imageEdit.clampCrop` and requires identical
+   * answers. The check the old comment here said could not exist now exists.
    *
-   * WHAT KEEPS THE TWO HONEST IS NOT A TEST OF THIS FUNCTION — it is not exported and this spec suite
-   * has no React renderer to reach it through. It is that the WORKER clamps again with the real one,
-   * and the worker's copy is the one that decides which pixels are read. This one only has to keep the
-   * box on screen sane while a finger is down; if it and the real one ever disagree, the frame drawn
-   * and the frame traced differ, which is why `SHARPEN_MAX_PIXELS` and `CROP_MIN_EDGE_PX` above ARE
-   * checked against the module (`e2e/sketch-frame-sharpen-unit.spec.ts`) — the constants are the part a
-   * drift would hide.
+   * The minimum edge is passed in rather than imported so that this file keeps the literal the source
+   * check in `e2e/sketch-frame-sharpen-unit.spec.ts` reads. One number, checked against the module
+   * that owns it, in the file that spec looks in.
    */
   const clamp = useCallback(
-    (rect: CropRect): CropRect => {
-      const minW = Math.min(CROP_MIN_EDGE_PX, pixels.width);
-      const minH = Math.min(CROP_MIN_EDGE_PX, pixels.height);
-      const w = Math.min(pixels.width, Math.max(minW, Math.round(rect.width)));
-      const h = Math.min(pixels.height, Math.max(minH, Math.round(rect.height)));
-      return {
-        x: Math.min(pixels.width - w, Math.max(0, Math.round(rect.x))),
-        y: Math.min(pixels.height - h, Math.max(0, Math.round(rect.y))),
-        width: w,
-        height: h
-      };
-    },
-    [pixels.width, pixels.height]
+    (rect: CropRect): CropRect => clampCropRect(rect, pixels, CROP_MIN_EDGE_PX),
+    [pixels]
   );
 
   /**
@@ -403,24 +535,26 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
     [clamp, crop]
   );
 
-  /** Move one corner to (x, y) in source pixels, keeping the opposite corner where it is. */
-  const moveCorner = useCallback(
-    (base: CropRect, corner: Corner, x: number, y: number): CropRect => {
-      const left = corner === "nw" || corner === "sw" ? x : base.x;
-      const top = corner === "nw" || corner === "ne" ? y : base.y;
-      const right = corner === "ne" || corner === "se" ? x : base.x + base.width;
-      const bottom = corner === "sw" || corner === "se" ? y : base.y + base.height;
-      return clamp({
-        x: Math.min(left, right),
-        y: Math.min(top, bottom),
-        width: Math.abs(right - left),
-        height: Math.abs(bottom - top)
-      });
-    },
-    [clamp]
-  );
+  /**
+   * How many photograph pixels one drawn pixel is worth, RIGHT NOW.
+   *
+   * Reads the element rather than the layout constant, and falls back to the laid-out box only when
+   * there is nothing to read — before the first paint, or in a test renderer with no layout. See
+   * {@link Drag}'s note on why the drag snapshots this instead of calling it per move.
+   */
+  const measurePicture = useCallback((): { originX: number; originY: number; perPxX: number; perPxY: number } => {
+    const box = pictureRef.current?.getBoundingClientRect();
+    const drawnW = box && box.width > 0 ? box.width : boxWidth;
+    const drawnH = box && box.height > 0 ? box.height : boxHeight;
+    return {
+      originX: box ? box.left : 0,
+      originY: box ? box.top : 0,
+      perPxX: sourcePerDisplayPixel(pixels.width, drawnW),
+      perPxY: sourcePerDisplayPixel(pixels.height, drawnH)
+    };
+  }, [boxWidth, boxHeight, pixels.width, pixels.height]);
 
-  function beginDrag(event: React.PointerEvent<HTMLElement>, corner: Corner | "move") {
+  function beginDrag(event: React.PointerEvent<HTMLElement>, mode: DragMode) {
     if (disabled || event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     /*
@@ -432,33 +566,92 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
       halves are `RankableList.beginDrag`'s, verbatim in intent.
     */
     event.preventDefault();
-    if (corner !== "move") (event.currentTarget as HTMLElement).focus();
-    setDrag({ pointerId: event.pointerId, corner, startX: event.clientX, startY: event.clientY, start: crop });
+    if (mode !== "move" && mode !== "draw") (event.currentTarget as HTMLElement).focus();
+    setDrag({
+      pointerId: event.pointerId,
+      mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      start: crop,
+      ...measurePicture()
+    });
   }
 
   function continueDrag(event: React.PointerEvent<HTMLElement>) {
     if (drag === null || drag.pointerId !== event.pointerId) return;
-    // The preview is drawn at `scale`, so a pointer moved by `d` display pixels is `d / scale` source
-    // pixels. Dividing by a scale that could be 0 is impossible: `scale` is `min(1, box/edge)` over a
-    // frame whose edges are at least 1.
-    const dx = (event.clientX - drag.startX) / scale;
-    const dy = (event.clientY - drag.startY) / scale;
-    if (drag.corner === "move") {
-      setCrop(clamp({ ...drag.start, x: drag.start.x + dx, y: drag.start.y + dy }));
+    const dx = (event.clientX - drag.startX) * drag.perPxX;
+    const dy = (event.clientY - drag.startY) * drag.perPxY;
+
+    // A LOCAL, SO THE NARROWING BELOW IS THE COMPILER'S RATHER THAN A CAST. Read once off the
+    // snapshot: three branches test it and the last one needs it to BE a corner.
+    const mode = drag.mode;
+
+    if (mode === "draw") {
+      /*
+        A CLICK IS NOT A ZERO-SIZED FRAME. Without the slop, a press on the picture that moved by a
+        pixel would replace the frame with the smallest legal box wherever the finger happened to land
+        — so a designer who touched the photograph to look at it would find it cropped to a 16px
+        square. Below the slop the frame is left exactly as it was, which is what a click means.
+      */
+      if (
+        Math.abs(event.clientX - drag.startX) < DRAW_SLOP_PX &&
+        Math.abs(event.clientY - drag.startY) < DRAW_SLOP_PX
+      ) {
+        return;
+      }
+      const ax = (drag.startX - drag.originX) * drag.perPxX;
+      const ay = (drag.startY - drag.originY) * drag.perPxY;
+      setCrop(cropRectFromPoints(ax, ay, ax + dx, ay + dy, pixels, CROP_MIN_EDGE_PX));
       return;
     }
-    const anchorX = drag.corner === "nw" || drag.corner === "sw" ? drag.start.x : drag.start.x + drag.start.width;
-    const anchorY = drag.corner === "nw" || drag.corner === "ne" ? drag.start.y : drag.start.y + drag.start.height;
-    setCrop(moveCorner(drag.start, drag.corner, anchorX + dx, anchorY + dy));
+
+    if (mode === "move") {
+      setCrop(moveCropBy(drag.start, dx, dy, pixels, CROP_MIN_EDGE_PX));
+      return;
+    }
+
+    // The corner the finger is on, moved to where the finger is. `moveCropCorner` clamps the two edges
+    // that corner OWNS — never the finished rectangle — which is the fix for the defect
+    // `frameGeometry.ts`'s header measures: the old order slid the whole box back inside the frame,
+    // so an outward drag moved the corner nobody was touching and eventually reset the crop to the
+    // whole photograph.
+    const heldX = mode === "nw" || mode === "sw" ? drag.start.x : drag.start.x + drag.start.width;
+    const heldY = mode === "nw" || mode === "ne" ? drag.start.y : drag.start.y + drag.start.height;
+    setCrop(moveCropCorner(drag.start, mode, heldX + dx, heldY + dy, pixels, CROP_MIN_EDGE_PX));
   }
 
   function endDrag(event: React.PointerEvent<HTMLElement>) {
     if (drag !== null && drag.pointerId === event.pointerId) setDrag(null);
   }
 
-  /** Arrow keys on a corner handle. 1 px, or 10 with Shift — the same pair `RankableList` uses. */
-  function nudge(event: React.KeyboardEvent<HTMLButtonElement>, corner: Corner) {
-    const step = event.shiftKey ? 10 : 1;
+  /**
+   * The gesture ended somewhere this component never heard about.
+   *
+   * `onPointerMove` fires on a bare hover as well as during a drag, so a `drag` left set after the
+   * pointer went away turns the next mouse movement across the picture into a resize with no button
+   * held. Pointer capture normally guarantees the `pointerup`, and `lostpointercapture` is what fires
+   * when it does not — a browser taking the capture back, an element removed mid-gesture, a touch the
+   * system claimed for a scroll it decided was happening.
+   */
+  function releaseDrag() {
+    setDrag(null);
+  }
+
+  /**
+   * Arrow keys on a corner handle — ONE DRAWN PIXEL a press, ten with Shift.
+   *
+   * IT USED TO BE ONE PHOTOGRAPH PIXEL, WHICH IS WHY THE KEYBOARD ROUTE READ AS DEAD. A 4032px sheet
+   * drawn 360px wide is 11.2 photograph pixels per drawn pixel, so one press moved the handle by one
+   * eleventh of a pixel and Shift's ten moved it by nine tenths of one: thirty presses produced no
+   * visible change at all, on the route this panel's own header calls "the one that works on every
+   * device and for every input method". The step is now derived from the magnification, so a press
+   * always moves the handle exactly one pixel of the picture the designer is looking at — and the
+   * handle's spoken label says how many photograph pixels that is, because on a large sheet it is not
+   * one and a screen-reader user has no other way to know.
+   */
+  function nudge(event: React.KeyboardEvent<HTMLButtonElement>, corner: FrameCorner) {
+    const unit = nudgeStep;
+    const step = event.shiftKey ? unit * 10 : unit;
     let dx = 0;
     let dy = 0;
     if (event.key === "ArrowLeft") dx = -step;
@@ -469,7 +662,7 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
     event.preventDefault();
     const x = (corner === "nw" || corner === "sw" ? crop.x : crop.x + crop.width) + dx;
     const y = (corner === "nw" || corner === "ne" ? crop.y : crop.y + crop.height) + dy;
-    setCrop(moveCorner(crop, corner, x, y));
+    setCrop(moveCropCorner(crop, corner, x, y, pixels, CROP_MIN_EDGE_PX));
   }
 
   /* ────────────────────────────────────────────────────────────────────────────
@@ -478,8 +671,10 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
 
   const cropped = crop.width * crop.height;
   const overCap = sharpen.amount > 0 && cropped > SHARPEN_MAX_PIXELS;
-  const isWhole =
-    crop.x === 0 && crop.y === 0 && crop.width === pixels.width && crop.height === pixels.height;
+  // The shared predicate rather than a fourth hand-written comparison: `frameGeometry` answers it,
+  // `imageEdit.isWholeFrame` answers it for the pixels the worker copies, and the unit spec requires
+  // the two to agree. A local `&&` chain is how "whole" comes to mean two things on one screen.
+  const isWhole = isWholeCropRect(crop, pixels);
   const stale =
     applied !== null &&
     (applied.crop.x !== crop.x ||
@@ -559,10 +754,31 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
    * Render
    * ──────────────────────────────────────────────────────────────────────────── */
 
-  const left = crop.x * scale;
-  const top = crop.y * scale;
-  const width = crop.width * scale;
-  const height = crop.height * scale;
+  /*
+    THE OVERLAY IS POSITIONED IN PERCENTAGES OF THE PICTURE, NOT IN PIXELS OF A SCALE.
+
+    A percentage is the one expression of the frame that cannot disagree with the picture: it is
+    correct at whatever size the browser decided to draw it, before the first measurement has been
+    taken, and while the column is mid-reflow. The pixel version had to be recomputed from a `scale`
+    that was only ever an assumption — the same assumption that made every drag frame the wrong region
+    once the preview stopped being exactly `PREVIEW_BOX_PX` wide.
+  */
+  const pct = (value: number, total: number): string => `${(value / Math.max(1, total)) * 100}%`;
+  const leftPct = pct(crop.x, pixels.width);
+  const topPct = pct(crop.y, pixels.height);
+  const widthPct = pct(crop.width, pixels.width);
+  const heightPct = pct(crop.height, pixels.height);
+  const rightPct = pct(crop.x + crop.width, pixels.width);
+  const bottomPct = pct(crop.y + crop.height, pixels.height);
+  const activePresetId = matchingPresetId(crop, pixels, CROP_MIN_EDGE_PX);
+  /*
+    A DRAG INSIDE THE BOX DRAWS A NEW FRAME WHILE THE BOX IS THE WHOLE PHOTOGRAPH, AND MOVES IT
+    AFTERWARDS. Not a mode switch a designer has to know about: while the frame is everything there is
+    nothing to move, so "move" is a gesture with no possible effect — which is exactly what this panel
+    shipped, and exactly what "the cropping is non-functional" meant. Once the frame is smaller than
+    the photograph, moving it is a real act and the picture around it is where a new one is drawn.
+  */
+  const boxGesture: DragMode = isWhole ? "draw" : "move";
   const taps = 2 * Math.max(1, Math.ceil(3 * sharpen.radius)) + 1;
 
   return (
@@ -584,22 +800,89 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
 
       {/* ── The frame ──────────────────────────────────────────────────────── */}
       <div className="mt-3">
+        {/* THE OWNER'S THIRD NAMED CONTROL, AND THE HANDSET'S WORD FOR IT
+            (`DwSketchTraceCropPanel.kt:207`). It said "Frame", which is the developer's word for the
+            rectangle rather than the designer's word for the act. The SUMMARY of this section, up on
+            the panel's primary path, carries the handset's other phrase — "The part of the photograph
+            to trace" (`:182`) — so the two are the handset's two, in the handset's two places, and
+            neither surface repeats the other's heading. */}
         <span className="field-label" id={`${fieldId}-frame-label`}>
-          Frame
+          Choose a frame
         </span>
+
+        {/*
+          ── "CHOOSE A FRAME": THE ROW OF PRESETS ────────────────────────────────────────────────
+          The owner named this control and the portal did not have it — verified 2026-08-28 with
+          `grep -rn "Choose a frame" --include=*.kt --include=*.tsx .`, which matched exactly one line,
+          `DwSketchTraceCropPanel.kt:207`, on the handset. Every route this panel had asked a designer
+          to place four numbers or aim a 16px handle; a photograph of a sheet on a table is a shape
+          this application can guess at in one press, and the guess is a STARTING POINT — a preset
+          writes the same `crop` state the drag and the boxes do, so it can then be pulled about.
+
+          `aria-pressed` rather than a radio group, matching the "Attach as" and comparator chip rows:
+          these are seven ways to move one rectangle, not seven values of a field. The pressed row is
+          an exact match on the rectangle (`matchingPresetId`) — a frame nudged by one pixel is
+          honestly no longer "Top half", and a chip that stayed lit would be the panel rounding
+          somebody's aim off for them.
+        */}
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {FRAME_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              disabled={disabled}
+              title={preset.hint}
+              aria-pressed={activePresetId === preset.id}
+              className={
+                activePresetId === preset.id
+                  ? "inline-flex items-center gap-1 rounded-md border border-purple-600 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-800 disabled:opacity-60"
+                  : "inline-flex items-center gap-1 rounded-md border border-line-200 bg-card px-2.5 py-1 text-xs font-medium text-ink-700 transition hover:border-purple-300 disabled:opacity-60"
+              }
+              onClick={() => {
+                setDraft(null);
+                setClampNote(null);
+                setCrop(presetCropRect(preset, pixels, CROP_MIN_EDGE_PX));
+              }}
+            >
+              {/* THE TICK IS NOT DECORATION. §1.4: colour never carries meaning alone, so the purple
+                  that says "this is the shape showing" is paired with a mark. `aria-pressed` already
+                  says it to a reader; this says it to everybody who cannot rely on a tint. */}
+              {activePresetId === preset.id ? <Check className="h-3 w-3" aria-hidden /> : null}
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        {/* THE PRESSED ROW'S OWN SENTENCE, BECAUSE `title` IS NOT A ROUTE. A tooltip needs a pointer
+            that hovers — which a handset does not have and a keyboard does not do — so the reason to
+            press a shape has to be readable without one. Same arrangement as the subject picker two
+            cards up, which shows the chosen preset's hint under the control for the same reason: the
+            option row is gone by the time a designer wonders what they picked. */}
+        <p className="mt-1 text-xs leading-5 text-ink-500">
+          {activePresetId === null
+            ? "A frame of your own. Pick a shape above to start from a common one."
+            : (FRAME_PRESETS.find((preset) => preset.id === activePresetId)?.hint ?? "")}
+        </p>
+
         {/*
           `touch-none` ON THE PREVIEW, so a drag inside it is a crop rather than a page scroll on a
           handset. Not `overflow-hidden`: the corner handles are `<button>`s and the global focus ring
           is an `outline` drawn OUTSIDE the border box, so clipping here would erase the ring of any
           handle sitting on an edge — which is all four of them once the frame is the whole photograph.
+
+          `max-w-full` AND AN ASPECT RATIO RATHER THAN A FIXED PIXEL BOX. The fixed 360px box sat
+          inside a card inside `px-4` page padding, so on a 360px handset — the device this fieldwork
+          is done on — it pushed the page into a horizontal scroll. The ratio is the photograph's own,
+          so the picture is never letterboxed or stretched, and every position over it is a percentage,
+          so nothing has to be recomputed when it shrinks.
         */}
         <div
-          className="relative mt-1 inline-block touch-none rounded-md bg-field-100 p-0"
-          style={{ width: boxWidth, height: boxHeight }}
+          ref={pictureRef}
+          className="relative mt-2 w-full touch-none rounded-md bg-field-100"
+          style={{ maxWidth: boxWidth, aspectRatio: `${pixels.width} / ${pixels.height}` }}
         >
           <canvas
             ref={canvasRef}
-            className="block rounded-md"
+            className="block h-full w-full rounded-md"
             aria-label="The photograph, with the frame that will be traced drawn over it"
           />
 
@@ -607,28 +890,56 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
               9999px shadow needs an `overflow-hidden` parent and that parent would clip the handles'
               focus rings. `rgb(var(--ink-900) / …)` inverts with the theme; a literal black would not. */}
           <div aria-hidden className="pointer-events-none absolute inset-0">
-            <div className="absolute left-0 right-0 top-0" style={{ height: top, background: "rgb(var(--ink-900) / 0.45)" }} />
+            <div className="absolute left-0 right-0 top-0" style={{ height: topPct, background: "rgb(var(--ink-900) / 0.45)" }} />
             <div
-              className="absolute left-0 right-0 bottom-0"
-              style={{ height: Math.max(0, boxHeight - top - height), background: "rgb(var(--ink-900) / 0.45)" }}
+              className="absolute bottom-0 left-0 right-0"
+              style={{ top: bottomPct, background: "rgb(var(--ink-900) / 0.45)" }}
             />
-            <div className="absolute left-0" style={{ top, height, width: left, background: "rgb(var(--ink-900) / 0.45)" }} />
+            <div
+              className="absolute left-0"
+              style={{ top: topPct, height: heightPct, width: leftPct, background: "rgb(var(--ink-900) / 0.45)" }}
+            />
             <div
               className="absolute right-0"
-              style={{ top, height, width: Math.max(0, boxWidth - left - width), background: "rgb(var(--ink-900) / 0.45)" }}
+              style={{ top: topPct, height: heightPct, left: rightPct, background: "rgb(var(--ink-900) / 0.45)" }}
             />
           </div>
 
-          {/* The frame itself. A plain div with pointer handlers and no tabindex — the keyboard route is
-              the handles and the four number inputs below, and a focusable box around them would be a
-              tab stop that announces nothing. */}
+          {/*
+            THE DRAW LAYER — the surface a NEW rectangle is pulled out on.
+
+            It covers the whole picture and sits UNDER the frame box, so while a frame is drawn the box
+            keeps the drag that moves it and the photograph around the box is where another one starts.
+            `aria-hidden` and no tabindex: it is a second way to do what the four number boxes and the
+            four handles already do reachably, and a bare div announcing nothing would be a tab stop
+            that wastes a keyboard user's press.
+          */}
           <div
-            className="absolute cursor-move border-2 border-purple-600"
-            style={{ left, top, width, height }}
-            onPointerDown={(event) => beginDrag(event, "move")}
+            aria-hidden
+            className="absolute inset-0 cursor-crosshair"
+            onPointerDown={(event) => beginDrag(event, "draw")}
             onPointerMove={continueDrag}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
+            onLostPointerCapture={releaseDrag}
+          />
+
+          {/* The frame itself. A plain div with pointer handlers and no tabindex — the keyboard route is
+              the handles and the four number inputs below, and a focusable box around them would be a
+              tab stop that announces nothing. See `boxGesture` for why a press on it means two
+              different things depending on whether there is anything to move. */}
+          <div
+            className={
+              isWhole
+                ? "absolute cursor-crosshair border-2 border-purple-600"
+                : "absolute cursor-move border-2 border-purple-600"
+            }
+            style={{ left: leftPct, top: topPct, width: widthPct, height: heightPct }}
+            onPointerDown={(event) => beginDrag(event, boxGesture)}
+            onPointerMove={continueDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            onLostPointerCapture={releaseDrag}
           />
 
           {(["nw", "ne", "sw", "se"] as const).map((corner) => (
@@ -636,21 +947,43 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
               key={corner}
               type="button"
               disabled={disabled}
-              aria-label={`${CORNER_NAME[corner]} corner of the frame. Arrow keys move it; hold Shift for ten pixels.`}
-              className="absolute h-4 w-4 rounded-sm border border-card bg-purple-700"
+              /* THE SPOKEN STEP IS THE REAL ONE. A screen-reader user pressing an arrow key has no way
+                 to see how far the handle went, and on a large sheet one drawn pixel is a dozen
+                 photograph pixels — so the number is derived from the magnification rather than being
+                 the "ten pixels" this label claimed while a press moved a ninth of one. */
+              aria-label={
+                `${CORNER_NAME[corner]} corner of the frame. Arrow keys move it by ${nudgeStep} ` +
+                `${nudgeStep === 1 ? "pixel" : "pixels"} of the photograph; hold Shift for ${nudgeStep * 10}.`
+              }
+              className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-card bg-purple-700 disabled:opacity-60"
               style={{
-                left: (corner === "nw" || corner === "sw" ? left : left + width) - 8,
-                top: (corner === "nw" || corner === "ne" ? top : top + height) - 8,
+                left: corner === "nw" || corner === "sw" ? leftPct : rightPct,
+                top: corner === "nw" || corner === "ne" ? topPct : bottomPct,
                 cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize"
               }}
               onPointerDown={(event) => beginDrag(event, corner)}
               onPointerMove={continueDrag}
               onPointerUp={endDrag}
               onPointerCancel={endDrag}
+              onLostPointerCapture={releaseDrag}
               onKeyDown={(event) => nudge(event, corner)}
             />
           ))}
         </div>
+
+        {/* THE GESTURES, WRITTEN OUT, BECAUSE NONE OF THEM IS DISCOVERABLE. `RankableList.tsx` states
+            the rule this follows — "a hint nobody can see is a feature nobody can reach" — and the
+            comparator two cards down says its own three out loud for the same reason. The keyboard
+            half is here because it exists: the handles are real buttons and answer to the arrow keys. */}
+        <p className="mt-2 text-xs leading-5 text-ink-500">
+          Drag across the photograph to draw a frame. Once there is one, drag inside it to move it and
+          drag a corner to resize it. Each corner is also a button: focus it and the arrow keys move it
+          {" "}
+          {nudgeStep}
+          {nudgeStep === 1 ? " pixel" : " pixels"} of the photograph at a time — one pixel of the
+          picture as it is drawn here — or {nudgeStep * 10} with Shift held. The four boxes below take
+          the numbers directly, and the row above jumps to a common shape.
+        </p>
 
         {/* THE NUMBERS ARE THE PRIMARY ROUTE, NOT A FALLBACK. Every one is a real labelled input, so
             the frame is reachable and readable without a pointer at all — which is why what they used
@@ -895,7 +1228,7 @@ const CROP_FIELD_NAME: Record<keyof CropRect, string> = {
   height: "Height"
 };
 
-const CORNER_NAME: Record<Corner, string> = {
+const CORNER_NAME: Record<FrameCorner, string> = {
   nw: "Top-left",
   ne: "Top-right",
   sw: "Bottom-left",

@@ -210,6 +210,26 @@ def _enum_members(name: str) -> set[str]:
 # LIVE instead, in the picker's sublabel at the moment of choosing. See
 # `design_workshops._review_flag` and
 # `test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_the_entry`.
+#: ``designWorkshopId`` ON THE FIVE RECORD MODELS — added 2026-08-28 with the columns themselves.
+#:
+#: It says which Design & Prototype Workshop the record was FILED under, and a carry writes a record
+#: INTO a stage of a design workshop. Those are two different workshops and copying one onto the
+#: other would be a bug rather than an omission: the destination is already known — it is the
+#: workshop whose stage is being filled in, and it is the one that gated the write — while this
+#: column is the SOURCE's filing, which may be another workshop entirely or nothing at all.
+#:
+#: It is also not a fact about the subject. Every value in the ``_CARRIED`` lists is something a
+#: reader of the finished entry learns about the artisan, the product or the tool; this is scope,
+#: enforced by ``services/record_design_workshop.assert_may_file_under`` on the way in and by
+#: ``load_workshop_or_404`` on the way out. A carried copy would sit in a second table asserting a
+#: membership nothing checks, which is exactly the shape of the stale ``status`` refusal below.
+_FILING_SCOPE = (
+    "scope, not a fact about the subject — which design workshop the SOURCE record was filed under. "
+    "A carry writes into a stage of the DESTINATION workshop, which is already known and already "
+    "gated (record_design_workshop.assert_may_file_under on the way in, load_workshop_or_404 on the "
+    "way out); copying the source's filing onto it would assert a membership nothing re-checks."
+)
+
 _MUTABLE_VERDICT = (
     "a reviewer's verdict, and MUTABLE — not bookkeeping. Frozen into a permanent copy it would "
     "assert a stale verdict for ever, so it is shown live in the picker's sublabel "
@@ -283,6 +303,7 @@ ARTISAN_NOT_CARRIED = {
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping — the researcher who typed the record",
+    "designWorkshopId": _FILING_SCOPE,
 }
 
 # ONE LEDGER ROW, THREE REFERENCING MODELS, AND THE TARGETS ARE NAMED IN FULL FOR A REASON. `Location`
@@ -389,6 +410,7 @@ PRODUCT_NOT_CARRIED = {
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping",
     "workshopId": "join key",
+    "designWorkshopId": _FILING_SCOPE,
 }
 
 TOOL_CARRIED = {
@@ -448,6 +470,7 @@ TOOL_NOT_CARRIED = {
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping",
     "workshopId": "join key",
+    "designWorkshopId": _FILING_SCOPE,
 }
 
 PROCESS_CARRIED = {
@@ -468,6 +491,7 @@ PROCESS_NOT_CARRIED = {
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping",
     "workshopId": "join key",
+    "designWorkshopId": _FILING_SCOPE,
 }
 
 PROCESS_STEP_CARRIED = {
@@ -580,6 +604,7 @@ QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
     # which is who SAVED the record, not a claim that they conducted the sitting. The same
     # distinction `_measurement_method_note` exists to keep between the saver and the measurer.
     "createdById": "bookkeeping — and see the refusal of an 'interviewed by' box on the model",
+    "designWorkshopId": _FILING_SCOPE,
 }
 
 # ── THE TWO MODELS BEHIND THE COUNTS, LEDGERED BECAUSE THE INCLUDE LOADS THEM ─────────────
@@ -684,6 +709,9 @@ RELATION_LEDGER = {
         ),
         "questionnaireInterviews": "a different feature; the report reaches questionnaires directly",
         "sectionStatuses": "bookkeeping — questionnaire progress",
+        "designWorkshop": (
+            "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
+        ),
     },
     "Location": {
         "artisans": "the back-reference of the relation the Artisan picker includes",
@@ -723,6 +751,9 @@ RELATION_LEDGER = {
         ),
         "mediaProcessingJobs": "queue state; see measurementAnalysisStatus in the scalar list",
         "processes": "reached by its own picker (processStep.processRef / traditionalProcess)",
+        "designWorkshop": (
+            "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
+        ),
     },
     "ToolDocumentation": {
         "artisan": "NOT INCLUDED — see the identical note on ProductDocumentation.artisan",
@@ -754,6 +785,9 @@ RELATION_LEDGER = {
             "why it is ordered by name and de-duplicated, and why 'documented for' and 'used by' are "
             "two boxes rather than one."
         ),
+        "designWorkshop": (
+            "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
+        ),
     },
     "Process": {
         "product": "read by the picker — processStep.documentedFor, via include={'product': True}",
@@ -762,6 +796,9 @@ RELATION_LEDGER = {
         "steps": (
             "read by the picker — _step_lines flattens the ordered sequence onto "
             "traditionalProcess.documentedSteps, via include={'steps': True}"
+        ),
+        "designWorkshop": (
+            "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
         ),
     },
     "ProcessStep": {
@@ -825,6 +862,9 @@ RELATION_LEDGER = {
             "images are pictures of named artisans mid-interview and the roster already carries each "
             "participant's portrait. The note is the only thing that can say the AUDIO RECORDING of "
             "the sitting exists."
+        ),
+        "designWorkshop": (
+            "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
         ),
     },
     "QuestionnaireResponse": {

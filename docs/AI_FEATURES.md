@@ -523,3 +523,25 @@ Four things to know before reading further:
   MARKET_RESEARCH.md §6 says exactly what an operator agrees to by enabling one.
 - **The offline provider is the `auto` default** and needs nothing installed — a CSV price list on
   disk, answered on the device, in a village with no signal.
+---
+
+## How this document is kept true
+
+Most of this page is a statement about CODE — which providers exist, which environment variable turns
+each one on, and what happens when one is off — and that half is checkable. The measured numbers are
+not, and the split is what this section is for.
+
+| Claim | What checks it | What it cannot check |
+|---|---|---|
+| The capabilities, the providers, and which variable enables each (§1–§4) | `cd backend && ./.venv/Scripts/python.exe -m pytest tests/test_ai_features.py tests/test_ai_features_providers.py -q` — the suite asserts that every module imports on stdlib alone, that the flags default OFF, and that a disabled or uninstalled capability raises a typed error naming the variable or the package | Whether a provider's own API still behaves as §2 describes. That is a third party's to change |
+| The market-research half (§10) | `pytest tests/test_market_research.py tests/test_market_research_providers.py -q` | The same |
+| Every repository path named anywhere here | `node docs/tools/check-docs.mjs`, which resolves them | Whether the path still does what the sentence says |
+| "Nothing crawls" (§9) | Read the provider list in §2: each is a documented commerce API or a local file | — |
+
+**The measured numbers in §7 are a DATED SNAPSHOT and nothing re-runs them.** They were taken on
+2026-07-26, on one named machine, against a synthetic flat-colour motif chosen as the *easy* case.
+They are labelled that way in the section itself. Re-measure — do not adjust — if the answer matters
+to a decision, and put the new date beside the new figure.
+
+**Re-read this page when** a provider is added to `backend/app/ai_features/providers/`, when a flag in
+§3 is renamed, or when either test file above changes shape.

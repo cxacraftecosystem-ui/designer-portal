@@ -1110,6 +1110,22 @@ export type RichTextEditorProps = {
   ariaLabelledBy?: string;
   ariaLabel?: string;
   /**
+   * Let the dictation button draw its own "this browser cannot dictate" sentence, or not.
+   *
+   * FORWARDED, NOT DECIDED HERE — added 2026-08-28. `OnDeviceDictationButton` says once, under
+   * itself, that the browser has no recogniser, which is right for a lone control and wrong for a
+   * form that mounts ten of them: a page whose every row repeats the same grey paragraph is a page
+   * where the paragraph stops being read. Every record form now renders
+   * `DictationUnavailableNotice` once at the top and passes `false` to each control below it — and
+   * this editor was the one control that could not be told, so on a browser with no recogniser
+   * (Firefox, today) `ProductForm` printed the form-level notice PLUS one copy under each of its
+   * four rich-text boxes.
+   *
+   * DEFAULTS TO UNDEFINED, which the button reads as its own default of true, so a caller that says
+   * nothing behaves exactly as it did before this prop existed.
+   */
+  explainWhenUnavailable?: boolean;
+  /**
    * The workshop whose recorded consent governs a clip dictated into this editor — or ABSENT, which
    * selects the on-device-only microphone.
    *
@@ -1171,6 +1187,7 @@ export function RichTextEditor({
   disabled,
   ariaLabelledBy,
   ariaLabel,
+  explainWhenUnavailable,
   workshopId,
   placeholder = "Write here. Select text to format it, or type “## ” for a heading and “1. ” for a numbered list.",
   maxLength,
@@ -2990,7 +3007,10 @@ export function RichTextEditor({
           workshopId ? (
             <DictationButton fieldLabel={ariaLabel ?? "this field"} workshopId={workshopId} onCommit={commitDictated} />
           ) : (
-            <OnDeviceDictationButton fieldLabel={ariaLabel ?? "this field"} onCommit={commitDictated} />
+            // One line, and it has to stay one: `record-form-dictation-unit.spec.ts` pins
+            // `<OnDeviceDictationButton fieldLabel=` as a single string, because what it holds is
+            // that the button this editor draws is the one carrying this field's own name.
+            <OnDeviceDictationButton fieldLabel={ariaLabel ?? "this field"} explainWhenUnavailable={explainWhenUnavailable} onCommit={commitDictated} />
           )
         ) : null}
         <button

@@ -101,6 +101,22 @@ class ArtisanCreate(APIModel):
     # exactly as before, while a supplied one both sets the explicit column and adds the
     # WorkshopArtisan join row, and subjects the submission to the workshop's assignment/window rules.
     workshopId: str | None = None
+    # ── FILED UNDER A DESIGN & PROTOTYPE WORKSHOP ─────────────────────────────────────────
+    #
+    # The owner's instruction of 2026-08-28: every record type must be linkable to a Design and
+    # Prototype Workshop. This is that link, and it is a SECOND column beside ``workshopId`` rather
+    # than a reuse of it — ``Artisan.designWorkshopId`` in schema.prisma carries the three reasons,
+    # the short version being that the two scopes are enforced by different machinery and one column
+    # meaning both is how a scope comes to be checked by whichever of them the caller remembered.
+    #
+    # OPTIONAL EVERYWHERE, and an explicit ``null`` UNFILES the record (``designWorkshopId`` is in
+    # ``records.CLEARABLE_KEYS``, so the None survives ``clean_data`` instead of being stripped as an
+    # unset optional). Omitting the key leaves the stored link alone.
+    #
+    # GATED ON WRITE by ``record_design_workshop.assert_payload_workshop`` — the caller must be the
+    # workshop's creator, an admin, or hold a viewer grant, exactly as ``load_workshop_or_404``
+    # requires. Without that check any client could file a record into a stranger's workshop.
+    designWorkshopId: str | None = None
     status: str = "PENDING"
     recordedAt: datetime | None = None
     recordedTimezone: str = "Asia/Kolkata"
@@ -207,6 +223,8 @@ class ArtisanUpdate(APIModel):
     craftId: str | None = None
     craftName: str | None = None
     workshopId: str | None = None
+    # The design & prototype workshop this record is filed under. See ArtisanCreate.
+    designWorkshopId: str | None = None
     status: str | None = None
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None
@@ -505,6 +523,8 @@ class ProductCreate(APIModel):
     artisanId: str | None = None
     craftId: str | None = None
     workshopId: str | None = None
+    # The design & prototype workshop this record is filed under. See ArtisanCreate.
+    designWorkshopId: str | None = None
     status: str = "PENDING"
     recordedAt: datetime | None = None
     recordedTimezone: str = "Asia/Kolkata"
@@ -550,6 +570,8 @@ class ProductUpdate(APIModel):
     artisanId: str | None = None
     craftId: str | None = None
     workshopId: str | None = None
+    # The design & prototype workshop this record is filed under. See ArtisanCreate.
+    designWorkshopId: str | None = None
     status: str | None = None
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None
@@ -578,6 +600,8 @@ class ProcessCreate(APIModel):
     # The workshop this process was documented at. Omitted, the process still inherits its parent
     # product's workshop exactly as before; supplied, it names its own and is gated on that workshop.
     workshopId: str | None = None
+    # The design & prototype workshop this record is filed under. See ArtisanCreate.
+    designWorkshopId: str | None = None
     status: str = "PENDING"
     steps: list[ProcessStepInput] = Field(default_factory=list)
     recordedAt: datetime | None = None
@@ -591,6 +615,8 @@ class ProcessUpdate(APIModel):
     preProcessAvailable: bool | None = None
     notes: str | None = None
     workshopId: str | None = None
+    # The design & prototype workshop this record is filed under. See ArtisanCreate.
+    designWorkshopId: str | None = None
     status: str | None = None
     steps: list[ProcessStepInput] | None = None
     recordedAt: datetime | None = None
@@ -635,6 +661,8 @@ class ToolCreate(APIModel):
     artisanId: str | None = None
     craftId: str | None = None
     workshopId: str | None = None
+    # The design & prototype workshop this record is filed under. See ArtisanCreate.
+    designWorkshopId: str | None = None
     status: str = "PENDING"
     recordedAt: datetime | None = None
     recordedTimezone: str = "Asia/Kolkata"
@@ -684,6 +712,8 @@ class ToolUpdate(APIModel):
     artisanId: str | None = None
     craftId: str | None = None
     workshopId: str | None = None
+    # The design & prototype workshop this record is filed under. See ArtisanCreate.
+    designWorkshopId: str | None = None
     status: str | None = None
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None

@@ -164,6 +164,8 @@ export type Craft = {
   // The workshop this craft was documented at. Nullable everywhere: it was added after the join
   // tables, so historical rows carry none. The API hydrates `workshop` alongside the scalar id.
   workshopId?: string | null;
+  /** The design & prototype workshop this record is filed under. See `Artisan`. */
+  designWorkshopId?: string | null;
   workshop?: Workshop | null;
   extraMetadata?: ExtraMetadata | null;
   createdAt?: string;
@@ -223,6 +225,20 @@ export type Artisan = {
   craftId?: string | null;
   craft?: Craft | null;
   workshopId?: string | null;
+  /**
+   * THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Added 2026-08-28 with the column.
+   *
+   * A SECOND LINK BESIDE `workshopId`, NOT A REPLACEMENT. `workshopId` is the ordinary field
+   * workshop, gated by `WorkshopAssignment`; this is the 22-stage design and prototype record,
+   * gated by `load_workshop_or_404` — creator, admin, or a `DesignWorkshopViewer` grant. Two
+   * tables, two access systems; a record may carry either, both or neither.
+   * `Artisan.designWorkshopId` in `backend/prisma/schema.prisma` holds the argument.
+   *
+   * OPTIONAL, AND AN EXPLICIT `null` UNFILES on the way back: the key is in
+   * `records.CLEARABLE_KEYS`, so a `null` survives `clean_data` instead of being stripped as an
+   * unset optional. Omitting it leaves the stored link alone.
+   */
+  designWorkshopId?: string | null;
   workshop?: Workshop | null;
   recordedAt?: string | null;
   recordedTimezone?: string | null;
@@ -351,6 +367,17 @@ export type MediaFile = {
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
   /**
+   * THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload was filed under, from that form's own
+   * dropdown — never derived from the pair above.
+   *
+   * `linkedRecordType: "designWorkshop"` says which RECORD a file was uploaded against and is
+   * written by the upload path for every stage photograph; this says which workshop a person CHOSE
+   * to file a loose file under. `records.media_relation_data` on the server carries the argument for
+   * why deriving one from the other would break the orphan-recovery machinery. A file may hold one,
+   * both or neither.
+   */
+  designWorkshopId?: string | null;
+  /**
    * The client-written Json column beside the file — read for exactly one key today.
    *
    * DECLARED BECAUSE A PROPERTY TYPESCRIPT CANNOT SEE IS A PROPERTY NOTHING READS. It has been on the
@@ -406,6 +433,8 @@ export type ProductDocumentation = {
   artisanId?: string | null;
   craftId?: string | null;
   workshopId?: string | null;
+  /** The design & prototype workshop this record is filed under. See `Artisan`. */
+  designWorkshopId?: string | null;
   workshop?: Workshop | null;
   media?: MediaFile[];
   extraMetadata?: ExtraMetadata | null;
@@ -470,6 +499,8 @@ export type ToolDocumentation = {
   artisanId?: string | null;
   craftId?: string | null;
   workshopId?: string | null;
+  /** The design & prototype workshop this record is filed under. See `Artisan`. */
+  designWorkshopId?: string | null;
   workshop?: Workshop | null;
   media?: MediaFile[];
   extraMetadata?: ExtraMetadata | null;
@@ -517,6 +548,8 @@ export type QuestionnaireInterview = {
   recordedAt?: string | null;
   recordedTimezone?: string | null;
   workshopId?: string | null;
+  /** The design & prototype workshop this record is filed under. See `Artisan`. */
+  designWorkshopId?: string | null;
   workshop?: Workshop | null;
   artisans?: Array<{ artisan: Artisan }>;
   responses?: QuestionnaireResponse[];

@@ -30,6 +30,7 @@ import {
   Menu as MenuIcon,
   MessageSquare,
   PencilRuler,
+  QrCode,
   Search,
   Settings as SettingsIcon,
   Share2,
@@ -237,6 +238,18 @@ export const NAV_ITEMS: NavItem[] = [
   // Everyone can be a task assignee; the "assign" half of the page is gated inside it.
   { href: "/tasks", label: "Tasks", icon: ClipboardCheck, group: "Browse", can: everyone, gate: "get_current_user" },
   { href: "/search", label: "Browse records", icon: Search, group: "Browse", can: everyone, gate: "get_current_user" },
+  // ── SCAN A CODE ───────────────────────────────────────────────────────────────────────────────
+  // Directly under "Browse records", which is the row that used to be the only way to reach the
+  // scanner: `RecordCodeScanPanel` sits above that page's search box and nowhere else, so reading a
+  // tag meant opening a destination named after reading a LIST. The owner's report on 2026-08-28 was
+  // that scanning was "buried underneath a lot of pages", and it was.
+  //
+  // UNGATED, exactly as `/search` is and for the identical reason `permissions.ts` gives there: the
+  // endpoints behind it take a signed-in caller and scope every answer per viewer on the server, and
+  // `require_record` answers 404 rather than 403 for a record the caller may not have, so a code
+  // cannot be used to enumerate anything. A `ROUTE_GUARDS` row here would be a client rule the API
+  // does not have.
+  { href: "/scan", label: "Scan a code", icon: QrCode, group: "Browse", can: everyone, gate: "get_current_user" },
   // The third way of reading the whole corpus, and it sits next to the other two on purpose:
   // /search reads it as a list, /data as a folder tree, /map as a place. Ungated to match /search,
   // because GET /map/points takes any signed-in caller and has already filtered every pin through

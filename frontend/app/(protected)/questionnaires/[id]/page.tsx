@@ -35,6 +35,9 @@ import { useAuth } from "@/components/AuthProvider";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
+import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { PageHeader } from "@/components/PageHeader";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
@@ -47,7 +50,7 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
 import { listDesignWorkshops, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
-import { canEditOwnOrAdmin } from "@/lib/permissions";
+import { canEditOwnOrAdmin, isAdmin } from "@/lib/permissions";
 import { cachedQuestionnaireNotice, loadQuestionnaireWithCache } from "@/lib/questionnaireFormCache";
 import {
   answeredCount,
@@ -76,6 +79,25 @@ export default function QuestionnaireDetailPage() {
   const [busy, setBusy] = useState(false);
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [sectionFormOpen, setSectionFormOpen] = useState(false);
+  /*
+    ── THE FIVE DICTATED BOXES ON THIS PAGE ARE CONTROLLED, BY `DictatedTextInput`'S CONTRACT ─────
+
+    Its header refuses an uncontrolled mode in as many words — "one mode, not two, because a control
+    that is sometimes controlled is a control whose reset behaviour has to be re-derived at every
+    call site" — so the value lives up here. The boxes still render a real `name`, so `addSection`,
+    `addQuestion` and `renameQuestionnaire` keep reading `FormData` off the form element and none of
+    them changed shape.
+
+    EACH IS CLEARED WHERE THE `element.reset()` IT REPLACED USED TO CLEAR IT, and that is the whole
+    reason this is not a one-line swap: `form.reset()` rewrites the DOM node and tells React nothing,
+    so a box React still believes holds text is re-painted with that text on the very next render.
+    `addSection` and `addQuestion` both call it; the rename form does not, and re-seeds from the
+    server instead — see the effect below.
+  */
+  const [sectionTitle, setSectionTitle] = useState("");
+  const [questionPrompt, setQuestionPrompt] = useState("");
+  const [questionHelp, setQuestionHelp] = useState("");
+  const [renameTitle, setRenameTitle] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [report, setReport] = useState<QFormUploadReport | null>(null);
   const [reuseOpen, setReuseOpen] = useState(false);
@@ -183,6 +205,8 @@ export default function QuestionnaireDetailPage() {
     );
     if (!next) return;
     element.reset();
+    // `reset()` clears the CODE box beside it, which is still uncontrolled; the title is React's.
+    setSectionTitle("");
     setSectionFormOpen(false);
     await load();
   }
@@ -204,6 +228,9 @@ export default function QuestionnaireDetailPage() {
     );
     if (!next) return;
     element.reset();
+    // `reset()` clears the "Required" tick; these two are React's.
+    setQuestionPrompt("");
+    setQuestionHelp("");
     setAddingTo(null);
     await load();
   }
@@ -233,6 +260,19 @@ export default function QuestionnaireDetailPage() {
       );
     }
   }
+
+  /*
+    THE RENAME BOX RE-SEEDS FROM THE SERVER, WHICH IS WHAT ITS `key` USED TO DO.
+
+    The box was `<TextInput defaultValue={form.title} key={`title-${form.title}`} />` — uncontrolled,
+    remounted whenever the stored title changed, which is how it picked up a rename that landed from
+    somewhere else and how it showed the SAVED value rather than the typed one after a failed save.
+    A controlled box gets the same behaviour from an effect on the same dependency, and keeps the
+    `key` off a component that would lose its dictation state to a remount mid-sentence.
+  */
+  useEffect(() => {
+    setRenameTitle(form?.title ?? "");
+  }, [form?.title]);
 
   async function renameQuestionnaire(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -406,6 +446,21 @@ export default function QuestionnaireDetailPage() {
           against it — the answers already recorded are still here and still exportable.
         </div>
       ) : null}
+      {/*
+        THE PUBLISHED DEFAULT, SAID ON THE PAGE — added 2026-08-28 with the `isShared` column.
+
+        A designer opening this form may not have uploaded it, and until this line existed nothing on
+        screen said why they could see it. Saying it here also answers the question the Open button
+        raises next: they may READ and ANSWER it and may not reword it, which is what the `mayEdit`
+        panel below already explains — this says whose form it is.
+      */}
+      {form.isShared ? (
+        <div className="mb-4 rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-sm leading-6 text-purple-900">
+          This is the <strong className="font-semibold">standard questionnaire</strong>, published by an administrator
+          for every designer. You can record answers against it exactly as you would your own; its wording belongs to
+          whoever published it.
+        </div>
+      ) : null}
       {!mayEdit ? (
         // An honest statement of a real boundary, not a padlock over the page. Reading this form and
         // answering it are both open to any designer; only its wording belongs to its author.
@@ -451,10 +506,33 @@ export default function QuestionnaireDetailPage() {
 
       {mayEdit ? (
         <form onSubmit={renameQuestionnaire} className="panel mb-5 grid gap-4 p-4">
+          {/* ONCE FOR THE WHOLE PAGE. Five boxes carry a microphone here, and every one of them
+              passes `explainWhenUnavailable={false}`: `OnDeviceDictationButton` prints its own
+              "this browser cannot dictate" sentence, which is right for a form with one microphone
+              and is five copies of one grey paragraph on this one. See that component. */}
+          <DictationUnavailableNotice />
           <div className="grid gap-3 md:grid-cols-2">
-            <Field label="Title" required>
-              <TextInput name="title" defaultValue={form.title} required maxLength={220} key={`title-${form.title}`} />
-            </Field>
+            {/*
+              ── THE AUTHORING SURFACE GETS THE MICROPHONE TOO — 2026-08-28 ─────────────────────
+              The owner asked that dictation be "a default for other record pages as well", and this
+              page was drawing six bare boxes: a designer builds a questionnaire on the same handset
+              they later carry into the workshop. Five of the six are prose and take a microphone;
+              the sixth is `code` below, which does not — see the note there.
+
+              `key` IS STILL LOAD-BEARING. `DictatedTextInput` seeds itself from `defaultValue` once
+              and then owns the value, exactly as the uncontrolled `<TextInput>` did, so a rename
+              that lands from the server needs the same remount to be seen. Dropping it here would
+              leave the box showing the OLD title after a successful save.
+            */}
+            <DictatedTextInput
+              name="title"
+              label="Title"
+              required
+              value={renameTitle}
+              onChange={setRenameTitle}
+              maxLength={220}
+              explainWhenUnavailable={false}
+            />
             {/* FieldBlock, not Field: `Field` is a <label>, and a <label> around a themed dropdown
                 forwards a stray click into the menu and slams it shut after one pick. */}
             <FieldBlock label="Design workshop">
@@ -474,9 +552,13 @@ export default function QuestionnaireDetailPage() {
               />
             </FieldBlock>
           </div>
-          <Field label="Description">
-            <TextArea name="description" defaultValue={form.description ?? ""} key={`desc-${form.description ?? ""}`} />
-          </Field>
+          <DictatedTextArea
+            key={`desc-${form.description ?? ""}`}
+            name="description"
+            label="Description"
+            defaultValue={form.description ?? ""}
+            explainWhenUnavailable={false}
+          />
           <div className="flex flex-wrap gap-2">
             <button className="field-button" disabled={busy}>
               Save details
@@ -485,6 +567,36 @@ export default function QuestionnaireDetailPage() {
                 own box (inline-flex, min-h-10, padding, radius), and class order in this repo is
                 plain source order — `cn` is a join, not tailwind-merge — so two competing paddings
                 would resolve by stylesheet position rather than by the order written here. */}
+            {/*
+              PUBLISH / WITHDRAW — ADMIN ONLY, and the guard is `isAdmin(user)` rather than `mayEdit`.
+
+              `mayEdit` is "the owner, or an admin", which is every designer for their own forms.
+              Ticking this does not change the owner's form; it changes what every OTHER designer in
+              the country sees in their list and their attach dropdown, which is a repository-wide
+              act. The server enforces the same rule and answers 403 to anybody else — this hides a
+              control the API would refuse rather than being the gate itself.
+
+              WITHDRAWING IS THE SAME AUTHORITY AS PUBLISHING, so one control does both. A designer
+              must no more be able to take the standard form away from everybody than to give it.
+            */}
+            {isAdmin(user) ? (
+              <button
+                type="button"
+                className="field-button-secondary"
+                disabled={busy}
+                onClick={async () => {
+                  const next = await run(
+                    () => patchQuestionnaire(id, { isShared: !form.isShared }),
+                    form.isShared
+                      ? "Unable to withdraw this as the standard questionnaire"
+                      : "Unable to publish this as the standard questionnaire"
+                  );
+                  if (next) setForm(next);
+                }}
+              >
+                {form.isShared ? "Withdraw as the standard form" : "Publish as the standard form"}
+              </button>
+            ) : null}
             {form.isActive ? (
               <button type="button" className="field-danger" onClick={deactivate} disabled={busy}>
                 Take out of use
@@ -522,9 +634,21 @@ export default function QuestionnaireDetailPage() {
 
         {sectionFormOpen && mayEdit ? (
           <form onSubmit={addSection} className="panel grid gap-3 p-4 md:grid-cols-[1fr_12rem_auto] md:items-end">
-            <Field label="Section title" required>
-              <TextInput name="title" required maxLength={220} placeholder="Background" />
-            </Field>
+            <DictatedTextInput
+              name="title"
+              label="Section title"
+              required
+              value={sectionTitle}
+              onChange={setSectionTitle}
+              placeholder="Background"
+              maxLength={220}
+              explainWhenUnavailable={false}
+            />
+            {/* NO MICROPHONE ON `code`, and it is the one box on this page that must not have one:
+                it is a short identifier — "S1", "BG" — that prints beside every question in the
+                download and is derived from the title when left empty. A recogniser returns the
+                nearest DICTIONARY WORD, so "S1" comes back as "Yes one"; the rule is the same one
+                the record forms apply to a phone number and a measurement. */}
             <Field label="Code">
               <TextInput name="code" maxLength={24} placeholder="Derived from the title" />
             </Field>
@@ -586,12 +710,30 @@ export default function QuestionnaireDetailPage() {
 
             {addingTo === section.id && mayEdit ? (
               <form onSubmit={(event) => addQuestion(section.id, event)} className="grid gap-3 rounded-md border border-line-200 bg-surface-50 p-3">
-                <Field label="Question" required>
-                  <TextInput name="prompt" required maxLength={2000} placeholder="How many looms do you own?" />
-                </Field>
-                <Field label="Help text">
-                  <TextInput name="helpText" placeholder="Shown under the question when answering" />
-                </Field>
+                {/* The two longest boxes on the page — a prompt runs to 2,000 characters — and the
+                    two an interviewer is most likely to compose out loud while thinking about the
+                    sitting they are designing it for. `DictatedTextInput` and not `DictatedTextArea`
+                    because the boxes they replace are one-line: the shape of the box follows the
+                    shape of the answer, and changing it here would also change how Enter behaves
+                    (`lib/formNav.isAdvanceableInput` opts textareas out of the Enter-walk). */}
+                <DictatedTextInput
+                  name="prompt"
+                  label="Question"
+                  required
+                  value={questionPrompt}
+                  onChange={setQuestionPrompt}
+                  placeholder="How many looms do you own?"
+                  maxLength={2000}
+                  explainWhenUnavailable={false}
+                />
+                <DictatedTextInput
+                  name="helpText"
+                  label="Help text"
+                  value={questionHelp}
+                  onChange={setQuestionHelp}
+                  placeholder="Shown under the question when answering"
+                  explainWhenUnavailable={false}
+                />
                 <label className="flex items-center gap-2 text-sm text-ink-700">
                   <input type="checkbox" name="isRequired" className="h-4 w-4 rounded border-line-200" />
                   Required

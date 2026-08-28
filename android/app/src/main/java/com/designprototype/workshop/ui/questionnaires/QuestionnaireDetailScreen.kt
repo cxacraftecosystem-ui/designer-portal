@@ -48,6 +48,7 @@ import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import com.designprototype.workshop.ui.RecordProseField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -1196,17 +1197,35 @@ private fun RenameQuestionnaireDialog(
         title = { Text("Rename questionnaire") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
+                /*
+                 * ── THE AUTHORING SURFACE GETS A MICROPHONE TOO — 2026-08-28 ──────────────────
+                 *
+                 * The owner: *"dictation should be a default for other record pages as well."* A
+                 * designer builds a questionnaire on the same handset they later carry into the
+                 * workshop, and every box in these dialogs is prose somebody composes. The web's
+                 * twin (`app/(protected)/questionnaires/[id]/page.tsx`) carries the same five
+                 * microphones in the same five places and leaves the same one box without one — the
+                 * section CODE, which is an identifier a recogniser would return as a dictionary
+                 * word.
+                 *
+                 * `RecordProseField` rather than a control of this file's own: one composable so the
+                 * twenty screens cannot drift in what dictation does or how it refuses. See its
+                 * header.
+                 */
+                RecordProseField(
+                    label = "Title *",
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Title *") },
-                    singleLine = true,
+                    enabled = !busy,
+                    dictate = !busy,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                RecordProseField(
+                    label = "Description",
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Description") },
+                    enabled = !busy,
+                    dictate = !busy,
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1238,11 +1257,17 @@ private fun SingleFieldDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(blurb, color = MaterialTheme.field.muted, fontSize = 12.sp)
-                OutlinedTextField(
+                /* Both call sites of this dialog pass "Section title" — a heading a designer writes,
+                   which is prose. If a third caller ever passes a CODE or a number, give this
+                   composable a `dictate` parameter rather than reaching for `label == ...`: the
+                   record forms' rule is that a box expecting digits must opt OUT explicitly, and a
+                   string comparison on a label is not an opt-out anybody would find. */
+                RecordProseField(
+                    label = label,
                     value = value,
                     onValueChange = { value = it },
-                    label = { Text(label) },
-                    singleLine = true,
+                    enabled = !busy,
+                    dictate = !busy,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -1292,10 +1317,12 @@ private fun QuestionDialog(
                         fontSize = 12.sp
                     )
                 }
-                OutlinedTextField(
+                RecordProseField(
+                    label = "Question *",
                     value = prompt,
                     onValueChange = { prompt = it },
-                    label = { Text("Question *") },
+                    enabled = !busy,
+                    dictate = !busy,
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1306,11 +1333,12 @@ private fun QuestionDialog(
                         fontSize = 11.sp
                     )
                 }
-                OutlinedTextField(
+                RecordProseField(
+                    label = "Hint shown under the question",
                     value = help,
                     onValueChange = { help = it },
-                    label = { Text("Hint shown under the question") },
-                    singleLine = true,
+                    enabled = !busy,
+                    dictate = !busy,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1355,10 +1383,16 @@ private fun StartSittingDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                /* "Who is answering" above stays bare and this does not, which is the split the
+                   record forms already make: a recogniser is at its worst on a proper noun, and the
+                   respondent's name is the string these sittings are later searched by. Notes are
+                   prose. `QuestionnaireAnswerScreen`'s copy of this dialog says the same. */
+                RecordProseField(
+                    label = "Notes",
                     value = notes,
                     onValueChange = { notes = it },
-                    label = { Text("Notes") },
+                    enabled = !busy,
+                    dictate = !busy,
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )

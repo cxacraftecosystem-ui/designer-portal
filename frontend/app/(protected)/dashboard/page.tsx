@@ -20,6 +20,7 @@ import {
   MapPinned,
   Package,
   PencilRuler,
+  QrCode,
   Settings,
   Share2,
   Star,
@@ -385,6 +386,29 @@ function DashboardView() {
     // volunteer contributes.
     { label: "Questionnaire", icon: ClipboardList, newHref: "/questionnaire?new=1", updateHref: "/questionnaire", newLabel: "New interview" },
     { label: "Miscellaneous Media", icon: Images, newHref: "/media", newLabel: "Upload" },
+    /*
+      SCAN A CODE — added 2026-08-28 on the owner's report that scanning was "buried underneath a
+      lot of pages", which it was: `RecordCodeScanPanel` was mounted above the search box on
+      `/search` and nowhere else, so reading a tag meant opening a destination named after reading a
+      LIST and then noticing a panel above the box. There was no row and no tile anywhere named
+      after the action.
+
+      IT SITS HERE, AT THE HEAD OF THE THREE READING SURFACES, and not inside the design-workshop
+      block above. The block's own assertion in
+      `frontend/e2e/dashboard-tile-parity-unit.spec.ts` exists to stop it being "padded from below"
+      by a tile that is not a member, and this is not a member: a scan is repository-wide and knows
+      nothing about which workshop anybody is standing in. Its NAV ROW is in the Browse group beside
+      Browse records, Map and View Data, so the grid neighbourhood and the menu group agree — which
+      is the property worth keeping, and the one a placement chosen purely for prominence would have
+      broken.
+
+      "Open" AND NOT "New": arriving here creates nothing, and `DashboardCard` reads exactly this
+      word to draw an arrow instead of a plus.
+
+      UNGATED, matching its nav entry and `/search` — see the page's own header for why a guard here
+      would be a client-side rule the API does not have.
+    */
+    { label: "Scan a code", icon: QrCode, newHref: "/scan", newLabel: "Open" },
     /*
       THE DESTINATION FORKS ON THE GRANT; WHETHER THE TILE IS DRAWN AT ALL FORKS ON THE TIER, AND
       THOSE ARE TWO DIFFERENT QUESTIONS.

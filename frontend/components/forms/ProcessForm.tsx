@@ -8,14 +8,20 @@ import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { Field, Select, TextInput } from "@/components/FormControls";
+import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import type { InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
-import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
+import {
+  DesignWorkshopSelect,
+  useDesignWorkshopSelection
+} from "@/components/forms/DesignWorkshopSelect";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Dropdown } from "@/components/ui/Dropdown";
@@ -56,6 +62,8 @@ export type ProcessRecord = {
   // The workshop this process was documented at. The API also resolves a process through its parent
   // product's workshop, so an older process can be null here and still belong to a workshop.
   workshopId?: string | null;
+  /** The design & prototype workshop this process is filed under. See `Artisan` in lib/types.ts. */
+  designWorkshopId?: string | null;
   workshop?: Workshop | null;
   extraMetadata?: ExtraMetadata | null;
   createdAt: string;
@@ -261,15 +269,21 @@ function MultiNoteInput({ label, value, onChange }: { label: string; value: stri
             have to guess which note the phrase belongs in, and its only defensible guess (the last
             one) is wrong exactly when somebody is going back to fill in note two.
 
-            `explainWhenUnavailable` is on for the first row only: on Firefox the alternative is the
-            same paragraph repeated once per note, which nobody reads.
+            `explainWhenUnavailable` USED TO BE `index === 0` — the first row of each note group
+            carried the "this browser cannot dictate" sentence and the rest stayed quiet. That was
+            right while these were the only microphones on the page. Since the sweep of 2026-08-28
+            the process name and every step name have one too, so "once per note group" became once
+            per STEP, and the form now says it exactly once at the top instead
+            (`DictationUnavailableNotice`). The sentence is not gone; it moved.
+
+            The joiner is `appendDictatedPhrase`, shared with both dictated boxes rather than written
+            out here for a fourth time — same rule, one place, see `richtext/dictatedValue.ts`.
           */}
           <OnDeviceDictationButton
             fieldLabel={rows.length > 1 ? `${label}, note ${index + 1}` : label}
-            explainWhenUnavailable={index === 0}
+            explainWhenUnavailable={false}
             onCommit={(phrase) => {
-              const joiner = !note || /\s$/.test(note) ? "" : " ";
-              emit(rows.map((n, i) => (i === index ? `${note}${joiner}${phrase}` : n)));
+              emit(rows.map((n, i) => (i === index ? appendDictatedPhrase(note, phrase) : n)));
             }}
           />
         </div>
@@ -286,6 +300,32 @@ function MultiNoteInput({ label, value, onChange }: { label: string; value: stri
 // The process form (create + edit) — Android ProcessForm parity.
 // ---------------------------------------------------------------------------
 
+/**
+ * ── DICTATION ON THIS FORM: WHICH BOXES HAVE A MICROPHONE, AND WHY THE REST DO NOT ──────────────
+ *
+ * The owner's instruction (2026-08-28): "All the record pages should have dictation options
+ * available, wherever applicable so as to reduce the friction as much as possible." So the default
+ * flipped — a free-text box HAS a microphone unless there is a reason it must not — and the reasons
+ * are written down here so a later reader can tell a decision from an oversight.
+ *
+ * DICTATED: Name of the process · What happens in this process (the `RichTextField`, whose editor
+ * carries the microphone at the caret) · Name of the step, per step · Additional context for this
+ * step, one microphone per note row.
+ *
+ * NOT DICTATED, and each is a rule rather than a preference:
+ *
+ *  - **Workshop, Artisan, Product, Status** — record pickers and a closed vocabulary behind themed
+ *    dropdowns. There is nothing free to speak, and the artisan picker in particular decides which
+ *    interview a submission folds into: it is chosen from a list, never typed.
+ *  - **"Pre-processes available" and "Record additional information"** — checkboxes. A recogniser
+ *    answers a yes/no question with a sentence.
+ *  - **Pre-process media, per-step media** — file pickers.
+ *
+ * ONE SENTENCE FOR THE WHOLE FORM. Every control above passes `explainWhenUnavailable={false}` and
+ * `DictationUnavailableNotice` sits once under the carry-forward banner. A form with six steps holds
+ * a dozen microphones, and repeating the Firefox explanation beside each of them is how a true
+ * sentence becomes wallpaper.
+ */
 export function ProcessForm({
   initial,
   footerFields,
@@ -340,6 +380,18 @@ export function ProcessForm({
   // The workshop this process was documented at: shared picker, shared most-recent defaulting, and
   // the late-submission gate (see components/forms/WorkshopSelect).
   const workshop = useWorkshopSelection({ initialWorkshopId: initial?.workshopId, isEdit, resetKey: initial?.id ?? null });
+  /*
+    THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Its own hook beside the ordinary
+    workshop's, never folded into it: `workshopId` is gated by `WorkshopAssignment` and carries a
+    submission window and a late-submission dialog; `designWorkshopId` is gated by
+    `load_workshop_or_404` and has neither. Two access systems on one control is how a scope comes to
+    be checked by whichever of them the caller remembered.
+
+    `initial` on the control below is `undefined` on a CREATE and the stored value (or null) on an
+    EDIT, which is what tells the picker whether it may prefill — the same convention
+    `LocationFields` uses to decide whether it may auto-capture.
+  */
+  const designWorkshop = useDesignWorkshopSelection(initial?.designWorkshopId ?? null);
 
   const [name, setName] = useState(initial?.name ?? "");
   const [artisanId, setArtisanId] = useState(initial?.product?.artisanId ?? "");
@@ -595,6 +647,11 @@ export function ProcessForm({
     artisanId: artisanId && artisanId === carriedArtisanId ? "" : artisanId,
     productId: productId && productId === carriedProductId ? "" : productId,
     workshopId: workshop.touched ? workshop.workshopId : "",
+    // The same `touched` gate, for the same reason: this form's guard is a DIFF of state, so a value
+    // the app prefilled would otherwise read as work the researcher had done, and a blank new form
+    // announcing unsaved changes before anybody types is what teaches people to click through the
+    // guard. `touched` is false for the prefill and true only once a person has picked.
+    designWorkshopId: designWorkshop.touched ? designWorkshop.workshopId : "",
     status,
     // IN THE SIGNATURE, because this form's unsaved-changes guard is a diff of state rather than an
     // `onDirty` event — so a box left out of it is a box a researcher can fill in, navigate away
@@ -792,6 +849,7 @@ export function ProcessForm({
         name: trimmedName,
         productId,
         workshopId: workshop.workshopId || null,
+        designWorkshopId: designWorkshop.workshopId || null,
         preProcessAvailable,
         notes: notes.trim() || null,
         // Unauthorized status changes are silently dropped server-side.
@@ -1052,25 +1110,58 @@ export function ProcessForm({
       ) : null}
       <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
 
+      {/*
+        THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
+        Every dictated control below passes `explainWhenUnavailable={false}`, including the per-note
+        buttons inside `MultiNoteInput`, which used to elect their first row to carry the sentence.
+        That was the right answer while the notes were the only microphones on the page; with a
+        process name, a step name per step and a note per row it would be one paragraph per step,
+        which is the noise the button's own prop documentation warns about.
+      */}
+      <DictationUnavailableNotice />
+
       {/* Android parity (ProcessForm): the workshop opens the form, because it is the context
           every other answer belongs to — not merely the first dropdown. */}
       <WorkshopSelect state={workshop} saving={saving} />
+      {/*
+        The design & prototype workshop, directly under the ordinary one — see the hook above.
+        Its default is the server's answer to "most recently allocated" rather than this form's
+        guess, so all seven forms and both clients agree; `lib/designWorkshopDefault.ts`.
+      */}
+      <DesignWorkshopSelect
+        state={designWorkshop}
+        initial={initial ? (initial.designWorkshopId ?? null) : undefined}
+        saving={saving}
+      />
 
       <div>
-        <Field label="Name of the process" required>
-          {/* `name` is one of the API's title-cased columns, so the box says what will actually be
-              stored (Android parity — see components/forms/TitleCasedInput). */}
-          <TitleCasedInput
-            id="process-name"
-            value={name}
-            aria-invalid={!!nameError}
-            /* `TitleCasedInput` MERGES an incoming `aria-describedby` with its own "Will be saved
-               as …" hint rather than replacing it, so the refusal and the hint are both announced.
-               Passing it straight through to a plain `<input>` would have silenced the hint. */
-            aria-describedby={nameError ? nameErrorId : undefined}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </Field>
+        {/*
+          `name` is one of the API's title-cased columns, so the box says what will actually be
+          stored (Android parity — see components/forms/TitleCasedInput). `titleCased` mounts that
+          exact component inside the dictated box: the sweep that added the microphone was not
+          allowed to cost this field its "Will be saved as …" sentence.
+
+          NOT WRAPPED IN `Field` ANY MORE, and that is required rather than incidental: `Field` is a
+          `<label>`, and a `<label>` forwards a stray click to the first labelable control inside it
+          — so clicking "Dictate" would also focus the box and, on a phone, throw the keyboard up
+          over the interim readout the researcher is watching. The control writes its own
+          `<label htmlFor>` instead, and `id="process-name"` is passed explicitly because `submit()`
+          reaches this box by `document.getElementById` when it refuses an empty name.
+        */}
+        <DictatedTextInput
+          id="process-name"
+          label="Name of the process"
+          required
+          titleCased
+          explainWhenUnavailable={false}
+          value={name}
+          aria-invalid={!!nameError}
+          /* `TitleCasedInput` MERGES an incoming `aria-describedby` with its own "Will be saved
+             as …" hint rather than replacing it, so the refusal and the hint are both announced.
+             Passing it straight through to a plain `<input>` would have silenced the hint. */
+          aria-describedby={nameError ? nameErrorId : undefined}
+          onChange={(next) => setName(next)}
+        />
         {/* NO `role="alert"` HERE, AND THAT IS THE POINT — see ALERT OR DESCRIPTION on `submit()`.
             `submit()` moves focus to `process-name`, and arriving on a control reads its
             `aria-describedby`, which is this paragraph. An alert as well would say it twice and
@@ -1223,6 +1314,9 @@ export function ProcessForm({
         helper="The sequence in your own words. This is what the design-workshop report prints under “What happens”, both in the traditional-process table and above it."
         className="md:col-span-2"
         onValueChange={setNotes}
+        // Said once at the top of this form by `DictationUnavailableNotice`; a copy under
+        // every editor is the same paragraph over again. See the prop on `RichTextEditor`.
+        explainWhenUnavailable={false}
       />
 
       <label className="flex items-center gap-2 text-sm text-ink-900">
@@ -1324,16 +1418,23 @@ export function ProcessForm({
                 </button>
               </div>
               <div>
-                <Field label="Name of the step" required>
-                  <input
-                    className="field-input"
-                    id={`step-name-${step.key}`}
-                    value={step.name}
-                    aria-invalid={!!step.nameError}
-                    aria-describedby={step.nameError ? `step-name-${step.key}-error` : undefined}
-                    onChange={(event) => updateStep(step.key, { name: event.target.value })}
-                  />
-                </Field>
+                {/* A step's name is free prose ("beating the weft down", "second indigo dip") and
+                    it sits directly above the per-note microphones this card already carried, so
+                    leaving it as the one silent box in the card was the odd thing. Its id stays
+                    keyed on the step, because `submit()` focuses it by `document.getElementById`
+                    when it refuses an unnamed step. NOT title-cased: `ProcessStep.name` is not in
+                    the API's `TITLE_CASE_FIELDS`, so a hint would promise a normalisation that does
+                    not happen. */}
+                <DictatedTextInput
+                  id={`step-name-${step.key}`}
+                  label="Name of the step"
+                  required
+                  explainWhenUnavailable={false}
+                  value={step.name}
+                  aria-invalid={!!step.nameError}
+                  aria-describedby={step.nameError ? `step-name-${step.key}-error` : undefined}
+                  onChange={(next) => updateStep(step.key, { name: next })}
+                />
                 {/* No `role="alert"`, for the reason the process name's paragraph gives: this is
                     the focus ladder's second rung, so it is read on arrival as the input's
                     description. */}

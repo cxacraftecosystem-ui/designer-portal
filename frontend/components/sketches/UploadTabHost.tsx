@@ -64,26 +64,72 @@
  * hold. `readStageRows` reports whether the repository's copy was folded in; until it has been,
  * this tab says so and attaches nothing. The bytes are never at risk either way — they are only
  * staged once a destination row exists.
+ *
+ * ── AND SINCE 2026-08-28, THE FILE IS NOT THE ONLY THING THAT LANDS ON A ROW FROM HERE ──────────
+ *
+ * "Measure a dimension from a photograph" is now mounted on this tab, in each half, against the row
+ * the pickers above have chosen. The card is `upload/MeasureFromPhotoCard.tsx` and the geometry
+ * inside it is `components/designworkshop/PhotoMeasureField.tsx` — the same component the stage form
+ * mounts, not a copy — and this file is the half that makes it mountable here at all:
+ *
+ *   * `useMeasurablePhotos` turns the media references already on the chosen row into DISPLAYABLE
+ *     URLs. That is the one thing `upload/` is built not to know how to do, which is why the card
+ *     arrives at `UploadTabPanel` as a rendered node rather than as four props;
+ *   * `proposeDimension` writes an accepted figure into the row through the same
+ *     `putDraftStage` → `syncDesignWorkshopDrafts` pair every attach on this tab uses, with the same
+ *     two phases and the same two sentences.
+ *
+ * IT WRITES NOTHING BY ITSELF. `proposeDimension` is only ever reached from a button inside the
+ * measuring panel that the designer pressed, which is the rule both clients state in their own
+ * source ("IT NEVER WRITES A DIMENSION BY ITSELF", `DwPhotoMeasureField.kt:115`). Nothing in this
+ * file may call it from an effect.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, CloudOff } from "lucide-react";
 
+import type { MeasurablePhoto, MeasureTarget } from "@/components/designworkshop/PhotoMeasureField";
+import { measurableLengthFields } from "@/components/designworkshop/stageFieldRoles";
 import { Dropdown } from "@/components/ui/Dropdown";
+import { apiFetch } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
 import { appendMediaRef, mediaRefRoom } from "@/lib/photoIntake";
 import {
+  ensureDraft,
+  isLocalMediaRef,
   loadDraft,
   putDraftStage,
+  readLocalMedia,
   stageLocalMedia,
   syncDesignWorkshopDrafts
 } from "@/lib/designWorkshopStore";
-import type { DwEntity, DwRegistry, DwRow } from "@/lib/designWorkshops";
+import {
+  inputValue,
+  type DwEntity,
+  type DwEntryData,
+  type DwField,
+  type DwRegistry,
+  type DwRow,
+  type DwValue
+} from "@/lib/designWorkshops";
+import type { MediaFile } from "@/lib/types";
 
 import { UploadTabPanel } from "./upload/UploadTabPanel";
+import { MeasureFromPhotoCard, type MeasurePhotos } from "./upload/MeasureFromPhotoCard";
 import { readStageRows, rowKeyOf, rowLabel, type StageRows } from "./stageRows";
 import { syncPassLanded, syncPassNote } from "./syncNote";
+
+/**
+ * What joins a row's media references into the one string `useMeasurablePhotos` keys its effect on.
+ *
+ * A NUL, and BUILT rather than written as a literal: a control character pasted into a source file
+ * makes it "binary" to git, to grep and to every review tool, and it is invisible to the next
+ * reader — this file was briefly in that state while the hook below was being fixed. It cannot
+ * appear in either kind of reference this joins (a server cuid or a `dwlocal:` id), so the split is
+ * lossless; see that hook for what happens in the impossible case.
+ */
+const REFERENCE_KEY_SEPARATOR = String.fromCharCode(0);
 
 /**
  * The four registry fields this tab writes into.
@@ -97,6 +143,17 @@ const SKETCH_IMAGE = "image";
 const SKETCH_LINE_ART = "lineArtFile";
 const PROTOTYPE_MODEL = "modelFile";
 const PROTOTYPE_TURNTABLE = "turntablePhotos";
+
+/**
+ * The values handed to the measuring card while no row is chosen.
+ *
+ * A MODULE CONSTANT rather than a fresh `{}` per render, so the card's props do not change identity
+ * on every keystroke elsewhere on the tab. The card does not read it in that state — it renders the
+ * "choose which one this is about" sentence instead — but a prop that is required by type and absent
+ * in one state is the kind of `undefined` that turns into a crash the first time somebody reorders a
+ * branch.
+ */
+const NO_ROW: DwEntryData = {};
 
 function fieldOf(entity: DwEntity | undefined, key: string) {
   return entity?.fields.find((field) => field.key === key) ?? null;
@@ -149,6 +206,181 @@ function fullNotice(said: string, names: string[]): string {
     "Remove something it already holds — the stage form is where an attachment can be taken off — then " +
     `attach ${one ? "it" : "them"} again.`
   );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The photographs already on a row, as things a measuring panel can display
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Every image field on an entity, in the order the form renders them.
+ *
+ * EVERY ONE, not a guessed "likely" one, for the reason `offersPhotoMeasure` gives in
+ * `components/designworkshop/stageFieldRoles.ts`: nothing in this application can tell which
+ * photograph has the ruler in it — that is a fact about what the designer laid beside the object
+ * thirty seconds ago — so narrowing the list would hide the feature on precisely the photograph it
+ * was taken for. On a sketch that is `image`; on a prototype it is `prototypePhotos` and
+ * `turntablePhotos` both.
+ */
+function imageFieldsOf(entity: DwEntity | undefined): DwField[] {
+  return (entity?.fields ?? []).filter(
+    (field) => !field.deprecated && (field.type === "IMAGE" || field.type === "IMAGE_LIST")
+  );
+}
+
+/** The media references a stored value holds — one for an IMAGE, several for an IMAGE_LIST. */
+function refsOf(value: DwValue | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+  }
+  return typeof value === "string" && value.trim() ? [value] : [];
+}
+
+/**
+ * Resolve a row's media references into photographs a measuring panel can draw.
+ *
+ * ── WHY THIS IS CHEAPER THAN IT LOOKS, AND WHY IT IS NOT `SketchRectifyField`'s LOADER ──────────
+ *
+ * `PhotoMeasureField` reads no pixels — its own header says so under "NO NETWORK, NO CANVAS
+ * READBACK, NO RE-ENCODING", and it is why the panel works on a cross-origin presigned URL with no
+ * bucket CORS rule at all. So this needs a URL and nothing else. `SketchRectifyField.loadSourceBlob`
+ * needs the BYTES (it decodes a plane), which forces it to `fetch()` a presigned URL and to report a
+ * CORS failure as an ordinary outcome. Copying that here would have added a network round trip, a
+ * CORS dependency and a failure mode to a feature that has none of them.
+ *
+ * ── THE TWO KINDS OF REFERENCE ARE NOT EQUALLY RELIABLE, AND THE UNRELIABLE ONE IS THE UPLOADED ONE
+ *
+ * A `dwlocal:` reference is bytes in this device's own draft store, so it is always readable — and
+ * that is the case that matters in the field, because a photograph taken minutes ago in a courtyard
+ * with no signal IS a `dwlocal:` reference. An uploaded media id costs a `GET /media/{id}` whose
+ * `url` may be absent by entitlement (§17: "Media `url`/`objectKey` may be absent by entitlement")
+ * and which simply cannot be answered with no connection. Neither of those is a broken feature and
+ * neither may be silent: a reference that resolves to nothing is COUNTED, and the count is printed
+ * beside the chooser by the card.
+ *
+ * ── AND WHY A ROW THAT HOLDS REFERENCES BUT RESOLVED NONE IS A FAILURE, NOT AN EMPTY ROW ────────
+ *
+ * "There is no photograph on this row" and "this row's photographs could not be read" have different
+ * remedies — attach one, versus find a connection — and rendering the first over the second is the
+ * house rule this repository states as "a failure and an empty answer are different states". So the
+ * only path to `photos: []` is a row that genuinely holds no reference.
+ *
+ * THE OBJECT URLS ARE CREATED AND REVOKED IN ONE EFFECT, which is what keeps the pair together:
+ * revoked anywhere else they either leak for the life of the tab or are released while an `<img>` is
+ * still reading them, and the second looks like a photograph that vanished. Both the cancel branch
+ * and the cleanup revoke, because they can run in either order — a teardown fires before an
+ * in-flight `await` resolves, so a URL created after cleanup would otherwise never be released.
+ * Revoking an already-revoked URL is a no-op.
+ */
+function useMeasurablePhotos(refs: string[]): MeasurePhotos {
+  /*
+    THE EFFECT IS KEYED ON WHICH REFERENCES THESE ARE, AND THE ARRAY IS DERIVED BACK FROM THAT KEY.
+
+    `refs` is a fresh array on every render and `reload()` replaces every row object on every attach
+    and every sync pass, so either one in the dependency list would re-resolve every photograph — and
+    re-mint every object URL — several times per file added, while the panel is open and drawing from
+    the URLs being replaced. The joined string changes only when the row's photographs actually
+    change.
+
+    ── WHY IT IS DERIVED AND NOT CARRIED IN A REF ────────────────────────────────────────────────
+
+    The obvious shape here is `const latest = useRef(refs); latest.current = refs;` and it is wrong
+    for a reason React's own lint states in one line: **a ref may not be written during render.** A
+    render can be discarded under concurrent rendering, and a ref written on a discarded render
+    leaves the effect reading state that never committed — the same hazard `useLeaveGuard` documents
+    for its interceptor, which is why that one registers inside an effect. The ref version also fails
+    silently rather than loudly, which is worse.
+
+    Splitting the key back is genuinely derived: the dependency list is honest, nothing is
+    suppressed, and there is no cross-render mutable state at all. The separator is a NUL, which
+    cannot appear in either kind of media reference this takes — a server cuid or a `dwlocal:` id —
+    and if one ever did, the failure mode is a split reference that resolves to nothing and is
+    COUNTED as unreadable, which is the safe direction: the count is printed beside the chooser, so
+    the designer is told rather than shown a silently shorter list.
+  */
+  const key = refs.join(REFERENCE_KEY_SEPARATOR);
+  const wanted = useMemo(() => (key === "" ? [] : key.split(REFERENCE_KEY_SEPARATOR)), [key]);
+  // Lazily initialised so the FIRST render is already the right state: a row with references starts
+  // as "reading", a row with none starts as an answered empty. Starting at one of them unconditionally
+  // paints the other's sentence for a frame, and the two sentences say opposite things.
+  const [state, setState] = useState<MeasurePhotos>(() =>
+    refs.length ? { status: "loading" } : { status: "ready", photos: [], unreadable: 0 }
+  );
+
+  useEffect(() => {
+    if (wanted.length === 0) {
+      setState({ status: "ready", photos: [], unreadable: 0 });
+      return;
+    }
+
+    let cancelled = false;
+    const created: string[] = [];
+    setState({ status: "loading" });
+
+    void (async () => {
+      const photos: MeasurablePhoto[] = [];
+      let unreadable = 0;
+      let offline = false;
+
+      for (const ref of wanted) {
+        if (isLocalMediaRef(ref)) {
+          // `readLocalMedia` swallows its own storage failures and answers null, so there is nothing
+          // to catch here. A confirmed upload clears `blob` (see `confirmLocalMedia`), which is the
+          // ordinary reason a local reference has no bytes left rather than a fault.
+          const media = await readLocalMedia(ref);
+          if (media?.blob && media.mimeType.startsWith("image/")) {
+            const url = URL.createObjectURL(media.blob);
+            created.push(url);
+            photos.push({ key: ref, name: media.name, url });
+          } else {
+            unreadable += 1;
+          }
+          continue;
+        }
+        try {
+          const media = await apiFetch<MediaFile>(`/media/${ref}`);
+          if (media.mediaType === "IMAGE" && media.url) {
+            photos.push({ key: ref, name: media.originalFilename, url: media.url });
+          } else {
+            unreadable += 1;
+          }
+        } catch (error) {
+          // ONE REFERENCE AT A TIME. A single unreachable media row must not throw away the
+          // photographs already resolved beside it — half of them may be on this device and
+          // measurable with no connection at all.
+          unreadable += 1;
+          if (isUnreachable(error)) offline = true;
+        }
+      }
+
+      if (cancelled) {
+        for (const url of created) URL.revokeObjectURL(url);
+        return;
+      }
+
+      if (photos.length === 0) {
+        setState({
+          status: "failed",
+          reason: offline
+            ? "There is no connection, so photographs already uploaded from this row cannot be fetched back here. A photograph still held on this device can be measured with no connection at all."
+            : "None of the files this row points at could be opened in this browser — that is usually a file this account is not entitled to fetch back."
+        });
+        return;
+      }
+      setState({ status: "ready", photos, unreadable });
+    })();
+
+    return () => {
+      cancelled = true;
+      for (const url of created) URL.revokeObjectURL(url);
+    };
+    // `wanted` and NOT `key`, and the two are the same trigger: `wanted` is `useMemo`'d on `key`
+    // alone, so its identity changes exactly when the joined string does — which is the whole
+    // reason it is derived rather than taken from the caller's fresh-every-render array. Naming the
+    // value the effect actually reads is what keeps this list honest instead of suppressed.
+  }, [wanted]);
+
+  return state;
 }
 
 export function UploadTabHost({ workshopId, registry }: { workshopId: string; registry: DwRegistry | null }) {
@@ -375,6 +607,96 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
     [reload, workshopId]
   );
 
+  /**
+   * Add an EMPTY row to one of the two collections, and select it.
+   *
+   * ── WHY THIS IS HERE AT ALL, AND WHY IT IS NOT A SECOND STORE ──────────────────────────────────
+   *
+   * The owner, 2026-08-28: *"Provide an option to add a Sketch or Prototype directly to the selected
+   * workshop from this screen."* Until now this tab could only pick a row somebody had already made
+   * on the stage form, so a designer with a drawing in their hand and an empty stage 11 was sent
+   * away to make the row and come back — on the one screen the feature exists to save them that.
+   *
+   * IT WRITES THROUGH THE SAME DOOR EVERY OTHER WRITE ON THIS TAB USES: `ensureDraft` →
+   * `putDraftStage` → `syncDesignWorkshopDrafts`, which is the stage form's own path. There is no
+   * parallel collection and no new endpoint, which is the whole of what
+   * `SketchesAndPrototypesScreen.kt`'s "one feature with two stores" rule forbids. The handset took
+   * the same shape on the same day (`DwSketchChooserRows.kt#dwChooserNewRow`).
+   *
+   * ── THE ROW IS EMPTY, AND THAT IS DELIBERATE ──────────────────────────────────────────────────
+   *
+   * It carries a `_clientKey` and nothing else. Naming it here would mean inventing a value for a
+   * field the registry may declare required, validated and title-cased, from a screen that renders
+   * none of that — and `sketch.name` is printed in the report. The row is created so a photograph
+   * has somewhere to land; the stage form is where it is named, and the empty-state sentence below
+   * the picker already points there.
+   *
+   * ── REFUSED ON AN UNRECONCILED COLLECTION, exactly as `attach` is ──────────────────────────────
+   *
+   * `putDraftStage` writes the stage's entities WHOLESALE. Appending to a collection this browser
+   * has not read would replace the repository's rows with the handful this browser holds, which is
+   * the same hazard the attach path refuses, for the same reason, in the same words.
+   */
+  const addRow = useCallback(
+    async (entityKey: "sketch" | "prototype") => {
+      const half = entityKey === "sketch" ? sketches : prototypes;
+      if (!half?.stageKey) return;
+      if (!half.reconciled) {
+        setProblem(
+          "This device has not read this workshop's " +
+            (entityKey === "sketch" ? "sketches" : "prototypes") +
+            " yet, so a new one cannot be added here without risking the ones the repository holds. " +
+            "Open the workshop once with a connection, then come back."
+        );
+        return;
+      }
+      setBusy(true);
+      setProblem(null);
+      setNotice(null);
+      try {
+        const draft = await ensureDraft(workshopId);
+        // The WHOLE stage, exactly as the attach path writes it: `putDraftStage` replaces a stage's
+        // entities, so a body carrying only this collection would drop the stage's singletons and
+        // its `removedFrom` list. Read them off the draft and put them straight back.
+        const stage = draft?.stages[half.stageKey];
+        const rows = [...(stage?.collections[entityKey] ?? [])];
+        // A client key, minted here, is what `putDraftStage` addresses the row by and what the sync
+        // pass turns into a server entry. `crypto.randomUUID` is available in every browser this app
+        // supports and is what `designWorkshopStore` mints its own keys with.
+        const key = `${entityKey}-${crypto.randomUUID()}`;
+        rows.push({ _clientKey: key } as DwRow);
+        await putDraftStage(workshopId, half.stageKey, {
+          singletons: stage?.singletons ?? {},
+          collections: { ...(stage?.collections ?? {}), [entityKey]: rows },
+          removedFrom: stage?.removedFrom
+        });
+        await reload();
+        if (entityKey === "sketch") setSketchRow(key);
+        else setPrototypeRow(key);
+        setNotice(
+          `A new ${entityKey} was added to this workshop on this device. Attach its files here; name it, ` +
+            "and fill in the rest, on its stage."
+        );
+        // THE SECOND PHASE, AND ITS OWN SENTENCE. "It is on this device" and "the repository has it"
+        // are different facts with different remedies — the rule this file's header states — so the
+        // send is reported separately and a failure here never claims the local write failed.
+        try {
+          const result = await syncDesignWorkshopDrafts();
+          setNotice(
+            (current) => `${current ?? ""} ${syncPassNote(result, `the new ${entityKey} is`)}`.trim()
+          );
+        } catch {
+          setNotice((current) => `${current ?? ""} It will be sent when this device next has a connection.`.trim());
+        }
+      } catch {
+        setProblem(`A new ${entityKey} could not be created on this device.`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [prototypes, reload, sketches, workshopId]
+  );
+
   const sketchEntity = sketches ? entityOf(sketches, "sketch") : undefined;
   const prototypeEntity = prototypes ? entityOf(prototypes, "prototype") : undefined;
   const lineArt = fieldOf(sketchEntity, SKETCH_LINE_ART);
@@ -383,6 +705,10 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
   const turntable = fieldOf(prototypeEntity, PROTOTYPE_TURNTABLE);
 
   const chosenPrototype = (prototypes?.rows ?? []).find((row) => rowKeyOf(row) === prototypeRow);
+  // The INDEX as well as the row, for the same reason the sketch half keeps one below: `rowLabel`
+  // falls back to "Untitled 3" for a row with no name of its own, and a hardcoded 0 would call every
+  // unnamed prototype "Untitled 1" in the measuring card's sentences.
+  const chosenPrototypeIndex = (prototypes?.rows ?? []).findIndex((row) => rowKeyOf(row) === prototypeRow);
   const turntableHeld = Array.isArray(chosenPrototype?.[PROTOTYPE_TURNTABLE])
     ? (chosenPrototype?.[PROTOTYPE_TURNTABLE] as string[]).length
     : 0;
@@ -416,6 +742,141 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
     return typeof value === "string" && value.trim() ? 1 : 0;
   })();
 
+  /* ── The measuring card's inputs, per half ──────────────────────────────────────────────────
+     All four are read off the REGISTRY rather than named here, exactly as the four writable field
+     labels above are: `measurableLengthFields` decides what a dimension is by asking whether the
+     field is numeric and carries a length unit, so a registry that renames `lengthCm` or adds a
+     `depthCm` needs no edit in this file. Only `stageFieldRoles` knows the rule, and it is the same
+     module the stage form asks.
+  */
+  const sketchTargets = useMemo<MeasureTarget[]>(
+    () => (sketchEntity ? measurableLengthFields(sketchEntity) : []),
+    [sketchEntity]
+  );
+  const prototypeTargets = useMemo<MeasureTarget[]>(
+    () => (prototypeEntity ? measurableLengthFields(prototypeEntity) : []),
+    [prototypeEntity]
+  );
+  const sketchPhotoFields = useMemo(() => imageFieldsOf(sketchEntity), [sketchEntity]);
+  const prototypePhotoFields = useMemo(() => imageFieldsOf(prototypeEntity), [prototypeEntity]);
+  const sketchPhotoRefs = useMemo(
+    () => sketchPhotoFields.flatMap((field) => refsOf(chosenSketch?.[field.key])),
+    [sketchPhotoFields, chosenSketch]
+  );
+  const prototypePhotoRefs = useMemo(
+    () => prototypePhotoFields.flatMap((field) => refsOf(chosenPrototype?.[field.key])),
+    [prototypePhotoFields, chosenPrototype]
+  );
+  const sketchPhotos = useMeasurablePhotos(sketchPhotoRefs);
+  const prototypePhotos = useMeasurablePhotos(prototypePhotoRefs);
+
+  /**
+   * Write ONE measured dimension into the chosen row.
+   *
+   * REACHED ONLY FROM A BUTTON THE DESIGNER PRESSED, inside `PhotoMeasureField`, which is the rule
+   * both clients state in their own source and which this function must not be the place that
+   * breaks: nothing here may be called from an effect, a timer or a load.
+   *
+   * ── IT IS THE ATTACH PATH WITH THE BYTES TAKEN OUT ─────────────────────────────────────────
+   *
+   * Same `loadDraft` → find the row → `putDraftStage` → `reload` → `syncDesignWorkshopDrafts`, same
+   * two phases and same two sentences, because the failure modes are identical: the stage may not be
+   * on this device, the row may have gone since the picker read it, IndexedDB may refuse, and the
+   * sending is the only half that can fail after the writing has succeeded. It does NOT share
+   * `attach`'s body because `attach` is about files — it stages blobs, counts what a field had room
+   * for, and answers a boolean the panels use to decide whether to print a receipt. A dimension is
+   * one scalar into one key with no ceiling and no receipt to suppress, and folding it in would have
+   * meant a `files: []` call and three "not for this caller" branches.
+   *
+   * ── WHAT IS DELIBERATELY DROPPED, AND WHY IT IS NOT A BUG HERE ─────────────────────────────
+   *
+   * `PhotoMeasureField.onPropose`'s third argument is a `MeasurementMarker` saying WHICH GEOMETRY
+   * produced the figure, and this tab drops it exactly as the stage form does, because a stage save
+   * still has nowhere to put one. Both halves were re-checked on 2026-08-28:
+   *
+   *     grep -n "class StageEntryIn" -A 14 backend/app/schemas/design_workshops.py
+   *     grep -n "onPropose" frontend/components/designworkshop/FieldInput.tsx
+   *
+   * `StageEntryIn` declares `entityKey` / `entryId` / `ordinal` / `data` / `merge` and no marker, and
+   * `FieldInput.tsx:1685` still writes `onPropose={(key, proposed) => onPatch({ [key]: proposed })}`.
+   * The record forms are the half that already carries it (`measurementMethods`, out of
+   * `components/media/RecordPhotoMeasure.tsx`), and when the stage save grows the same sibling this
+   * call site gains a third parameter and nothing inside the panel changes.
+   */
+  const proposeDimension = useCallback(
+    async (
+      target: { stageKey: string; entityKey: string; rowKey: string },
+      field: DwField,
+      unit: string,
+      value: DwValue
+    ): Promise<void> => {
+      // The unit is printed with the figure in every sentence below. The panel proposes a bare
+      // number because that is what the field stores, and "now reads 20" over a length is a sentence
+      // a designer cannot check against the object in their hands.
+      const shown = `${inputValue(value)} ${unit}`.trim();
+      setBusy(true);
+      setProblem(null);
+      setNotice(null);
+      let landed: string | null = null;
+      try {
+        const draft = await loadDraft(workshopId);
+        const stage = draft?.stages[target.stageKey];
+        if (!draft || !stage) {
+          setProblem(
+            `That measurement has not been written: this browser holds no copy of the stage “${field.label}” belongs to. Open that stage once with a connection, then try again.`
+          );
+          return;
+        }
+        const rows = [...(stage.collections[target.entityKey] ?? [])];
+        const index = rows.findIndex((row) => rowKeyOf(row) === target.rowKey);
+        if (index < 0) {
+          // The row went away between the picker reading it and the button being pressed — another
+          // tab, or a colleague's deletion arriving on a sync. Naming it is the only honest answer.
+          setProblem(
+            "That measurement has not been written: the row it was headed for is no longer in this workshop. Reload the tab and choose another."
+          );
+          return;
+        }
+        const row = { ...rows[index], [field.key]: value };
+        rows[index] = row;
+        await putDraftStage(workshopId, target.stageKey, {
+          singletons: stage.singletons,
+          collections: { ...stage.collections, [target.entityKey]: rows },
+          removedFrom: stage.removedFrom
+        });
+        landed = rowLabel(row, index);
+        await reload();
+        setNotice(`“${field.label}” on “${landed}” now reads ${shown} on this device. Sending it to the repository…`);
+      } catch {
+        setProblem(
+          "That measurement could not be written to this device's storage. If the browser is in private mode or its storage is full, nothing can be kept here — free some space and try again."
+        );
+        return;
+      } finally {
+        setBusy(false);
+      }
+
+      /* ── Phase two: the repository. Its own try, its own sentence. ────────────────────────── */
+      try {
+        const result = await syncDesignWorkshopDrafts();
+        await reload();
+        setNotice(
+          `“${field.label}” on “${landed}” now reads ${shown}. ${syncPassNote(result, "this measurement is")}` +
+            (syncPassLanded(result) ? "" : " The copy on this device is kept until the repository confirms it.")
+        );
+      } catch (error) {
+        // The figure IS on this device — that happened above and is not in doubt here. Only the
+        // sending is, so only the sending is what this sentence is about.
+        setNotice(
+          isUnreachable(error)
+            ? `“${field.label}” on “${landed}” now reads ${shown} on this device. There is no connection, so it goes up when one returns, and the copy here is kept until the repository confirms it.`
+            : `“${field.label}” on “${landed}” now reads ${shown} on this device, but sending it did not complete. It goes up with the next sync — the banner above the page follows it.`
+        );
+      }
+    },
+    [reload, workshopId]
+  );
+
   /*
     THE TAB IS ONLY WRITABLE OVER ROWS THE REPOSITORY'S COPY HAS BEEN FOLDED INTO — see the header.
     `reconciled` is false when the stage read failed, which on this fleet usually means no signal.
@@ -435,19 +896,31 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
   */
   const anythingReady = sketchReady || prototypeReady;
 
-  /** Why one half cannot take a file, for the handler that has just been asked to. */
-  function refuse(half: "sketch" | "prototype") {
+  /**
+   * Why one half cannot be written to, for the handler that has just been asked to write.
+   *
+   * `said` IS A PARAMETER BECAUSE NOT EVERY WRITE ON THIS TAB IS A FILE ANY MORE. The three reasons
+   * below are properties of the HALF — no rows, no row chosen, the stage unread — and are identical
+   * whether the designer was attaching a photograph or accepting a measured dimension. The lead
+   * clause is not: "This file has not been attached" over a figure somebody just measured names the
+   * wrong thing and sends them looking for a file they never chose. So the reason is shared and the
+   * noun is the caller's, which is the same division `attach`'s `what` phrase-maker uses.
+   */
+  function refuse(half: "sketch" | "prototype", said = "This file has not been attached") {
     const rows = half === "sketch" ? sketches : prototypes;
     const chosen = half === "sketch" ? sketchRow : prototypeRow;
     setNotice(null);
     setProblem(
       rows && rows.rows.length === 0
-        ? `This file has not been attached: there are no ${half}s in this workshop yet, so there is no record for it to belong to. Add one on its stage first.`
+        ? `${said}: there are no ${half}s in this workshop yet, so there is no record for it to belong to. Add one on its stage first.`
         : !chosen
-          ? `This file has not been attached: choose which ${half} it belongs to first.`
-          : `This file has not been attached: the repository's copy of the ${half} stage could not be read, and writing into a list this browser has not downloaded would replace what the repository holds.`
+          ? `${said}: choose which ${half} it belongs to first.`
+          : `${said}: the repository's copy of the ${half} stage could not be read, and writing into a list this browser has not downloaded would replace what the repository holds.`
     );
   }
+
+  /** The lead clause `refuse` uses when what could not be written is a measured dimension. */
+  const MEASURE_REFUSED = "That measurement has not been written";
 
   return (
     <div className="grid gap-4">
@@ -468,6 +941,9 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               sketches?.stageKey ? `/design-workshops/${workshopId}/stages/${sketches.stageKey}` : null
             }
             emptyWord="No sketches in this workshop yet"
+            addWord="Add a sketch"
+            onAdd={sketches?.reconciled ? () => void addRow("sketch") : undefined}
+            busy={busy}
           />
           <RowPicker
             label="Prototype"
@@ -478,6 +954,9 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               prototypes?.stageKey ? `/design-workshops/${workshopId}/stages/${prototypes.stageKey}` : null
             }
             emptyWord="No prototypes in this workshop yet"
+            addWord="Add a prototype"
+            onAdd={prototypes?.reconciled ? () => void addRow("prototype") : undefined}
+            busy={busy}
           />
         </div>
 
@@ -620,12 +1099,85 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               (count) => (count === 1 ? `1 frame of “${turntable.label}”` : `${count} frames of “${turntable.label}”`)
             );
           }}
+          /*
+            ── "MEASURE A DIMENSION FROM A PHOTOGRAPH", ON THE SURFACE IT WAS MISSING FROM ────────
+
+            One card per half, built HERE rather than inside `upload/` because it needs a displayable
+            URL for every photograph already on the chosen row, and resolving a media id or a
+            `dwlocal:` reference is exactly the knowledge that directory is built not to have. See
+            `useMeasurablePhotos` above and the slot's own note in `upload/UploadTabPanel.tsx`.
+
+            THE CARD IS RENDERED EVEN WHEN IT CANNOT MEASURE, and that is the whole point of the
+            change: it says why — no row chosen, no photograph on the row, the photographs unreadable
+            — instead of disappearing. A control that vanishes is indistinguishable from a build that
+            does not have the feature, which is precisely how this surface came to be reported as
+            "completely missing".
+          */
+          sketchMeasure={
+            <MeasureFromPhotoCard
+              what="sketch"
+              rowName={chosenSketch ? rowLabel(chosenSketch, chosenSketchIndex) : null}
+              photos={sketchPhotos}
+              targets={sketchTargets}
+              row={chosenSketch ?? NO_ROW}
+              photoFieldLabels={sketchPhotoFields.map((entry) => entry.label)}
+              disabled={busy || !sketchReady}
+              // Two parameters against a three-parameter type, deliberately — see the note on
+              // `proposeDimension` for the marker this stage save has nowhere to put yet.
+              onPropose={(key, value) => {
+                const chosenTarget = sketchTargets.find((entry) => entry.field.key === key);
+                if (!sketches?.stageKey || !sketchReady || !chosenTarget) {
+                  refuse("sketch", MEASURE_REFUSED);
+                  return;
+                }
+                void proposeDimension(
+                  { stageKey: sketches.stageKey, entityKey: "sketch", rowKey: sketchRow },
+                  chosenTarget.field,
+                  chosenTarget.unit,
+                  value
+                );
+              }}
+            />
+          }
+          prototypeMeasure={
+            <MeasureFromPhotoCard
+              what="prototype"
+              rowName={chosenPrototype ? rowLabel(chosenPrototype, chosenPrototypeIndex) : null}
+              photos={prototypePhotos}
+              targets={prototypeTargets}
+              row={chosenPrototype ?? NO_ROW}
+              photoFieldLabels={prototypePhotoFields.map((entry) => entry.label)}
+              disabled={busy || !prototypeReady}
+              onPropose={(key, value) => {
+                const chosenTarget = prototypeTargets.find((entry) => entry.field.key === key);
+                if (!prototypes?.stageKey || !prototypeReady || !chosenTarget) {
+                  refuse("prototype", MEASURE_REFUSED);
+                  return;
+                }
+                void proposeDimension(
+                  { stageKey: prototypes.stageKey, entityKey: "prototype", rowKey: prototypeRow },
+                  chosenTarget.field,
+                  chosenTarget.unit,
+                  value
+                );
+              }}
+            />
+          }
         />
       ) : (
+        /*
+          THE MEASURING CARDS ARE INSIDE THE PANEL, SO THEY GO WHEN IT GOES — AND THIS SAYS SO.
+
+          They are slots of the two sections (see `sketchMeasure` above), which is where they belong:
+          a measurement is taken against the row the section's picker chose. When the registry does
+          not declare the four fields the panel writes, there are no sections and therefore nowhere
+          to put them, so this sentence names measuring as well as attaching. Losing a control is
+          allowed; losing it without a word is the bug this whole change was raised about.
+        */
         <p className="panel px-4 py-6 text-sm text-ink-muted">
           {registry === null
-            ? "This browser holds no field registry yet, so it cannot say which fields a sketch or a prototype has. Open the workshop once with a connection."
-            : "This build's field registry does not declare the image, line-art and 3D-model fields this tab writes into, so nothing can be attached from here. That is a schema mismatch rather than a permission — open a stage form, which renders whatever the registry does declare."}
+            ? "This browser holds no field registry yet, so it cannot say which fields a sketch or a prototype has. Nothing can be attached or measured from here until it does — open the workshop once with a connection."
+            : "This build's field registry does not declare the image, line-art and 3D-model fields this tab writes into, so nothing can be attached from here, and the measuring card that sits in each of those sections is not rendered either. That is a schema mismatch rather than a permission — open a stage form, which renders whatever the registry does declare, its own measuring panel included."}
         </p>
       )}
     </div>
@@ -639,7 +1191,10 @@ function RowPicker({
   value,
   onChange,
   emptyHref,
-  emptyWord
+  emptyWord,
+  addWord,
+  onAdd,
+  busy
 }: {
   label: string;
   rows: DwRow[];
@@ -647,15 +1202,41 @@ function RowPicker({
   onChange: (value: string) => void;
   emptyHref: string | null;
   emptyWord: string;
+  /** The button's own words — "Add a sketch" / "Add a prototype", never a generic "Add". */
+  addWord: string;
+  /**
+   * Make an empty row here and select it, or `undefined` where that must not be offered.
+   *
+   * UNDEFINED IS A REFUSAL WITH A REASON, and the caller owns the reason: this tab passes it only
+   * when the collection has been RECONCILED with the repository, because `putDraftStage` writes a
+   * stage's entities wholesale and appending to a collection this browser never downloaded would
+   * replace the repository's rows with the handful it happens to hold. A disabled button with no
+   * sentence would be worse than no button; the panel says why above.
+   */
+  onAdd?: () => void;
+  busy: boolean;
 }) {
   if (rows.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-line-200 bg-surface-50 px-3 py-3 text-sm">
         <p className="text-ink-700">{emptyWord}</p>
+        {/*
+          THE EMPTY STATE IS WHERE THIS MATTERS MOST — added 2026-08-28. Until then it offered only
+          "Add one on its stage", which sends a designer holding a drawing away from the screen the
+          feature exists to save them. Both routes are kept: the button makes a row here so a file
+          has somewhere to land, and the link is still the way to NAME it and fill in the rest.
+        */}
+        {onAdd ? (
+          <button type="button" className="field-button mt-2" onClick={onAdd} disabled={busy}>
+            {addWord}
+          </button>
+        ) : null}
         {emptyHref ? (
-          <Link href={emptyHref} className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-purple-700">
-            Add one on its stage
-            <ArrowRight className="h-4 w-4" aria-hidden />
+          <Link href={emptyHref} className="mt-2 block text-sm font-medium text-purple-700">
+            <span className="inline-flex items-center gap-1">
+              Add one on its stage
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </span>
           </Link>
         ) : null}
       </div>
@@ -695,6 +1276,18 @@ function RowPicker({
            names: the reader is adjusting this control and would be thrown off it mid-adjustment. */
         advanceOnSelect={false}
       />
+      {/* Offered beside a populated picker too, not only in the empty state: a workshop documents
+          several sketches, and the second one is added from exactly here. */}
+      {onAdd ? (
+        <button
+          type="button"
+          className="field-button-secondary justify-self-start"
+          onClick={onAdd}
+          disabled={busy}
+        >
+          {addWord}
+        </button>
+      ) : null}
     </div>
   );
 }

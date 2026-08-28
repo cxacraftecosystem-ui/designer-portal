@@ -20,12 +20,17 @@ import {
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { seedHasArtisan, type InlineHostSeed, type InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { craftChangeClearsArtisan, useCraftAndArtisanOptions, useRecordOffPage } from "@/components/forms/recordPickers";
-import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
+import {
+  DesignWorkshopSelect,
+  useDesignWorkshopSelection
+} from "@/components/forms/DesignWorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { GridMeasurement, MEASUREMENT_GRID_PURPOSE, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
 import { RecordPhotoMeasure, type MeasureColumn } from "@/components/media/RecordPhotoMeasure";
 import { UploadProgress } from "@/components/media/UploadProgress";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
@@ -137,6 +142,32 @@ function StatusField({
   );
 }
 
+/**
+ * ── DICTATION ON THIS FORM: WHICH BOXES HAVE A MICROPHONE, AND WHY THE REST DO NOT ──────────────
+ *
+ * The owner's instruction (2026-08-28): "All the record pages should have dictation options
+ * available, wherever applicable so as to reduce the friction as much as possible." The default
+ * therefore flipped — a free-text box HAS a microphone unless there is a reason it must not — and
+ * the reasons are written down here so a later reader can tell a decision from an oversight.
+ *
+ * DICTATED: Toolkit name · Local name · English name · Craft name · Artisan name · Place · Process
+ * used in · Material · Suggestions for tool improvement · Remarks. (The last two are
+ * `RichTextField`, whose editor carries the microphone at the caret rather than under the box.)
+ *
+ * NOT DICTATED, and each is a rule rather than a preference:
+ *
+ *  - **Workshop, Linked craft, Linked artisan, Maker, Tradition type, Status** — closed vocabularies
+ *    and record pickers behind a themed dropdown. There is no free text to speak.
+ *  - **Years in use, Height, Width, Length (inches), Breadth (inches), Height (inches), Thickness,
+ *    Weight, Radius, Replacement cost** — native number boxes bounded `min={0}`. A recogniser
+ *    spells digits out in words, which a number input discards silently, so a spoken answer leaves
+ *    the box empty with nothing on screen to say why. The three inch columns also have two
+ *    measurement routes of their own, and both PROPOSE a number a person accepts — a spoken third
+ *    route would record an acceptance for a reading nobody can re-derive from the photograph.
+ *  - **Media capture, process-stage captures, measurement grid photographs** — file pickers.
+ *  - **Location** — `LocationFields` is a separate component with its own owner; its free-text
+ *    address boxes are named as a handoff rather than reached into from here.
+ */
 export function ToolForm({
   initial,
   seed,
@@ -200,6 +231,23 @@ export function ToolForm({
     initial?.artisanName ?? seed?.artisanName ?? searchParams.get("artisanName") ?? ""
   );
   const [place, setPlace] = useState(initial?.place ?? searchParams.get("place") ?? "");
+  /*
+    ── THE FIVE REMAINING FREE-TEXT BOXES, CONTROLLED FOR THE SAME REASON THE THREE ABOVE ARE ──────
+
+    They were uncontrolled `defaultValue` inputs until the dictation sweep of 2026-08-28.
+    `DictatedTextInput` is controlled by its caller and cannot be anything else (the argument is in
+    that file: a self-controlled box repaints stale text on a form cleared by `formElement.reset()`),
+    so a box with a microphone is a box this component holds the string for.
+
+    NOTHING HAS TO CLEAR THEM: this form does not reset in place — it navigates to /tools or hands
+    the record to its host and unmounts. If a reset-in-place button is ever added here, these five
+    join it, the way `ArtisanForm`'s "Discard this entry" and "Add another artisan" lists work.
+  */
+  const [toolkitName, setToolkitName] = useState(initial?.toolkitName ?? "");
+  const [localName, setLocalName] = useState(initial?.localName ?? "");
+  const [englishName, setEnglishName] = useState(initial?.englishName ?? "");
+  const [processUsedIn, setProcessUsedIn] = useState(initial?.processUsedIn ?? "");
+  const [material, setMaterial] = useState(initial?.material ?? "");
   // Android parity: ordered "Process stages" captures, archived as STAGE_STEP_1, STAGE_STEP_2, …
   const [stageFiles, setStageFiles] = useState<File[]>([]);
   // The measurable dimensions are controlled state so that the two measurement routes below can
@@ -336,6 +384,18 @@ export function ToolForm({
     isEdit,
     resetKey: initial?.id ?? null
   });
+  /*
+    THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Its own hook beside the ordinary
+    workshop's, never folded into it: `workshopId` is gated by `WorkshopAssignment` and carries a
+    submission window and a late-submission dialog; `designWorkshopId` is gated by
+    `load_workshop_or_404` and has neither. Two access systems on one control is how a scope comes to
+    be checked by whichever of them the caller remembered.
+
+    `initial` on the control below is `undefined` on a CREATE and the stored value (or null) on an
+    EDIT, which is what tells the picker whether it may prefill — the same convention
+    `LocationFields` uses to decide whether it may auto-capture.
+  */
+  const designWorkshop = useDesignWorkshopSelection(initial?.designWorkshopId ?? null);
 
   /**
    * FINISH WHAT THE SEED (OR THE QUERY STRING) STARTED — an artisan id alone is not a usable answer.
@@ -605,6 +665,7 @@ export function ToolForm({
         artisanId: artisanId || null,
         craftId: craftId || null,
         workshopId: workshop.workshopId || null,
+        designWorkshopId: designWorkshop.workshopId || null,
         // Below professor no status control is rendered: create submits PENDING, edit resubmits the
         // current status (the backend drops unauthorized changes either way).
         status: requiredText(form, "status") || initial?.status || "PENDING",
@@ -878,22 +939,68 @@ export function ToolForm({
           </div>
         ) : null}
         <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
+        {/*
+          THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
+          Every dictated box below passes `explainWhenUnavailable={false}`: on Firefox the same
+          honest paragraph printed eight times down one form is grey text nobody reads. Delete this
+          line and the explanation is gone from ALL of them, not from one.
+        */}
+        <DictationUnavailableNotice />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {/* Android parity (ToolForm): the workshop opens the form, because it is the context
               every other answer belongs to — not merely the first dropdown. */}
           <WorkshopSelect state={workshop} onDirty={markDirty} saving={saving} />
-          <Field label="Toolkit name" required>
-            {/* Toolkit/English/craft/artisan names and place are title-cased by the API on write, so
-                the box says what will be stored (Android parity — see forms/TitleCasedInput). Local
-                name is NOT: it is Devanagari/Gujarati, where capitalising means nothing. */}
-            <TitleCasedInput name="toolkitName" required defaultValue={initial?.toolkitName ?? ""} />
-          </Field>
-          <Field label="Local name">
-            <TextInput name="localName" defaultValue={initial?.localName ?? ""} />
-          </Field>
-          <Field label="English name">
-            <TitleCasedInput name="englishName" defaultValue={initial?.englishName ?? ""} />
-          </Field>
+          {/*
+            The design & prototype workshop, directly under the ordinary one — see the hook above.
+            Its default is the server's answer to "most recently allocated" rather than this form's
+            guess, so all seven forms and both clients agree; `lib/designWorkshopDefault.ts`.
+          */}
+          <DesignWorkshopSelect
+            state={designWorkshop}
+            initial={initial ? (initial.designWorkshopId ?? null) : undefined}
+            onDirty={markDirty}
+            saving={saving}
+          />
+          {/* Toolkit/English/craft/artisan names and place are title-cased by the API on write, so
+              the box says what will be stored (Android parity — see forms/TitleCasedInput);
+              `titleCased` mounts that exact component inside the dictated box rather than copying
+              its hint. Local name is NOT title-cased: it is Devanagari/Gujarati, where capitalising
+              means nothing — and it still gets a microphone, because the recogniser takes the
+              language it is set to and Odia, Hindi and Gujarati are in that list. `markDirty` by
+              hand: a dictated phrase fires no native input event for the form's `onInput` to see. */}
+          <DictatedTextInput
+            name="toolkitName"
+            label="Toolkit name"
+            required
+            titleCased
+            explainWhenUnavailable={false}
+            value={toolkitName}
+            onChange={(next) => {
+              setToolkitName(next);
+              markDirty();
+            }}
+          />
+          <DictatedTextInput
+            name="localName"
+            label="Local name"
+            explainWhenUnavailable={false}
+            value={localName}
+            onChange={(next) => {
+              setLocalName(next);
+              markDirty();
+            }}
+          />
+          <DictatedTextInput
+            name="englishName"
+            label="English name"
+            titleCased
+            explainWhenUnavailable={false}
+            value={englishName}
+            onChange={(next) => {
+              setEnglishName(next);
+              markDirty();
+            }}
+          />
           <Field label="Linked craft (fills craft name)">
             {/* `searchable` on both link pickers: crafts and artisans are records, both lists are
                 capped (notices below), and the label is the only thing that tells two artisans of
@@ -930,9 +1037,18 @@ export function ToolForm({
             </Select>
             <CappedListNotice cuts={[craftCut]} />
           </Field>
-          <Field label="Craft name" required>
-            <TitleCasedInput name="craftName" required value={craftName} onChange={(event) => setCraftName(event.target.value)} />
-          </Field>
+          <DictatedTextInput
+            name="craftName"
+            label="Craft name"
+            required
+            titleCased
+            explainWhenUnavailable={false}
+            value={craftName}
+            onChange={(next) => {
+              setCraftName(next);
+              markDirty();
+            }}
+          />
           <Field label="Linked artisan (fills artisan + place)">
             <Select
               name="artisanId"
@@ -972,18 +1088,54 @@ export function ToolForm({
             ) : null}
             <CappedListNotice cuts={[craftId ? craftArtisanCut : null]} />
           </Field>
-          <Field label="Artisan name" required>
-            <TitleCasedInput name="artisanName" required value={artisanName} onChange={(event) => setArtisanName(event.target.value)} />
-          </Field>
-          <Field label="Place" required>
-            <TitleCasedInput name="place" required value={place} onChange={(event) => setPlace(event.target.value)} />
-          </Field>
-          <Field label="Process used in">
-            <TextInput name="processUsedIn" defaultValue={initial?.processUsedIn ?? ""} />
-          </Field>
-          <Field label="Material">
-            <TextInput name="material" defaultValue={initial?.material ?? ""} />
-          </Field>
+          <DictatedTextInput
+            name="artisanName"
+            label="Artisan name"
+            required
+            titleCased
+            explainWhenUnavailable={false}
+            value={artisanName}
+            onChange={(next) => {
+              setArtisanName(next);
+              markDirty();
+            }}
+          />
+          <DictatedTextInput
+            name="place"
+            label="Place"
+            required
+            titleCased
+            explainWhenUnavailable={false}
+            value={place}
+            onChange={(next) => {
+              setPlace(next);
+              markDirty();
+            }}
+          />
+          {/* FREE PROSE, NOT A CLOSED LIST. "Process used in" is a `String?` column nothing parses —
+              a researcher writes "block printing, the second dyeing pass" into it — and "Material"
+              answers "mango wood with an iron collar". Both are exactly the answer somebody standing
+              at a bench would rather speak, and neither is a measurement or a vocabulary. */}
+          <DictatedTextInput
+            name="processUsedIn"
+            label="Process used in"
+            explainWhenUnavailable={false}
+            value={processUsedIn}
+            onChange={(next) => {
+              setProcessUsedIn(next);
+              markDirty();
+            }}
+          />
+          <DictatedTextInput
+            name="material"
+            label="Material"
+            explainWhenUnavailable={false}
+            value={material}
+            onChange={(next) => {
+              setMaterial(next);
+              markDirty();
+            }}
+          />
           {/* ── `min={0}` ON EVERY NUMBER ON THIS FORM, AND THE SAME BOUND ON THE SCHEMA ──────
               `yearsInUse` has carried this pair since it was added — `min={0}` here and `ge=0` on
               both `ToolCreate` and `ToolUpdate` — and it was the ONLY number on this form that did.
@@ -1241,6 +1393,9 @@ export function ToolForm({
             defaultValue={initial?.suggestionsForToolImprovement ?? ""}
             className="md:col-span-2"
             onDirty={markDirty}
+            // Said once at the top of this form by `DictationUnavailableNotice`; a copy under
+            // every editor is the same paragraph over again. See the prop on `RichTextEditor`.
+            explainWhenUnavailable={false}
           />
           <RichTextField
             name="remarks"
@@ -1248,6 +1403,9 @@ export function ToolForm({
             defaultValue={initial?.remarks ?? ""}
             className="md:col-span-2"
             onDirty={markDirty}
+            // Said once at the top of this form by `DictationUnavailableNotice`; a copy under
+            // every editor is the same paragraph over again. See the prop on `RichTextEditor`.
+            explainWhenUnavailable={false}
           />
           <StatusField canSetStatus={canSetStatus} initialStatus={initial?.status} onDirty={markDirty} />
         </div>

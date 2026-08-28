@@ -388,31 +388,78 @@ test("a row that says a client lacks something says when, and how to check", () 
  * would pass an absence check while being useless, so the two stage keys it hands over are asserted
  * in the same test.
  */
-test("the handset's chooser navigates and does not write", () => {
+test("the handset's Upload tab writes through the stage's own store and mints no second one", () => {
+  /*
+    ══════════════════════════════════════════════════════════════════════════════════════════════
+    THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS RIGHT UNTIL 2026-08-28
+    ══════════════════════════════════════════════════════════════════════════════════════════════
+
+    It read `SketchesAndPrototypesScreen.kt` and failed if that file so much as NAMED
+    `DwMediaCaptureCard`, `DwSketchRectifyPanel`, `newCaptureFile` or `WorkshopDraftStore`, under the
+    message "the chooser has grown an editor". The owner then asked for exactly that capability —
+    *"Provide an option to add a Sketch or Prototype directly to the selected workshop from this
+    screen"* — and the handset grew the web's Upload/Review tabs.
+
+    **THE OLD ASSERTION WOULD HAVE PASSED ANYWAY, AND THAT IS WHY IT IS REWRITTEN RATHER THAN
+    DELETED.** The capture card lives in `DwSketchChooserUpload.kt`, a file this test never opened,
+    so a green run would have been reporting on a screen that no longer exists in that shape. A
+    check that passes because the code moved is worse than no check: it is a claim, still being made,
+    about something nobody is looking at.
+
+    ══════════════════════════════════════════════════════════════════════════════════════════════
+    WHAT THE ORIGINAL RULE ACTUALLY FORBADE, WHICH IS STILL FORBIDDEN
+    ══════════════════════════════════════════════════════════════════════════════════════════════
+
+    A SECOND STORE. `SketchesAndPrototypesScreen.kt`'s own words: "one feature with two stores, and
+    the one it wrote to would be the one the report did not read." The web found the resolution first
+    and this page records it — `UploadTabHost` "picks an existing row and writes through the same
+    draft store the stage form uses, so the web is not the thing this comment forbids."
+
+    So the property is no longer "does not write". It is **writes through the ONE path**, and that is
+    what is asserted here: `WorkshopDraftStore.updateStage` for the row, `WorkshopDraftStore.importMedia`
+    for the bytes, `WorkshopSyncEngine.pushStage` for the hop to the repository — the same three the
+    stage screen uses — and nothing that looks like a private collection or a bespoke endpoint.
+  */
   const CHOOSER =
     "android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt";
+  const UPLOAD =
+    "android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserUpload.kt";
   expect(existsSync(join(ROOT, CHOOSER)), "the chooser screen is gone").toBe(true);
-  const code = codeOf(CHOOSER);
-
-  const editors = [
-    ["DwMediaCaptureCard", "the capture card — a camera and a file picker on the chooser"],
-    ["DwSketchRectifyPanel", "the straightening panel, which belongs on the stage form"],
-    ["newCaptureFile", "a write to a new file on the device"],
-    ["WorkshopDraftStore", "the draft store every stage write goes through"]
-  ] as const;
-
-  const found = editors
-    .filter(([symbol]) => declares(code, symbol))
-    .map(([symbol, what]) => `${symbol} — ${what}`);
   expect(
-    found.join("\n"),
-    "the chooser has grown an editor. Two ways to file one sketch is two stores, and the report " +
-      "reads one of them. Put the control on the stage form instead, and rewrite the matrix row."
-  ).toBe("");
+    existsSync(join(ROOT, UPLOAD)),
+    "the Upload tab's file is gone — if it was renamed, rename it here too, or this test is " +
+      "asserting about a file that does not exist and will pass for ever"
+  ).toBe(true);
 
-  // And it still hands both stages over, which is the entirety of what it is for.
-  expect(code.includes("SKETCH_DEVELOPMENT"), "the chooser no longer opens stage 11").toBe(true);
-  expect(code.includes("PROTOTYPE_DEVELOPMENT"), "the chooser no longer opens stage 13").toBe(true);
+  const upload = codeOf(UPLOAD);
+
+  // THE ONE PATH, named. Each of these is what the stage screen itself calls.
+  for (const [symbol, what] of [
+    ["WorkshopDraftStore.updateStage", "the row write every stage form goes through"],
+    ["WorkshopDraftStore.importMedia", "the copy into the workshop's own media directory"],
+    ["WorkshopSyncEngine.pushStage", "the one place a stage becomes a payload"]
+  ] as const) {
+    expect(
+      upload.includes(symbol),
+      `the Upload tab no longer calls ${symbol} — ${what}. If the write moved, it must have moved ` +
+        "to the stage's own path and not to a second one; check before changing this line."
+    ).toBe(true);
+  }
+
+  // AND NO SECOND STORE. A private table, a bespoke endpoint or a parallel collection is the thing
+  // the original rule forbade, and it is still forbidden.
+  for (const forbidden of ["SharedPreferences", "Room.databaseBuilder", "/sketches", "/prototypes"]) {
+    expect(
+      upload.includes(forbidden),
+      `the Upload tab reaches for ${forbidden}. A sketch is a row of the stage's own collection; a ` +
+        "second store is the one thing this feature may not have."
+    ).toBe(false);
+  }
+
+  // And the chooser still names both stages, which is what decides where a row is filed.
+  const code = codeOf(CHOOSER);
+  expect(code.includes("SKETCH_DEVELOPMENT"), "the chooser no longer knows stage 11").toBe(true);
+  expect(code.includes("PROTOTYPE_DEVELOPMENT"), "the chooser no longer knows stage 13").toBe(true);
 });
 
 /**

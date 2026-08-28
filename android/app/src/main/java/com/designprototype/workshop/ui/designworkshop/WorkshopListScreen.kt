@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.ConnectivityObserver
 import com.designprototype.workshop.data.DW_LOCAL_ID_PREFIX
 import com.designprototype.workshop.data.DW_WORKSHOP_CREATE_REFUSAL
+import com.designprototype.workshop.data.DesignWorkshopDefaultDto
 import com.designprototype.workshop.data.DesignWorkshopCreateBody
 import com.designprototype.workshop.data.DwEligibleViewerDto
 import com.designprototype.workshop.data.DwEligibleViewers
@@ -431,6 +432,28 @@ fun WorkshopListScreen(
                     fontSize = 12.sp,
                     lineHeight = 17.sp
                 )
+                /*
+                  THE LAST CLAUSE OF THAT REFUSAL, TURNED INTO A CONTROL.
+
+                  It ends "Any workshop you already have access to is open to you now", which was
+                  true and was not actionable: the designer had to read it and then find the right
+                  row in a list that may be twenty long and is paged. The owner asked for the other
+                  half on 2026-08-28 — a chooser of the workshops they are already part of, opening
+                  by default on the one they were MOST RECENTLY GIVEN ACCESS TO.
+
+                  ONE ROW AND NOT A DROPDOWN, which is where this departs from the web deliberately.
+                  The web puts a `<select>` here because its refusal panel sits above a table the
+                  reader has to scroll past; on a handset the designer's whole list is already
+                  directly below this panel and is scrollable with one thumb, so a second control
+                  listing the same rows would be two ways to pick one thing. What the list CANNOT do
+                  is say which row is the most recently allocated one — that is
+                  `DesignWorkshopViewer.createdAt`, which is on no payload this client can see — so
+                  the answer that only the server has is what gets a control.
+
+                  IT OPENS; IT NEVER CREATES. Nothing here widens `canCreateDesignWorkshops`, and the
+                  sentence above still says whose job that is.
+                */
+                DwMostRecentlyAllocated(repository = repository, onOpen = onOpen)
             }
         }
 
@@ -1102,6 +1125,36 @@ private fun CreateWorkshopDialog(
      * [dwOrderedDesignerPicks], which is what keeps this one deterministic and visible.
      */
     var designerUserIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    /*
+      SEEDED WITH THE CREATOR WHEN — AND ONLY WHEN — THE CREATOR IS THEMSELVES A DESIGNER.
+
+      The owner's instruction of 2026-08-28: *"The designer initiating the workflow should be the
+      default designer. By default, the designer list/selection should contain that designer
+      themselves."*
+
+      THE GUARD IS NOT CAUTION; IT IS THE ONE CASE THE INSTRUCTION CANNOT MEAN. `seed_designer_prefill`
+      on the server argues the opposite behaviour for an admin at length — with no designer named,
+      "the CREATOR's profile is copied, which for an admin opening a workshop on somebody else's
+      behalf is the wrong person's name on a ministry document". An admin holds the sanction order
+      and is almost never a participant, so defaulting them in would put an administrator on the
+      report cover, seed their `DesignerProfile` into stage 1 and stage 3, and give them the .docx's
+      `dc:creator`. "The designer initiating the workflow" excludes them by its own words, and
+      `role == "DESIGNER"` is the only test that tells the two apart — `canRunDesignWorkshops` is a
+      SET that CONTAINS admin and master admin, which is precisely the case being excluded.
+
+      A SEED AND NOT A LOCK: one tick the creator can remove, with the lead still derived from the
+      first ticked rather than pinned, so nothing about the previous behaviour is lost for an admin
+      who is also empanelled and is opening a workshop for a colleague.
+
+      FROM THE CACHED ACCOUNT, with no network: this dialog opens offline (it mints a local id), and
+      a default that needed a request would be absent in exactly the courtyard it is for.
+    */
+    LaunchedEffect(Unit) {
+        val me = repository.cachedUser()
+        if (me?.role == "DESIGNER" && me.id.isNotBlank() && designerUserIds.isEmpty()) {
+            designerUserIds = listOf(me.id)
+        }
+    }
     /**
      * Whose name the report carries, or "" to let it be derived (the first ticked, never the admin).
      *
@@ -1967,3 +2020,74 @@ private suspend fun rowFor(
 // report "created on the server and all its stages pushed" having pushed none of them. All of that
 // is now [WorkshopSyncEngine], where the order, the resumability and the triage are written down
 // once and tested against `backend/tests/test_stage_sync.py`'s semantics.
+
+/**
+ * "The design workshop you were most recently given access to" — one row, under the create refusal.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY THE SERVER ANSWERS THIS AND NOT THIS SCREEN
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The list on this screen is ordered `createdAt DESC`, which answers "most recently CREATED". The
+ * question the owner asked is "most recently ALLOCATED", and for a workshop the Ministry opened in
+ * March and handed to a designer in August those are different rows — the wrong one being the one
+ * this screen could compute. Allocation is `DesignWorkshopViewer.createdAt` and that column is on no
+ * payload any client receives, by design: `has_viewer_grant` reads the EXISTENCE of the row and
+ * nothing on it. So `GET /design-workshops/default-for-me` is the only thing that can answer, and
+ * both clients read the same answer rather than each guessing.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * IT DRAWS NOTHING UNTIL IT HAS SOMETHING TO SAY, AND SAYS NOTHING WHEN IT FAILS
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Three states collapse to "draw nothing": still asking, answered-and-none, and could-not-ask. That
+ * is the OPPOSITE of this repository's usual rule, and it is right here for one reason: this control
+ * sits INSIDE a panel that is already an answer to a refused action, above a list that already
+ * works. A second sentence in there would bury the one that matters, and none of the three states
+ * costs the designer anything — the workshops are on screen either way, one scroll down.
+ *
+ * The one state it must not produce is a row naming a workshop that is not there, so nothing is
+ * drawn until a title has actually arrived.
+ */
+@Composable
+private fun DwMostRecentlyAllocated(
+    repository: WorkshopRepository,
+    onOpen: (workshopId: String) -> Unit,
+) {
+    var answer by remember { mutableStateOf<DesignWorkshopDefaultDto?>(null) }
+
+    LaunchedEffect(Unit) {
+        runCatching { repository.designWorkshopDefaultForMe() }
+            .onSuccess { answer = it }
+            .onFailure { error ->
+                // Leaving the screen is not a failure, and rethrowing is what stops a dead
+                // composable writing state — the rule every load on this client follows.
+                if (error is CancellationException) throw error
+            }
+    }
+
+    val row = answer ?: return
+    val id = row.workshopId?.takeIf { it.isNotBlank() } ?: return
+    val title = row.title?.takeIf { it.isNotBlank() } ?: return
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(
+            // WHICH DOOR, in words, because "you were added to it" and "you opened it" are different
+            // facts and a designer told the wrong one goes looking for an allocation that never
+            // happened. Anything this client does not recognise falls back to the neutral phrasing
+            // rather than being dressed as one of the two known answers.
+            when (row.reason) {
+                "GRANTED" -> "Most recently allocated to you: $title"
+                "CREATED" -> "Most recently opened by you: $title"
+                else -> "Ready to open: $title"
+            },
+            color = MaterialTheme.field.onWarningContainer,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 17.sp
+        )
+        OutlinedButton(onClick = { onOpen(id) }) {
+            Text("Open this workshop", fontSize = 12.sp)
+        }
+    }
+}

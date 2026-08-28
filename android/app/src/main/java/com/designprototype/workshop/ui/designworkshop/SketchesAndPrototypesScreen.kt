@@ -1,6 +1,5 @@
 package com.designprototype.workshop.ui.designworkshop
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,17 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.Category
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,87 +23,95 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DesignWorkshopDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.isConnectionFailure
+import com.designprototype.workshop.ui.SearchableSelectField
+import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.designWorkshopPrefillNote
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 
 /**
- * Sketches and prototypes, reached without a workshop already open — the handset's chooser.
+ * Sketches and prototypes, reached without a workshop already open — the handset's own workspace.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * WHAT THIS ADDS, AND WHAT WAS ALREADY HERE
+ * WHAT THIS SCREEN IS, AND WHAT IT USED TO BE
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  *
- * The owner's instruction of 2026-08-25: *"The recently added designer options available on the web
- * application — including Sketches, Prototypes, Designer Profile, and all other recently introduced
- * designer-related options — should also be implemented on the Android application."*
+ * It ASKS WHICH WORKSHOP, ONCE, at the top — and then everything below it is that one workshop's
+ * sketch and prototype work, under two tabs: **Upload** and **Review**. That is the web's shape
+ * (`frontend/app/(protected)/sketches-and-prototypes/page.tsx` for the chooser,
+ * `frontend/components/sketches/SketchesWorkspace.tsx` for the two tabs), and until 2026-08-28 the
+ * handset did not have it: this screen listed EVERY workshop with two navigating buttons apiece, so
+ * a designer with a drawing in their hand scrolled a list of twelve to press one of twenty-four
+ * buttons, and the same screen on the two clients answered two different questions.
  *
- * For sketches, the gap was NARROWER than it looked and it is worth being exact, because the
- * frontend contract's own note on this row was over-claimed once and sent readers hunting for the
- * wrong thing. The WORK has been on this handset since the sketch wave: `DwSketchRectifyField`
- * straightens a photographed sketch into a plate, `DwSketchPlate` and `DwSketchRectify` carry the
- * geometry, `FieldRenderer.dwOffersSketchRectify` mounts the panel on the two FILE fields that want
- * it, and `ReportFigures` counts the plates into the report. What did not exist was any way to REACH
- * that without first opening a workshop and walking to stage 11 — no destination, no menu row, no
- * card. So this is the CHOOSER and not a second sketch screen.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * WHY IT HANDS OVER TO THE STAGE RATHER THAN OWNING ANY OF THE WORK
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * A sketch is a `DwSketch` row under stage 11 and a prototype is a `DwPrototype` row under stage 13.
- * That is where their fields, their plates, their captions and their report figures are filed, and
- * `InlineRecordDialog`'s header already refuses the obvious alternative by name: there must not be
- * "a second, parallel way to add a prototype". A screen here that let a designer add a sketch would
- * be one feature with two stores, and the one it wrote to would be the one the report did not read.
- *
- * So every row on this screen is two buttons that navigate: one to stage 11, one to stage 13.
+ * The owner's instruction of 2026-08-28, which this rewrite is: *"Ensure complete parity between the
+ * Android screens and web screens, especially for Sketches and Prototypes … Users must be able to
+ * select the relevant workshop from the Sketches and Prototypes screen … The screen must contain two
+ * tabs, Upload and Review … Provide an option to add a Sketch or Prototype directly to the selected
+ * workshop from this screen. A workshop can contain multiple sketches and multiple prototypes; the
+ * implementation and data model must account for that."*
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * THE ONE THING IT SAYS THAT IS NOT NAVIGATION, AND WHY THAT IS NOT A CRACK IN THE RULE ABOVE
+ * THE ARGUMENT THIS FILE USED TO MAKE AGAINST ADDING A SKETCH, AND WHY IT IS STILL HONOURED
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  *
- * [DW_PROTOTYPE_3D_IN_THE_REPORT] and [DW_TURNTABLE_CAPTURE_ADVICE] tell a designer what the printed
- * report can and cannot carry off a prototype — that a “3D model” file reaches the officer as the
- * words "1 document attached" and that a “360° capture” is the only 3D form that is drawn. That is
- * COPY, not capture: this screen still owns no field, no draft and no store, and adding one here
- * would be the "second, parallel way to add a prototype" the section above refuses by name.
+ * **THIS SECTION REPLACES ONE THAT SAID THE OPPOSITE, AND IT IS REWRITTEN RATHER THAN DELETED** for
+ * the reason this file's own history keeps demonstrating: a comment that names a missing feature is
+ * how the next reader comes to look for the wrong gap. The paragraph that stood here said —
  *
- * It is said on this screen because this screen is the door. The alternative is saying it beside the
- * two fields on the stage 13 form, which is where it also belongs and where it does not yet exist —
- * a note that has to be mounted from `FieldRenderer`, which this change does not own. Said only
- * there it would arrive after the upload; said only here it is missed by the designer who reaches
- * stage 13 through Design workshops. Both, eventually. The long argument, the three backend files
- * that are the authority for every clause of it, and why the wording is the web's word for word,
- * are at the declaration of [DW_PROTOTYPE_3D_IN_THE_REPORT].
+ * > "A screen here that let a designer add a sketch would be one feature with two stores, and the one
+ * > it wrote to would be the one the report did not read. So every row on this screen is two buttons
+ * > that navigate."
+ *
+ * — and the FIRST sentence of it is still exactly right. What it forbids is a SECOND STORE, and the
+ * capability the owner asked for does not need one. The web had already found the resolution and
+ * `docs/SKETCHES-PROTOTYPES-PARITY.md` records it in as many words: *"The web's upload tab does not
+ * add one either — `frontend/components/sketches/UploadTabHost.tsx` picks an existing row and writes
+ * through the same draft store the stage form uses, so the web is not the thing this comment
+ * forbids."*
+ *
+ * The handset now has the same shape, and the refusal holds because every write goes to the ONE place
+ * a sketch has always lived:
+ *
+ *  * a sketch is a row of the `sketch` collection under `SKETCH_DEVELOPMENT` and a prototype is a row
+ *    of `prototype` under `PROTOTYPE_DEVELOPMENT` — the stage keys, from the registry, never numbers;
+ *  * the row is written with `WorkshopDraftStore.updateStage`, whose own KDoc reads *"This is what a
+ *    stage screen should call"*, into the same `StageDraft.rows` the stage form edits;
+ *  * a photograph is copied by `WorkshopDraftStore.importMedia` into the workshop's own media
+ *    directory, exactly as `StageScreen`'s bridge does;
+ *  * and it reaches the repository through `WorkshopSyncEngine.pushStage`, the one place a stage
+ *    becomes a payload.
+ *
+ * **THERE IS NO SECOND STORE, NO PARALLEL COLLECTION AND NO NEW ENDPOINT.** A sketch added here is
+ * byte for byte the row a designer would have created by walking to stage 11, which is why
+ * `ReportFigures` finds it. The detail, including why a draft record is only ever seeded after the
+ * repository has answered, is at [DwSketchChooserUploadTab].
+ *
+ * WHAT THE TAB STILL HANDS OVER is everything that is not a file: naming a sketch, its caption, its
+ * measurements, straightening a photographed sketch into a plate with `DwSketchRectifyField`, a
+ * prototype's materials and its stage log. Those are the stage form's, both tabs say so, and both
+ * offer the button.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * WHERE THE REVIEW HALF NOW LIVES — AND THIS SECTION USED TO SAY IT DID NOT EXIST
+ * WHICH WORKSHOP THE SCREEN OPENS ON
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  *
- * The web's page has two tabs, Upload and Review, and this section carried the honest state of the
- * handset at the time: the REVIEW half — rating a colleague's work qualitatively and quantitatively,
- * ranking it, and the two rounds of it — had no implementation here at all, no DTO for the three
- * `/design-ratings` endpoints and no repository method. It shipped with one sentence on screen saying
- * so, rather than a tab that opened nothing.
- *
- * IT EXISTS NOW, at [NavDestination.DESIGN_REVIEW] and `DesignReviewScreen`, so the sentence has been
- * changed to point at it. It is a DESTINATION OF ITS OWN rather than a second tab here, for the same
- * permission reason the web made it a page: the pool round is read by designers `load_workshop_or_404`
- * turns away, and this screen's whole job is handing a workshop it CAN open to a stage screen gated by
- * exactly that helper. Folding the two together would put one screen behind two different doors.
- *
- * A STALE "this does not exist" NOTE IS NOT A HARMLESS ONE, which is why this is rewritten rather
- * than deleted: a comment that names a missing feature is how a reader comes to look for the wrong
- * gap, and the frontend contract's §16 records the same over-claim about this very pair of screens
- * costing every reader of it exactly that.
+ * The most recently accessed one, and the derivation is stated because no client can see the column
+ * that would answer it directly: `DesignWorkshopViewer.createdAt` is not on [DesignWorkshopDto] and
+ * no endpoint publishes it per row. `GET /design-workshops/default-for-me` answers instead — the same
+ * request `DesignWorkshopPicker.kt` makes for every record form, whose `reason` is `"GRANTED"` (the
+ * workshop you were most recently added to) or `"CREATED"` (the one you most recently opened) — and
+ * the sentence under the picker is `designWorkshopPrefillNote`'s, so the app never fills a box in
+ * without saying why. When that request has no answer, the fallback is the first row of
+ * `GET /design-workshops`, which is ordered newest-first: a DIFFERENT question, so it gets a
+ * different sentence rather than the server's. See [dwChooserDefaultWorkshop].
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  * THREE ANSWERS ABOUT THE LIST, AND WHY TWO OF THEM USED TO SHARE ONE SENTENCE
@@ -118,21 +121,28 @@ import kotlinx.coroutines.CancellationException
  * `emptyList()` — under a comment claiming "the sentence names the failure instead", which it did
  * not — and `emptyList()` falls into the `isEmpty()` branch. So a designer standing in a courtyard
  * with no signal, on twelve workshops, read *"You are not on any design workshop yet. Once an
- * administrator adds you to one, its sketch and prototype stages open from here."* and was sent to
- * ask an administrator for the twelve they already had. The real failure went to `onError`, which is
- * the HOST's transient line at the bottom of the scrolling column — underneath the placeholder that
- * had just told them the opposite, and gone four seconds later while the placeholder stayed.
+ * administrator adds you to one…"* and was sent to ask an administrator for the twelve they already
+ * had. The real failure went to `onError`, which is the HOST's transient line at the bottom of the
+ * scrolling column — underneath the placeholder that had just told them the opposite, and gone four
+ * seconds later while the placeholder stayed.
  *
  * That is the silent-emptiness class this repository keeps having to un-ship: a FAILURE drawn as an
- * ordinary empty state. The three answers are now three sentences that cannot be mistaken for each
- * other, and they are the three a reader actually needs told apart:
+ * ordinary empty state. The three answers are three sentences that cannot be mistaken for each other,
+ * and the rewrite above did not touch them:
  *
  *  * STILL ASKING — the spinner, `workshops == null`.
  *  * ANSWERED, AND THE ANSWER IS NONE — the ordinary state of a newly onboarded designer, and not a
  *    fault. This is the only state that may name an administrator.
  *  * COULD NOT ASK — `listFailure`, worded for the cause, with a "Try again" beside it and a
- *    sentence saying that nothing is lost. It can promise that because this screen is a READ: it
- *    writes nothing, anywhere, so a failed list has cost the designer no work.
+ *    sentence saying that nothing is lost.
+ *
+ * **THAT LAST SENTENCE HAD TO CHANGE, AND THE CHANGE IS THE POINT OF WRITING THIS DOWN.** It used to
+ * justify itself with "this screen only reads, so nothing on this handset has changed", which was
+ * true of the chooser and is FALSE of this screen. The promise still holds — a workshop has to be
+ * chosen before anything can be added, and this failure happens before that — but the reason had to
+ * be replaced rather than left standing, because a promise resting on a mechanism that no longer
+ * exists is the same defect as a stale absence note, one paragraph further on.
+ * `DwSketchChooserSentenceTest` pins the new mechanism and pins that the old claim is gone.
  *
  * `DesignReviewScreen`'s `listFailure` is the shape this follows rather than a third one — same
  * `isConnectionFailure` split between "could not be reached" and a refusal in the repository's own
@@ -144,27 +154,26 @@ fun SketchesAndPrototypesScreen(
     /** Open one workshop at one stage. The stage screen owns everything from there. */
     onOpenStage: (workshopId: String, stageKey: String) -> Unit,
     /**
-     * The host's transient message line — AND NOTHING ON THIS SCREEN CALLS IT ANY MORE.
+     * The host's transient message line — AND NOTHING ON THIS SCREEN CALLS IT.
      *
-     * This screen is a READ that never writes, so it has exactly one failure to report: the list
-     * request. That failure is now rendered IN PLACE, where the list would have been, above the
-     * "Try again" it needs — because the host's line slides away after four seconds while a wrong
-     * placeholder underneath it stays, which is precisely how the defect above was invisible.
-     * `DwProvenanceScreen` is the same shape and MainActivity's arm for it records the resolution in
-     * its own words: it "took an `onError` it never called — a channel that looks live to whoever
-     * wires up the next failure path and goes nowhere — so it does not take one now."
+     * Every failure this screen can have is now rendered IN PLACE, beside the control that caused it:
+     * the workshop list below its own picker, a stage that could not be read above the cards it would
+     * have enabled, a row that could not be written under the button that asked for it. Each of those
+     * has a different next move, and the host's line slides away after four seconds while a wrong
+     * placeholder underneath it stays — which is precisely how the defect in the class KDoc was
+     * invisible. `DwProvenanceScreen` is the same shape and MainActivity's arm for it records the
+     * resolution in its own words: it "took an `onError` it never called — a channel that looks live
+     * to whoever wires up the next failure path and goes nowhere — so it does not take one now."
      *
-     * THE ARM AT THE CALL SITE SHOULD GO THE SAME WAY. It is left in place here only because
-     * `MainActivity.kt` is not this change's to edit; nothing routes on it (the siblings take what
-     * they use), so dropping `onError = { showMessage(it) }` from the `Screen.SketchesAndPrototypes`
-     * arm and this parameter with it is a two-line change for whoever is next in that file. Until
-     * then: do not wire a new failure path through here without first asking whether the failure
-     * belongs beside the control that caused it, which on this screen it always has.
+     * THE ARM AT THE CALL SITE SHOULD GO THE SAME WAY. It is left in place only because
+     * `MainActivity.kt` is not this change's to edit; nothing routes on it, so dropping
+     * `onError = { showMessage(it) }` from the `Screen.SketchesAndPrototypes` arm and this parameter
+     * with it is a two-line change for whoever is next in that file.
      */
     @Suppress("UNUSED_PARAMETER") onError: (String) -> Unit,
 ) {
     var workshops by remember { mutableStateOf<List<DesignWorkshopDto>?>(null) }
-    var truncated by remember { mutableStateOf(0) }
+    var truncated by remember { mutableIntStateOf(0) }
     /**
      * Why the list is not here, in words — or null when it IS here.
      *
@@ -177,14 +186,25 @@ fun SketchesAndPrototypesScreen(
     var listFailure by remember { mutableStateOf<String?>(null) }
     /** Bumped by "Try again", which is the only thing that re-runs the load. */
     var attempt by remember { mutableIntStateOf(0) }
+    /** The workshop everything below the picker is scoped to. Blank until the list lands. */
+    var chosen by remember { mutableStateOf("") }
+    /**
+     * Why the picker filled itself in, or null. Cleared the moment the designer picks.
+     *
+     * A DROPDOWN THAT FILLS ITSELF IN AND CANNOT SAY WHY READS AS A BUG — `DesignWorkshopPickerState`
+     * carries the same field for the same reason. It is retired on a tap because the explanation is
+     * about a choice that is no longer the app's.
+     */
+    var prefillNote by remember { mutableStateOf<String?>(null) }
+    var tab by remember { mutableStateOf(DwSketchChooserTab.UPLOAD) }
 
     LaunchedEffect(attempt) {
         /*
-          EVERY ATTEMPT STARTS FROM THE LOADING STATE, and this is not tidying. A retry that fails
+          EVERY ATTEMPT STARTS FROM THE LOADING STATE, and this is not tidying. A retry that failed
           identically would otherwise mutate NOTHING on screen — same sentence, same button — so the
           designer who pressed it, and in particular the reader who cannot see the button, gets the
-          "nothing happened" that the button exists to end. Clearing these three sends the status
-          region through the spinner and back, which is a change assistive technology announces.
+          "nothing happened" that the button exists to end. Clearing these sends the status region
+          through the spinner and back, which is a change assistive technology announces.
         */
         workshops = null
         listFailure = null
@@ -199,19 +219,13 @@ fun SketchesAndPrototypesScreen(
             }
             .onFailure { error ->
                 /*
-                  LEAVING THE SCREEN IS NOT A FAILURE, AND NEITHER IS PRESSING "Try again".
-                  `runCatching` catches `Throwable`, so both of those arrive here as a
-                  `CancellationException`: the designer who walks on before the list lands, and — now
-                  that this effect is keyed on `attempt` rather than on `Unit` — the run this retry
-                  replaced, cancelled in place while the screen stays exactly where it is.
-
-                  Handled, that second one is worse than the first: the cancelled run would write its
-                  `listFailure` after the replacement run had already cleared it, so the sentence
-                  "could not be listed" would sit over a load that is at that moment in flight, and
-                  no further attempt would clear it because the spinner it belongs to has already
-                  been and gone. Rethrown, as `loadMyActivity`'s caller in MainActivity and
-                  `dwReadQrPicture` both do — which is also what stops a dead composable writing
-                  `workshops`.
+                  LEAVING THE SCREEN IS NOT A FAILURE, AND NEITHER IS PRESSING "Try again". Both
+                  arrive here as a `CancellationException`, and the second is the dangerous one: the
+                  cancelled run would write its `listFailure` after the replacement run had already
+                  cleared it, so "could not be listed" would sit over a load that is at that moment in
+                  flight, and no further attempt would clear it because the spinner it belongs to has
+                  already been and gone. Rethrown, as `dwReadQrPicture` and MainActivity's
+                  `loadMyActivity` caller both do.
                 */
                 if (error is CancellationException) throw error
                 // `emptyList()` and NOT left null, exactly as `DesignReviewScreen` does it: null is
@@ -233,6 +247,41 @@ fun SketchesAndPrototypesScreen(
                     error.apiErrorMessage(DW_SKETCH_CHOOSER_REFUSED)
                 }
             }
+
+        /*
+          THE DEFAULT, ASKED SEPARATELY AND ONLY WHEN THERE IS A LIST TO APPLY IT TO.
+
+          `runCatching` of its own, because the two requests fail for different reasons: the list is a
+          scoped read a designer always passes, the default is a newer endpoint an older deployment
+          may not have at all. A 404 from a server that predates it must leave the picker perfectly
+          usable, unprefilled — which is `rememberDesignWorkshopPicker`'s own argument, kept.
+
+          NOTHING IS PREFILLED OVER A CHOICE THE DESIGNER HAS ALREADY MADE. `dwChooserDefaultWorkshop`
+          honours `chosen` whenever it is still in the list, so a "Try again" cannot move the
+          selection out from under somebody mid-attachment.
+        */
+        val rows = workshops.orEmpty()
+        if (rows.isNotEmpty()) {
+            val answer = runCatching { repository.designWorkshopDefaultForMe() }
+                .onFailure { error -> if (error is CancellationException) throw error }
+                .getOrNull()
+            val fromServer = answer?.workshopId?.trim().orEmpty()
+            val wasBlank = chosen.isBlank()
+            val next = dwChooserDefaultWorkshop(rows, fromServer, chosen)
+            chosen = next
+            prefillNote = when {
+                // The designer's own choice, or a re-read that kept it. Nothing to explain.
+                !wasBlank -> prefillNote
+                // THE SERVER DECIDED, so the server's sentence — the two doors need different words
+                // and only `reason` knows which this was.
+                next.isNotBlank() && next == fromServer ->
+                    designWorkshopPrefillNote(answer?.reason, answer?.accessAt)
+                // THE FALLBACK, which answers a DIFFERENT question and must not borrow the sentence
+                // above. See [dwChooserDefaultWorkshop].
+                next.isNotBlank() -> DW_SKETCH_CHOOSER_FALLBACK_PREFILL
+                else -> null
+            }
+        }
     }
 
     Column(
@@ -246,40 +295,12 @@ fun SketchesAndPrototypesScreen(
             fontSize = 22.sp
         )
         Text(
-            "Sketch and prototype work is filed against the workshop it belongs to — stage 11 for " +
-                "sketches, stage 13 for prototypes — so pick a workshop to open it there. Plates " +
-                "straightened from a photograph, captions and report figures all live on those stages.",
+            "Pick a workshop, then add and file its sketches and prototypes under Upload, or see " +
+                "how its peer round has ranked them under Review. The work itself lives on the " +
+                "workshop's own sketch and prototype stages, which both tabs open.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp
-        )
-        /*
-          SAID BEFORE THE BUTTON THAT LEADS TO STAGE 13, NOT AFTER THE UPLOAD. See
-          [DW_PROTOTYPE_3D_IN_THE_REPORT] for what is true and which three files say so. The reason
-          it is HERE is that this screen is the handset's door to prototype work: a designer who
-          reads it on the way in can photograph the piece while it is still in front of them, and a
-          designer who is told after the .glb has gone up has been told too late to act on it.
-        */
-        Text(
-            DW_PROTOTYPE_3D_IN_THE_REPORT,
-            color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
-            lineHeight = 17.sp
-        )
-        Text(
-            DW_TURNTABLE_CAPTURE_ADVICE,
-            color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
-            lineHeight = 16.sp
-        )
-        // Said once, plainly, and pointing at the destination that now holds it. This line used to
-        // read "on the web only for now", which stopped being true the day Design review landed — and
-        // a screen telling a designer a feature is absent while it sits two rows up the same menu is
-        // worse than saying nothing. See the class KDoc.
-        Text(
-            "Rating and ranking a colleague's sketches and prototypes is Design review, in the menu.",
-            color = MaterialTheme.field.muted,
-            fontSize = 11.sp
         )
 
         /*
@@ -303,10 +324,9 @@ fun SketchesAndPrototypesScreen(
           which is the defect this section was rewritten for. Spinner second, so a failure cannot be
           hidden behind one either.
 
-          THE WORKSHOP ROWS ARE DELIBERATELY NOT IN HERE. Twenty rows inside a polite live region are
-          twenty rows read out on arrival, and `mergeDescendants` over a row would flatten its two
-          navigation buttons into the paragraph. This region carries the STATUS of the list; the list
-          itself is below.
+          THE PICKER IS DELIBERATELY NOT IN HERE. A merging live region is the wrong parent for a
+          control — it would flatten the trigger into the paragraph and read the whole thing out on
+          arrival. This region carries the STATUS of the list; the control is below.
         */
         Box(
             modifier = Modifier.semantics(mergeDescendants = true) {
@@ -354,7 +374,7 @@ fun SketchesAndPrototypesScreen(
                     lineHeight = 18.sp
                 )
 
-                // A list arrived. It is drawn below, outside this region.
+                // A list arrived. The picker is below, outside this region.
                 else -> Unit
             }
         }
@@ -367,21 +387,115 @@ fun SketchesAndPrototypesScreen(
             }
         }
 
-        // THE ROWS, GATED ON THERE BEING NO FAILURE. `onFailure` writes `emptyList()`, so today this
-        // draws nothing in that state anyway — it is stated as a condition rather than left to that
-        // coincidence, because the next person to give a failed load a partial list would otherwise
-        // leave rows standing under a sentence saying the list could not be loaded.
-        if (listFailure == null) {
-            workshops?.forEach { workshop ->
-                WorkshopRow(workshop = workshop, onOpenStage = onOpenStage)
-            }
-            if (truncated > 0) {
-                Text(
-                    "$truncated more workshop${if (truncated == 1) "" else "s"} not shown. " +
-                        "Open Design workshops to search the whole list.",
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+        /*
+          THE SELECTOR, WHICH IS THE WHOLE DIFFERENCE BETWEEN THIS SCREEN AND THE LIST IT REPLACED.
+
+          `SearchableSelectField` rather than a hand-rolled dropdown, because it is what every other
+          long list in this app uses and it grows its own filter box at eight options — a designer on
+          twenty is not scrolling blind, and one who was sent a workshop code in a message can type it
+          straight into the filter, because `hint` is SEARCHED as well as shown.
+
+          `includeNone = false`: emptying the picker would leave the tabs below scoped to nothing and
+          a control implying that is a state worth choosing. The way to a different workshop is
+          another workshop.
+        */
+        val rows = workshops.orEmpty()
+        SearchableSelectField(
+            label = "Which design workshop",
+            options = rows.map { workshop ->
+                SelectOption(
+                    value = workshop.id,
+                    label = dwChooserWorkshopLabel(workshop),
+                    // The workshop CODE and the three telling facts. Two workshops that share a title
+                    // and a date render as two identical rows, and an identical row is a choice a
+                    // reader cannot make.
+                    hint = listOfNotNull(
+                        workshop.workshopCode?.takeIf { it.isNotBlank() },
+                        dwChooserWorkshopHint(workshop).takeIf { it.isNotBlank() },
+                    ).joinToString(" · ").takeIf { it.isNotBlank() },
                 )
+            },
+            selectedValue = chosen,
+            placeholder = when {
+                workshops == null -> "Looking for your workshops…"
+                listFailure != null -> "This list could not be loaded"
+                rows.isEmpty() -> "No workshops are listed for this account"
+                else -> "Choose one of your design workshops"
+            },
+            includeNone = false,
+            enabled = rows.isNotEmpty(),
+            onSelect = { id ->
+                chosen = id
+                // A person picked. Retires the explanation, which was about a choice that is no
+                // longer the app's.
+                prefillNote = null
+            },
+        )
+        prefillNote?.let { note ->
+            Text(note, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        if (truncated > 0) {
+            // RULE 10: EVERY CAP SAYS SO — and only when it bites, so an ordinary designer on four
+            // workshops never reads a sentence about a ceiling they cannot reach.
+            Text(
+                "$truncated more workshop${if (truncated == 1) "" else "s"} not shown, so a " +
+                    "workshop missing from this picker is not a workshop you cannot open. Design " +
+                    "workshops searches the whole list, and its sketch and prototype stages open " +
+                    "from a workshop opened there.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+        }
+
+        DwSketchChooserTabStrip(
+            selected = tab,
+            onSelect = { tab = it },
+            // THE TABS DESCRIBE WORK ON A WORKSHOP, so they are off until there is one. The sentence
+            // below says why — a disabled control with no explanation is the shape of a screen that
+            // looks broken.
+            enabled = chosen.isNotBlank(),
+        )
+
+        if (chosen.isBlank()) {
+            Text(
+                DW_SKETCH_CHOOSER_PICK_FIRST,
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
+        } else {
+            /*
+              RE-KEYED ON THE WORKSHOP, AND THIS IS LOAD-BEARING RATHER THAN TIDY.
+              `SketchesWorkspace.tsx`'s header carries the whole argument and it ports exactly: the
+              review panel coalesces its arrangement push behind a quiet second and flushes on
+              unmount, and the stage key is the SAME STRING in every workshop. A designer who nudged
+              a card in workshop A and then changed the picker to workshop B inside that window would
+              have A's arrangement written into B's draft — a wrong ordinal in a real record with
+              nothing on screen to say it happened. `key` turns the change into a dispose, whose
+              cleanup runs before the new mount's effects, so the flush still lands where it was meant
+              to. The Upload tab needs it for the same reason: its media bridge closes over the
+              workshop it was built for.
+            */
+            key(chosen) {
+                DwSketchChooserTabPanel(tab) {
+                    when (tab) {
+                        // THE TWO PANELS ARE MOUNTED EXCLUSIVELY. Keeping the review panel composed
+                        // behind the upload tab would change WHEN an arrangement is offered to the
+                        // repository, which is the web's stated reason for the same construction.
+                        DwSketchChooserTab.UPLOAD -> DwSketchChooserUploadTab(
+                            repository = repository,
+                            workshopId = chosen,
+                            onOpenStage = onOpenStage,
+                        )
+
+                        DwSketchChooserTab.REVIEW -> DwSketchChooserReviewTab(
+                            repository = repository,
+                            workshopId = chosen,
+                            onOpenStage = onOpenStage,
+                        )
+                    }
+                }
             }
         }
     }
@@ -432,19 +546,61 @@ internal const val DW_SKETCH_CHOOSER_REFUSED: String =
 /**
  * WHAT A FAILED LIST COSTS, which is nothing, said under both failure sentences.
  *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * ITS REASON WAS REWRITTEN ON 2026-08-28 AND THE OLD ONE MUST NOT COME BACK
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * It used to read "this screen only reads, so nothing on this handset has changed", and that was a
+ * true statement about a chooser that navigated. **This screen now writes** — it mints sketch and
+ * prototype rows and attaches photographs to them — so the old justification is a claim about a
+ * mechanism that no longer exists, which is exactly the failure class the class KDoc's stale-absence
+ * paragraph is about.
+ *
+ * THE PROMISE ITSELF STILL HOLDS, and the new reason is the one that actually carries it: the picker
+ * is what scopes every control below it, so **nothing on this screen can write until a workshop has
+ * been chosen**, and a list that failed is a list nothing was chosen from. That is checkable in the
+ * code above rather than merely asserted — the tabs are `enabled = chosen.isNotBlank()` and the
+ * panels are not composed at all until then.
+ *
  * RULE 10 CUTS BOTH WAYS: a screen must say when it is showing less than the truth, and it must say
  * when a failure has taken nothing from the reader. Silence on the second point is read as the worst
- * case by anyone whose fortnight of fieldwork is in the app — and here the truth is unusually clean,
- * because this chooser only ever READS.
+ * case by anyone whose fortnight of fieldwork is in the app.
  *
  * The route it names is true offline: `WorkshopListScreen` falls back to the drafts on this handset
  * with "Showing what is stored on this device", and the two stages open from a workshop opened from
  * there — which is how sketch work was reached before this screen existed at all.
  */
 internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
-    "Nothing is lost: this screen only reads, so nothing on this handset has changed. Design " +
-        "workshops still lists what is stored on this device, and the sketch and prototype stages " +
-        "open from a workshop opened there."
+    "Nothing is lost: a workshop has to be chosen before anything here can be added or attached, " +
+        "and this list failed before that, so nothing on this handset has changed. Design workshops " +
+        "still lists what is stored on this device, and the sketch and prototype stages open from a " +
+        "workshop opened there."
+
+/**
+ * WHY THE PICKER FILLED ITSELF IN WHEN THE SERVER HAD NO ANSWER.
+ *
+ * A DIFFERENT SENTENCE FROM `designWorkshopPrefillNote`'S, deliberately, because it is the answer to
+ * a different question. That one reports what `GET /design-workshops/default-for-me` decided — "most
+ * recently added to", or "most recently opened". This one is the fallback for when that request had
+ * nothing to say, and all it can honestly claim is the ordering of the list it took the row from:
+ * `list_design_workshops` is newest-first. Borrowing the server's wording here would tell a designer
+ * they were recently added to a workshop on the strength of a request that never answered.
+ */
+internal const val DW_SKETCH_CHOOSER_FALLBACK_PREFILL: String =
+    "Filled in with your most recently created design workshop, because the repository did not say " +
+        "which one you last worked on. Change it if this is not the one."
+
+/**
+ * WHY THE TABS ARE OFF WHILE NO WORKSHOP IS CHOSEN.
+ *
+ * Not a permission and not a failure — the ordinary state of a screen whose first question has not
+ * been answered yet. It is said because a disabled control with no explanation is the shape of a
+ * screen that looks broken, which is `DwRankableList.disabledReason`'s rule and the reason that
+ * parameter is a sentence rather than a boolean.
+ */
+internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
+    "Choose a workshop above and its Upload and Review tabs open here. Both are about one workshop " +
+        "at a time, because a sketch belongs to the workshop that made it."
 
 /*
   ══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -460,6 +616,17 @@ internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
 
   (`backend/app/services/stage_definitions.py`, the `STAGE_13` / `prototype` block — read 2026-08-27.
   Re-check: `grep -n 'turntablePhotos\|modelFile' backend/app/services/stage_definitions.py`.)
+
+  ── WHERE THESE TWO SENTENCES ARE NOW DRAWN, AND WHY THAT MOVED ────────────────────────────────────
+
+  They used to be printed at the top of this screen, above a list of navigation buttons, under the
+  argument that "this screen is the door" — a designer who read it on the way in could photograph the
+  piece while it was still in front of them, and one told after the .glb had gone up had been told too
+  late to act on it. That argument is unchanged and is now better served: the Upload tab draws them
+  IMMEDIATELY ABOVE THE TWO CAPTURE CARDS THEY ARE ABOUT (see `DwChooserHalf.mediaNotes`), which is
+  where the web puts the identical wording — `frontend/components/sketches/upload/
+  PrototypeModelField.tsx` renders it on the turntable card. Same words, same moment, one fewer
+  paragraph between a designer and the picker they came to use.
 
   ── THE THREE FILES THAT DECIDE THIS, AND WHY NO CLIENT CAN ────────────────────────────────────────
 
@@ -530,11 +697,12 @@ internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
  * the last clause reads "rather than in the app" where the web reads "rather than in the browser".
  *
  * IT NAMES THE FIELDS BY THEIR REGISTRY LABELS — “3D model” and “360° capture” — because those are
- * the words the designer will meet on the stage 13 form two taps from here. A sentence about "the
- * model file" would be advice about a box they cannot find.
+ * the words the designer will meet on the capture cards immediately below it and on the stage 13 form
+ * one tap from here. A sentence about "the model file" would be advice about a box they cannot find.
  *
- * The closing clause is the ACTION, and it is the whole point of saying any of this on the way in: a
- * designer who knows can photograph the prototype as well, and then the officer sees the piece.
+ * The closing clause is the ACTION, and it is the whole point of saying any of this before the
+ * upload: a designer who knows can photograph the prototype as well, and then the officer sees the
+ * piece.
  */
 internal const val DW_PROTOTYPE_3D_IN_THE_REPORT: String =
     "On stage 13 a prototype takes a “3D model” file and a “360° capture”, and only one of them " +
@@ -568,59 +736,21 @@ internal const val DW_TURNTABLE_CAPTURE_ADVICE: String =
  * How many workshops this screen asks for.
  *
  * The same 20 the list screen's first page uses. Deliberately NOT the server's ceiling: a longer list
- * on a chooser is a longer scroll to the same two buttons, and the row below the list names what was
- * left out and where to search for it.
+ * behind one picker is a longer scroll to the same answer, and `SearchableSelectField` grows its own
+ * filter box at eight options, so a designer on twenty is not scrolling blind. The sentence below the
+ * picker names what was left out and where to search for it.
  */
 private const val PAGE_SIZE = 20
 
-/** The two stages sketch and prototype work is filed under. Registry keys, never numbers. */
-private const val SKETCH_STAGE = "SKETCH_DEVELOPMENT"
-private const val PROTOTYPE_STAGE = "PROTOTYPE_DEVELOPMENT"
-
-@Composable
-private fun WorkshopRow(
-    workshop: DesignWorkshopDto,
-    onOpenStage: (String, String) -> Unit,
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.field.surface50, RoundedCornerShape(12.dp))
-            .padding(12.dp)
-    ) {
-        Text(
-            workshop.title.ifBlank { "Untitled workshop" },
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
-        )
-        // The three facts that tell two workshops apart on a phone: what craft, where, and when. Any
-        // of them may be blank on a workshop whose stage 1 is unfinished, so the line is assembled
-        // from what is there rather than printed with empty gaps.
-        val subtitle = listOfNotNull(
-            workshop.craftName?.takeIf { it.isNotBlank() },
-            workshop.clusterName?.takeIf { it.isNotBlank() } ?: workshop.state?.takeIf { it.isNotBlank() },
-            workshop.startDate?.take(10)?.takeIf { it.isNotBlank() }
-        ).joinToString(" · ")
-        if (subtitle.isNotBlank()) {
-            Text(subtitle, color = MaterialTheme.field.muted, fontSize = 12.sp)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
-                onClick = { onOpenStage(workshop.id, SKETCH_STAGE) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Filled.Brush, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text("Sketches", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
-            }
-            OutlinedButton(
-                onClick = { onOpenStage(workshop.id, PROTOTYPE_STAGE) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Filled.Category, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text("Prototypes", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
-            }
-        }
-    }
-}
+/**
+ * The two stages sketch and prototype work is filed under. Registry keys, never numbers.
+ *
+ * KEPT AS NAMED CONSTANTS EVEN THOUGH THE TABS NOW RESOLVE THE STAGE THROUGH THE REGISTRY
+ * (`dwStageKeyForEntity`, which is what both clients use and what survives `SKETCH_REVIEW` being
+ * dropped). They are the screen's own statement of which two stages it is about, they are what
+ * `frontend/e2e/sketches-parity-matrix-unit.spec.ts` asserts this file still names, and they are the
+ * fallback a reader looks for when asking "which stages is this screen for?" — a question the answer
+ * to which should not require reading a registry lookup three files away.
+ */
+internal const val SKETCH_STAGE = "SKETCH_DEVELOPMENT"
+internal const val PROTOTYPE_STAGE = "PROTOTYPE_DEVELOPMENT"

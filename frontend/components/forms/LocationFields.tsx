@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 
 import { Field, Select, TextInput } from "@/components/FormControls";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 // The MapLibre loader moved to components/forms/MapPointPicker so this card and the design-workshop
 // stage form share ONE module-level cache. Two caches meant two downloads of the same megabyte in a
 // session where a designer opened an artisan record and then a stage, on the rural connection this
@@ -1909,14 +1911,36 @@ export function LocationFields({
               </p>
             ) : null}
           </Field>
-          <Field label="Village or place">
-            <TextInput
+          {/*
+            THE ONE BOX IN THIS CARD THAT TAKES A MICROPHONE — added 2026-08-28 under the owner's
+            *"all the record pages should have dictation options available, wherever applicable"*.
+
+            A village name is a free proper noun, often in a script the designer's keyboard makes
+            hard work of, typed while standing in the place it names. Everything else in this card is
+            excluded by rule and each exclusion is a fact rather than a preference: `state` and
+            `district` are closed lists, `pincode` is six digits, and the four coordinate boxes are
+            decimal degrees — a recogniser writes "at" for a symbol, spells digits out and punctuates
+            what it hears, so a microphone on any of them reliably produces a value the field then
+            refuses.
+
+            NOT TITLE-CASED, deliberately: `village` is not in the API's `TITLE_CASE_FIELDS`, so a
+            hint promising a normalisation the server does not perform would be worse than none.
+
+            `explainWhenUnavailable={false}` — every form that mounts this card renders
+            `DictationUnavailableNotice` once, and a grey paragraph repeated per row is a paragraph
+            nobody reads. `FieldBlock`, not `Field`: the control contains a button, and a `<label>`
+            around a button folds its name into the box's own (§12.3).
+          */}
+          <FieldBlock label="Village or place">
+            <DictatedTextInput
               name="village"
+              label="Village or place"
               value={village}
               placeholder="Bagru"
-              onChange={(event) => setVillage(event.target.value)}
+              explainWhenUnavailable={false}
+              onChange={(next) => setVillage(next)}
             />
-          </Field>
+          </FieldBlock>
           <Field label="Pincode">
             <input
               ref={pincodeRef}

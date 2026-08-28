@@ -223,6 +223,11 @@ async def load_form(
         "ownerId": questionnaire.ownerId,
         "designWorkshopId": questionnaire.designWorkshopId,
         "isActive": questionnaire.isActive,
+        # PUBLISHED TO EVERY DESIGNER — the "default questionnaire". On the single read as well as on
+        # the list and the options, because this is the payload the DETAIL page renders and that page
+        # is where an admin turns it on and off. A screen that could set a flag it cannot see would
+        # be a toggle with no state.
+        "isShared": questionnaire.isShared,
         "version": questionnaire.version,
         "sourceFilename": questionnaire.sourceFilename,
         "createdAt": questionnaire.createdAt,

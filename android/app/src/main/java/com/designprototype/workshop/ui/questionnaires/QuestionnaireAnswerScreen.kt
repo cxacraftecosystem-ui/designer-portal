@@ -45,6 +45,7 @@ import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.RecordProseField
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -616,20 +617,46 @@ private fun AnswerField(
         question.helpText?.takeIf { it.isNotBlank() }?.let {
             Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp)
         }
-        OutlinedTextField(
+        /*
+         * ── THESE TWO CARRY A MICROPHONE, AND THE WEB'S ANSWER PAGE ALREADY DID ────────────────
+         *
+         * The owner, 2026-08-28: *"all the record pages should have dictation options available,
+         * wherever applicable so as to reduce the friction as much as possible."* This screen is a
+         * sitting of a DESIGNER-OWNED questionnaire — the plural `/questionnaires` family, not the
+         * ministry instrument at `/questionnaire` — and it is filled in beside the person answering.
+         * The answer box is the longest typing anywhere in this app.
+         *
+         * `frontend/app/(protected)/questionnaires/[id]/answer/page.tsx` has had a microphone on
+         * both of these since the dictation sweep (`OnDeviceDictationButton` beside each answer, and
+         * `DictatedTextArea` on the sitting's notes). Android drew five bare boxes. That is a parity
+         * gap in the direction the parity rule cares about least often and the owner cares about
+         * most: the handset is the device actually carried into the workshop.
+         *
+         * `RecordProseField` and not a hand-rolled control, for the reason its own header gives —
+         * one composable so twenty screens cannot drift in what dictation does or how it refuses.
+         * `rich = false`: an answer is a sentence, not a document, and the section-audio workflow
+         * beside it is where a long-form record of the sitting belongs.
+         *
+         * NO MICROPHONE WHILE LOCKED. `enabled = !locked` already greys the box; a live microphone
+         * over a box that cannot accept its text would transcribe a whole answer into nothing.
+         * `RecordProseField` forwards `enabled` to the field, and passing `dictate = !locked` is
+         * what stops the button drawing at all rather than drawing dead.
+         */
+        RecordProseField(
+            label = "Answer",
             value = answer,
             onValueChange = onAnswer,
             enabled = !locked,
-            label = { Text("Answer") },
+            dictate = !locked,
             minLines = 2,
             modifier = Modifier.fillMaxWidth()
         )
-        OutlinedTextField(
+        RecordProseField(
+            label = "Note (optional)",
             value = note,
             onValueChange = onNote,
             enabled = !locked,
-            label = { Text("Note (optional)") },
-            singleLine = true,
+            dictate = !locked,
             modifier = Modifier.fillMaxWidth()
         )
         when {
@@ -668,6 +695,19 @@ private fun EntryDetailsDialog(
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp
                 )
+                /*
+                 * ── NO MICROPHONE ON THESE TWO, AND IT IS NOT AN OVERSIGHT ────────────────────
+                 *
+                 * Both are NAMES, and a recogniser is at its worst on a proper noun: it returns the
+                 * nearest dictionary word, and the respondent's name is the one string on this
+                 * screen a designer later searches the sittings by. The sitting's label defaults to
+                 * that same name, so it inherits the same argument.
+                 *
+                 * This is the split the record forms already make — an artisan's address and notes
+                 * get a microphone, the name, phone and e-mail do not — and the web's own answer
+                 * page states it in these words at the same two boxes. Copying the rule rather than
+                 * inventing a second one is the whole point of writing it down twice.
+                 */
                 OutlinedTextField(
                     value = respondent,
                     onValueChange = { respondent = it },
@@ -682,10 +722,15 @@ private fun EntryDetailsDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                /* Prose, and dictated at the START of a sitting standing in the room being
+                   described — the moment typing is most awkward. The web's `DictatedTextArea` on
+                   the same box, in the same dialog's shape. */
+                RecordProseField(
+                    label = "Notes",
                     value = entryNotes,
                     onValueChange = { entryNotes = it },
-                    label = { Text("Notes") },
+                    enabled = !busy,
+                    dictate = !busy,
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )

@@ -58,6 +58,7 @@ export function RichTextField({
    * columns is not decoration — it is what keeps the formatting controls on one line.
    */
   className,
+  explainWhenUnavailable,
   onDirty,
   onValueChange
 }: {
@@ -68,6 +69,13 @@ export function RichTextField({
   defaultValue?: string | null;
   helper?: string;
   disabled?: boolean;
+  /**
+   * Let this editor's dictation button draw its own "this browser cannot dictate" sentence.
+   *
+   * Pass `false` on a form that renders `DictationUnavailableNotice` once at the top — ten copies of
+   * one paragraph is how the paragraph stops being read. See the prop on `RichTextEditor`.
+   */
+  explainWhenUnavailable?: boolean;
   maxLength?: number;
   listKind?: RichBlockKind;
   join?: PlainBlockJoin;
@@ -149,6 +157,9 @@ export function RichTextField({
         ariaLabelledBy={labelId}
         // Also the name the microphone reads out: "Dictate Remarks in English (India)".
         ariaLabel={label}
+        // Forwarded so a form that already says it once at the top can stop each editor saying it
+        // again — see the prop's own note on `RichTextEditor`.
+        explainWhenUnavailable={explainWhenUnavailable}
         maxLength={maxLength}
         listKind={listKind}
         {...(placeholder ? { placeholder } : {})}

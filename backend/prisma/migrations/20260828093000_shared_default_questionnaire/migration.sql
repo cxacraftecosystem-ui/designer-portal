@@ -1,0 +1,49 @@
+-- The "default questionnaire": one instrument an administrator publishes to every designer.
+--
+-- =============================================================================================
+-- THE GAP, AND WHY NOTHING SHORT OF A COLUMN CLOSES IT
+-- =============================================================================================
+--
+-- The owner, 2026-08-28: "The default questionnaire that was previously discussed/configured is
+-- still not visible to designers. Fix this so that the default questionnaire is available to them
+-- and designers can directly select and utilize it."
+--
+-- `_visible_questionnaire_where` (backend/app/api/routes/questionnaire_forms.py) admits exactly
+-- three things: a designer's OWN forms, forms attached to a design workshop they created, and forms
+-- attached to one they hold a `DesignWorkshopViewer` grant on. A form meant for EVERYBODY — the
+-- standard instrument, attached to no workshop precisely because it belongs to all of them —
+-- matches none of the three, so it was invisible to every designer while sitting in the table.
+--
+-- The two conventions that look like they would do instead are both accidents rather than
+-- decisions. "Owned by an admin" would publish an admin's half-finished draft for one cluster to
+-- the whole country the moment it was saved. "Attached to no workshop" would publish every
+-- designer's own unattached draft to every other designer. Publication has to be something somebody
+-- DID, so it is a column somebody set.
+--
+-- =============================================================================================
+-- WHAT IT ADMITS, AND WHAT IT DELIBERATELY DOES NOT
+-- =============================================================================================
+--
+-- It admits the FORM: title, description, sections, questions — enough to find it, select it and
+-- take a sitting on it. It carries NOTHING about anybody's sittings. `read_questionnaire` still
+-- hands a caller only their own `entries` unless they own the form, are an admin, or work on the
+-- workshop it is attached to, and that must not change: a shared instrument becoming a window onto
+-- every respondent's name and every recorded answer in the repository is the exact leak that
+-- route's docstring records having already had to close once.
+--
+-- =============================================================================================
+-- WHY THIS IS SAFE TO APPLY
+-- =============================================================================================
+--
+-- Additive, NOT NULL with a DEFAULT of false, so every existing row keeps behaving exactly as it
+-- does today and no read widens until an administrator ticks something. A client that has never
+-- heard of the column is unaffected.
+--
+-- The index is (isShared, isActive) because those two are always asked together: the new visibility
+-- clause is `{isShared: true, isActive: true}`, and a retired instrument must stop appearing in
+-- everybody's picker the moment it is retired rather than staying because only half the pair was
+-- indexed.
+
+ALTER TABLE "Questionnaire" ADD COLUMN "isShared" BOOLEAN NOT NULL DEFAULT false;
+
+CREATE INDEX "Questionnaire_isShared_isActive_idx" ON "Questionnaire"("isShared", "isActive");

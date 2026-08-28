@@ -38,16 +38,18 @@ import java.io.File
  *
  * ── WHAT IS DELIBERATELY DIFFERENT, AND THEREFORE NOT A FAILURE ─────────────────────────────────
  *
- *  1. TWO TILES ARE WEB-ONLY: "Design review" and "My designer profile". Both are real, working
- *     destinations on this handset — `NavDestination.DESIGN_REVIEW` and
- *     `NavDestination.DESIGNER_PROFILE`, with a screen behind each. What they lack is a CARD, and
- *     the reason is structural: this grid is the bespoke cards plus `EntryMode.entries` plus the
- *     admin card, and neither of those two destinations is an `EntryMode`. Say the missing thing
- *     precisely and never a tier more than that — the version of this claim that said "no feature"
- *     was wrong about sketches for a whole release, and an over-claim sends every reader looking
- *     for a gap that is not there. Design review is the next card to add, and it is deliberately a
- *     separate change: one at a time, so the grid row each costs on a 360dp handset is argued on
- *     its own evidence. Moving it means editing [WEB_ONLY] and writing the reason there.
+ *  1. NO TILE IS WEB-ONLY ANY MORE, and [WEB_ONLY] is empty. Until 2026-08-28 this point read "TWO
+ *     TILES ARE WEB-ONLY: Design review and My designer profile", and it was careful to say that
+ *     both were real, working destinations on this handset — `NavDestination.DESIGN_REVIEW` and
+ *     `NavDestination.DESIGNER_PROFILE`, with a screen behind each — and that what they lacked was
+ *     a CARD. That care mattered and it was still not enough: the owner reported both pages as
+ *     "missing from the dashboard", which is the same report the Sketches & prototypes card was
+ *     added to answer, and it is the report a menu-only destination will always produce. **A
+ *     destination that exists in one register and not the other is the defect this file is for**,
+ *     and "the drawer has it" is not the other register — the dashboard is the screen this app
+ *     opens on. Both cards are now bespoke, for the structural reason the old text gave: this grid
+ *     is the bespoke cards plus `EntryMode.entries` plus the admin card, and neither destination is
+ *     an `EntryMode`. Adding a label back to [WEB_ONLY] owes this point a reason and a date.
  *  2. SETTINGS SITS LAST HERE AND MID-GRID ON THE WEB. This grid appends the admin card after
  *     Workshop; the web array lists it between Users and Craft. Already recorded in that array's own
  *     comment ("The ORDER already diverges too"), so it is pinned as the one exception rather than
@@ -245,17 +247,52 @@ class DashboardTileParityTest {
         // product: a designer opens the app to run a design and prototype workshop, and everything
         // below — artisans, products, tools, the questionnaire — is the reference data a workshop
         // draws on. Both grids make that call, and both say so in a comment above the tile.
-        assertEquals(
-            listOf(DesignWorkshopCard.LABEL, SketchesAndPrototypesCard.LABEL),
-            ANDROID.take(2).map { it.label }
+        // THREE AND THEN ARTISAN, on both clients since 2026-08-28. This assertion took the handset's
+        // first TWO and the web's first FOUR while Design review was web-only; now the same four
+        // words open both grids, and Artisan is named on both sides so the block cannot be padded
+        // from below without somebody deciding here that the new tile belongs inside it.
+        val block = listOf(
+            DesignWorkshopCard.LABEL,
+            SketchesAndPrototypesCard.LABEL,
+            DesignReviewCard.LABEL,
+            "Artisan",
         )
-        // The web leads with the same two, then the third member of the block — the card this
-        // handset has not grown yet — then Artisan, so the block cannot be padded from below
-        // without somebody deciding here that the new tile belongs inside it.
-        assertEquals(
-            listOf(DesignWorkshopCard.LABEL, SketchesAndPrototypesCard.LABEL, "Design review", "Artisan"),
-            WEB.take(4).map { it.label }
+        assertEquals(block, ANDROID.take(4).map { it.label })
+        assertEquals(block, WEB.take(4).map { it.label })
+    }
+
+    @Test
+    fun `the two design-workshop cards added on 2026-08-28 read one predicate and one label`() {
+        // The property `the sketches card and its menu row carry one predicate and one label` holds
+        // for its own card; these are the same two claims for the two that followed it. A card and a
+        // row that disagree about who may see a destination is the stranded-work trap arriving by the
+        // other door, and a card and a row that disagree about its NAME read to a designer as two
+        // different features.
+        val pairs = listOf(
+            Triple(NavDestination.DESIGN_REVIEW, DesignReviewCard.LABEL, DesignReviewCard::visibleTo),
+            Triple(
+                NavDestination.DESIGNER_PROFILE,
+                DesignerProfileCard.LABEL,
+                DesignerProfileCard::visibleTo,
+            ),
         )
+        for ((destination, label, visibleTo) in pairs) {
+            val row = FIELD_NAV_ITEMS.first { it.destination == destination }
+            assertEquals("$destination's card and menu row must carry one spelling", row.label, label)
+            val disagreements = everyRole.filter { role -> row.can(user(role)) != visibleTo(user(role)) }
+            assertEquals(
+                "$destination's card and menu row must never disagree about who may reach it",
+                emptyList<String>(),
+                disagreements
+            )
+            // And the predicate is the SET the server enforces, never a rank ladder — a professor
+            // outranks a designer everywhere else in this app and sits outside it.
+            assertEquals(
+                "$destination must be offered to exactly deps.DESIGN_WORKSHOP_ROLES",
+                setOf("DESIGNER", "ADMIN", "MASTER_ADMIN"),
+                everyRole.filter { visibleTo(user(it)) }.toSet()
+            )
+        }
     }
 
     @Test
@@ -373,8 +410,14 @@ class DashboardTileParityTest {
  * above and nothing else in this module should grow a second copy of it.
  * ───────────────────────────────────────────────────────────────────────────────────────────────── */
 
-/** See point 1 of the header. In the web array's own order, so a failure names them in that order. */
-private val WEB_ONLY = listOf("Design review", "My designer profile")
+/**
+ * See point 1 of the header. In the web array's own order, so a failure names them in that order.
+ *
+ * EMPTY SINCE 2026-08-28, and the empty list is an assertion rather than a leftover: every tile the
+ * web grid draws now has a card on this handset. Anything added here again owes the header a reason
+ * and a date, exactly as the two that used to be here did.
+ */
+private val WEB_ONLY = emptyList<String>()
 
 private const val SETTINGS = "Settings"
 
@@ -382,17 +425,24 @@ private const val SETTINGS = "Settings"
  * The bespoke cards' strings, resolved from the objects that OWN them rather than from source text,
  * so a rewording fails the comparison instead of quietly passing the parse.
  *
- * A closed list on purpose. A third bespoke card — Design review is the one that is coming — reaches
- * [resolve] with an expression this map has no entry for and fails BY NAME, which forces its author
- * to come here and say what the new card is. Same mechanism, for the same reason, as the closed
- * `FAMILY` list in `frontend/e2e/dashboard-tile-parity-unit.spec.ts`: the defect this family keeps
- * producing is a member arriving in one register and no other.
+ * A closed list on purpose. A FIFTH bespoke card reaches [resolve] with an expression this map has
+ * no entry for and fails BY NAME, which forces its author to come here and say what the new card is.
+ * Same mechanism, for the same reason, as the closed `FAMILY` list in
+ * `frontend/e2e/dashboard-tile-parity-unit.spec.ts`: the defect this family keeps producing is a
+ * member arriving in one register and no other. (This comment said "a third bespoke card — Design
+ * review is the one that is coming"; the third and fourth arrived together on 2026-08-28.)
  */
 private val CONSTANTS = mapOf(
     "DesignWorkshopCard.LABEL" to DesignWorkshopCard.LABEL,
     "DesignWorkshopCard.PRIMARY_LABEL" to DesignWorkshopCard.PRIMARY_LABEL,
     "SketchesAndPrototypesCard.LABEL" to SketchesAndPrototypesCard.LABEL,
     "SketchesAndPrototypesCard.PRIMARY_LABEL" to SketchesAndPrototypesCard.PRIMARY_LABEL,
+    "DesignReviewCard.LABEL" to DesignReviewCard.LABEL,
+    "DesignReviewCard.PRIMARY_LABEL" to DesignReviewCard.PRIMARY_LABEL,
+    "DesignerProfileCard.LABEL" to DesignerProfileCard.LABEL,
+    "DesignerProfileCard.PRIMARY_LABEL" to DesignerProfileCard.PRIMARY_LABEL,
+    "ScanCodeCard.LABEL" to ScanCodeCard.LABEL,
+    "ScanCodeCard.PRIMARY_LABEL" to ScanCodeCard.PRIMARY_LABEL,
 )
 
 /** What a reader of either grid actually sees. Nothing platform-shaped crosses this type. */
@@ -771,13 +821,78 @@ private fun handsetGrid(source: String, modes: List<Mode>): List<Tile> {
     // there rather than a silent default here.
     assertNull("EntryMode.icon() has grown an `else` arm", glyphFallback)
 
-    val fromModes = modes.filter { it.onDashboard }.map { mode ->
-        Tile(
-            label = mode.label,
-            button = requireQuoted(words[mode.name] ?: wordFallback, "${mode.name}'s button word"),
-            hasSecondButton = mode.editable,
-            glyph = glyphs[mode.name] ?: "",
-        )
+    // Bespoke cards declared INSIDE the loop, each keyed by the mode its guard names. The grid grew
+    // one of these when My designer profile arrived: the web array puts that tile between Workshop
+    // access and Users, and `the shared tiles stand in one order` is a stronger property to keep
+    // than this parser was simple.
+    val spliced = splicedCards(loop)
+    val onGrid = modes.filter { it.onDashboard }
+    assertEquals(
+        "a card is spliced after an EntryMode that has no tile on this grid, so it would never be " +
+            "drawn — name a mode that carries `onDashboard = true`",
+        emptySet<String>(),
+        spliced.keys - onGrid.map { it.name }.toSet()
+    )
+
+    val fromModes = buildList {
+        for (mode in onGrid) {
+            add(
+                Tile(
+                    label = mode.label,
+                    button = requireQuoted(words[mode.name] ?: wordFallback, "${mode.name}'s button word"),
+                    hasSecondButton = mode.editable,
+                    glyph = glyphs[mode.name] ?: "",
+                )
+            )
+            spliced[mode.name]?.let { addAll(it) }
+        }
     }
     return bespokeCards(lead) + fromModes + bespokeCards(trail)
+}
+
+/**
+ * The bespoke cards written inside the `actions.forEach` body, keyed by the [EntryMode] member the
+ * nearest preceding `entry == EntryMode.X` guard names.
+ *
+ * WHY THIS EXISTS AT ALL. Until My designer profile landed, every bespoke card sat either wholly
+ * before the enum run or wholly after it, and [handsetGrid] was a three-part concatenation. That
+ * shape cannot express a tile the web array places IN THE MIDDLE of the run, and the two ways out of
+ * it were both worse than teaching this parser one more sentence of Kotlin: a second
+ * `actions.forEach` block (which the assertion above forbids by name, because a reader then has to
+ * work out which of two loops a mode is drawn by), or pinning a second order exception beside
+ * Settings — and an exception list is exactly how the register this file guards comes to disagree
+ * with itself.
+ *
+ * THE GUARD IS READ BACKWARDS FROM THE CONSTRUCTION, not forwards from the `if`, because that is
+ * what makes the answer right when the guard carries other clauses ("showDesignerProfile && entry ==
+ * …"). A construction with NO guard anywhere before it in the loop is a card drawn once per mode,
+ * which is a bug rather than a placement, so it fails by name.
+ */
+private fun splicedCards(loop: String): Map<String, List<Tile>> {
+    val construction = "DashboardTile("
+    val guardPattern = Regex("""entry\s*==\s*EntryMode\.([A-Z_]+)""")
+    val out = LinkedHashMap<String, MutableList<Tile>>()
+    var at = loop.indexOf(construction)
+    while (at >= 0) {
+        val props = properties(balanced(loop, at + construction.length - 1, '('), '=')
+        // The generic tile — the one the loop exists for. Everything else in here is a splice.
+        if (props["label"] != "entry.label") {
+            val guard = guardPattern.findAll(loop.substring(0, at)).lastOrNull()
+            assertNotNull(
+                "a DashboardTile inside `actions.forEach` is not guarded by an `entry == " +
+                    "EntryMode.X` test, so it would be added once per mode: ${props["label"]}",
+                guard
+            )
+            out.getOrPut(guard!!.groupValues[1]) { mutableListOf() }.add(
+                Tile(
+                    label = resolve(props["label"], "label"),
+                    button = resolve(props["primaryLabel"], "primaryLabel"),
+                    hasSecondButton = props.containsKey("onUpdate"),
+                    glyph = props["icon"] ?: "",
+                )
+            )
+        }
+        at = loop.indexOf(construction, at + 1)
+    }
+    return out
 }

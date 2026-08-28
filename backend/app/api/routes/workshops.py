@@ -17,7 +17,7 @@ rows move to DENIED/REVOKED and stay put; see :func:`revoke_workshop_assignment`
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 
 from app.core.db import db
 from app.core.deps import (
@@ -72,6 +72,8 @@ from app.services.workshop_access import (
 )
 from app.services.workshop_inference import (
     apply_workshop_mapping,
+    discard_one_unmapped,
+    file_one_unmapped,
     plan_workshop_mapping,
 )
 
@@ -310,6 +312,13 @@ async def create_workshop(
 # Declared above ``/{workshop_id}`` for the reason stated below the access-request banner: FastAPI
 # matches in declaration order, so ``/workshops/unmapped`` registered after ``/workshops/{workshop_id}``
 # would be swallowed as a workshop whose id is the word "unmapped".
+#
+# AND THE RULE IS NOT ONLY ABOUT THE SECOND SEGMENT ANY MORE. The two single-row routes below are
+# ``/unmapped/{bucket}/{record_id}`` — three segments, the same shape as
+# ``/{workshop_id}/assignments/{user_id}`` further down this file, whose DELETE would match
+# ``DELETE /workshops/unmapped/interviews/<id>`` perfectly if it came first and would then look for
+# an assignment on a workshop called "unmapped". Everything in this block stays above every
+# parameterised path in the file, whatever its length.
 
 
 @router.get("/unmapped")
@@ -351,6 +360,68 @@ async def map_unmapped_records(_: Any = Depends(require_admin)) -> dict[str, Any
     than being quietly absorbed.
     """
     return await apply_workshop_mapping()
+
+
+@router.post("/unmapped/{bucket}/{record_id}")
+async def file_one_unmapped_record(
+    bucket: str,
+    record_id: str,
+    workshopId: str = Body(..., embed=True),
+    _: Any = Depends(require_admin),
+) -> dict[str, Any]:
+    """File ONE record the ladder could not settle, under the workshop an admin names.
+
+    THE COMPANION TO THE REPORT'S "left alone" LIST, and the reason it needed one. The ladder
+    deliberately refuses a row whose evidence is absent or points two ways
+    (``services/workshop_inference``'s header says why picking one would be worse than refusing), so
+    those rows are reported by name and by reason — and until this route existed that report was
+    where the story stopped. An admin who could see "this interview was at Bagru" had no way to say
+    so without leaving the screen, hunting the record down in another list, and editing it there.
+
+    NOT A GENERAL "MOVE THIS RECORD" ROUTE, and that is the whole shape of it. It writes only where
+    ``workshopId`` is still NULL, so it can close a gap and can never quietly re-file something a
+    person already decided; a row filed since the report was read comes back 409 naming the workshop
+    it went to. Changing a record's workshop AFTER it has one is the record's own edit form, which
+    writes a ``RecordRevision`` — as it should, because that is an edit to a record rather than the
+    closing of a hole.
+
+    NO REVISION ROW HERE, deliberately, and it is the same call the bulk button makes: filling in a
+    column that was never populated is not an edit somebody made to somebody else's answer, and the
+    two paths that close this one gap must not disagree about whether it appears in a record's
+    history. ``update_many`` could not write one per row in any case.
+
+    ``require_admin``, exactly as the two routes above — a per-row account of records the caller may
+    not own, and a write into them.
+    """
+    return await file_one_unmapped(bucket, record_id, workshopId)
+
+
+@router.delete("/unmapped/{bucket}/{record_id}")
+async def discard_one_unmapped_record(
+    bucket: str,
+    record_id: str,
+    _: Any = Depends(require_admin),
+) -> dict[str, Any]:
+    """Delete ONE unfiled record permanently. Admin and master admin only.
+
+    THE OTHER THING AN ADMIN LOOKING AT THIS LIST NEEDS. Some of what lands here should not exist —
+    a test row, a duplicated sync, a file uploaded twice — and the reason it is on the report at all
+    is that nothing in the repository claims it. ``discard_one_unmapped`` carries the argument for
+    the delete being real rather than a flag.
+
+    THE SAME PREDICATE AS EVERY OTHER DELETE IN THIS API, not a looser one. ``require_admin`` here is
+    what ``deps.assert_can_delete`` enforces on ``DELETE /artisans/{id}``, ``/products/{id}``,
+    ``/tools/{id}``, ``/processes/{id}``, ``/questionnaire/interviews/{id}`` and
+    ``/media/{id}``'s admin branch — one rule, reached from the screen where the record is visible.
+
+    200 WITH A BODY, where the per-type deletes answer 204. They have nothing to report; this does.
+    Every MediaFile relation is ``onDelete: SetNull``, so deleting a parent record DETACHES its
+    attachments rather than removing them, and the count of what survived is the difference between
+    "deleted permanently" and "deleted permanently, and its nine photographs are still in the
+    repository with nothing pointing at them". The client says that sentence out loud; it cannot if
+    the server answers 204.
+    """
+    return await discard_one_unmapped(bucket, record_id)
 
 
 # --------------------------------------------------------------------------- access requests

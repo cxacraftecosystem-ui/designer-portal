@@ -1326,6 +1326,103 @@ async def list_design_workshops(
     return page_payload(items, total, clean_page, clean_size)
 
 
+@router.get("/default-for-me")
+async def default_design_workshop_for_me(
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """The design workshop this account was most recently given access to — the smart default.
+
+    ONE ENDPOINT BECAUSE THERE IS ONE QUESTION, asked from six or seven places. The owner's
+    instruction of 2026-08-28 has two halves and they are the same query:
+
+    * *"When a designer selects Start a new workshop, provide a dropdown containing the workshops
+      that the designer is already part of or has been given access to. By default, select the
+      Design and Prototype Workshop that the designer was most recently given access to."*
+    * *"Whenever a designer goes to create/record any particular record type, the most recently
+      allocated Design and Prototype Workshop should be populated by default."*
+
+    Two clients times seven record forms is fourteen places that would otherwise each decide what
+    "most recently allocated" means, and they would not agree — which is the failure
+    ``workshopOccurrenceDate``'s comment in the web client already records for the ORDINARY workshop
+    default ("getting 'which workshop is most recent' wrong picks the wrong default silently"). So
+    the server answers it once and both clients read the answer.
+
+    ── WHAT "MOST RECENTLY GIVEN ACCESS TO" MEANS, EXACTLY ──────────────────────────────────────
+
+    Access to a design workshop arrives by exactly two doors and this reads both, taking whichever
+    is later:
+
+    * **A grant.** ``DesignWorkshopViewer.createdAt`` is the moment an admin ticked the box, or the
+      moment a join card was redeemed — ``design_workshop_grants._write_the_viewer_row`` sets it in
+      the same statement that creates the row. This is the door the owner's phrase names: a workshop
+      "created by the Ministry and allocated to particular designers".
+    * **Authorship.** A workshop this account created is one it has had access to since
+      ``DesignWorkshop.createdAt``. Reading only grants would leave a designer who opened their own
+      workshop this morning defaulted to somebody else's from last month.
+
+    ``has_viewer_grant`` reads the EXISTENCE of a viewer row and nothing on it, so ordering by
+    ``createdAt`` here adds no new meaning to that column — it reads a timestamp the row already
+    keeps, and no access decision is made from it.
+
+    ── IT IS A SUGGESTION AND NEVER A SCOPE ─────────────────────────────────────────────────────
+
+    The answer is a DEFAULT for a dropdown. Nothing may gate on it: the caller still picks, the
+    picker still lists everything ``visible_to_clause`` admits, and every write is still checked by
+    ``load_workshop_or_404``. A client that treated this as "the workshop I am allowed to use" would
+    be inventing a scope the API does not have.
+
+    ── A SOFT-DELETED WORKSHOP IS NEVER THE ANSWER ─────────────────────────────────────────────
+
+    ``deletedAt: null`` on both branches. A deleted workshop is invisible to its own creator
+    (``load_workshop_or_404`` answers 404 to a non-admin reading one), so defaulting a form to it
+    would populate a dropdown with a row the very next request denies.
+
+    ── AND "NONE" IS AN ANSWER, NOT AN ERROR ───────────────────────────────────────────────────
+
+    A newly onboarded designer is on no workshop, which is ordinary. This returns
+    ``{"workshopId": None, ...}`` with a 200 rather than a 404, because the callers are dropdowns
+    filling in a default: a 404 would arrive at seven forms as a failure to report, and every one of
+    them would have to learn that this particular failure means "nothing to prefill", which is how
+    an empty answer comes to be drawn as a broken screen.
+    """
+    grant, own = await asyncio.gather(
+        db.designworkshopviewer.find_first(
+            where={"userId": current_user.id, "designWorkshop": {"is": {"deletedAt": None}}},
+            order={"createdAt": "desc"},
+            include={"designWorkshop": True},
+        ),
+        db.designworkshop.find_first(
+            where={"createdById": current_user.id, "deletedAt": None},
+            order={"createdAt": "desc"},
+        ),
+    )
+
+    # (when access began, the workshop row, which door it came through) for whichever exists.
+    candidates: list[tuple[datetime, Any, str]] = []
+    if grant is not None and getattr(grant, "designWorkshop", None) is not None:
+        candidates.append((grant.createdAt, grant.designWorkshop, "GRANTED"))
+    if own is not None:
+        candidates.append((own.createdAt, own, "CREATED"))
+    if not candidates:
+        # ANSWERED, AND THE ANSWER IS NONE. `reason` is null rather than a word, so a client cannot
+        # print "granted" over an empty dropdown.
+        return {"workshopId": None, "title": None, "accessAt": None, "reason": None}
+
+    accessed_at, workshop, reason = max(candidates, key=lambda row: row[0])
+    return {
+        "workshopId": workshop.id,
+        "title": workshop.title,
+        # ISO on the wire, as every other timestamp this API publishes is. The clients show it as
+        # "you were added on …" beside the prefilled row so the default is legible rather than
+        # mysterious — a dropdown that fills itself in and cannot say why reads as a bug.
+        "accessAt": accessed_at.isoformat() if accessed_at is not None else None,
+        # WHICH DOOR, because the two need different sentences: "the workshop you opened most
+        # recently" and "the workshop you were most recently added to" are different facts, and a
+        # designer who is told the wrong one goes looking for an allocation that never happened.
+        "reason": reason,
+    }
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_design_workshop(
     payload: DesignWorkshopCreate, current_user: Any = Depends(get_current_user)

@@ -284,6 +284,40 @@ interface WorkshopRepositoryApi {
     @POST("workshops/unmapped/map")
     suspend fun mapUnmappedRecords(): WorkshopMappingPlanDto
 
+    /**
+     * File ONE record the ladder could not settle, under the workshop an admin names.
+     *
+     * THE COMPANION TO THE "left alone" LIST. The ladder deliberately refuses a row whose evidence is
+     * absent or points two ways, and until this route existed that report was where the story
+     * stopped: an admin who could see "this interview was at Bagru" had no way to say so without
+     * leaving the screen and hunting the record down in another list.
+     *
+     * NOT A GENERAL "MOVE THIS RECORD" ROUTE. The server writes only where `workshopId` is still
+     * NULL, so it can close a gap and can never quietly re-file something a person already decided;
+     * a row filed since the report was read answers 409 naming the workshop it went to.
+     */
+    @POST("workshops/unmapped/{bucket}/{recordId}")
+    suspend fun fileOneUnmappedRecord(
+        @Path("bucket") bucket: String,
+        @Path("recordId") recordId: String,
+        @Body body: FileUnmappedRecordBody,
+    ): WorkshopMappingPlanDto
+
+    /**
+     * Delete ONE unfiled record permanently. Admin and master admin only.
+     *
+     * 200 WITH A BODY where every per-type delete answers 204, and the body is the point: every
+     * `MediaFile` relation is `onDelete: SetNull`, so deleting a parent DETACHES its attachments
+     * rather than removing them. The count of what survived is the difference between "deleted
+     * permanently" and "deleted permanently, and its nine photographs are still in the repository
+     * with nothing pointing at them" — and a client cannot say the second sentence off a 204.
+     */
+    @DELETE("workshops/unmapped/{bucket}/{recordId}")
+    suspend fun discardUnmappedRecord(
+        @Path("bucket") bucket: String,
+        @Path("recordId") recordId: String,
+    ): DiscardUnmappedRecordDto
+
     @Multipart
     @POST("media/analyze-measurement")
     suspend fun analyzeMeasurement(
@@ -996,6 +1030,21 @@ interface WorkshopRepositoryApi {
         @Query("state") state: String? = null,
         @Query("mineOnly") mineOnly: Boolean = false
     ): DesignWorkshopPageDto
+
+    /**
+     * The design workshop this account was most recently given access to — the smart default every
+     * record form opens on.
+     *
+     * ONE ENDPOINT BECAUSE THERE IS ONE QUESTION, asked from seven forms on this client and seven on
+     * the web. Deriving "most recently allocated" here would mean fourteen implementations of it,
+     * and they would not agree — the server reads `DesignWorkshopViewer.createdAt`, which is when an
+     * admin actually allocated the workshop and which no client can see.
+     *
+     * IT IS A SUGGESTION AND NEVER A SCOPE. The picker still lists everything the server admits and
+     * every write is still gated by `load_workshop_or_404`.
+     */
+    @GET("design-workshops/default-for-me")
+    suspend fun designWorkshopDefaultForMe(): DesignWorkshopDefaultDto
 
     @POST("design-workshops")
     suspend fun createDesignWorkshop(@Body body: DesignWorkshopCreateBody): DesignWorkshopDto

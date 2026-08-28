@@ -28,6 +28,26 @@ export type ReviewField = {
   multiline?: boolean;
   /** Mirrors `min_length=1` on the record's update schema — the column cannot be blanked. */
   required?: boolean;
+  /**
+   * Draw this box as a CLOSED VOCABULARY rather than free text.
+   *
+   * ── WHY A MARKER AND NOT AN `options` ARRAY ────────────────────────────────────────────────────
+   *
+   * This module is a plain registry with no imports; handing it a list would make it the second
+   * place the interview languages are written down, and the whole point of `lib/interviewLanguages`
+   * is that the list exists once. The panel resolves the marker to the real options — and to the
+   * "preserve whatever is stored as the front row" rule, which a static array could not express: an
+   * interview saved before the vocabulary existed must not silently lose its language on the next
+   * save.
+   *
+   * ── WHY THIS FIELD NEEDED IT ───────────────────────────────────────────────────────────────────
+   *
+   * `/questionnaire`'s own Language box became a dropdown on 2026-08-28, matching the handset, which
+   * has had one for longer. THIS panel is the only other web surface where a saved interview's
+   * language can be changed, and it stayed a text box — so the one route that edits an APPROVED
+   * record still took free text and bypassed the vocabulary entirely.
+   */
+  vocabulary?: "interviewLanguage";
 };
 
 const FIELDS: Record<string, ReviewField[]> = {
@@ -76,7 +96,7 @@ const FIELDS: Record<string, ReviewField[]> = {
   questionnaire: [
     { key: "title", label: "Interview title", required: true },
     { key: "place", label: "Place" },
-    { key: "language", label: "Language" },
+    { key: "language", label: "Language", vocabulary: "interviewLanguage" },
     { key: "notes", label: "Notes", multiline: true }
   ],
   media: [

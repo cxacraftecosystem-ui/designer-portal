@@ -122,6 +122,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -223,6 +224,9 @@ import com.designprototype.workshop.ui.rememberCarryPrefill
 import com.designprototype.workshop.ui.Coral
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireScreen
 import com.designprototype.workshop.ui.DataBrowserScreen
+import com.designprototype.workshop.ui.DesignWorkshopField
+import com.designprototype.workshop.ui.rememberDesignWorkshopPicker
+import com.designprototype.workshop.ui.RecordCodeLookupPanel
 import com.designprototype.workshop.ui.RecordCodeSection
 import com.designprototype.workshop.ui.RecordEditHistorySection
 // The shared prose box behind every record form: an optional on-device microphone and an optional
@@ -307,6 +311,7 @@ import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Architecture
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Brush
@@ -335,6 +340,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Storage
@@ -372,11 +378,17 @@ import com.designprototype.workshop.data.StagedMedia
 import com.designprototype.workshop.data.TaskDto
 import com.designprototype.workshop.data.WorkshopAccessLevelDto
 import com.designprototype.workshop.data.WorkshopAssignmentDto
+import com.designprototype.workshop.data.DW_INTERVIEW_LANGUAGE_PLACEHOLDER
+import com.designprototype.workshop.data.DW_INTERVIEW_LANGUAGES
+import com.designprototype.workshop.data.dwInterviewLanguageOptions
+import com.designprototype.workshop.data.WorkshopMappingRowDto
+import com.designprototype.workshop.data.WorkshopMappingWindowDto
 import com.designprototype.workshop.data.WorkshopMappingPlanDto
 import com.designprototype.workshop.data.WorkshopSubmissionCheckDto
 import com.designprototype.workshop.data.titleCasePreview
 import androidx.compose.runtime.DisposableEffect
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
@@ -698,6 +710,20 @@ private sealed interface Screen {
      * workshops this feature exists to reach.
      */
     data object DesignReview : Screen
+
+    /**
+     * SCAN A CODE — the destination whose whole job is reading a card, a tag or a screenshot.
+     *
+     * NO PARAMETERS, AND THAT IS THE FEATURE. A scan is repository-wide: the code carries the record
+     * type and the record id, so this screen needs to be told nothing at all about where the
+     * designer is standing. Anything it took would be a question asked before the answer, which is
+     * exactly the errand `RecordCodeLookup`'s header refuses ("asking a designer to open some
+     * workshop before looking up a tool would be asking them to name the very thing they scanned the
+     * tag to avoid naming").
+     *
+     * See [NavDestination.SCAN_CODE] for why the panel gained a destination rather than moving.
+     */
+    data object ScanCode : Screen
 
     /**
      * The artisan cards and prototype tags for one workshop — the phone's `…/codes` page.
@@ -1814,6 +1840,10 @@ private fun HomeScreen(
             // The web's /search. [EntryMode.SEARCH] keeps the page's own title so the two entries that
             // both want the words "Browse records" cannot collide in one menu.
             NavDestination.BROWSE_RECORDS -> screen = screenFor(EntryMode.SEARCH)
+            // Its own screen and NOT `screenFor(EntryMode.SEARCH)`. Landing a designer who tapped
+            // "Scan a code" on the search page with the scanner somewhere down it is the buried
+            // route this destination was added to replace, only with a better sign on the door.
+            NavDestination.SCAN_CODE -> screen = Screen.ScanCode
             NavDestination.MAP -> screen = screenFor(EntryMode.MAP)
             // The web's /data directory tree, which owns its whole viewport (see [Screen.DataBrowser]).
             NavDestination.VIEW_DATA -> screen = screenFor(EntryMode.DATA_BROWSER)
@@ -1921,6 +1951,10 @@ private fun HomeScreen(
             // stage opened FROM here backs out to that stage's own index, which is that screen's
             // business and not this one's.
             is Screen.DesignReview -> Screen.Dashboard
+            // Reached from the menu or from the dashboard tile, so back is the dashboard. A RECORD
+            // opened from a scan backs out to wherever that record's own editor backs out to, which
+            // is that screen's business — this one hands over and keeps nothing.
+            is Screen.ScanCode -> Screen.Dashboard
             is Screen.DesignerProfile -> if (s.userId != null) Screen.DesignerRoster else Screen.Dashboard
             is Screen.DesignerRoster -> Screen.Dashboard
             is Screen.AccessRoster -> Screen.Dashboard
@@ -1991,6 +2025,10 @@ private fun HomeScreen(
         // Null for the same reason: the screen draws its own "Design review" heading, which is the
         // web's `PageHeader title` word for word, over a description the shared header cannot carry.
         is Screen.DesignReview -> null
+        // The shared header carries this one, because the screen below it is a PANEL rather than a
+        // page: `RecordCodeLookupPanel` draws a card with its own small caption and no page heading,
+        // and a destination reached from a tile has to say its own name somewhere.
+        is Screen.ScanCode -> "Scan a code"
         is Screen.DesignerProfile -> null
         is Screen.DesignerRoster -> null
         is Screen.AccessRoster -> null
@@ -2051,6 +2089,11 @@ private fun HomeScreen(
         // this screen is reached from its own menu row, and lighting a different row than the one that
         // was tapped is how a menu comes to disagree with the screen behind it.
         is Screen.DesignReview -> NavDestination.DESIGN_REVIEW
+        // Its OWN row and never BROWSE_RECORDS, even though the search screen mounts the same panel:
+        // lighting the row a designer did not tap is how a menu comes to disagree with the screen
+        // behind it, and here it would additionally point them back at the buried route this
+        // destination exists to replace.
+        is Screen.ScanCode -> NavDestination.SCAN_CODE
         // Lights the same row as its siblings even though it is admin chrome, because it is still a
         // screen INSIDE one design workshop and the row opens the list the admin is already in.
         // It is not `DESIGNER_ROSTER`: that is the institution's list of who may sign in at all,
@@ -2350,6 +2393,17 @@ private fun HomeScreen(
                         message = null
                         screen = Screen.SketchesAndPrototypes
                     },
+                    // The same set-not-ladder rule again, read from the object that owns it. See
+                    // [DesignReviewCard].
+                    showDesignReview = DesignReviewCard.visibleTo(user),
+                    onOpenDesignReview = { message = null; screen = Screen.DesignReview },
+                    // THIS ACCOUNT'S OWN PROFILE, which is what `Screen.DesignerProfile()` with no
+                    // userId means — the roster is the only route to somebody else's, and it carries
+                    // its own permission check. See [DesignerProfileCard].
+                    showDesignerProfile = DesignerProfileCard.visibleTo(user),
+                    onOpenDesignerProfile = { message = null; screen = Screen.DesignerProfile() },
+                    // No predicate: the destination has none. See [ScanCodeCard].
+                    onOpenScanCode = { message = null; screen = Screen.ScanCode },
                     // `adminSurface(isAdmin(user))` on the web dashboard: the role decides, the
                     // toggle can only take the tile away again.
                     showAdminHub = isAdmin && adminChrome,
@@ -2899,6 +2953,57 @@ private fun HomeScreen(
                     screen = Screen.DesignWorkshopStage(workshopId = workshopId, stageKey = stageKey)
                 },
             )
+
+            /*
+             * SCAN A CODE. The panel is mounted whole rather than re-composed out of
+             * [DwQrLiveScanControl] plus [DwQrScanControl] plus a lookup: `RecordCodeLookup`'s header
+             * already argues that copies of a scanner drift, and that the half which drifts is always
+             * the refusal wording. A second assembly here would be the fourth copy of exactly that.
+             *
+             * `onOpen` IS THE SEARCH SCREEN'S OWN ARM, character for character, so a code and a search
+             * hit for one record cannot lead to two different places. That property is stated at the
+             * mount inside `SearchScreen`; keeping the two arms identical is what makes it true.
+             *
+             * A SENTENCE ABOVE THE PANEL AND NOTHING ELSE. This screen deliberately owns no state: it
+             * hands over on a hit and keeps nothing, which is also why `parentOf` sends it back to the
+             * dashboard rather than trying to remember where the designer came from.
+             */
+            is Screen.ScanCode -> Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            ) {
+                Text(
+                    "Point the camera at a card or a tag, or read a code out of a picture you were " +
+                        "sent, and open the record it names.",
+                    color = Muted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+                RecordCodeLookupPanel(
+                    repository = repository,
+                    onOpen = { recordType, recordId ->
+                        message = null
+                        screen = Screen.Edit(searchRecordEntryMode(recordType), recordId)
+                    }
+                )
+                /*
+                 * SAID HERE BECAUSE A DESIGNER WHO ARRIVES AT A DESTINATION NAMED "Scan a code" AND
+                 * CANNOT DO THE ONE THING THEY CAME FOR CONCLUDES THE APP CANNOT DO IT AT ALL. Each
+                 * of the two surfaces named answers a question this screen cannot: this one is
+                 * repository-wide and knows nothing about which workshop anybody is standing in, so
+                 * it cannot read a prototype tag out of a workshop's own draft with no signal, and
+                 * it opens records rather than linking them into a stage form.
+                 */
+                Text(
+                    "A workshop's Cards & tags screen reads that workshop's own codes off this " +
+                        "handset first, so a prototype tag still resolves with no signal. Inside a " +
+                        "stage form, the reference picker takes a scan to LINK a record to what you " +
+                        "are filling in rather than to open it.",
+                    color = Muted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+            }
 
             is Screen.DesignerProfile -> DesignerProfileScreen(
                 repository = repository,
@@ -3563,6 +3668,103 @@ internal object SketchesAndPrototypesCard {
     fun visibleTo(user: UserDto): Boolean = FieldPermissions.canRunDesignWorkshops(user)
 }
 
+/**
+ * The dashboard's Design review card — the third member of the design-workshop block, and the one
+ * `DashboardTileParityTest` has carried in [WEB_ONLY] since that file was written.
+ *
+ * WHY IT IS ADDED NOW, AND WHY THE OLD ARGUMENT FOR LEAVING IT OUT NO LONGER HOLDS. The comment on
+ * [SketchesAndPrototypesCard] said "one card at a time, so the row each one costs on a 360dp handset
+ * is argued on its own evidence rather than waved through as a pair", and that was the right call
+ * while the destination was new. The evidence has since arrived from the other direction: the owner
+ * reports the page as MISSING FROM THE DASHBOARD, which is the same report the sketches card was
+ * added to answer — "everything shipped, and the owner still said the feature was still not there".
+ * A destination reachable only from the drawer's BROWSE group answers "where is the thing I already
+ * know about" and never "what is this application for", and rating a colleague's sketches is the
+ * second half of the work the two cards above it start.
+ *
+ * WHY IT IS NOT AN [EntryMode], for the third time and for the same two reasons: `screenFor` routes
+ * every mode to [Screen.Create], and this destination is [Screen.DesignReview]; and the grid filters
+ * modes through `canCreate(mode)`, a RANK ladder, while `can_run_design_workshops` is a SET that a
+ * PROFESSOR sits outside.
+ *
+ * `Icons.Filled.Star` IS THE MENU ROW'S GLYPH AND THE WEB TILE'S, and the web tile's own comment
+ * records why it is Star rather than the page header's `Globe2`: "where a page and its menu row
+ * disagree the TILE FOLLOWS THE MENU". No other card on this grid draws a star, which is the
+ * property `no two cards on this grid draw the same glyph` holds.
+ */
+internal object DesignReviewCard {
+    /** The web tile's `label`, and the menu row's, and the screen's own heading — one spelling. */
+    const val LABEL = "Design review"
+
+    /** The web tile's `newLabel`. "Open", because arriving here creates nothing. */
+    const val PRIMARY_LABEL = "Open"
+
+    /**
+     * Whether this account is offered the card, mirroring `can_run_design_workshops` in
+     * `backend/app/core/deps.py` — the same predicate the menu row already reads, so the two
+     * registers cannot disagree about who may reach the destination.
+     */
+    fun visibleTo(user: UserDto): Boolean = FieldPermissions.canRunDesignWorkshops(user)
+}
+
+/**
+ * The dashboard's My designer profile card — the standing details that fill stage 1 and stage 3 of
+ * every workshop, typed once.
+ *
+ * WHERE IT SITS, AND WHY THAT IS NOT WITH THE THREE ABOVE. The web array puts this tile between
+ * Workshop access and Users rather than in the design-workshop block, because it is the DESIGNER'S
+ * OWN RECORD rather than a workshop surface: its menu row is in [NavGroup.ACCOUNT] on both clients.
+ * This grid therefore splices it into the [EntryMode] run at that same point — see the `buildList`
+ * in [DashboardScreen] — so that `the shared tiles stand in one order` keeps holding for every tile
+ * on both clients rather than gaining a second exception beside Settings.
+ *
+ * "Open" AND NOT "New", and that word is load-bearing twice over. The web tile's own comment gives
+ * the reason: "the row is created empty by the GET itself, so there is never a profile to create —
+ * a plus on this button would be a lie", and [dashboardPrimaryIcon] reads this exact string to
+ * choose an arrow over a plus.
+ *
+ * NOT ADMIN CHROME. An admin browsing as an ordinary user still has a profile of their own to fill
+ * in, which is the web tile's stated reason for gating on the entitlement alone.
+ */
+/**
+ * The dashboard's Scan a code card.
+ *
+ * WHY IT IS NOT AN [EntryMode], which is a different reason from the three cards above. Routing and
+ * permission are both fine here — it could have been a mode with `editable = false`. What it cannot
+ * be is a member of an enum whose every value routes to [Screen.Create], the record-form slot, and
+ * whose grid position is its DECLARATION ORDER: this tile has to sit between Miscellaneous Media and
+ * View Data to match the web array and the drawer's BROWSE group, and putting it there as an enum
+ * member would mean declaring a non-record between two records in a list whose comments describe it
+ * as "the record types". A bespoke card spliced at that point says what it is.
+ *
+ * NO `visibleTo`, AND THAT IS THE ONLY CARD ON THIS GRID WITHOUT ONE. The other three bespoke cards
+ * each mirror `can_run_design_workshops`; this one mirrors nothing, because its menu row is
+ * `everyone`/`get_current_user` and the endpoints behind it answer 404 rather than 403 for a record
+ * the caller may not have. A predicate here would be a client-side rule the API does not have —
+ * which is the same sentence `permissions.ts` uses about `/search` having no route guard.
+ */
+internal object ScanCodeCard {
+    /** The web tile's `label`, and the menu row's, on both clients. One spelling. */
+    const val LABEL = "Scan a code"
+
+    /** The web tile's `newLabel`. "Open": arriving here creates nothing. */
+    const val PRIMARY_LABEL = "Open"
+}
+
+internal object DesignerProfileCard {
+    /** The web tile's `label`, and the menu row's. One spelling, lower-case "d" and all. */
+    const val LABEL = "My designer profile"
+
+    /** The web tile's `newLabel`. See the note above on why it is not "New". */
+    const val PRIMARY_LABEL = "Open"
+
+    /**
+     * Whether this account is offered the card, mirroring `can_run_design_workshops` in
+     * `backend/app/core/deps.py` — the same predicate [FIELD_NAV_ITEMS] gates the row on.
+     */
+    fun visibleTo(user: UserDto): Boolean = FieldPermissions.canRunDesignWorkshops(user)
+}
+
 @Composable
 private fun DashboardScreen(
     stats: DashboardStats?,
@@ -3588,6 +3790,25 @@ private fun DashboardScreen(
     showSketchesAndPrototypes: Boolean = false,
     /** Opens the chooser — which workshop, then straight to the stage that owns the work. */
     onOpenSketchesAndPrototypes: () -> Unit = {},
+    /**
+     * [DesignReviewCard.visibleTo] — its OWN flag, for the reason stated on
+     * [showSketchesAndPrototypes]: three destinations reading one identical predicate today are
+     * still three decisions, and folding them into one boolean is how a later narrowing of any of
+     * them silently takes the other two with it.
+     */
+    showDesignReview: Boolean = false,
+    /** Opens the rating and ranking screen. One destination, so no "Update" beside it. */
+    onOpenDesignReview: () -> Unit = {},
+    /** [DesignerProfileCard.visibleTo] — again its own flag. */
+    showDesignerProfile: Boolean = false,
+    /** Opens this account's own profile. Never another designer's — that is the roster's route. */
+    onOpenDesignerProfile: () -> Unit = {},
+    /**
+     * Opens [Screen.ScanCode]. No `show…` flag beside it, deliberately: [ScanCodeCard] has no
+     * predicate at all — see its declaration — so a boolean here would be a gate this destination
+     * does not have, sitting where the next reader would take it for one.
+     */
+    onOpenScanCode: () -> Unit = {},
     showAdminHub: Boolean = false,
     onOpenAdminHub: () -> Unit = {},
     onWalkthrough: () -> Unit = {},
@@ -3712,6 +3933,24 @@ private fun DashboardScreen(
                 )
             )
         }
+        /*
+         * THIRD, AND IT COMPLETES THE BLOCK. Sketches & prototypes is where a designer PUTS the
+         * work; this is where the workshop's designers judge it, rank it, and settle the order the
+         * pieces stand in. The web grid puts the two side by side for that reason and this one now
+         * does too — see [DesignReviewCard] for why the "one card at a time" argument that kept it
+         * off this grid has been answered rather than overruled.
+         */
+        if (showDesignReview) {
+            add(
+                DashboardTile(
+                    label = DesignReviewCard.LABEL,
+                    icon = Icons.Filled.Star,
+                    primaryLabel = DesignReviewCard.PRIMARY_LABEL,
+                    onPrimary = onOpenDesignReview
+                    // One destination, so no `onUpdate` — the same shape as the card above.
+                )
+            )
+        }
         actions.forEach { entry ->
             add(
                 DashboardTile(
@@ -3722,6 +3961,57 @@ private fun DashboardScreen(
                     onUpdate = if (entry.editable) ({ onUpdateExisting(entry) }) else null
                 )
             )
+            /*
+             * SPLICED INTO THE ENUM RUN, IMMEDIATELY AFTER WORKSHOP ACCESS, because that is where
+             * the web array puts it — between Workshop access and Users — and this grid's one
+             * ordering exception is Settings. Adding it before the loop would put a personal record
+             * inside the design-workshop block; adding it after would put it below Craft and
+             * Workshop, which the web deliberately keeps last as the least frequently edited
+             * reference data. See [DesignerProfileCard].
+             *
+             * The guard reads `entry ==` rather than an index so that reordering [EntryMode] moves
+             * this card with the row it belongs beside instead of leaving it pinned to a number.
+             */
+            if (showDesignerProfile && entry == EntryMode.WORKSHOP_ACCESS) {
+                add(
+                    DashboardTile(
+                        label = DesignerProfileCard.LABEL,
+                        icon = Icons.Filled.Badge,
+                        primaryLabel = DesignerProfileCard.PRIMARY_LABEL,
+                        onPrimary = onOpenDesignerProfile
+                    )
+                )
+            }
+            /*
+             * SCAN A CODE, AT THE HEAD OF THE THREE READING SURFACES — spliced after Miscellaneous
+             * Media and before View Data, which is where the web array puts it and where this app's
+             * own menu puts the row (BROWSE, beside Browse records and Map). The grid neighbourhood
+             * and the menu group therefore agree, which is the property worth keeping.
+             *
+             * IT IS NOT IN THE DESIGN-WORKSHOP BLOCK AT THE TOP, and the temptation to put it there
+             * is the whole reason this comment exists: the owner's complaint was discoverability, and
+             * the most prominent cell is the obvious cure. But that block's leading position is
+             * asserted on both clients precisely so it cannot be padded from below by a tile that is
+             * not a member, and a scan is not one — it is repository-wide and knows nothing about
+             * which workshop anybody is standing in. What actually fixes the report is that there is
+             * now a tile AND a menu row NAMED AFTER THE ACTION; before this there was neither, on
+             * either client, and on this one the only route was a menu row called "Browse records".
+             *
+             * NO PREDICATE, matching the menu row and [NavDestination.SCAN_CODE]'s argument: the
+             * lookup's endpoints take a signed-in caller and answer 404 rather than 403 for anything
+             * the caller may not have.
+             */
+            if (entry == EntryMode.MEDIA) {
+                add(
+                    DashboardTile(
+                        label = ScanCodeCard.LABEL,
+                        icon = Icons.Filled.QrCodeScanner,
+                        primaryLabel = ScanCodeCard.PRIMARY_LABEL,
+                        onPrimary = onOpenScanCode
+                        // One destination, so no `onUpdate`.
+                    )
+                )
+            }
         }
         if (showAdminHub) {
             add(
@@ -7181,7 +7471,7 @@ private fun CraftForm(
         // controls. The single-line boxes above take neither: that is the user's own "only the larger
         // text boxes" rule, and `ui/RecordProseText.kt` carries the full enumeration of what was
         // given a control and what was deliberately skipped.
-        TextInput("Description", description, minLines = 3, dictate = true, rich = true) { description = it }
+        TextInput("Description", description, minLines = 3, rich = true) { description = it }
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "craft", recordId = editing!!.id, onError = onError)
         }
@@ -7329,6 +7619,11 @@ private fun ArtisanForm(
     var craftId by remember(editing) { mutableStateOf(editing?.craftId ?: prefill?.craftId ?: "") }
     var newCraftName by remember(editing) { mutableStateOf("") }
     val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
+    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
+    // tables, two access systems, and a record may carry either, both or neither. See
+    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
+    // form's guess, so all seven forms and both clients agree about "most recently allocated".
+    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
     /**
      * The craft and the workshop carry into a new artisan; the ARTISAN in the bag never does.
      *
@@ -7510,6 +7805,7 @@ private fun ArtisanForm(
                 craftId = craftId.ifBlank { null },
                 craftName = if (craftId.isBlank()) newCraftName.blankToNull() else null,
                 workshopId = workshop.value(),
+                designWorkshopId = designWorkshop.value(),
                 status = status,
                 recordedAt = if (isEdit) null else Instant.now().toString(),
                 location = locationForBody(isEdit, media.location, editing?.location)
@@ -7576,7 +7872,7 @@ private fun ArtisanForm(
     val initialSig = remember(editing) { formSignature() }
     val dirty = !saving && (
         formSignature() != initialSig ||
-            workshop.isDirty() || media.uris.isNotEmpty()
+            workshop.isDirty() || designWorkshop.isDirty() || media.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit artisan" else "Add artisan") {
@@ -7587,6 +7883,7 @@ private fun ArtisanForm(
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
         WorkshopField(state = workshop, saving = saving)
+        DesignWorkshopField(state = designWorkshop, saving = saving)
         RequiredInput("Name", name, nameError, nameFocus, titleCased = true) { name = it }
         TextInput("Local name", localName) { localName = it }
         DropdownField(
@@ -7715,7 +8012,7 @@ private fun ArtisanForm(
          * exactly right for it: an address is the worst thing on a phone keyboard and the easiest
          * thing to say out loud.
          */
-        TextInput("Address", address, minLines = 2, dictate = true) { address = it }
+        TextInput("Address", address, minLines = 2) { address = it }
         MultiNoteInput(value = notes) { notes = it }
         // Identity — the same grouped block, in the same position (after notes, before Do's/Don'ts),
         // as the web form's `role="group"` panel. The heading is what makes the dependency between
@@ -7853,6 +8150,16 @@ private fun WorkshopForm(
     editing: WorkshopDetailDto? = null,
     prefill: Prefill? = null,
     adminView: Boolean = false,
+    /**
+     * Open one repository record for editing — used only by [WorkshopMappingCard]'s unfiled cards.
+     *
+     * DEFAULTED TO A NO-OP rather than made required, and the default is what decides whether the
+     * card offers the control at all: the inline host (`InlineRecordDialog`) mounts this form inside
+     * a picker, where navigating away from a half-filled dialog would abandon the record the picker
+     * was opened to make. That host passes nothing, so its unfiled cards keep the other two actions
+     * and drop "Open" — an absent button rather than one that closes somebody's work.
+     */
+    onOpenRecord: ((EntryMode, String) -> Unit)? = null,
     onDone: () -> Unit,
     onError: (String) -> Unit
 ) {
@@ -7968,7 +8275,7 @@ private fun WorkshopForm(
     // already here. Create-mode only, so it does not push an edit form down the screen, and admin-only; the
     // endpoints are gated the same way, so this predicate is not the security boundary.
     if (!isEdit && repository.cachedUser()?.isAdminUser() == true) {
-        WorkshopMappingCard(repository = repository, onError = onError)
+        WorkshopMappingCard(repository = repository, onOpenRecord = onOpenRecord, onError = onError)
     }
 
     RecordCard(title = if (isEdit) "Edit workshop" else "Add workshop") {
@@ -8014,7 +8321,7 @@ private fun WorkshopForm(
         }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         // `Workshop.description` — the narrative of what happened at the workshop, and it prints.
-        TextInput("Description", description, minLines = 3, dictate = true, rich = true) { description = it }
+        TextInput("Description", description, minLines = 3, rich = true) { description = it }
         MultiNoteInput(value = notes) { notes = it }
         ArtisanMultiSelectField(
             label = "Linked artisans",
@@ -8094,6 +8401,11 @@ private fun ProductForm(
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
     var status by remember(editing) { mutableStateOf(editing?.status ?: defaultCreateStatus(repository.cachedUser()?.role)) }
     val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
+    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
+    // tables, two access systems, and a record may carry either, both or neither. See
+    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
+    // form's guess, so all seven forms and both clients agree about "most recently allocated".
+    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
     /**
      * Offer the sitting this researcher was last working in, however they got here — the in-memory
      * [Prefill] only survives a tap made straight off the save screen, and the route they actually
@@ -8195,6 +8507,7 @@ private fun ProductForm(
                 artisanId = artisanId.ifBlank { null },
                 craftId = craftId.ifBlank { null },
                 workshopId = workshop.value(),
+                designWorkshopId = designWorkshop.value(),
                 status = status,
                 recordedAt = if (isEdit) null else Instant.now().toString(),
                 location = locationForBody(isEdit, media.location, editing?.location)
@@ -8268,7 +8581,7 @@ private fun ProductForm(
     }
     val initialSig = remember(editing) { productSig() }
     val dirty = !saving && (
-        productSig() != initialSig || workshop.isDirty() || media.uris.isNotEmpty()
+        productSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() || media.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit product" else "Add product") {
@@ -8279,6 +8592,7 @@ private fun ProductForm(
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
         WorkshopField(state = workshop, saving = saving)
+        DesignWorkshopField(state = designWorkshop, saving = saving)
         RequiredInput("Product name", productName, productNameError, productNameFocus, titleCased = true) { productName = it }
         TextInput("Local name", localName) { localName = it }
         DropdownField("Product type", productTypeOptions.map { it to it }, productType, includeNone = false) { productType = it }
@@ -8335,10 +8649,10 @@ private fun ProductForm(
         TextInput("Time taken to complete", timeTaken) { timeTaken = it }
         TextInput("Size", size) { size = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal) { length = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal) { breadth = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal, dictate = false) { length = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal, dictate = false) { breadth = it } }
         }
-        TextInput("Height (inches)", height, keyboardType = KeyboardType.Decimal) { height = it }
+        TextInput("Height (inches)", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it }
         /*
          * THE TWO MEASUREMENT ROUTES, DELIBERATELY IN THIS ORDER.
          *
@@ -8387,8 +8701,8 @@ private fun ProductForm(
             onHeight = { value, marker -> height = numToText(value); markers.accept("heightInches", height, marker) }
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Cost of making", costOfMaking, keyboardType = KeyboardType.Decimal) { costOfMaking = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Selling price", sellingPrice, keyboardType = KeyboardType.Decimal) { sellingPrice = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Cost of making", costOfMaking, keyboardType = KeyboardType.Decimal, dictate = false) { costOfMaking = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Selling price", sellingPrice, keyboardType = KeyboardType.Decimal, dictate = false) { sellingPrice = it } }
         }
         DropdownField("Market demand", marketDemandOptions.map { it to it }, marketDemand, includeNone = false) { marketDemand = it }
         /*
@@ -8400,10 +8714,10 @@ private fun ProductForm(
          * formatting this storage keeps intact end to end — `toPlain` writes bullets as "• " and
          * `recordDocFromStored` reads them back, so a list written here reopens as a list.
          */
-        TextInput("Raw materials used", rawMaterials, minLines = 2, dictate = true, rich = true) { rawMaterials = it }
-        TextInput("Main tools used", mainTools, minLines = 2, dictate = true, rich = true) { mainTools = it }
-        TextInput("Function or use", functionUse, minLines = 2, dictate = true, rich = true) { functionUse = it }
-        TextInput("Remarks", remarks, minLines = 3, dictate = true, rich = true) { remarks = it }
+        TextInput("Raw materials used", rawMaterials, minLines = 2, rich = true) { rawMaterials = it }
+        TextInput("Main tools used", mainTools, minLines = 2, rich = true) { mainTools = it }
+        TextInput("Function or use", functionUse, minLines = 2, rich = true) { functionUse = it }
+        TextInput("Remarks", remarks, minLines = 3, rich = true) { remarks = it }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "product", recordId = editing!!.id, onError = onError)
@@ -8473,6 +8787,11 @@ private fun ToolForm(
     var suggestions by remember(editing) { mutableStateOf(editing?.suggestionsForToolImprovement ?: "") }
     var remarks by remember(editing) { mutableStateOf(editing?.remarks ?: "") }
     val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
+    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
+    // tables, two access systems, and a record may carry either, both or neither. See
+    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
+    // form's guess, so all seven forms and both clients agree about "most recently allocated".
+    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
     /**
      * Offer the sitting this researcher was last working in, however they got here.
      *
@@ -8572,6 +8891,7 @@ private fun ToolForm(
                 artisanId = artisanId.ifBlank { null },
                 craftId = craftId.ifBlank { null },
                 workshopId = workshop.value(),
+                designWorkshopId = designWorkshop.value(),
                 status = status,
                 recordedAt = if (isEdit) null else Instant.now().toString(),
                 location = locationForBody(isEdit, media.location, editing?.location)
@@ -8683,7 +9003,7 @@ private fun ToolForm(
     }
     val initialSig = remember(editing) { toolSig() }
     val dirty = !saving && (
-        toolSig() != initialSig || workshop.isDirty() ||
+        toolSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() ||
             media.uris.isNotEmpty() || stages.uris.isNotEmpty()
     )
 
@@ -8695,6 +9015,7 @@ private fun ToolForm(
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
         WorkshopField(state = workshop, saving = saving)
+        DesignWorkshopField(state = designWorkshop, saving = saving)
         RequiredInput("Toolkit name", toolkitName, toolkitNameError, toolkitNameFocus, titleCased = true) { toolkitName = it }
         TextInput("Local name", localName) { localName = it }
         TextInput("English name", englishName, titleCased = true) { englishName = it }
@@ -8750,21 +9071,21 @@ private fun ToolForm(
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
         TextInput("Process used in", processUsedIn) { processUsedIn = it }
         TextInput("Material", material) { material = it }
-        TextInput("Years in use", yearsInUse, keyboardType = KeyboardType.Number) { yearsInUse = it }
+        TextInput("Years in use", yearsInUse, keyboardType = KeyboardType.Number, dictate = false) { yearsInUse = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Height", height, keyboardType = KeyboardType.Decimal) { height = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Width", width, keyboardType = KeyboardType.Decimal) { width = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Height", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Width", width, keyboardType = KeyboardType.Decimal, dictate = false) { width = it } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal) { length = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal) { breadth = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal, dictate = false) { length = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal, dictate = false) { breadth = it } }
         }
-        TextInput("Height (inches)", heightInches, keyboardType = KeyboardType.Decimal) { heightInches = it }
+        TextInput("Height (inches)", heightInches, keyboardType = KeyboardType.Decimal, dictate = false) { heightInches = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Thickness", thickness, keyboardType = KeyboardType.Decimal) { thickness = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Weight", weight, keyboardType = KeyboardType.Decimal) { weight = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Thickness", thickness, keyboardType = KeyboardType.Decimal, dictate = false) { thickness = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Weight", weight, keyboardType = KeyboardType.Decimal, dictate = false) { weight = it } }
         }
-        TextInput("Radius", radius, keyboardType = KeyboardType.Decimal) { radius = it }
+        TextInput("Radius", radius, keyboardType = KeyboardType.Decimal, dictate = false) { radius = it }
         /*
          * THE TWO MEASUREMENT ROUTES, DELIBERATELY IN THIS ORDER.
          *
@@ -8816,12 +9137,12 @@ private fun ToolForm(
         )
         DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
         DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }
-        TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal) { replacementCost = it }
+        TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal, dictate = false) { replacementCost = it }
         // The tool form's two narrative columns. `processUsedIn` above stays single-line and plain —
         // it is single-line on the web form too, and widening it here would put the two platforms out
         // of step over a field the review registry already disagrees with itself about.
-        TextInput("Suggestions for improvement", suggestions, minLines = 2, dictate = true, rich = true) { suggestions = it }
-        TextInput("Remarks", remarks, minLines = 3, dictate = true, rich = true) { remarks = it }
+        TextInput("Suggestions for improvement", suggestions, minLines = 2, rich = true) { suggestions = it }
+        TextInput("Remarks", remarks, minLines = 3, rich = true) { remarks = it }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         ToolStagesSection(stages = stages, onMessage = onError, onError = onError)
         if (isEdit) {
@@ -8993,6 +9314,11 @@ private fun ProcessForm(
     var preProcessAvailable by remember(editing) { mutableStateOf(editing?.preProcessAvailable ?: false) }
     var notes by remember(editing) { mutableStateOf(editing?.notes ?: "") }
     val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
+    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
+    // tables, two access systems, and a record may carry either, both or neither. See
+    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
+    // form's guess, so all seven forms and both clients agree about "most recently allocated".
+    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
     var status by remember(editing) { mutableStateOf(editing?.status ?: defaultCreateStatus(repository.cachedUser()?.role)) }
     var saving by remember { mutableStateOf(false) }
@@ -9140,6 +9466,7 @@ private fun ProcessForm(
                 status = status,
                 steps = stepRequests,
                 workshopId = workshop.value(),
+                designWorkshopId = designWorkshop.value(),
                 recordedAt = if (isEdit) null else Instant.now().toString()
             )
             // Bank the sitting the moment the record is accepted — queued counts, offline being the
@@ -9275,7 +9602,7 @@ private fun ProcessForm(
     }
     val initialSig = remember(editing) { procSig() }
     val dirty = !saving && (
-        procSig() != initialSig || workshop.isDirty() ||
+        procSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() ||
             preMedia.uris.isNotEmpty() || steps.any { it.media.uris.isNotEmpty() }
     )
 
@@ -9292,6 +9619,7 @@ private fun ProcessForm(
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
         WorkshopField(state = workshop, saving = saving)
+        DesignWorkshopField(state = designWorkshop, saving = saving)
         RequiredInput("Name of the process", name, nameError, nameFocus, titleCased = true) { name = it }
         DropdownField(
             label = "Artisan *",
@@ -9376,7 +9704,7 @@ private fun ProcessForm(
         // form's two carry it — this is a paragraph about a sequence, not a label — and the web's
         // `ProcessForm` gained the matching `RichTextField` in the same change. A box on one surface
         // and not the other is the cross-surface divergence the whole reference lane exists to end.
-        TextInput("What happens in this process", notes, minLines = 3, dictate = true, rich = true, resetKey = editing?.id) { notes = it }
+        TextInput("What happens in this process", notes, minLines = 3, rich = true, resetKey = editing?.id) { notes = it }
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Checkbox(checked = preProcessAvailable, onCheckedChange = { preProcessAvailable = it })
@@ -10590,11 +10918,11 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
              * nobody will ever see and would cost every one of them a line of explanatory copy under
              * the box. Size alone was never the rule; "would formatting be read by anyone" is.
              */
-            TextInput("What do you like most?", likeMost, minLines = 2, dictate = true) { likeMost = it }
-            TextInput("What should we improve?", improve, minLines = 2, dictate = true) { improve = it }
-            TextInput("Any bugs or issues you hit?", bugs, minLines = 2, dictate = true) { bugs = it }
-            TextInput("Features you'd like to see", featureRequests, minLines = 2, dictate = true) { featureRequests = it }
-            TextInput("Anything else (general comments)", comment, minLines = 3, dictate = true) { comment = it }
+            TextInput("What do you like most?", likeMost, minLines = 2) { likeMost = it }
+            TextInput("What should we improve?", improve, minLines = 2) { improve = it }
+            TextInput("Any bugs or issues you hit?", bugs, minLines = 2) { bugs = it }
+            TextInput("Features you'd like to see", featureRequests, minLines = 2) { featureRequests = it }
+            TextInput("Anything else (general comments)", comment, minLines = 3) { comment = it }
 
             val anyProvided = rating > 0 || easeOfUse > 0 || reliability > 0 || performance > 0 ||
                 design > 0 || features > 0 || recommend > 0 ||
@@ -11261,7 +11589,33 @@ private fun ViewDataScreen(
  * the `fields` map and is validated against the record type's own PATCH schema, so a typo here is a
  * 422 rather than a silent no-op.
  */
-private data class ReviewField(val key: String, val label: String, val multiline: Boolean = false)
+private data class ReviewField(
+    val key: String,
+    val label: String,
+    val multiline: Boolean = false,
+    /**
+     * Draw this box as a CLOSED VOCABULARY rather than free text.
+     *
+     * ── WHY A MARKER AND NOT A LIST OF OPTIONS ────────────────────────────────────────────────────
+     *
+     * The list would then be written down twice — here and at [DW_INTERVIEW_LANGUAGES], which the
+     * interview form already reads — and the whole point of hoisting that list out of the form was
+     * that it exists once. The renderer resolves the marker, and with it the rule a static list
+     * cannot express: whatever is STORED stays selectable, so an interview recorded before the
+     * vocabulary existed does not lose its language the first time a reviewer fixes a typo beside it.
+     *
+     * ── AND IT IS THE WEB'S MARKER, SPELLED THE SAME ──────────────────────────────────────────────
+     *
+     * `frontend/components/review/reviewEditFields.ts` declares `vocabulary?: "interviewLanguage"`.
+     * That file and this function are a stated contract — the frontend guide puts it as "change one,
+     * change the other" — so the two carry one spelling and a reviewer meets the same control on
+     * either client.
+     */
+    val vocabulary: String? = null,
+)
+
+/** The one vocabulary [ReviewField.vocabulary] recognises today. Spelled as the web spells it. */
+private const val REVIEW_VOCABULARY_INTERVIEW_LANGUAGE = "interviewLanguage"
 
 /**
  * The fields the review screen offers per record type: the name-like columns and the prose a reviewer
@@ -11318,7 +11672,7 @@ private fun reviewEditableFields(recordType: String): List<ReviewField> = when (
     "questionnaire" -> listOf(
         ReviewField("title", "Interview title"),
         ReviewField("place", "Place"),
-        ReviewField("language", "Language"),
+        ReviewField("language", "Language", vocabulary = REVIEW_VOCABULARY_INTERVIEW_LANGUAGE),
         ReviewField("notes", "Notes", multiline = true)
     )
     "media" -> listOf(
@@ -11601,7 +11955,7 @@ private fun PendingReviewRow(
                     // The reviewer's note back to the field. Dictation only: it is read as a message,
                     // not rendered as a document, and the reviewer is usually dictating a correction
                     // while looking at the record rather than composing anything.
-                    TextInput("What needs to change?", reviseNote, minLines = 2, dictate = true) { reviseNote = it }
+                    TextInput("What needs to change?", reviseNote, minLines = 2) { reviseNote = it }
                     Button(
                         enabled = !busy && reviseNote.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
@@ -11642,13 +11996,35 @@ private fun PendingReviewRow(
                              * screen. `field.multiline` is the same flag the web's registry uses, so
                              * the two platforms light up the same boxes.
                              */
-                            TextInput(
-                                field.label,
-                                value,
-                                minLines = if (field.multiline) 2 else 1,
-                                dictate = field.multiline,
-                            ) {
-                                edited[field.key] = it
+                            if (field.vocabulary == REVIEW_VOCABULARY_INTERVIEW_LANGUAGE) {
+                                /*
+                                  A CLOSED VOCABULARY IS A DROPDOWN, AND IT CARRIES NO MICROPHONE.
+                                  A recogniser cannot produce a value a closed list will accept, so a
+                                  mic here would reliably write something the picker then shows as
+                                  nothing selected. The interview FORM has had this dropdown for
+                                  longer than the web has; this is the surface that edits a SAVED
+                                  interview and was still taking free text, which is how the one
+                                  route that touches an approved record bypassed the vocabulary.
+                                */
+                                DropdownField(
+                                    label = field.label,
+                                    // WHATEVER IS STORED STAYS SELECTABLE — a value the list does not
+                                    // carry is put at the front rather than dropped, so an interview
+                                    // recorded before this vocabulary existed keeps its language.
+                                    options = dwInterviewLanguageOptions(value),
+                                    selectedValue = value,
+                                    placeholder = DW_INTERVIEW_LANGUAGE_PLACEHOLDER,
+                                    includeNone = false,
+                                ) { edited[field.key] = it }
+                            } else {
+                                TextInput(
+                                    field.label,
+                                    value,
+                                    minLines = if (field.multiline) 2 else 1,
+                                    dictate = field.multiline,
+                                ) {
+                                    edited[field.key] = it
+                                }
                             }
                             // Name-like columns are title-cased server-side, so show what will land.
                             if (field.key in com.designprototype.workshop.data.TITLE_CASE_FIELDS) {
@@ -12500,6 +12876,10 @@ private fun AndroidMediaForm(
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
     var savedMedia by remember { mutableStateOf<List<com.designprototype.workshop.data.MediaFileDto>>(emptyList()) }
     var localMessage by remember { mutableStateOf<String?>(null) }
+    // THE DESIGN & PROTOTYPE WORKSHOP this loose upload is filed under — "Miscellaneous Media" is one
+    // of the seven record types the owner named on 2026-08-28. `isEdit = false` because this screen
+    // only ever uploads: there is no stored value to protect from the prefill.
+    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit = false, initialId = null)
     // Bumped after a batch lands so the jobs card below re-reads: an audio upload enqueues its
     // transcription job during /media/complete, so the row exists the moment the upload returns.
     var jobsReload by remember { mutableStateOf(0) }
@@ -12633,10 +13013,14 @@ private fun AndroidMediaForm(
             includeNone = true,
             enabled = linkedMode != null && !loadingEntries
         ) { linkedEntryId = it }
+        // UNDER the two link dropdowns and never merged with them: "which record is this a picture
+        // OF" and "which design workshop is it filed UNDER" are different questions with different
+        // answers, and a file may legitimately have one, both or neither.
+        DesignWorkshopField(state = designWorkshop, saving = uploading)
         // A media caption. Dictation only — a caption is one sentence describing a photograph, and it
         // is printed as a single run under the picture in the media annexure, where a heading or a
         // bullet has nowhere to go.
-        TextInput("Caption", caption, minLines = 2, dictate = true) { caption = it }
+        TextInput("Caption", caption, minLines = 2) { caption = it }
         // Web parity (app/(protected)/media/page.tsx): the GPS block closes the form, after the
         // caption — it describes the upload rather than being one of the things being described.
         LocationAddressEditor(
@@ -12708,6 +13092,7 @@ private fun AndroidMediaForm(
                                 uri = uri,
                                 linkedRecordType = linkedMode?.linkedRecordType() ?: "",
                                 linkedRecordId = linkedEntryId,
+                                designWorkshopId = designWorkshop.value(),
                                 caption = caption,
                                 location = location,
                                 titleHint = mediaTitle.ifBlank { caption },
@@ -13264,6 +13649,11 @@ private fun QuestionnaireForm(
     var notes by remember(editing) { mutableStateOf(editing?.notes ?: "") }
     var capturedLocation by remember(editing) { mutableStateOf(editing?.location?.toRequest()) }
     val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
+    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
+    // tables, two access systems, and a record may carry either, both or neither. See
+    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
+    // form's guess, so all seven forms and both clients agree about "most recently allocated".
+    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
     /**
      * Open on the artisan this researcher was last documenting.
      *
@@ -13480,30 +13870,35 @@ private fun QuestionnaireForm(
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
         WorkshopField(state = workshop, saving = saveState == SaveState.SAVING)
+        DesignWorkshopField(state = designWorkshop, saving = saveState == SaveState.SAVING)
         RequiredInput("Interview title", title, titleError, titleFocus, titleCased = true) { title = it }
         // Web parity (app/(protected)/questionnaire/page.tsx): title → place → language → status →
         // the artisans this interview is about. There is deliberately NO date field: the server
         // derives interviewDate from recordedAt, which is when the interview was actually captured.
         TextInput("Place", place, titleCased = true) { place = it }
-        // Language of the interview: Hindi primary, then English + the major scheduled Indian
-        // languages. Any pre-existing free-text value is preserved as an extra option.
-        val languageOptions = remember(language) {
-            val base = listOf(
-                "Hindi", "English", "Bengali", "Marathi", "Telugu", "Tamil", "Gujarati", "Urdu",
-                "Kannada", "Odia", "Malayalam", "Punjabi", "Assamese", "Maithili", "Sanskrit",
-                "Konkani", "Nepali", "Manipuri (Meitei)", "Bodo", "Dogri", "Kashmiri", "Santali",
-                "Sindhi", "Other"
-            )
-            val withExisting = if (language.isNotBlank() && base.none { it.equals(language, ignoreCase = true) }) {
-                listOf(language) + base
-            } else base
-            withExisting.map { it to it }
-        }
+        /*
+          THE LIST IS NO LONGER WRITTEN HERE — see [DW_INTERVIEW_LANGUAGES], 2026-08-28.
+
+          It was twenty-four strings inline, which was right while this form was the only place a
+          language could be set. The REVIEW editor now sets one too, and two copies of a vocabulary
+          drift: the half that drifts is always the one nobody is looking at, and a reviewer opening
+          an interview recorded in a language their picker cannot represent is how a stored answer
+          gets overwritten with a blank.
+
+          THE PRESERVE RULE MOVED WITH IT, AND ITS COMPARISON WAS WRONG HERE. This read
+          `base.none { it.equals(language, ignoreCase = true) }`, so a stored lower-case "hindi" was
+          judged to BE the option "Hindi" and nothing was prepended — while the picker itself matches
+          values exactly, so it then drew "Select language" over a record that had one. The hoisted
+          `dwInterviewLanguageOptions` compares exactly, which is the whole reason it is a function
+          rather than a list. The behaviour on this screen therefore improves rather than merely
+          moving.
+        */
+        val languageOptions = remember(language) { dwInterviewLanguageOptions(language) }
         DropdownField(
             label = "Language",
             options = languageOptions,
             selectedValue = language,
-            placeholder = "Select language",
+            placeholder = DW_INTERVIEW_LANGUAGE_PLACEHOLDER,
             includeNone = false
         ) { language = it }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
@@ -13704,20 +14099,30 @@ private fun QuestionnaireForm(
         // progress) — the same media array used by every other record form.
         MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
         /*
-         * THE ONE `MultiNoteInput` WITH NO MICROPHONE, AND THE OPT-OUT IS THE POINT OF THE FLAG.
+         * THIS LINE CARRIED `dictate = false` AND NO LONGER DOES — 2026-08-28.
          *
-         * The questionnaire screens were placed out of scope for the record-form dictation work by
-         * decision, not by oversight: they already have a capture workflow of their own — per-section
-         * or per-question audio recorded as a MediaFile and transcribed asynchronously by the queue —
-         * whose default hides the written answer boxes entirely, and which was designed around how
-         * these interviews are actually conducted. Adding a live microphone anywhere on this screen
-         * puts two capture models in front of one researcher.
+         * The comment that stood here was correct and is worth keeping in outline, because it ended
+         * with a condition rather than a door: the questionnaire screens were "placed out of scope
+         * for the record-form dictation work by decision", they "already have a capture workflow of
+         * their own" (per-section or per-question audio, transcribed asynchronously by the queue),
+         * and "removing it does not enable a feature here; it opts this screen into a decision
+         * nobody has taken".
          *
-         * So this one line is what keeps the shared control's new default from reaching a screen it
-         * was told to leave alone. Removing it does not "enable a feature here"; it opts this screen
-         * into a decision nobody has taken.
+         * THE DECISION HAS NOW BEEN TAKEN, twice over and in the owner's own words: *"Review the
+         * questionnaire workflow and identify all fields where typing can reasonably be replaced or
+         * supplemented by microphone dictation"*, and *"dictation should be a default for other
+         * record pages as well."* The web's `MultiNoteField` gained a microphone per note in the
+         * same wave, so leaving this opt-out would have left the two clients disagreeing about one
+         * control on one screen — which is the divergence this whole wave exists to end.
+         *
+         * THE OLD ARGUMENT'S SUBSTANCE SURVIVES AND IS NOT CONTRADICTED. Two capture models in front
+         * of one researcher was the worry; they are not the same model and they do not compete.
+         * Section audio RECORDS THE ARTISAN — a MediaFile, consent-gated, transcribed by the server,
+         * and the artefact of the interview. This dictates the INTERVIEWER'S OWN note, on device,
+         * with nothing stored and nothing sent. The screen's default of hiding the answer boxes is
+         * untouched, so a researcher who never opens them never meets this control at all.
          */
-        MultiNoteInput(value = notes, dictate = false) { notes = it }
+        MultiNoteInput(value = notes) { notes = it }
         fun submit() {
             if (!validateRequired(listOf(
                     RequiredCheck(title.isBlank(), { titleError = it }, titleFocus)
@@ -13781,6 +14186,7 @@ private fun QuestionnaireForm(
                                 status = status,
                                 artisanIds = selectedArtisans.toList(),
                                 workshopId = workshop.value(),
+                                designWorkshopId = designWorkshop.value(),
                                 location = capturedLocation,
                                 responses = responsesToSend,
                                 recordedAt = now
@@ -13873,6 +14279,7 @@ private fun QuestionnaireForm(
                                     artisanIds = if (selectedArtisans != originalArtisans) selectedArtisans.toList() else null,
                                     responses = responsesToSend.ifEmpty { null },
                                     workshopId = workshop.value(),
+                                    designWorkshopId = designWorkshop.value(),
                                     location = locationForBody(true, capturedLocation, original.location)
                                 )
                             )
@@ -13887,6 +14294,7 @@ private fun QuestionnaireForm(
                                     status = status,
                                     artisanIds = selectedArtisans.toList(),
                                     workshopId = workshop.value(),
+                                    designWorkshopId = designWorkshop.value(),
                                     location = capturedLocation,
                                     responses = responsesToSend,
                                     recordedAt = now
@@ -14024,7 +14432,7 @@ private fun QuestionnaireForm(
         val initialSig = remember(editing) { qSig() }
         // Any changed field, an unsaved general attachment, or an unsaved recorded clip makes the
         // interview "dirty" so an accidental Back offers to save it (including in-progress recordings).
-        val dirty = qSig() != initialSig || workshop.isDirty() || qMedia.uris.isNotEmpty() || media.uris.isNotEmpty()
+        val dirty = qSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() || qMedia.uris.isNotEmpty() || media.uris.isNotEmpty()
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         SaveButton(
             state = saveState,
@@ -14050,7 +14458,7 @@ private fun QuestionnaireBuilder(
 
     RecordCard(title = "Questionnaire builder") {
         Text("Master admin controls for adding, editing, removing, moving sections, and moving questions between sections. Tap a section to expand and edit it.", color = Muted, fontSize = 12.sp)
-        TextInput("New section code", newCode) { newCode = it }
+        TextInput("New section code", newCode, dictate = false) { newCode = it }
         TextInput("New section title", newTitle) { newTitle = it }
         Button(
             onClick = {
@@ -14090,7 +14498,7 @@ private fun QuestionnaireBuilder(
                         var code by remember(section.id, section.code) { mutableStateOf(section.code) }
                         var sectionTitle by remember(section.id, section.title) { mutableStateOf(section.title) }
                         var newPrompt by remember(section.id) { mutableStateOf("") }
-                        TextInput("Code", code) { code = it }
+                        TextInput("Code", code, dictate = false) { code = it }
                         TextInput("Title", sectionTitle) { sectionTitle = it }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             OutlinedButton(
@@ -14997,7 +15405,7 @@ private fun WorkshopAccessScreen(
                 ?.let { Text(it, color = Muted, fontSize = 11.sp) }
             // A note to whoever grants the access. Dictation only: it is read once, by a person, in a
             // request list — there is nothing here for formatting to survive into.
-            TextInput("Why do you need access? (optional)", note, minLines = 2, dictate = true) { note = it }
+            TextInput("Why do you need access? (optional)", note, minLines = 2) { note = it }
             Button(
                 enabled = !busy && selected.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
@@ -15689,6 +16097,8 @@ private fun RecordCard(title: String, icon: ImageVector? = null, content: @Compo
 @Composable
 private fun WorkshopMappingCard(
     repository: WorkshopRepository,
+    /** See [WorkshopForm]'s parameter of the same name. Null = do not offer "Open". */
+    onOpenRecord: ((EntryMode, String) -> Unit)?,
     onError: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -15805,15 +16215,36 @@ private fun WorkshopMappingCard(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                                /*
+                                  EACH ROW IS A CARD, NOT A LINE OF TEXT — 2026-08-28.
+
+                                  The owner: *"Change these records into clickable cards … When an
+                                  authorized user clicks one of these cards, they must be able to
+                                  open the record, re-attribute/reassign the record to the
+                                  appropriate destination/workshop, and discard and permanently
+                                  delete the record."*
+
+                                  The heading above these rows used to read "Left alone — open the
+                                  record and choose its workshop by hand", which was an instruction
+                                  to leave this screen, find the record in another list, and edit it
+                                  there. Every one of the three actions is now here.
+
+                                  ONLY MASTER ADMIN AND ADMIN, and the gate is the SERVER'S: all
+                                  three routes are `Depends(require_admin)`. This whole card is
+                                  already inside the admin hub, so a non-admin never reaches it —
+                                  which is why there is no second predicate here. A client guard over
+                                  an open route would be the thing that is not a guard; the API is.
+                                */
                                 stuck.forEach { row ->
-                                    Text(
-                                        row.title +
-                                            (row.reasonCopy?.let { " — $it" } ?: "") +
-                                            (if (row.candidateTitles.isNotEmpty()) {
-                                                " (" + row.candidateTitles.joinToString(" or ") + ")"
-                                            } else ""),
-                                        color = MaterialTheme.field.onWarningContainer,
-                                        fontSize = 11.sp
+                                    DwUnfiledRecordCard(
+                                        repository = repository,
+                                        bucket = bucket.bucket,
+                                        noun = bucket.singular,
+                                        row = row,
+                                        workshops = current.workshops,
+                                        onOpen = onOpenRecord,
+                                        onFiled = { reloadKey++ },
+                                        onError = onError,
                                     )
                                 }
                                 // Compared against THIS list's own length, not `rowsTruncated`. That flag
@@ -15919,6 +16350,214 @@ private fun WorkshopMappingCard(
             Text("Re-check")
         }
     }
+}
+
+/**
+ * ONE UNFILED RECORD, AS AN ACTIONABLE CARD — the three things an admin can do about it.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY THIS EXISTS
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The owner, 2026-08-28: *"Change these records into clickable cards. Only Master Admin and Admin
+ * should have access to the associated administrative actions. When an authorized user clicks one of
+ * these cards, they must be able to open the record, re-attribute/reassign the record to the
+ * appropriate destination/workshop, and discard and permanently delete the record."*
+ *
+ * What stood here was a line of text under a heading reading "Left alone — open the record and choose
+ * its workshop by hand": an instruction to leave this screen, find the row in another list, and edit
+ * it there. The report knew which record it was and could not act on it.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHO MAY, AND WHERE THAT IS DECIDED
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * All three routes are `Depends(require_admin)` — the same predicate `assert_can_delete` enforces on
+ * every per-type delete in this API — and [WorkshopMappingCard] is mounted inside a branch already
+ * gated on `isAdminUser()`. THE SERVER IS THE BOUNDARY; this file draws controls for a capability it
+ * does not grant. A client guard over an open route is not a guard, and a second predicate here would
+ * be a third place to keep one rule in step.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE DELETE IS DANGER-TONE AND CANNOT BE PRESSED BY REFLEX
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Two presses, never one, and the second is drawn in the error colour with the record's own title in
+ * the sentence. A single tap that permanently removes a fortnight of somebody's fieldwork, on a row
+ * an admin is reading rather than hunting for, is the one thing this card must not offer.
+ *
+ * AND IT SAYS WHAT SURVIVES. Every `MediaFile` relation is `onDelete: SetNull`, so deleting a record
+ * DETACHES its attachments rather than removing them; the server answers with `mediaKept` for exactly
+ * this reason, and a screen that reported only "deleted" would leave out the half an admin has to act
+ * on — nine photographs still in the repository with nothing pointing at them.
+ */
+@Composable
+private fun DwUnfiledRecordCard(
+    repository: WorkshopRepository,
+    bucket: String,
+    /** The server's own noun for the type, so both clients word one deletion the same way. */
+    noun: String,
+    row: WorkshopMappingRowDto,
+    workshops: List<WorkshopMappingWindowDto>,
+    onOpen: ((EntryMode, String) -> Unit)?,
+    /** Re-read the whole plan. A row that has been filed or discarded must leave this list. */
+    onFiled: () -> Unit,
+    onError: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var expanded by remember { mutableStateOf(false) }
+    var chosenWorkshop by remember { mutableStateOf("") }
+    var confirmingDelete by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    val mode = remember(bucket) { unfiledRecordEntryMode(bucket) }
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.field.surface50, MaterialTheme.shapes.small)
+            .clickable(
+                onClickLabel = if (expanded) "Hide the actions for ${row.title}" else "Show the actions for ${row.title}",
+                role = Role.Button,
+            ) { expanded = !expanded }
+            .padding(8.dp)
+    ) {
+        Text(
+            row.title.ifBlank { "Untitled $noun" },
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        // WHY IT WAS LEFT ALONE, kept from the line this card replaces: an admin deciding where a row
+        // belongs needs the ladder's own reason and the workshops it could not choose between.
+        val why = listOfNotNull(
+            row.reasonCopy?.takeIf { it.isNotBlank() },
+            row.candidateTitles.takeIf { it.isNotEmpty() }?.joinToString(" or ")
+        ).joinToString(" · ")
+        if (why.isNotBlank()) {
+            Text(why, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+
+        if (!expanded) {
+            Text("Tap to file it, open it, or discard it.", color = MaterialTheme.field.muted, fontSize = 11.sp)
+            return@Column
+        }
+
+        // ── 1. RE-ATTRIBUTE ────────────────────────────────────────────────────────────────────
+        //
+        // The workshops offered are the ones the PLAN already carries — the windows it read to make
+        // its decision — rather than a fresh list. Two reasons: this card sits inside a report the
+        // admin is reading, and a second list could disagree with the one the report reasoned from;
+        // and a workshop with no dates was never a candidate for the window rung anyway.
+        DropdownField(
+            label = "File it under",
+            options = workshops.map { it.id to it.title },
+            selectedValue = chosenWorkshop,
+            placeholder = "Choose a workshop",
+            includeNone = false,
+            enabled = !busy
+        ) { chosenWorkshop = it }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = {
+                    scope.launch {
+                        busy = true
+                        runCatching { repository.fileOneUnmappedRecord(bucket, row.id, chosenWorkshop) }
+                            .onFailure { error ->
+                                if (error is CancellationException) throw error
+                                // THE 409 IS THE ONE REFUSAL THAT MUST BE READ RATHER THAN SWALLOWED:
+                                // it means somebody filed this row since the report was read, and it
+                                // names the workshop it went to.
+                                onError(error.apiErrorMessage("This $noun could not be filed."))
+                            }
+                        busy = false
+                        onFiled()
+                    }
+                },
+                enabled = !busy && chosenWorkshop.isNotBlank(),
+                modifier = Modifier.weight(1f)
+            ) { Text("File it", fontSize = 12.sp) }
+
+            // ── 2. OPEN ────────────────────────────────────────────────────────────────────────
+            //
+            // Absent rather than disabled where there is no route: `onOpen` is null inside the inline
+            // picker host (navigating would abandon the record the picker was opened to make) and
+            // `mode` is null for a type this app has no editor for. A disabled button says "this
+            // exists and you may not"; both of those are "this does not apply here".
+            if (onOpen != null && mode != null) {
+                OutlinedButton(
+                    onClick = { onOpen(mode, row.id) },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Open", fontSize = 12.sp) }
+            }
+        }
+
+        // ── 3. DISCARD ─────────────────────────────────────────────────────────────────────────
+        if (!confirmingDelete) {
+            TextButton(onClick = { confirmingDelete = true }, enabled = !busy) {
+                Text("Discard permanently", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            }
+        } else {
+            Text(
+                "Delete \u201C${row.title}\u201D permanently? This cannot be undone. Any photographs or " +
+                    "recordings attached to it stay in the repository with nothing pointing at them.",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 11.sp,
+                lineHeight = 15.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // CANCEL FIRST AND CANCEL WIDER. A reflex press on a two-button row lands on the
+                // leading control, and on this row that must be the one that loses nothing.
+                OutlinedButton(onClick = { confirmingDelete = false }, enabled = !busy) {
+                    Text("Keep it", fontSize = 12.sp)
+                }
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            runCatching { repository.discardUnmappedRecord(bucket, row.id) }
+                                .onSuccess { answer ->
+                                    if (answer.mediaKept > 0) {
+                                        onError(
+                                            "${answer.noun.ifBlank { noun }} deleted. ${answer.mediaKept} " +
+                                                "attached file(s) stayed in the repository with nothing " +
+                                                "pointing at them — Miscellaneous Media lists them."
+                                        )
+                                    }
+                                }
+                                .onFailure { error ->
+                                    if (error is CancellationException) throw error
+                                    onError(error.apiErrorMessage("This $noun could not be deleted."))
+                                }
+                            busy = false
+                            confirmingDelete = false
+                            onFiled()
+                        }
+                    },
+                    enabled = !busy
+                ) {
+                    Text("Delete it permanently", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A mapping bucket's name to the editor that opens one of its rows, or null where there is none.
+ *
+ * THE BUCKETS ARE THE SERVER'S and this app has an editor for five of them. `media` is deliberately
+ * absent: a media file is not edited through [EntryMode], so the "Open" button is not drawn for it
+ * rather than being drawn and refused.
+ */
+private fun unfiledRecordEntryMode(bucket: String): EntryMode? = when (bucket) {
+    "artisans" -> EntryMode.ARTISAN
+    "products" -> EntryMode.PRODUCT
+    "tools" -> EntryMode.TOOL
+    "processes" -> EntryMode.PROCESS
+    "interviews" -> EntryMode.QUESTIONNAIRE
+    else -> null
 }
 
 /**
@@ -16089,8 +16728,27 @@ private fun TextInput(
     minLines: Int = 1,
     titleCased: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
-    /** Draw the on-device microphone. On-device rungs only — nothing here posts a clip anywhere. */
-    dictate: Boolean = false,
+    /**
+     * Draw the on-device microphone. On-device rungs only — nothing here posts a clip anywhere.
+     *
+     * ── DEFAULTS TO TRUE SINCE 2026-08-28, AND THE POLARITY IS THE POINT ─────────────────────────
+     *
+     * The owner: *"dictation should be a default for other record pages as well."* It defaulted to
+     * FALSE, so a box had a microphone only where somebody had remembered to ask for one — and a
+     * field added next year would arrive silently without one, on a screen whose whole purpose is to
+     * reduce typing in a courtyard. Inverted, the omission is safe: a new box gets a mic, and taking
+     * one away is a decision somebody has to write down.
+     *
+     * **PASS `false` FOR ANYTHING THAT IS NOT PROSE, AND SAY WHY AT THE CALL SITE.** That is every
+     * `keyboardType = Number` / `Decimal` box and every closed code token in this file. A recogniser
+     * spells digits out, writes "point" for a decimal separator and punctuates what it hears, so a
+     * microphone there reliably produces a value the field then refuses — friction added rather than
+     * removed, on the field least able to absorb it.
+     *
+     * The RICH branch ignores this entirely: `RecordProseField`'s editor carries its own microphone
+     * in its toolbar, and passing this to it would be a lie about which control is drawn.
+     */
+    dictate: Boolean = true,
     /** Draw the rich-text editor instead of a plain box. **Larger narrative boxes only.** */
     rich: Boolean = false,
     /** Re-seed the rich editor when a form loads a different record into the same composition. */
@@ -16212,7 +16870,33 @@ private fun NumberedListDisplay(label: String, value: String?) {
     }
 }
 
-/** A mandatory text field: shows a trailing asterisk and an inline error when left empty. */
+/**
+ * A mandatory text field: a trailing asterisk, an inline error when left empty, and a microphone.
+ *
+ * ── THE MICROPHONE, ADDED 2026-08-28 ────────────────────────────────────────────────────────────
+ *
+ * The owner: *"All the record pages should have dictation options available, wherever applicable so
+ * as to reduce the friction as much as possible."* The boxes with the MOST typing friction on a
+ * record form are the required ones — an artisan's name, a place, a product name, a toolkit name,
+ * the name of a process, an interview title — and they were the only boxes on the whole form that
+ * could not have one, because this function drew its own bare `OutlinedTextField`. `TextInput`
+ * beside it has forwarded to [RecordProseField] since dictation landed; this now does the same, so
+ * a required box and an optional one cannot differ in padding, label placement, keyboard type or —
+ * the half that always drifts — the wording of a dictation refusal.
+ *
+ * ── [dictate] DEFAULTS TO TRUE, WHICH IS A CLAIM ABOUT THE CALL SITES ──────────────────────────
+ *
+ * All sixteen of them are free prose or a proper noun: names, places, titles, a step's name. Not one
+ * is a date, a number, a dropdown or a regulated identity field. Defaulting to true is therefore
+ * "wherever applicable" read off the actual call sites rather than a blanket. **A required field
+ * that is NOT prose must pass `dictate = false`** — a microphone on a box expecting digits is
+ * friction added, not removed, and dictated digits are the least reliable thing a recogniser
+ * returns.
+ *
+ * `titleCased` and `dictate` COMPOSE, and the order matters: [RecordProseField] appends the
+ * committed text and then the caller's `onValueChange` runs, so a dictated name reaches
+ * `TitleCaseHint` exactly as a typed one does.
+ */
 @Composable
 private fun RequiredInput(
     label: String,
@@ -16221,22 +16905,23 @@ private fun RequiredInput(
     focusRequester: FocusRequester,
     minLines: Int = 1,
     titleCased: Boolean = false,
+    /** See the note above before turning this off — and say why at the call site. */
+    dictate: Boolean = true,
     onValueChange: (String) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            label = { Text("$label *") },
-            isError = error != null,
-            supportingText = error?.let { msg -> { Text(msg) } },
-            minLines = minLines,
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(focusRequester)
-        )
-        if (titleCased) TitleCaseHint(value)
-    }
+    RecordProseField(
+        // The asterisk stays in the LABEL rather than becoming a parameter of the shared component:
+        // it is this function's whole visible contract, and pushing it down would put a
+        // required-ness concept into a control that has no idea whether a value is required.
+        label = "$label *",
+        value = value,
+        onValueChange = onValueChange,
+        minLines = minLines,
+        dictate = dictate,
+        errorText = error,
+        focusRequester = focusRequester,
+        below = { if (titleCased) TitleCaseHint(value) },
+    )
 }
 
 /** One required field's validation hooks: whether it is blank, how to flag it, and where to focus. */

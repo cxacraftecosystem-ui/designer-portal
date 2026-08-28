@@ -174,8 +174,8 @@ Ranked by *when* it bites, not by size of eventual win.
 |---|---|---|---|---|---|
 | 1 | **Sequential round trips per request** | §1.1–1.3, MEASURED | **Now**, at 16 artisans | Gather independent reads; batch relations; delete queries outright | None — strictly faster, no new memory |
 | 2 | **One auth read on every request** | `deps.py:127`; `/reference/address` = 789 ms MEASURED | **Now**, every call | In-process TTL cache of the user row | ~200 KB RAM; role changes lag by the TTL |
-| 3 | **Whole media objects read into RAM** — **DONE**, §5.1 | was `s3.py:243` (now `:286`), six read sites; largest live object **668 MiB** MEASURED | **Now** — that file already exists | `s3.download_to_temp` + `head_object`; caps derived from free memory (`services/memory_budget`), not constants | Disk instead of RAM; one `HEAD` per gated read; oversized work now refused visibly rather than attempted |
-| 4 | **Write-path N+1** | `questionnaire.py:216-258` = 3 queries per answer | **Now**, at ~14 answers in one save | `db.batch_()` / `create_many` — one round trip | None; strictly fewer queries |
+| 3 | **Whole media objects read into RAM** — **DONE**, §5.1 | was `s3.py#get_object_bytes`, six read sites; largest live object **668 MiB** MEASURED | **Now** — that file already exists | `s3.download_to_temp` + `head_object`; caps derived from free memory (`services/memory_budget`), not constants | Disk instead of RAM; one `HEAD` per gated read; oversized work now refused visibly rather than attempted |
+| 4 | **Write-path N+1** | `questionnaire.py#create_interview`'s answer loop = 3 queries per answer | **Now**, at ~14 answers in one save | `db.batch_()` / `create_many` — one round trip | None; strictly fewer queries |
 | 5 | **Connection pool under burst** | Knee at 8 concurrent, MEASURED §6 | **Now**, at ~8 simultaneous users | Remove queries (see 1, 2); make the pool a knob | None |
 | 6 | **Reports and manifests built entirely in RAM** | 284 B/cell MEASURED; caps allow 2.1 M cells | ~10–20× today's records | `write_only` workbook to a temp file; stream rows | Column widths become fixed, not content-fitted |
 | 7 | **Queue throughput: one worker, serial batch** | `media_queue.py::process_next_media_jobs`; `main.py::_acquire_queue_worker_lock` | ~5–10× today's audio | Concurrency as a setting (default 1); DB lease instead of `flock` | None at default |
@@ -329,8 +329,9 @@ every signed-in account, and its docstring says so — and `records.py::owned_or
 kept the original grant-table body and is reached only from the paths that take data OUT:
 `/export/dataset`, the `/data` browser and the download routes. So a researcher's list request costs
 what an admin's costs, and the sentence removed here was pricing a query the list path had stopped
-making. `records.py:262` is now a docstring inside `_redact_sensitive` — which is what a stale line
-pin looks like from the other side.
+making. The line that pin named is now a docstring inside `records.py#_redact_sensitive` — which is
+what a stale line pin looks like from the other side, and the reason this sentence no longer carries
+one.
 
 What survives is narrower and still worth caching. `owned_or_granted_where` **is** a real read below
 professor — the media variant resolves design-workshop-tagged ids through
@@ -1495,3 +1496,30 @@ tally = collections.Counter(verdicts.values())
 print(f"{len(verdicts)} models -", ", ".join(f"{n} {v}" for v, n in tally.most_common()))
 EOF
 ```
+---
+
+## How this document is kept true
+
+Half of this page is arithmetic over measurements taken on one dated afternoon, and half is a
+description of code that has since moved. They are maintained differently and the table says which is
+which.
+
+| Claim | What checks it | What it cannot check |
+|---|---|---|
+| Every repository path, and every citation that names a symbol | `node docs/tools/check-docs.mjs`. It resolves the paths, and for a citation that names a symbol on the same line it checks the symbol is still there | Whether the code still has the shape the paragraph describes |
+| The ranked inventory (§2) and the remedies beside it | Read the code each row cites. Several rows are marked **DONE** and name the change that closed them | Whether a rank is still right. A remedy landing elsewhere can reorder these |
+| The MEASURED endpoint timings | Nothing. §8 says how to reproduce each one; that is the whole check | — |
+| The MODELLED figures | The arithmetic is shown inline, over a number labelled MEASURED. Re-do it | Whether the constant it extrapolates is still the constant |
+
+**CITE BY SYMBOL, NEVER BY LINE.** This page pins line numbers in places and they rot silently — the
+checker says so about this file by name, and three of them had drifted by 2026-08-28 and were
+re-pinned to symbols (`s3.py#get_object_bytes`, `questionnaire.py#create_interview`,
+`records.py#_redact_sensitive`). `docs/REPORT-DATA-WIRING.md` had to have its line pins removed
+wholesale for the same reason. Any new citation added here names a symbol.
+
+**A MEASURED NUMBER IS NEVER EDITED TO MATCH A NEW BELIEF.** Re-measure and date the new figure, or
+mark the old one as superseded. §0's three labels are the vocabulary for doing that.
+
+**Re-read this page when** a row in §2 is closed, when the instance size or the database region
+changes, or when a remedy named here ships — the second of those invalidates most of the numbers at
+once rather than one at a time.

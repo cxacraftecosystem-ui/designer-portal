@@ -50,8 +50,23 @@
  * prop, a count prop and two paragraphs of advice about how much it mattered, and no callback — so
  * the one field on this surface that reaches the printed report AS PICTURES was the one field this
  * tab could not fill. It was closed rather than the advice removed, because the advice is right.
+ *
+ * ── AND ONE SLOT, WHICH IS NOT A CALLBACK AND IS NOT A FIFTH FIELD (2026-08-28) ─────────────────
+ *
+ * {@link UploadTabPanelProps.sketchMeasure} and {@link UploadTabPanelProps.prototypeMeasure} take
+ * rendered nodes rather than data, and that is what keeps the paragraph above true. The measuring
+ * card needs a DISPLAYABLE URL for every photograph already attached to the chosen row, which means
+ * resolving media ids and `dwlocal:` references out of the draft store — precisely the knowledge
+ * this directory is built not to have. So the host, which already owns all of it, builds the card
+ * and this file only says WHERE it goes: at the foot of the section it belongs to, so it follows the
+ * designer between Sketches and Prototypes instead of sitting under both.
+ *
+ * A slot rather than four more props is the arrangement `FieldInput`'s `MediaField` already uses for
+ * its `extra` render prop, and for the same reason: what the extra needs is the host's business, and
+ * a panel that typed it would have to be edited every time the extra learned something new.
  */
 
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { Layers, PencilRuler } from "lucide-react";
 
@@ -98,6 +113,17 @@ export interface UploadTabPanelProps {
    * print twelve notices. See `UploadTabHost.attach`.
    */
   onAttachTurntable?: (files: File[]) => AttachAnswer;
+  /**
+   * The "Measure a dimension from a photograph" card for the SKETCH the host has chosen.
+   *
+   * Rendered at the foot of the Sketches section. Optional because a host with no way to resolve a
+   * photograph to a URL — a record form mounting this panel into its own image field — has nothing
+   * to put here, and an absent slot renders nothing rather than an empty box. See the header for why
+   * this is a node and not four typed props.
+   */
+  sketchMeasure?: ReactNode;
+  /** The same card for the chosen PROTOTYPE, at the foot of the Prototypes section. */
+  prototypeMeasure?: ReactNode;
 }
 
 /**
@@ -141,7 +167,9 @@ export function UploadTabPanel({
   onAttachSketch,
   onAttachSketchSource,
   onAttachModel,
-  onAttachTurntable
+  onAttachTurntable,
+  sketchMeasure,
+  prototypeMeasure
 }: UploadTabPanelProps) {
   const [section, setSection] = useState<Section>("sketch");
 
@@ -195,6 +223,13 @@ export function UploadTabPanel({
             onAttach={onAttachSketch}
             onAttachSource={onAttachSketchSource}
           />
+          {/*
+            BELOW THE TRACING PANEL, NOT ABOVE IT, and that order is the reading order of the tab:
+            the photograph is attached first and measured afterwards, and a designer who has just
+            filed one is already at the bottom of the panel when the measuring card comes into view.
+            `mt-3` matches the gap the Prototypes section puts above its own panel.
+          */}
+          {sketchMeasure ? <div className="mt-3">{sketchMeasure}</div> : null}
         </div>
       ) : (
         <div className="panel p-4">
@@ -214,6 +249,8 @@ export function UploadTabPanel({
               onAttachTurntable={onAttachTurntable}
             />
           </div>
+          {/* See the note on the sketch half — same order, same gap. */}
+          {prototypeMeasure ? <div className="mt-3">{prototypeMeasure}</div> : null}
         </div>
       )}
     </div>

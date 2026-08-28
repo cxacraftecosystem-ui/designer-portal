@@ -67,6 +67,28 @@ const PRODUCT_FORM = read("components", "forms", "ProductForm.tsx");
 const TOOL_FORM = read("components", "forms", "ToolForm.tsx");
 const PROCESS_FORM = read("components", "forms", "ProcessForm.tsx");
 
+/*
+ * THE QUESTIONNAIRE FAMILY AND THE THREE REMAINING RECORD PAGES — added 2026-08-28.
+ *
+ * The owner widened the requirement twice after the first sweep landed: *"all the record pages
+ * should have dictation options available, wherever applicable so as to reduce the friction as much
+ * as possible"*, then *"dictation should be a default for other record pages as well."* These six
+ * files are where that second sweep went, and section 4 below is what stops it quietly coming back
+ * out.
+ *
+ * BOTH questionnaire families are read here on purpose. `/questionnaire` (singular) is the ministry
+ * instrument and `/questionnaires` (plural) is the designer-owned form builder; they are separate
+ * features with separate models and must never be unified, so a rule applied to one is not applied
+ * to the other unless somebody applies it twice. That is exactly the drift a register catches and a
+ * review does not.
+ */
+const Q_SINGULAR = read("app", "(protected)", "questionnaire", "page.tsx");
+const Q_LIST = read("app", "(protected)", "questionnaires", "page.tsx");
+const Q_DETAIL = read("app", "(protected)", "questionnaires", "[id]", "page.tsx");
+const Q_ANSWER = read("app", "(protected)", "questionnaires", "[id]", "answer", "page.tsx");
+const MEDIA_PAGE = read("app", "(protected)", "media", "page.tsx");
+const WORKSHOP_PAGE = read("app", "(protected)", "workshops", "page.tsx");
+
 /* ────────────────────────────────────────────────────────────────────────────
  * 1. Nothing a record form hears may leave the device
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -437,6 +459,126 @@ test("every qualifying record-form box has a control, and the skipped ones stay 
   );
   const multiNote = PROCESS_FORM.slice(PROCESS_FORM.indexOf("function MultiNoteInput"), PROCESS_FORM.indexOf("// The process form (create + edit)"));
   expect(multiNote, "and no editor inside the control itself either").not.toMatch(/<RichTextField/);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 4. The second sweep: every remaining record page, and the boxes that stay bare
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A NAME IS NOT DICTATED AND A PHRASE IS — the one rule this whole section is made of.
+ *
+ * A recogniser returns the nearest DICTIONARY word for a token that is not one, so a proper noun, an
+ * identifier and a number each come back wrong in a way the speaker does not notice until much
+ * later. Every page below therefore splits its boxes the same way, and every split is asserted in
+ * BOTH directions: the prose box has a control, the identifier box does not. Only the second
+ * direction catches "somebody dictated the section code because it looked like a text box".
+ */
+test("the questionnaire family dictates its prose and leaves its identifiers alone", () => {
+  // /questionnaires — the designer's own list, and the create form on it.
+  expect(Q_LIST, "a new questionnaire's title is a phrase somebody composes").toMatch(
+    /<DictatedTextInput[\s\S]{0,200}?name="title"/
+  );
+  expect(Q_LIST, "and so is its description").toMatch(/<DictatedTextInput[\s\S]{0,200}?name="description"/);
+
+  // /questionnaires/[id] — the authoring surface.
+  for (const name of ["title", "prompt", "helpText"]) {
+    expect(Q_DETAIL, `${name} is prose and must carry a microphone`).toMatch(
+      new RegExp(`<DictatedTextInput[\\s\\S]{0,300}?name="${name}"`)
+    );
+  }
+  expect(Q_DETAIL, "the questionnaire description takes the multi-line box").toMatch(
+    /<DictatedTextArea[\s\S]{0,200}?name="description"/
+  );
+  expect(Q_DETAIL, "a SECTION CODE is an identifier, not a phrase").not.toMatch(
+    /<DictatedTextInput[\s\S]{0,300}?name="code"/
+  );
+
+  // /questionnaires/[id]/answer — the sitting itself.
+  expect(Q_ANSWER, "the sitting's notes are dictated").toMatch(/<DictatedTextArea[\s\S]{0,200}?name="notes"/);
+  expect(Q_ANSWER, "and every answer box has its own button").toMatch(/<OnDeviceDictationButton/);
+  for (const name of ["respondentName", "title"]) {
+    expect(Q_ANSWER, `${name} is a proper noun; the page says so at the box`).not.toMatch(
+      new RegExp(`<DictatedTextInput[\\s\\S]{0,300}?name="${name}"`)
+    );
+  }
+
+  // /questionnaire — the ministry instrument.
+  for (const name of ["title", "place"]) {
+    expect(Q_SINGULAR, `the interview ${name} was named in the requirement`).toMatch(
+      new RegExp(`<DictatedTextInput[\\s\\S]{0,300}?name="${name}"`)
+    );
+  }
+  expect(Q_SINGULAR, "a new question prompt is prose").toMatch(/<DictatedTextArea[\s\S]{0,300}?name="prompt"/);
+  expect(Q_SINGULAR, "the admin editor's section title is seeded, then dictated").toContain(
+    "<SeededSectionTitle"
+  );
+  /*
+    THE SECTION CODE ON THIS PAGE IS CONTROLLED AND STILL BARE, so the assertion names the CONTROL
+    around `newCode` rather than a `name=` this box does not carry. Reading the whole file for "no
+    DictatedTextInput near code" would pass for the wrong reason the day somebody renames the state.
+  */
+  expect(Q_SINGULAR, "the section code stays a plain box").toMatch(/<TextInput value=\{newCode\}/);
+});
+
+/**
+ * `formElement.reset()` IS THE TRAP ON THE MEDIA FORM, AND IT IS INVISIBLE IN A DIFF.
+ *
+ * `reset()` rewrites the DOM node and tells React nothing, so any box whose value React is holding
+ * is re-painted with the PREVIOUS upload's text on the very next render — the researcher's second
+ * photograph arrives carrying the first one's caption. Both dictated boxes on that form hold their
+ * value in React (one in the page, one inside `DictatedTextArea`), so both need clearing by hand,
+ * and the two mechanisms differ only because the two components have different contracts.
+ *
+ * Asserted because nothing else would catch it: the form still submits, the upload still succeeds,
+ * and the wrong caption is a real caption on a real file.
+ */
+test("the media form clears both dictated boxes when it resets itself", () => {
+  expect(MEDIA_PAGE, "the object name is dictated — Android's box has been since the default flipped").toMatch(
+    /<DictatedTextInput[\s\S]{0,300}?name="mediaTitle"/
+  );
+  expect(MEDIA_PAGE, "the caption is the multi-line dictated box").toMatch(
+    /<DictatedTextArea[\s\S]{0,200}?name="caption"/
+  );
+  expect(MEDIA_PAGE, "the caption remounts on reset, which is how a self-controlled box re-seeds").toMatch(
+    /<DictatedTextArea key=\{resetNonce\}/
+  );
+  const reset = MEDIA_PAGE.slice(MEDIA_PAGE.indexOf("formElement.reset();"));
+  expect(reset.slice(0, 400), "the page-held title must be cleared in the same block").toContain(
+    'setMediaTitle("")'
+  );
+  expect(reset.slice(0, 400), "and the caption's key must be bumped there too").toContain("setResetNonce");
+});
+
+/**
+ * The Workshop record form, which was the last web record page still typing into bare boxes.
+ *
+ * Its three prose columns are CONTROLLED for the reason the file states beside them, and `setDirty`
+ * is armed by hand at each: a dictated phrase is a React state write and fires no native `input`
+ * event, so the form's own `onInput` guard cannot see it. A box that dictates without arming the
+ * guard loses its text to an unsaved-changes dialog it never triggered.
+ */
+test("the workshop record form dictates its three prose columns and arms the dirty guard", () => {
+  /*
+    SLICED PER ELEMENT RATHER THAN MATCHED WITH A PROXIMITY WINDOW.
+
+    A window is a guess about how much prose sits between the `name` and the call, and the guess is
+    wrong the moment somebody writes a comment inside the element — which is what happened here on
+    the first attempt: `name="title"` and its `setDirty(true)` are more than 300 characters apart
+    because the REASON for that call is written between them, and the reason is worth more than the
+    assertion's convenience. Slicing to the element's own closing bracket bounds the read exactly,
+    and it keeps being right however long the comment grows.
+  */
+  for (const name of ["title", "place", "description"]) {
+    const at = WORKSHOP_PAGE.indexOf(`name="${name}"`);
+    expect(at, `${name} is not on this form at all`).toBeGreaterThan(-1);
+    const opens = WORKSHOP_PAGE.lastIndexOf("<Dictated", at);
+    expect(opens, `${name} must be on a DictatedTextInput or a DictatedTextArea`).toBeGreaterThan(-1);
+    const element = WORKSHOP_PAGE.slice(opens, WORKSHOP_PAGE.indexOf("/>", at));
+    expect(element, `${name} must arm the dirty guard — a dictated phrase fires no native input event`).toContain(
+      "setDirty(true)"
+    );
+  }
 });
 
 /*

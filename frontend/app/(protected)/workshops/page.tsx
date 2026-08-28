@@ -10,6 +10,8 @@ import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
+import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DateRangeField } from "@/components/forms/DateRangeField";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -120,6 +122,23 @@ function WorkshopsPageBody() {
   // are re-seeded in `resetForm` — the one place a different workshop is ever loaded into the form.
   const [artisanIds, setArtisanIds] = useState<string[]>([]);
   const [craftIds, setCraftIds] = useState<string[]>([]);
+  /*
+    THE TWO DICTATED SINGLE-LINE BOXES ARE CONTROLLED, and the rest of this form is not.
+
+    Dictation writes into a box from OUTSIDE the keyboard, so an uncontrolled input would need a ref
+    plus a hand-dispatched `input` event to keep React and the DOM agreeing about what is in it.
+    `submit` reads `FormData` off the form element, so nothing downstream can tell the difference.
+
+    They are re-seeded in `resetForm` for the reason the two link pickers are: that is the ONE place a
+    different workshop is loaded into the form, and a controlled value left alone there would keep the
+    PREVIOUS record's title while the row highlighted below said otherwise.
+
+    The DESCRIPTION needs none of this: `DictatedTextArea` is uncontrolled by design — `defaultValue`
+    plus `onDirty`, exactly the shape of the plain `<TextArea>` it replaces — so it re-seeds with the
+    form and holds no value here.
+  */
+  const [title, setTitle] = useState("");
+  const [place, setPlace] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -255,6 +274,10 @@ function WorkshopsPageBody() {
   function resetForm(next: Workshop | null) {
     setEditing(next);
     setWorkshopType(next?.workshopType ?? "OTHER");
+    // The controlled, dictated boxes. `""` and not `undefined` — a controlled input handed undefined
+    // switches to uncontrolled and React warns, and the box then keeps the last record's text.
+    setTitle(next?.title ?? "");
+    setPlace(next?.place ?? "");
     setArtisanIds(linkedArtisanIds(next));
     setCraftIds(linkedCraftIds(next));
     setMediaFiles([]);
@@ -523,12 +546,40 @@ function WorkshopsPageBody() {
         </Field>
 
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <Field label="Workshop title" required>
-            <TextInput name="title" required defaultValue={editing?.title ?? ""} />
-          </Field>
-          <Field label="Place" required>
-            <TextInput name="place" required defaultValue={editing?.place ?? ""} />
-          </Field>
+          {/*
+            DICTATED, AND `FieldBlock` RATHER THAN `Field` — 2026-08-28. `DictatedTextInput` draws its
+            own label and its own asterisk from `required`, so wrapping it in a `<label>` would name
+            the box twice and fold the microphone button's name into the field's own (§12.3).
+
+            CONTROLLED, which the rest of this form's boxes are not: dictation writes from outside the
+            keyboard, and an uncontrolled input would need a ref plus a hand-dispatched `input` event
+            to keep React and the DOM agreeing. `submit` reads `FormData` off the form element, so
+            nothing downstream can tell the difference.
+          */}
+          <DictatedTextInput
+            name="title"
+            label="Workshop title"
+            required
+            value={title}
+            onChange={(next) => {
+              setTitle(next);
+              // A dictated phrase is a React state write and fires no native `input` event, so the
+              // form's own `onInput` cannot see it. Every themed control here arms the guard by hand.
+              setDirty(true);
+            }}
+            explainWhenUnavailable={false}
+          />
+          <DictatedTextInput
+            name="place"
+            label="Place"
+            required
+            value={place}
+            onChange={(next) => {
+              setPlace(next);
+              setDirty(true);
+            }}
+            explainWhenUnavailable={false}
+          />
           <div className="md:col-span-2">
             <DateRangeField start={editing?.startDate ?? editing?.date} end={editing?.endDate ?? editing?.date} />
           </div>
@@ -545,9 +596,15 @@ function WorkshopsPageBody() {
               </div>
             )}
           </Field>
-          <Field label="Description">
-            <TextArea name="description" defaultValue={editing?.description ?? ""} />
-          </Field>
+          {/* A description is prose and gets the multi-line dictated box, exactly as an artisan's
+              address does on its own form. */}
+          <DictatedTextArea
+            name="description"
+            label="Description"
+            defaultValue={editing?.description ?? ""}
+            onDirty={() => setDirty(true)}
+            explainWhenUnavailable={false}
+          />
           <MultiNoteField defaultValue={editing?.notes ?? ""} />
           {/* Both link pickers use the same themed multi-select as every other one in the app; the
               selections are React state, not FormData (see the note on `artisanIds` above).
