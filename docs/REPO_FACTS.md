@@ -18,7 +18,7 @@ API lags the tree by however many commits have not been deployed; see
 |---|---|
 | Prisma models | **59** |
 | Prisma enums | **27** |
-| `@@index` declarations | 162 |
+| `@@index` declarations | 169 |
 | `@@unique` declarations | 19 |
 
 Models: `User`, `AssignedTask`, `Feedback`, `UserPreference`, `AppRelease`, `Craft`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `MediaFile`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `UserAiCredential`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DesignWorkshopInspector`, `DesignWorkshopAccessRequest`, `RecordAccessToken`, `RecordAccessTokenRedemption`, `DesignWorkshopProvisionalMember`, `DwStageEntry`, `DwCustomSection`, `DwCustomField`, `DwReportExport`, `DwAiLayer`, `DwAiLayerDecision`, `DwWorkshopConsentDecision`, `DwDictationDailyUsage`, `DwAiVerbDailyUsage`, `DwReviewRating`, `DesignerRoster`, `DesignerProfile`, `AccessRoster`.
@@ -27,17 +27,17 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**267 operations** in the working tree — 125 GET, 82 POST, 25 DELETE,
+**270 operations** in the working tree — 126 GET, 83 POST, 26 DELETE,
 20 PATCH, 15 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
-| `design_workshops.py` | 42 |
+| `design_workshops.py` | 43 |
+| `workshops.py` | 21 |
 | `media.py` | 20 |
 | `questionnaire.py` | 20 |
 | `questionnaire_forms.py` | 19 |
-| `workshops.py` | 19 |
 | `data_access.py` | 12 |
 | `tasks.py` | 10 |
 | `designers.py` | 9 |
@@ -115,8 +115,8 @@ no key is skipped wherever it sits.
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
 | Backend unit (`backend/tests/`) | 149 | 3170 `def test_` | `python -m pytest -q` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 162 | 1662 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 189 | 2435 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Web end-to-end (`frontend/e2e/`) | 163 | 1676 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 191 | 2488 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -133,11 +133,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 175 | 105,338 | 175 | 105,338 |
-| `frontend/app` | 68 | 32,991 | 68 | 32,991 |
-| `frontend/components` | 253 | 99,276 | 253 | 99,276 |
-| `frontend/lib` | 112 | 57,348 | 112 | 57,348 |
-| `android/app/src/main/java` | 222 | 189,269 | 222 | 189,269 |
+| `backend/app` | 176 | 106,190 | 176 | 106,190 |
+| `frontend/app` | 69 | 34,343 | 69 | 34,343 |
+| `frontend/components` | 261 | 103,623 | 261 | 103,623 |
+| `frontend/lib` | 114 | 57,678 | 114 | 57,678 |
+| `android/app/src/main/java` | 228 | 194,582 | 228 | 194,582 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
