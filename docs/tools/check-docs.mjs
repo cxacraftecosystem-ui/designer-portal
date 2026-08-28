@@ -1385,6 +1385,32 @@ const PROVIDER_WORKAROUND_FILES = new Set([
   "scripts/keep-supabase-active.mjs",
 ]);
 
+/** The vendored tracer engine, exempt from the provider-name sweep because "NEON" there is the ARM
+ *  SIMD instruction set and not the company hosting the database.
+ *
+ *  `android/core-imaging/.../Accel.kt:31` names its native backend `"neon-arm64"`, which is what
+ *  every imaging library calls that code path; the four `core-*` modules are full of it. Two reasons
+ *  this is a path exemption rather than a reworded line. First, these modules are vendored VERBATIM
+ *  from Offline-Tracer and hashed file by file in `android/UPSTREAM-MANIFEST-KOTLIN.txt`, so editing
+ *  them to satisfy a grep is not available: the next re-vendor undoes it and the manifest stops
+ *  matching upstream, which is the one property the manifest exists to have. Second, the sweep's
+ *  purpose is to stop a SECOND COPY of "which company hosts production" drifting when the deployment
+ *  moves — and a SIMD register file cannot go stale that way, so there is nothing here for the rule
+ *  to protect.
+ *
+ *  A PREFIX AND NOT A FILE LIST, deliberately: the exemption is a property of the vendored tree, and
+ *  a list would go stale the first time upstream adds a file. If the engine is ever un-vendored and
+ *  becomes ours to edit, delete this block with it. Added 2026-08-28, when vendoring first tripped
+ *  the sweep. */
+const PROVIDER_HOMONYM_PREFIXES = [
+  "android/core-imaging/",
+  "android/core-vector/",
+  "android/core-pipeline/",
+  "android/core-export/",
+];
+
+const isProviderHomonymPath = (rel) => PROVIDER_HOMONYM_PREFIXES.some((p) => rel.startsWith(p));
+
 /** The words that say, in the lines around a provider name, that the sentence is about the past.
  *  A bare date is deliberately NOT enough — dates decorate live facts all over this repository — and
  *  neither is "was", which appears in every third sentence of this prose. */
@@ -1607,6 +1633,7 @@ function checkDatabaseProvider() {
   const elsewhere = new Map();
   for (const rel of trackedTextFiles()) {
     if (rel === "docs/tools/check-docs.mjs" || rel === "docs/ENVIRONMENT.md") continue;
+    if (isProviderHomonymPath(rel)) continue;
     const n = read(join(REPO, rel)).split("\n").filter((l) => claimedRe.test(l)).length;
     if (n) elsewhere.set(rel, n);
   }
