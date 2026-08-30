@@ -1030,6 +1030,7 @@ to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports i
 | `/design-workshops/:id/provenance` | `isAdmin` — the per-field authorship on each stage stays open to every designer on the workshop; this is the CANONICAL COMPARISON, which crosses into the shared record tables and reports one account's data beside another's | `require_admin` (`GET /design-workshops/{id}/provenance`) |
 | `/settings/api-keys` | `isAdmin` (key **values** are master-admin inside the page) | `require_admin` / `require_master_admin` |
 | `/settings/tasks` | `canAssignTasks` | `require_admin` |
+| `/settings/usage` | `isAdmin` | `require_usage_reader` (`GET /usage/routes`, `GET /usage/collection`) |
 | `/review` | `canReview` | `require_reviewer` |
 | `/data` | `canDownloadDataset` | `require_dataset_downloader` |
 | `/design-review` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child, because the pool round reaches ACROSS workshops: a designer ranks work from rounds they were never added to. No prefix rule covered it, so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_ratable_workshop_or_404`) |
