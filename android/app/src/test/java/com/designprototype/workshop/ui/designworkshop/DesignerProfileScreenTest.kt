@@ -86,10 +86,15 @@ class DesignerProfileScreenTest {
     fun `every column on the profile is classified, and none of them twice`() {
         val columns = profileColumns()
         assertEquals(
-            "ProfileForm no longer has twenty-one columns. That is fine — but the new one has to be " +
-                "put in DESIGNER_PROFILE_DICTATED or in DESIGNER_PROFILE_NOT_DICTATED with a reason, " +
-                "because a box that is neither is an omission nobody can tell from a decision",
-            21,
+            "ProfileForm no longer has twenty-three columns. That is fine — but the new one has to " +
+                "be put in DESIGNER_PROFILE_DICTATED or in DESIGNER_PROFILE_NOT_DICTATED with a " +
+                "reason, because a box that is neither is an omission nobody can tell from a " +
+                "decision",
+            // Twenty-one until 2026-08-30, when `experienceMonths` and `location` arrived together:
+            // the months half of the experience pair, and the `Location` row that finally gives a
+            // designer's address a district and a map point. Both are classified as NOT dictated,
+            // with their reasons, in the table this test guards.
+            23,
             columns.size,
         )
 
@@ -149,9 +154,14 @@ class DesignerProfileScreenTest {
             "state",
             // Media slots: a camera, a gallery and a document picker. No text to speak.
             "photoMediaId", "signatureMediaId", "cvMediaId",
+            // Not a box at all: the whole address card, whose one free-text answer carries a
+            // microphone of its own inside `LocationFieldsSection`.
+            "location",
             // Numbers and identity: a recogniser returns words where these want digits, and a
             // mis-heard character in an empanelment number is indistinguishable from a right one.
-            "experienceYears", "phone", "pincode", "empanelmentNo",
+            // The experience pair is two closed lists of whole numbers with no text box between
+            // them for a spoken answer to land in.
+            "experienceYears", "experienceMonths", "phone", "pincode", "empanelmentNo",
             // Addresses and URLs: punctuation a recogniser writes out as words.
             "email", "website",
         ).forEach { column ->

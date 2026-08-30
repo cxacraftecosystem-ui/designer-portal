@@ -344,9 +344,7 @@ async def set_model(user_id: str, provider: AiProvider, model: str | None) -> di
 
 async def delete_key(user_id: str, provider: AiProvider) -> dict[str, Any]:
     """Remove this person's key so the deployment's applies again."""
-    await db.useraicredential.delete_many(
-        where={"userId": user_id, "provider": provider.value}
-    )
+    await db.useraicredential.delete_many(where={"userId": user_id, "provider": provider.value})
     # WARNING, value-free: see the head of the Writes section. A cleared key is the half of the
     # trail that says a designer's work went back to being billed to the deployment.
     logger.warning("AUDIT personal AI key cleared: user=%s provider=%s", user_id, provider.value)

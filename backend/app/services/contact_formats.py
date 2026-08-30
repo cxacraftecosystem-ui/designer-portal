@@ -203,14 +203,14 @@ def split_phone(stored: str) -> tuple[str, str]:
         return INDIA_DIAL_CODE, ""
     compact = text.replace(" ", "")
     if compact.startswith(INDIA_DIAL_CODE):
-        return INDIA_DIAL_CODE, phone_digits(compact[len(INDIA_DIAL_CODE):])
+        return INDIA_DIAL_CODE, phone_digits(compact[len(INDIA_DIAL_CODE) :])
     if compact.startswith("+"):
         head, separator, tail = text.partition(" ")
         if separator and _DIAL_CODE.fullmatch(head):
             return head, phone_digits(tail)
         match = _DIAL_CODE.match(compact)
         if match:
-            return match.group(0), phone_digits(compact[match.end():])
+            return match.group(0), phone_digits(compact[match.end() :])
         return INDIA_DIAL_CODE, phone_digits(compact)
     # Bare numbers (legacy rows) are Indian nationals: 10 digits under +91.
     return INDIA_DIAL_CODE, phone_digits(compact)
@@ -257,7 +257,9 @@ def phone_error(value: str | None) -> str | None:
     shaped = phone_is_number_shaped(text)
     if code == INDIA_DIAL_CODE:
         return None if shaped and len(digits) == 10 else "Enter a 10-digit number for +91."
-    return None if shaped and 4 <= len(digits) <= 14 else "Enter a valid phone number (4–14 digits)."
+    return (
+        None if shaped and 4 <= len(digits) <= 14 else "Enter a valid phone number (4–14 digits)."
+    )
 
 
 def validate_email(value: str | None) -> str | None:

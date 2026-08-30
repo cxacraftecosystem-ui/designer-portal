@@ -9,6 +9,7 @@ records THAT the field changed, who changed it and when, but not the value. The 
 exception is written out above the set; it is the difference between auditing a retraction and
 undoing it.
 """
+
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -422,7 +423,10 @@ async def record_revision(record: Any, user: Any, data: dict[str, Any], record_t
         if field in REVISION_REDACTED_FIELDS:
             changes[field] = _redacted_change(old_value, new_value)
         else:
-            changes[field] = {"old": jsonable_encoder(old_value), "new": jsonable_encoder(new_value)}
+            changes[field] = {
+                "old": jsonable_encoder(old_value),
+                "new": jsonable_encoder(new_value),
+            }
     if not changes:
         return
     await db.recordrevision.create(
@@ -467,7 +471,9 @@ async def guard_record_edit(record: Any, user: Any, data: dict[str, Any], record
     return privileged
 
 
-async def assert_can_comment(user: Any, owner_id: str | None, record_type: str, record_id: str) -> None:
+async def assert_can_comment(
+    user: Any, owner_id: str | None, record_type: str, record_id: str
+) -> None:
     """COMMENT tier (or owner/admin) required to comment on a record."""
     tier = await effective_tier_for_record(user, owner_id, record_type, record_id)
     if not tier_at_least(tier, "COMMENT"):
@@ -489,7 +495,11 @@ async def owner_download_scope(user: Any, owner_id: str) -> dict[str, set[str]] 
     if is_admin(user) or can_download_dataset(user) or get_value(user, "id") == owner_id:
         return None
     grant = await active_grant(get_value(user, "id"), owner_id)
-    if not (grant and _enum_str(grant.status) == "GRANTED" and tier_at_least(_enum_str(grant.tier), "DOWNLOAD")):
+    if not (
+        grant
+        and _enum_str(grant.status) == "GRANTED"
+        and tier_at_least(_enum_str(grant.tier), "DOWNLOAD")
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You need download access to this researcher's data. Request it from them.",

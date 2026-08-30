@@ -211,6 +211,282 @@ export function capNoticeSentence({
   return `Showing the first ${shown} of ${total}${plus}. ${hint}`;
 }
 
+/**
+ * THE SAME SENTENCE WHEN THE SERVER REPORTS THE CUT AS A FLAG AND NOT AS A TOTAL.
+ *
+ * WHY A SECOND FUNCTION RATHER THAN `capNoticeSentence` WITH A CLEVER `total`. A panel driven by
+ * `SearchableSelectProps.serverQuery` holds the server's answer, not the corpus, and its caller asks
+ * for exactly `RENDER_CAP` rows — so `filtered.length` never exceeds the cap, `capNoticeSentence`
+ * never fires, and a list that was cut on the server would be drawn in complete silence. That is
+ * R4's failure with the numbers on the other side of the wire. What the routes can cheaply say is a
+ * BOOLEAN, read one past the take, exactly as `GET /tasks/options` already reports
+ * `workshopsTruncated` (`backend/app/api/routes/tasks.py`) — counting the corpus to print "of 3632"
+ * is a second query for a number nobody acts on. `components/data/cappedList.ts::flagCutNotice`
+ * makes the identical split one layer up, for the identical reason, and this is its in-panel twin;
+ * the wording is deliberately close enough that a page and its picker read as one voice.
+ *
+ * **This sentence WINS over `capNoticeSentence` whenever both could be drawn**, and the reason is
+ * that a known total which is itself a truncated count is worse than admitting the total is
+ * unknown: "Showing the first 80 of 100" over a server that cut at 100 tells the reader there are
+ * twenty more when there may be nine hundred, and they stop looking.
+ *
+ * The two arms are `flagCutNotice`'s and are the same judgement. With nothing typed the reader has
+ * been handed a slice and must be told the box is the way past it; with a term typed the cut is a
+ * cut of the MATCHES, and telling somebody to search when they already have is how a picker teaches
+ * a reader that searching does not work — the only useful instruction left is to narrow it.
+ */
+export function unknownTotalNoticeSentence({
+  shown,
+  pinned,
+  term,
+  hint
+}: {
+  shown: number;
+  pinned: number;
+  term: string;
+  hint: string;
+}): string {
+  const plus = pinned > 0 ? `, plus ${pinned} already selected` : "";
+  const trimmed = term.trim();
+  const more = trimmed
+    ? `More match “${trimmed}” than are drawn, and the server did not say how many.`
+    : `There are more than are drawn, and the server did not say how many.`;
+  return `Showing the first ${shown}${plus}. ${more} ${hint}`;
+}
+
+/**
+ * What the panel says while a `serverQuery` answer is outstanding.
+ *
+ * A WORD, NOT A SPINNER, and that is the whole design rather than a shortcut. This repository's
+ * non-negotiable is that "a signal that only exists as motion is a signal reduced-motion readers
+ * never get" — every pulse has to be paired with a static state anyway, so a control whose only
+ * pending signal is a static state has nothing left to pair. It also costs nothing to announce: the
+ * same word goes into the panel's `role="status"` region through `listAnnouncement`, where a spinner
+ * could never have gone.
+ *
+ * The ellipsis is the single U+2026 character, matching every other "…" in this app's copy rather
+ * than three periods, so a screen reader pauses instead of spelling out dots.
+ */
+export const SEARCHING_LABEL = "Searching…";
+
+/**
+ * "Your query matched nothing" — the `serverQuery` wording, which is a STRONGER claim than the
+ * local one and therefore may not share its sentence.
+ *
+ * A panel filtering the array it was handed says "No matches", and that sentence is true only of
+ * the rows it holds. Sixteen controls in this app shipped exactly that over one server-truncated
+ * page, and `app/(protected)/design-review/page.tsx` names what it cost: *"typing a real workshop's
+ * title that happens to sit on page 4 answered 'No matches' — absence reading as non-existence."*
+ * With the box going to the server the answer finally IS about the whole list, and the sentence has
+ * to say so — otherwise a reader trained by those sixteen controls to distrust "No matches" goes on
+ * distrusting the one control that has earned it, and keeps hunting for a record that is not there.
+ *
+ * The term is quoted back because a debounced server box can answer a query the reader has already
+ * typed past; seeing which term the answer is about is how they tell a stale panel from a real
+ * absence.
+ */
+export function serverNoMatchSentence(term: string): string {
+  return `No matches for “${term.trim()}”. This box searches the whole list, not only the rows drawn here.`;
+}
+
+/**
+ * THE PANEL'S LIVE REGION, in one place, because it is the only description of the list a screen
+ * reader gets and it now has to describe two very different controls.
+ *
+ * The non-server arms are byte-for-byte what both components have always announced — "N of M
+ * options match X" while filtering, "M options" otherwise — because ~40 call sites and their specs
+ * depend on those exact strings and this pass adds capability without moving anything.
+ *
+ * The server arms exist because the old sentence goes from useless to actively wrong on that
+ * branch. `filtered` IS `options` when the server did the filtering, so the filtering arm would
+ * announce "80 of 80 options match bagru", which is arithmetic rather than an answer; and neither
+ * arm can say the two things that only exist there — that a request is in flight (so silence means
+ * "wait", not "nothing"), and that the server had more than it sent (so this is not the whole
+ * answer). Both are facts a sighted reader gets from the panel, and a reader who does not see the
+ * panel got nothing at all.
+ *
+ * `term` must be handed in ALREADY BLANKED when there is no filter box, which is how the callers
+ * express "this control is not searching" without a fifth flag.
+ */
+export function listAnnouncement({
+  total,
+  matched,
+  term,
+  server,
+  pending,
+  truncated
+}: {
+  /** `options.length` — every row the control was handed. */
+  total: number;
+  /** `filtered.length` — the rows matching the term. Equal to `total` on the server branch. */
+  matched: number;
+  /** The live filter term, or "" where there is no filter box. */
+  term: string;
+  /** The box drives a server query, so `matched` is the server's answer and not a local narrowing. */
+  server: boolean;
+  /** A server answer is outstanding. */
+  pending: boolean;
+  /** The server had more rows matching than it sent. */
+  truncated: boolean;
+}): string {
+  const trimmed = term.trim();
+  if (server && pending) return trimmed ? `Searching for ${trimmed}` : "Loading options";
+  if (server) {
+    const more = truncated
+      ? trimmed
+        ? ", and more match than are drawn"
+        : ", and more exist than are drawn"
+      : "";
+    return trimmed ? `${total} options match ${trimmed}${more}` : `${total} options${more}`;
+  }
+  if (trimmed) return `${matched} of ${total} options match ${trimmed}`;
+  return `${total} options`;
+}
+
+/**
+ * How many of a multi-select's picks are read out by name before the summary switches to a sample.
+ *
+ * Six is a listening budget rather than a measurement: past about that many names in one breath a
+ * screen-reader user is being read a list they cannot hold, and the count in front of them is the
+ * part they were actually asking for. Named here beside the sentence that spends it, the way
+ * `CAP_HINT_WITH_SEARCH` sits beside `capNoticeSentence`, so the number and its one use cannot drift.
+ */
+export const SUMMARY_NAMES = 6;
+
+/**
+ * WHAT A MULTI-SELECT'S TRIGGER IS CALLED — the count it holds, and as many of the names as can be
+ * resolved and read.
+ *
+ * ── THE COUNT AND THE NAMES ARE TWO QUESTIONS, AND ONE NUMBER USED TO ANSWER BOTH ────────────────
+ * The summary was built by looking every selected value up in `options` and counting what came back,
+ * which is correct exactly while `options` carries every pick. `SearchableSelectProps.serverQuery`
+ * ends that: there the array is one answer to one term, replaced whenever the reader types. So
+ * ticking three workshops and then typing a fourth term left the button reading "3 selected" while
+ * its accessible name said "1 selected: Bagru block printing" — and where the new answer carried none
+ * of the three, "Nothing selected", spoken about a control holding three. A picker that reports its
+ * own state one way to a sighted reader and another to a screen reader has told one of them a lie,
+ * and on the design-workshop viewer picker the lie is about who has been granted access.
+ *
+ * So `selected` — the length of the caller's array — is always the number, and it is the NAMES that
+ * degrade: every name known and few enough to read gets the full list; otherwise "including" says
+ * plainly that what follows is a sample. That word is already this control's vocabulary for the same
+ * situation past `SUMMARY_NAMES`, and it is exactly as true of a row the current page cannot name as
+ * of a seventh one.
+ *
+ * ── AND IT CHANGES NOTHING FOR A CALLER THAT HANDS IN A WHOLE LIST ───────────────────────────────
+ * Which is every caller that existed before `serverQuery`: `names.length === selected` there, so the
+ * first two arms produce the sentence this control has always produced, character for character. The
+ * same repair reaches one older case by the same door — a stored value the fetched page does not
+ * contain (the off-page row `DROPDOWN_DESIGN.md` §2.9 leaves the CALLER to recover) was until now
+ * quietly subtracted from the total the trigger announced, so a picker missing a row also miscounted
+ * the ones it had.
+ */
+export function selectionSummarySentence({
+  selected,
+  names
+}: {
+  /** `values.length` — every pick the control is holding, nameable or not. */
+  selected: number;
+  /** The labels that could be resolved from the options actually in hand, in the caller's order. */
+  names: string[];
+}): string {
+  if (selected <= 0) return "Nothing selected";
+  if (names.length === selected && selected <= SUMMARY_NAMES) {
+    return `${selected} selected: ${names.join(", ")}`;
+  }
+  // No names at all is its own arm rather than a trailing ", including " with nothing after it: the
+  // whole answer is off the current page, and a sentence that trails off reads like a bug rather
+  // than like a control saying honestly that it cannot name what it is holding.
+  if (!names.length) return `${selected} selected`;
+  return `${selected} selected, including ${names.slice(0, SUMMARY_NAMES).join(", ")}`;
+}
+
+/**
+ * THE ONE LINE DRAWN WHERE THE CORPUS HAS NO ROWS — three facts on a `serverQuery` control and two
+ * everywhere else, and they must never share a sentence.
+ *
+ * Without a server query this is exactly what the panel has always drawn: "No matches" when a query
+ * excluded everything, and the caller's `emptyLabel` when there was no query — because "your search
+ * found nothing" and "there is nothing here" are different facts with different next moves, and
+ * collapsing them is how a picker tells a designer that a workshop they can see the name of does not
+ * exist.
+ *
+ * A server query adds the third, and it is the one the local control never had a way to say: **the
+ * answer has not arrived yet.** An empty list mid-flight is not an empty list, and drawing the
+ * `emptyLabel` at it — "No design workshops have been recorded yet" — is a claim about the
+ * repository made from a read that has not finished. That is the single most repeated bug class in
+ * this repo arriving through a door the local branch does not have, and on the rural connections
+ * this app is built for the window it arrives in is a second and a half wide.
+ *
+ * `emptyLabel` is the caller's and is never composed with anything here. It is where the six
+ * sentences of the offline contract land — bundled, cached-and-stale, empty-because-offline,
+ * could-not-be-listed, genuinely-empty-scoped and genuinely-empty-unscoped — and the panel has no
+ * business knowing which of them it is holding.
+ */
+export function emptyListSentence({
+  emptyLabel,
+  term,
+  server,
+  pending
+}: {
+  emptyLabel: string;
+  term: string;
+  server: boolean;
+  pending: boolean;
+}): string {
+  if (server && pending) return SEARCHING_LABEL;
+  if (!term.trim()) return emptyLabel;
+  return server ? serverNoMatchSentence(term) : "No matches";
+}
+
+/**
+ * Which truncation sentence a panel owes the reader, or "" for the case that owes none.
+ *
+ * Here rather than in the JSX because the ORDER of the branches is a ruling and not a formatting
+ * choice: **a server-reported truncation beats a locally-counted one whenever both could be drawn.**
+ *
+ * A caller with `serverQuery` asks for exactly `RENDER_CAP` rows, so `capped` is normally 0 there and
+ * the question never arises. Where it does arise the local count is the one that must give way,
+ * because a total that is itself a truncated count is a worse lie than an admitted unknown: over a
+ * server that cut at 100, "Showing the first 80 of 100" tells a reader there are twenty more they
+ * have not seen when there may be nine hundred, and they stop looking.
+ *
+ * `shown` and `total` are always counts of the CORPUS. A "none" row and a pinned row are not rows of
+ * the list this sentence is counting, and folding either in produces the off-by-one notice a reader
+ * checks their own counting against.
+ */
+export function truncationSentence({
+  shown,
+  pinned,
+  total,
+  capped,
+  term,
+  hint,
+  serverTruncated
+}: {
+  /** The window — the first N rows of the corpus, pinned rows excluded. */
+  shown: number;
+  pinned: number;
+  /** `filtered.length` — every row matching, as far as this client can see. */
+  total: number;
+  /** How many matching rows the render cap dropped. */
+  capped: number;
+  term: string;
+  hint: string;
+  /** The server said it had more than it sent. */
+  serverTruncated: boolean;
+}): string {
+  // Nothing was drawn, so there is no window to describe and the empty line above is already saying
+  // what happened. "Showing the first 0" underneath it would be a second sentence contradicting the
+  // first. Not reachable from a well-behaved route — a server that reports a cut has by definition
+  // sent at least the rows it cut at — but this is the arm `cappedListNotice` also gives its own
+  // words to, and silence is the right ones here.
+  if (shown <= 0) return "";
+  if (serverTruncated) return unknownTotalNoticeSentence({ shown, pinned, term, hint });
+  if (capped > 0) return capNoticeSentence({ shown, pinned, total, hint });
+  return "";
+}
+
 /** A run of rows under one heading. `group: null` is the ungrouped run, which is drawn first. */
 export type OptionGroup = {
   group: string | null;
@@ -249,5 +525,11 @@ export function groupRows(rendered: SelectOption[]): OptionGroup[] {
   // Ungrouped rows first: they are the ones a caller wrote with no opinion about grouping (the photo
   // picker's "Leave out — I will attach this one myself"), and drawing them under the first heading
   // would file them in a group they are not in.
+  //
+  // `SearchableSelectProps.noneLabel` depends on this ordering rather than on a special case of its
+  // own: the "none" row is prepended ungrouped, so it lands in this bucket and is drawn above every
+  // heading — which is the reading order DROPDOWN_DESIGN §2.4 specifies for the workshop pickers
+  // ("(ungrouped, first) — the none row only", then "Already on this record", then "Open"). Filing
+  // "Not filed under a design workshop" under "Open" would make un-filing look like a workshop.
   return buckets.sort((a, b) => (a.group === null ? -1 : b.group === null ? 1 : 0));
 }

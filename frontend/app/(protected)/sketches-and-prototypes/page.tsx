@@ -195,6 +195,7 @@ import {
   type SketchesTab
 } from "@/components/sketches/SketchesWorkspace";
 import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
+import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { ApiError } from "@/lib/api";
 import { getDesignWorkshop, listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
@@ -219,12 +220,19 @@ import {
 /**
  * How many workshops the chooser asks for.
  *
- * A page, not "everything", and the number is the server's ceiling rather than a preference:
- * `normalize_pagination` clamps `pageSize` to `MAX_PAGE_SIZE = 100`, so asking for 500 silently
- * gives 100 and would leave this page believing it had the whole archive. The reported `total` is
- * kept beside the rows so the chooser can say when it is showing less than there is — the same
- * decision `DesignWorkshopViewersPanel` documents, for the same reason: a selector that quietly
- * stops at a hundred is indistinguishable from a repository with a hundred workshops in it.
+ * `RENDER_CAP`, not the round number `100` this used to ask for. `100` was defended as "the
+ * server's ceiling" — true, `normalize_pagination` clamps `pageSize` to `MAX_PAGE_SIZE = 100` — but
+ * that defended the wrong boundary. `SearchableSelect` draws at most `RENDER_CAP` (80) rows of
+ * whatever `options` it is handed, silently, with no notice of its own — so a deployment with
+ * between 81 and 100 accessible workshops fetched every one of them, `truncated` below read `false`
+ * (`total` fit inside the page that was asked for), and the picker then quietly dropped the last of
+ * them anyway: the exact dead band `/design-review` shipped and fixed first, its own comment naming
+ * this page by name as the sibling still carrying the bug (`RENDER_CAP`'s header in
+ * `components/ui/selectFilter.ts`). Asking for exactly as many rows as the control can draw removes
+ * the gap between the two caps rather than choosing which of them a reader gets to hear about. The
+ * reported `total` is kept beside the rows so the chooser can say when it is showing less than there
+ * is — the same decision `DesignWorkshopViewersPanel` documents, for the same reason: a selector
+ * that quietly stops short is indistinguishable from a repository with nothing past that point in it.
  *
  * WHAT THIS NUMBER MUST NEVER AGAIN GOVERN IS A REFUSAL. It is the size of a control, and for a
  * while it was also the boundary of what this page believed the account could open — so raising or
@@ -233,7 +241,7 @@ import {
  * which leaves the cap answering the one question it is qualified to answer: how many rows are in
  * the dropdown.
  */
-const CHOOSER_PAGE = 100;
+const CHOOSER_PAGE = RENDER_CAP;
 
 /**
  * WHY THERE IS NO `ListSource` HERE ANY MORE.

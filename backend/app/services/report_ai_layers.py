@@ -391,9 +391,9 @@ def provenance_line(item: AiLayerItem) -> str:
             parts.append(f"made from the note “{_elide(origin)}”")
         else:
             parts.append(f"made from “{origin}”")
-    accepted = (
-        f"Accepted by {item.acceptor}"
-    ) + (f" on {item.accepted_at[:10]}" if item.accepted_at else "")
+    accepted = (f"Accepted by {item.acceptor}") + (
+        f" on {item.accepted_at[:10]}" if item.accepted_at else ""
+    )
     return " · ".join(parts) + ". " + accepted + "."
 
 
@@ -446,13 +446,15 @@ def layer_body_blocks(item: AiLayerItem) -> list[Block]:
     blocks = transcript_body_blocks(item.text)
     if len(blocks) > MAX_PARAGRAPHS_PER_LAYER:
         kept = blocks[:MAX_PARAGRAPHS_PER_LAYER]
-        kept.append(ParagraphBlock(
-            runs=runs_of(
-                f"[Text truncated after {MAX_PARAGRAPHS_PER_LAYER} paragraphs. The full layer is "
-                f"held against the workshop in the repository, under {item.layer_id}.]"
-            ),
-            style=ParaStyle.NOTE,
-        ))
+        kept.append(
+            ParagraphBlock(
+                runs=runs_of(
+                    f"[Text truncated after {MAX_PARAGRAPHS_PER_LAYER} paragraphs. The full layer is "
+                    f"held against the workshop in the repository, under {item.layer_id}.]"
+                ),
+                style=ParaStyle.NOTE,
+            )
+        )
         return kept
     return blocks
 

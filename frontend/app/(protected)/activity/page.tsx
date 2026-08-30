@@ -196,12 +196,6 @@ export default function MyActivityPage() {
         rows: by(raw.processes).map((p) => ({ id: p.id, name: p.name, createdAt: p.createdAt }))
       },
       {
-        // Android's order: processes sit directly after tools, before workshops.
-        title: "Processes",
-        href: "/processes",
-        rows: by(raw.processes).map((p) => ({ id: p.id, name: p.name, createdAt: p.createdAt }))
-      },
-      {
         title: "Workshops",
         href: "/workshops",
         rows: by(raw.workshops).map((w) => ({ id: w.id, name: w.title, createdAt: w.createdAt }))

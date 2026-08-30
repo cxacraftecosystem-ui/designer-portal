@@ -104,9 +104,7 @@ _XML_UNSAFE_RE = re.compile(
     "["
     "\x00-\x08\x0b\x0c\x0e-\x1f"  # C0 controls, less \t \n \r
     "\ud800-\udfff"  # lone surrogates, e.g. an emoji truncated mid-pair by a client
-    "\ufdd0-\ufdef\ufffe\uffff"  # noncharacters in the BMP
-    + _NONCHARACTERS
-    + "]"
+    "\ufdd0-\ufdef\ufffe\uffff" + _NONCHARACTERS + "]"  # noncharacters in the BMP
 )
 
 # What a run falls back to when its font reference is missing or is not an InlineFont: plain

@@ -552,5 +552,7 @@ def consolidated_rows(payload: dict[str, Any]) -> list[list[Any]]:
             # No question to name: the clip resolved to this section and no further.
             rows.append(_csv_row(code, title, "(section recording)", False, recording))
     for recording in payload.get("unfiled", []):
-        rows.append(_csv_row("", "(unfiled)", "(section could not be determined)", False, recording))
+        rows.append(
+            _csv_row("", "(unfiled)", "(section could not be determined)", False, recording)
+        )
     return rows

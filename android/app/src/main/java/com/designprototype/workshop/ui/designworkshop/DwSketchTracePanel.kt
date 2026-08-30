@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
@@ -40,8 +39,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -202,6 +203,169 @@ const val DW_TRACE_AUTO_PREVIEW_BUDGET_MS: Long = 2500L
  */
 const val DW_TRACE_DISCLOSURE_TURN_MS: Int = 180
 
+/**
+ * What TalkBack is told the header press will DO, in the two directions.
+ *
+ * THE GRAMMAR IS `DW_MEASURE_EXPAND_ACTION`'S, NOT A SECOND INVENTION. A designer who has met one of
+ * these three cards has met the other two — they sit on the same record, one above the other — and a
+ * reader who learns that the measuring card announces "Expand the measuring card" should not have to
+ * discover that the tracing card calls the same press something structurally different. Only the
+ * noun changes, and the noun is what tells the two apart.
+ */
+internal const val DW_TRACE_EXPAND_ACTION: String = "Expand the tracing card"
+
+/** The other direction of the same sentence. See [DW_TRACE_EXPAND_ACTION]. */
+internal const val DW_TRACE_COLLAPSE_ACTION: String = "Collapse the tracing card"
+
+/**
+ * **THE TITLE, SAID ONCE, IN BOTH STATES — AND ON BOTH CLIENTS.**
+ *
+ * This card used to be called "Trace a photographed sketch into line art" while it was shut and
+ * "Trace a sketch into line art" while it was open, which is a small thing that costs exactly what
+ * [DwPanelDisclosureHeader]'s one-composable rule was written to stop: the header is the accordion
+ * CONTROL now, and a control whose label changes when you press it reads as a different control.
+ *
+ * ── AND THE TIE-BREAK IS THE OTHER CLIENT, NOT TASTE — requirement 20 ─────────────────────────
+ *
+ * One of the two candidates had to win and both were defensible: the collapsed wording names the
+ * INPUT, the open wording is shorter. **The open wording wins because it is already the portal's
+ * name for this card**, at `SketchTraceField.tsx:391` — `const CARD_TITLE = "Trace a sketch into
+ * line art"`, and that constant's own header records that `e2e/sketch-trace-panel.spec.ts` addresses
+ * the panel by those exact words twenty-seven times. A card that does one job under two names across
+ * two clients is the defect this repository already refuses for the export formats and for
+ * [DW_MEASURE_CARD_TITLE], which matches its portal twin character for character.
+ *
+ * Divergence is available where a clause would be FALSE on one of the clients — that is the rule
+ * `dwSharedPhotographSentence` is written under, and it earns its exception honestly. Nothing about
+ * "Trace a sketch into line art" is false on a handset, so there is no exception to claim, and the
+ * fact the collapsed wording named is not lost: the sentence under this heading has said "Turns the
+ * pencil in one of the photographs on this record into vector line work" all along.
+ *
+ * `DwSketchDerivationPhotoTest` pins it against the portal's own source rather than a transcription
+ * of it, for the reason `DwSketchTracePlateMathTest` gives: a transcription is a third copy that can
+ * go stale in its own right.
+ */
+internal const val DW_TRACE_CARD_TITLE: String = "Trace a sketch into line art"
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * What the collapsed card remembers
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What this card has already done, held by the panel so that closing it is not the same as never
+ * having opened it.
+ *
+ * ── THE SPLIT IS `DwMeasureConfig`'S, AND SO IS THE REASON ────────────────────────────────────
+ *
+ * That class states the rule this one obeys: *"MARKS AND TEXT ARE CHEAP, SO THEY ARE KEPT. PIXELS
+ * ARE EXPENSIVE, SO THEY ARE NOT."* Everything in here is a string, an int or a flag. The
+ * `DwTraceResult` is NOT, and must not become a field of this class: it carries two 1024 px display
+ * plates — about 8.4 MB — and the panel's whole arrangement is that opening it starts a runtime and
+ * holds those plates and closing it drops them, which is the right trade on a phone whose other job
+ * right now is a camera preview.
+ *
+ * ── SO THE COLLAPSED CARD REPORTS AND DOES NOT PROMISE ────────────────────────────────────────
+ *
+ * The measuring card can say "All of that is kept while this is closed" because its marks genuinely
+ * are. This one cannot, and saying it would be the worse defect of the two — a designer who reopened
+ * expecting their drawing and found an empty comparator would have been told a specific untruth by
+ * the screen. So this reports what HAPPENED ("a full-resolution trace of “sheet-3.jpg”, 412 paths")
+ * and the sentence beside it says plainly that the drawing itself is not kept. That is still the
+ * whole of the report the accordion answers: a collapsed card that says only its own title is
+ * indistinguishable from one nobody has touched.
+ */
+@Stable
+internal class DwTraceCardMemory {
+
+    /** The photograph the last finished trace was made from, by name. Blank when there was none. */
+    var tracedName by mutableStateOf("")
+        private set
+
+    /**
+     * Paths and nodes off that trace, for the one figure that says how much drawing came out.
+     *
+     * `mutableIntStateOf` rather than `mutableStateOf` — Compose's own advice for an Int, and free
+     * here: a boxed state allocates an `Integer` on every write, and these two are written once per
+     * finished trace on the phone class this feature is hardest on.
+     */
+    var shapeCount by mutableIntStateOf(0)
+        private set
+
+    var nodeCount by mutableIntStateOf(0)
+        private set
+
+    /** True while what was made was a preview — a coarser drawing that may not be attached. */
+    var wasPreview by mutableStateOf(true)
+        private set
+
+    /** What was attached to the record from this card, by name, or blank if nothing was. */
+    var attachedName by mutableStateOf("")
+        private set
+
+    fun recordTrace(sourceName: String, shapes: Int, nodes: Int, preview: Boolean) {
+        tracedName = sourceName
+        shapeCount = shapes
+        nodeCount = nodes
+        wasPreview = preview
+    }
+
+    fun recordAttachment(fileLabel: String) {
+        attachedName = fileLabel
+    }
+
+    /**
+     * Forget the drawing, keeping the attachment.
+     *
+     * Called when the photograph changes, for the reason the panel's own chips give: a result belongs
+     * to ONE photograph and a summary left standing under a different one describes a drawing that
+     * was never made from it. The ATTACHMENT is a different kind of fact — it is a file that is on
+     * the record right now, whichever photograph the card is pointed at — so it survives.
+     */
+    fun forgetTrace() {
+        tracedName = ""
+        shapeCount = 0
+        nodeCount = 0
+        wasPreview = true
+    }
+}
+
+/**
+ * What the COLLAPSED card says has already happened, in one sentence, or null when nothing has.
+ *
+ * Mirrors [dwMeasureSummary] deliberately, down to the middle dot and the "null means untouched"
+ * contract, because the two cards sit one above the other on the same record and a designer reading
+ * down the screen should be reading one register rather than two.
+ *
+ * IT NAMES THE PHOTOGRAPH AND THE COUNT, NOT ONE OR THE OTHER. "412 paths" alone does not say which
+ * sheet, and this card can be pointed at any of the record's photographs; the sheet alone does not
+ * say whether anything came out of it. Both, or neither.
+ *
+ * Pure — plain counts, flags and strings — so `DwSketchTraceCardTest` can pin the wording on the JVM
+ * with no composition to run it in.
+ */
+internal fun dwTraceCardSummary(
+    tracedName: String,
+    shapeCount: Int,
+    nodeCount: Int,
+    wasPreview: Boolean,
+    attachedName: String,
+): String? {
+    val parts = mutableListOf<String>()
+    if (tracedName.isNotBlank()) {
+        parts += if (wasPreview) {
+            "a preview traced from “${tracedName.trim()}”"
+        } else {
+            "traced from “${tracedName.trim()}”"
+        }
+        parts += "$shapeCount paths · $nodeCount nodes"
+    }
+    if (attachedName.isNotBlank()) parts += "attached as “${attachedName.trim()}”"
+    // Nothing traced and nothing attached is not a state anybody put this card into — it should read
+    // as the invitation it was before it was ever opened.
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" · ")
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The export slot
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -302,6 +466,13 @@ internal fun DwSketchTracePanel(
     /** The file already in this field, so the panel can say what attaching would replace. */
     currentFileName: String?,
     enabled: Boolean,
+    /**
+     * Where the photograph comes from — this card's own chooser, or a host above it.
+     *
+     * Defaulted to [DwSketchPhotographSupply.OwnChoice], which is the stage form's mount and is what
+     * this panel has always done. See that type for why the three states are one value.
+     */
+    supply: DwSketchPhotographSupply = DwSketchPhotographSupply.OwnChoice,
     /** Write the new media id into this FILE field. Called only from a button the designer pressed. */
     onAttached: (String) -> Unit,
     onMessage: (String) -> Unit,
@@ -311,8 +482,22 @@ internal fun DwSketchTracePanel(
 ) {
     if (sources.isEmpty()) return
     var open by remember { mutableStateOf(false) }
+    /*
+      WHAT THIS CARD HAS ALREADY DONE, KEYED ON NOTHING so it outlives the open half exactly as
+      `DwMeasureConfig` does. Collapsing this card used to be indistinguishable from never having
+      opened it, which is half of the report the accordion answers — see [DwTraceCardMemory] for what
+      is kept, what is deliberately not, and why the sentence underneath does not promise a drawing.
+    */
+    val memory = remember { DwTraceCardMemory() }
 
     if (!open) {
+        val summary = dwTraceCardSummary(
+            tracedName = memory.tracedName,
+            shapeCount = memory.shapeCount,
+            nodeCount = memory.nodeCount,
+            wasPreview = memory.wasPreview,
+            attachedName = memory.attachedName,
+        )
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -320,36 +505,59 @@ internal fun DwSketchTracePanel(
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    Icons.Filled.Gesture,
-                    contentDescription = null,
-                    tint = MaterialTheme.field.muted,
-                    modifier = Modifier.size(16.dp),
+            // THE TITLE ROW IS THE CONTROL, as it is on the measuring card. It used to be an inert
+            // Row here — an icon and some text with no chevron, no state description and no press —
+            // so the two cards on one record answered a tap on their heading differently and only
+            // one of them told a screen reader whether it was open. See [DwPanelDisclosureHeader].
+            DwPanelDisclosureHeader(
+                icon = Icons.Filled.Gesture,
+                title = DW_TRACE_CARD_TITLE,
+                expanded = false,
+                // The gate the "Trace a sketch" button has always had. A read-only field must not be
+                // openable, because opening it starts a runtime and decodes a photograph.
+                toggleEnabled = enabled,
+                expandAction = DW_TRACE_EXPAND_ACTION,
+                collapseAction = DW_TRACE_COLLAPSE_ACTION,
+                onToggle = { open = true },
+            )
+            if (summary == null) {
+                Text(
+                    // "as lines that print at any size" AND NOT "a report can print at any size": the
+                    // second is a claim about the ministry document and it is false. See
+                    // DW_TRACE_ATTACH_REPORT_SENTENCE, which is the corrected version and is printed
+                    // under the Attach button where a designer is deciding.
+                    "Turns the pencil in one of the photographs on this record into vector line work — the " +
+                        "same drawing, as lines that print at any size without going blocky. The result " +
+                        "is attached here as ${field.label}; the photograph itself is never changed. It " +
+                        "runs on this device and needs no connection.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            } else {
+                // THE STATE, IN WORDS, WITHOUT EXPANDING ANYTHING — the measuring card's own move,
+                // drawn in the foreground colour for its reason: this is the thing the designer came
+                // back to read, not chrome around it.
+                Text(
+                    summary,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
                 )
                 Text(
-                    "Trace a photographed sketch into line art",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    // SAID PLAINLY, BECAUSE THE OTHER CARD PROMISES THE OPPOSITE AND BOTH ARE TRUE.
+                    // The measuring card keeps its marks across a collapse; this one cannot keep a
+                    // drawing, because a drawing here is two 1024 px plates. A designer who reopened
+                    // expecting the comparator they left would have been told something specific and
+                    // false by a card that said nothing.
+                    "The drawing itself is not kept while this is closed — it is two full-size " +
+                        "pictures, and holding them would cost this phone the memory the trace needs. " +
+                        "Opening this again traces afresh; anything already attached stays attached.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
                 )
             }
-            Text(
-                // "as lines that print at any size" AND NOT "a report can print at any size": the
-                // second is a claim about the ministry document and it is false. See
-                // DW_TRACE_ATTACH_REPORT_SENTENCE, which is the corrected version and is printed
-                // under the Attach button where a designer is deciding.
-                "Turns the pencil in one of the photographs on this record into vector line work — the " +
-                    "same drawing, as lines that print at any size without going blocky. The result " +
-                    "is attached here as ${field.label}; the photograph itself is never changed. It " +
-                    "runs on this device and needs no connection.",
-                color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-            )
             // ALWAYS THE BUTTON. There used to be a branch here that drew a sentence instead, for a
             // phone whose WebView was too old to start the JavaScript isolate the tracer ran in — a
             // real state on a handset that has been in a village for a fortnight, and the reason
@@ -357,6 +565,9 @@ internal fun DwSketchTracePanel(
             // compiled into this APK now, so there is no such phone and no such sentence: see that
             // class's header. What can still stop one trace is memory, and that is said at the
             // moment it is true rather than guessed at before the panel opens.
+            //
+            // KEPT RATHER THAN REPLACED BY THE HEADER, for the measuring card's stated reason: a row
+            // that happens to be tappable is not a button anybody can SEE.
             OutlinedButton(
                 onClick = { open = true },
                 enabled = enabled,
@@ -364,7 +575,10 @@ internal fun DwSketchTracePanel(
             ) {
                 Icon(Icons.Filled.Gesture, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Trace a sketch", fontSize = 13.sp)
+                Text(
+                    if (summary == null) "Trace a sketch" else "Open the tracing card again",
+                    fontSize = 13.sp,
+                )
             }
         }
         return
@@ -378,6 +592,8 @@ internal fun DwSketchTracePanel(
         recordCategory = recordCategory,
         currentFileName = currentFileName,
         enabled = enabled,
+        supply = supply,
+        memory = memory,
         onClose = { open = false },
         onAttached = onAttached,
         onMessage = onMessage,
@@ -396,6 +612,9 @@ private fun DwSketchTraceOpen(
     recordCategory: String?,
     currentFileName: String?,
     enabled: Boolean,
+    supply: DwSketchPhotographSupply,
+    /** What the collapsed card will report. Owned by the panel, so it outlives this composable. */
+    memory: DwTraceCardMemory,
     onClose: () -> Unit,
     onAttached: (String) -> Unit,
     onMessage: (String) -> Unit,
@@ -406,8 +625,20 @@ private fun DwSketchTraceOpen(
     val scope = rememberCoroutineScope()
     val availability = runtime.availability
 
+    /**
+     * Which photograph is being traced, and who decided.
+     *
+     * WHEN A HOST OWNS THE CHOICE, `sourceId` IS NOT CONSULTED AT ALL — not merely defaulted from it.
+     * A local selection kept alongside a hosted one is the two-pickers-for-one-photograph state
+     * `DwSketchPhotographSupply` exists to make unrepresentable: they would drift the first time the
+     * host changed its mind while this panel was shut, and the card would then be tracing a
+     * photograph the preview above it is not showing.
+     */
     var sourceId by remember { mutableStateOf(sources.first().item.id) }
-    val source = sources.firstOrNull { it.item.id == sourceId } ?: sources.first()
+    val hosted = supply as? DwSketchPhotographSupply.Hosted
+    val source = hosted?.source
+        ?: sources.firstOrNull { it.item.id == sourceId }
+        ?: sources.first()
 
     var presets by remember { mutableStateOf<DwTracePresetTables?>(null) }
     var params by remember { mutableStateOf<DwTraceValues?>(null) }
@@ -470,6 +701,27 @@ private fun DwSketchTraceOpen(
 
     var job by remember { mutableStateOf<Job?>(null) }
 
+    /**
+     * Which photograph the in-flight run belongs to, as a number that only ever goes up.
+     *
+     * ── THE BUG THIS EXISTS FOR, WHICH `cancelAndJoin` ALONE DOES NOT CLOSE ───────────────────
+     *
+     * A trace is seconds to tens of seconds. If the photograph changes while one is running, the run
+     * must not be allowed to finish and write ITS drawing into the panel's state — a trace of sheet A
+     * shown under sheet B's name is a drawing a designer would attach believing it came from what
+     * they are looking at, which is the single worst outcome this panel is written against.
+     *
+     * Cancellation is most of the answer and is not all of it. Kotlin does not poll for cancellation
+     * between two ordinary statements: a run that is INSIDE `runtime.trace` when the cancel arrives
+     * throws at the next suspension point, but a run that has just RETURNED from it is a few
+     * assignments away from `result = traced` with no suspension in between, and a cancel landing in
+     * that window is simply lost. So the token is read after the trace returns and before anything is
+     * written, and the write is skipped if it has moved. This was reachable the moment a host above
+     * could change the photograph without asking the panel — the chips could not do it, because they
+     * are disabled while `running != null`.
+     */
+    var runToken by remember { mutableIntStateOf(0) }
+
     /*
       ONE PATCH AT A TIME. Every parameter change is a round trip to the runtime's own
       `withOverrides` — a call into another process where the portal's equivalent is a synchronous
@@ -531,6 +783,9 @@ private fun DwSketchTraceOpen(
     fun startRun(kind: DwTraceRunKind, debounceMs: Long) {
         val values = params ?: return
         val previous = job
+        // WHICH PHOTOGRAPH THIS RUN IS ABOUT, READ AT THE PRESS AND NOT AT THE ANSWER. See [runToken].
+        val token = runToken
+        val tracedName = source.item.displayName
         job = scope.launch {
             previous?.cancelAndJoin()
             if (debounceMs > 0L) delay(debounceMs)
@@ -547,6 +802,12 @@ private fun DwSketchTraceOpen(
                         frame = frame,
                     ),
                 ) { progress = it }
+                // THE PHOTOGRAPH MAY HAVE MOVED WHILE THIS RAN. Everything below writes the panel's
+                // visible state, and every one of those writes would be about the wrong sheet. The
+                // `finally` still runs — this run really has stopped and the spinner it owns must
+                // clear — and the effect that changed the photograph has already dropped the old
+                // drawing and armed a fresh preview. See [runToken].
+                if (token != runToken) return@launch
                 when (outcome) {
                     is DwTraceOutcome.Refused -> {
                         result = null
@@ -571,6 +832,15 @@ private fun DwSketchTraceOpen(
                         */
                         params = traced.appliedParams
                         resultWire = traced.appliedParams.wire
+                        // WHAT THE COLLAPSED CARD WILL REPORT, written where the drawing arrives and
+                        // named after the photograph THIS run was started on rather than whatever the
+                        // panel is pointed at by the time it lands. See [DwTraceCardMemory].
+                        memory.recordTrace(
+                            sourceName = tracedName,
+                            shapes = traced.shapeCount,
+                            nodes = traced.nodeCount,
+                            preview = traced.isPreview,
+                        )
                         if (traced.stages.isNotEmpty()) weights = DwTraceProgressWeights.from(traced.stages)
                         if (kind == DwTraceRunKind.PREVIEW &&
                             traced.totalMillis > DW_TRACE_AUTO_PREVIEW_BUDGET_MS
@@ -589,6 +859,10 @@ private fun DwSketchTraceOpen(
                 // one, which is what keeps `cancelAndJoin` above correct.
                 throw cancelled
             } catch (t: Throwable) {
+                // GUARDED FOR THE SAME REASON THE SUCCESS PATH IS. A failure sentence belongs to the
+                // photograph the run was about; printed under a different one it reads as "this
+                // sheet cannot be traced" about a sheet nothing has been tried on.
+                if (token != runToken) return@launch
                 result = null
                 resultWire = null
                 failure = "The trace could not be completed. " +
@@ -623,6 +897,65 @@ private fun DwSketchTraceOpen(
         if (!autoPreview || !resumed) return@LaunchedEffect
         primed = true
         startRun(DwTraceRunKind.PREVIEW, 0L)
+    }
+
+    /**
+     * Everything on screen that was derived from the photograph, dropped in one place.
+     *
+     * ONE FUNCTION AND NOT FIVE ASSIGNMENTS AT EVERY SITE, because there are now two events that owe
+     * this — a chip press and a host changing its mind — and the way a reset like this comes to be
+     * incomplete is by being written out twice with one line missing from the second copy. The frame
+     * goes with the rest: a region chosen on one sheet is meaningless on the next, and leaving it
+     * applied would trace a part of a photograph nobody framed (`FramePanel` clears its own the same
+     * way, on the same event).
+     */
+    fun forgetDerivations() {
+        result = null
+        resultWire = null
+        difference = null
+        differenceRefusal = ""
+        frame = null
+        memory.forgetTrace()
+    }
+
+    /**
+     * THE PHOTOGRAPH CHANGED UNDER THIS PANEL — stop what is running and drop what it produced.
+     *
+     * ── WHY THIS IS AN EFFECT AND NOT SIMPLY THE CHIP'S `onClick` ─────────────────────────────
+     *
+     * Because the chips are no longer the only thing that can change the answer. A host above owns
+     * the choice on the surfaces where one photograph feeds both cards ([DwSketchPhotographSupply]),
+     * and it can change it while this panel is shut, or open, or MID-TRACE — which the chips could
+     * never do, being disabled while `running != null`. So the reset lives on the fact rather than on
+     * the press.
+     *
+     * ── AND WHY IT CANCELS FIRST AND ARMS LAST ────────────────────────────────────────────────
+     *
+     * `runToken++` before the cancel, so a run that is between its last suspension point and its
+     * first assignment cannot write (see [runToken]); `cancelAndJoin` and not a bare `cancel`, so the
+     * old run's `finally` — which owns the spinner — has really run before a new one starts, which is
+     * the same ordering `startRun` is written around; then the drawing is dropped, and only then is a
+     * preview armed. `armPreview` declines when auto-preview is off or a full run is in flight, which
+     * are both the right answers.
+     *
+     * The first composition is not a change: `derivedFrom` starts on the photograph the panel opened
+     * with, so this does nothing until something moves it. Without that guard, opening the panel
+     * would cancel the one preview it opens with.
+     */
+    var derivedFrom by remember { mutableStateOf(source.item.id) }
+    LaunchedEffect(source.item.id) {
+        if (derivedFrom == source.item.id) return@LaunchedEffect
+        derivedFrom = source.item.id
+        runToken++
+        job?.cancelAndJoin()
+        job = null
+        running = null
+        stopping = false
+        progress = null
+        failure = null
+        notice = null
+        forgetDerivations()
+        armPreview()
     }
 
     /**
@@ -756,6 +1089,9 @@ private fun DwSketchTraceOpen(
                 val id = ids.firstOrNull()
                 if (id != null) {
                     onAttached(id)
+                    // Recorded so the COLLAPSED card can say a file went onto the record from here.
+                    // An attachment outlives a change of photograph, unlike the drawing that made it.
+                    memory.recordAttachment(field.label)
                     onMessage("The line art is attached as ${field.label}. The photograph is unchanged.")
                 }
                 // Only after the callback: the import made its own durable copy, so deleting earlier
@@ -772,25 +1108,26 @@ private fun DwSketchTraceOpen(
             .fillMaxWidth()
             .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        // 8.dp AND NOT 10, WHICH IS THE MEASURING CARD'S FIGURE AND IS NOW BOTH CARDS'. The two sat
+        // one above the other on the same record at two different rhythms for no reason either of
+        // them could give, and where two surfaces disagree about a number neither argues for, the one
+        // that argues for the rest of the arrangement wins: the accordion contract in this open half
+        // — the header that is the control, the door at the foot, the summary when it is shut — is
+        // `DwPhotoMeasurePanel`'s, and its spacing comes with it.
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                "Trace a sketch into line art",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 48.dp)) {
-                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Close", fontSize = 12.sp)
-            }
-        }
+        DwPanelDisclosureHeader(
+            icon = Icons.Filled.Gesture,
+            title = DW_TRACE_CARD_TITLE,
+            expanded = true,
+            // Collapsing is ALWAYS allowed, even where the field itself is read-only: it writes
+            // nothing, and a designer who can see a card mid-trace must be able to put it away.
+            // Expanding keeps its gate (see the collapsed half); this is the other direction.
+            toggleEnabled = true,
+            expandAction = DW_TRACE_EXPAND_ACTION,
+            collapseAction = DW_TRACE_COLLAPSE_ACTION,
+            onToggle = onClose,
+        )
 
         if (loading) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -809,8 +1146,40 @@ private fun DwSketchTraceOpen(
 
         /* ── Which photograph ───────────────────────────────────────────────────────────────── */
 
-        if (sources.size > 1) {
-            DwPanelLabel("Photograph to trace")
+        if (hosted != null) {
+            /*
+              NO CHOOSER HERE, AND THE ONE THAT EXISTS IS NAMED.
+
+              `SketchTraceField.tsx:283-286` states the rule this follows: told that a host owns the
+              picker, the panel "draws NO picker of its own and says where the one picker is, rather
+              than offering a second". Two chip rows over one photograph is the duplication the whole
+              arrangement exists to end, and the sentence is what stops the absence reading as a
+              capability this card has lost.
+            */
+            Text(
+                // THE SHARED CARD IS NAMED BY ITS OWN CONSTANT, not pointed at.
+                // `SketchTraceField.tsx:2207` reads "Chosen in “Photograph of the sketch” above" for
+                // the reason that makes this line worth having at all: two cards reading one
+                // photograph is only safe if each of them says WHICH, and a reader who cannot see
+                // the card above needs its NAME to find it rather than a direction. Through the
+                // constant, so a rename of that card moves this sentence with it.
+                hosted.source?.let {
+                    "Tracing “${it.item.displayName}” — chosen in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
+                        "above. Every other panel here works from the same one."
+                } ?: ("No photograph has been chosen yet. Choose one in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
+                    "above — it is the photograph this card traces and the cards beside it work from."),
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        } else if (sources.size > 1) {
+            // "Photograph", NOT "Photograph to trace" — one label for one control. The three
+            // derivation cards each own a chooser over the record's photographs and each had its own
+            // name for it ("Photograph", "Which photograph", "Photograph to trace"); the card's own
+            // heading directly above already says what this one is for, so the extra words were
+            // saying the same thing a second time in the one place the three cards should have read
+            // alike. `SketchRectifyField.tsx:426` is the portal's bare noun and settles the tie.
+            DwPanelLabel("Photograph")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -824,15 +1193,11 @@ private fun DwSketchTraceOpen(
                         // The result belongs to ONE photograph. Leaving it on screen under a different
                         // one is a drawing the designer would attach believing it came from what they
                         // are looking at — [DwSketchRectifyPanel] clears its plate for the same reason.
+                        //
+                        // THE CLEARING ITSELF IS NOT DONE HERE ANY MORE. It hangs off the FACT that
+                        // the photograph changed, in the effect beside [forgetDerivations], because
+                        // this press is no longer the only thing that can change it.
                         sourceId = candidate.item.id
-                        result = null
-                        resultWire = null
-                        difference = null
-                        differenceRefusal = ""
-                        // A frame chosen on one sheet is meaningless on the next, and leaving it
-                        // applied would trace a region of a photograph nobody framed. `FramePanel`
-                        // clears its own the same way, on the same event.
-                        frame = null
                     }
                 }
             }
@@ -1132,7 +1497,26 @@ private fun DwSketchTraceOpen(
             ) {
                 Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Attach as ${field.label}", fontSize = 13.sp)
+                /*
+                  ── THE OTHER CLIENT'S WORDS, AND THE REASON IS NOT ONLY REQUIREMENT 20 ───────
+
+                  `SketchTraceField.tsx` labels this button *"Add the line art to “{targetLabel}”"*.
+                  This read "Attach as ${'$'}{field.label}" — which names the DESTINATION and not the
+                  THING, and on this client that is a live ambiguity rather than a shade of phrasing.
+
+                  [DwSketchRectifyPanel] sits directly above this panel, on the SAME record, writing
+                  into the SAME FILE field, and its button read the same four words. Two cards one
+                  under the other, two different artefacts — a traced drawing and a straightened plate
+                  — and one identical label on both, over a single-valued field where the second press
+                  silently replaces what the first one wrote. `dwPanelReplaceWarning` was already
+                  unified across that pair for exactly this reason; the buttons themselves were not,
+                  and the warning is the thing a designer reads AFTER deciding which button to press.
+
+                  So both now say what they add, in the grammar a designer learns on the laptop. Only
+                  this one is a string copy: there is no straightening panel in a browser, so that
+                  panel takes the SHAPE and names its own artefact.
+                */
+                Text("Add the line art to “${field.label}”", fontSize = 13.sp)
             }
             /*
               DECLINING IS A FIRST-CLASS OUTCOME AND NOT A CANCEL. `SketchTraceField.tsx:45-57`: a
@@ -1187,8 +1571,12 @@ private fun DwSketchTraceOpen(
             )
         }
 
-        currentFileName?.let {
-            DwPanelNote(warning = true, text = "“$it” is attached here now. Attaching replaces it.")
+        // ONE SENTENCE, THREE CARDS. This said "Attaching replaces it" while the straightening panel
+        // — writing into the SAME field from the SAME button — said "This replaces it", which is a
+        // verb's worth of drift in the one warning a designer reads before losing a file they cannot
+        // get back. See [dwPanelReplaceWarning].
+        dwPanelReplaceWarning(currentFileName, DwPanelHolds.FILE)?.let {
+            DwPanelNote(warning = true, text = it)
         }
         Text(
             // The one thing about this file that a designer cannot see and would want to know — and
@@ -1203,6 +1591,24 @@ private fun DwSketchTraceOpen(
             fontSize = 11.sp,
             lineHeight = 16.sp,
         )
+
+        /* ── The way out, at the point the work ends ────────────────────────────────────────── */
+
+        /*
+         * THE SECOND DOOR, AND THE REPORT IT ANSWERS IS THE MEASURING CARD'S, WORD FOR WORD.
+         *
+         * This card had exactly one way out and it was at the very top of a surface that is a frame
+         * chooser, a comparator, two dozen control rows, a preview switch, three buttons and an
+         * export card tall. A designer who has just traced a sheet and read the stats is a whole
+         * screen below it. `DwPhotoMeasureOpen` was given a second door at the foot on 2026-08-28 for
+         * that exact reason and this is the same door, from the same composable, saying the same
+         * word — which is what stops the two cards on one record coming to be labelled differently.
+         *
+         * "Keep the photograph as it is" is NOT this and does not replace it: that is a first-class
+         * OUTCOME — a decision that the trace is not good enough, made by the only person who can
+         * make it — and it sits with the buttons it is an alternative to. This is a door.
+         */
+        DwPanelCollapseButton(prominent = true, title = DW_TRACE_CARD_TITLE, onClick = onClose)
     }
 }
 

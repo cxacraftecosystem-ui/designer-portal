@@ -58,7 +58,7 @@
  * guide, "truncation, caps and skipped work must be stated on screen".
  */
 
-import { useCallback, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { AlertTriangle, Upload } from "lucide-react";
 
 export interface DropCardProps {
@@ -87,6 +87,32 @@ export interface DropCardProps {
   onFiles: (files: File[]) => void;
   /** Anything the caller wants inside the card under the button — the chosen file, a warning, a tick. */
   children?: ReactNode;
+  /**
+   * The card's own button, for a caller that has to put focus back on it.
+   *
+   * ── WHY A CALLER EVER NEEDS THIS, WHICH IS NOT OBVIOUS FROM HERE ────────────────────────────
+   *
+   * Every caller that renders a control INSIDE this card through {@link children} — "Put this
+   * photograph away" on `SharedPhotoField`, "Go back to the photograph chosen above" on
+   * `MeasureFromPhotoCard` — has written a button that destroys itself: pressing it clears the
+   * held photograph, and the block those buttons live in is rendered only while there IS one. The
+   * browser then drops focus to `<body>`, so a keyboard reader has to tab from the top of the
+   * document back to where they were, and a screen reader is told nothing happened at all. That is
+   * the same failure `MeasureFromPhotoCard.collapse` and `SketchTraceField`'s open/close effect
+   * each move focus deliberately to avoid, and §7.8's rule about `closeSheet()` returning focus to
+   * the hamburger.
+   *
+   * THE BUTTON ABOVE IS THE RIGHT LANDING PLACE rather than the card, the label or the accept
+   * sentence: it is the only element in this card that is focusable, it survives every one of those
+   * presses, and it is the control the designer would reach for next — having put a photograph
+   * away, the next act is choosing another. A `tabIndex={-1}` target invented on the card root would
+   * be a second focusable thing that means nothing to a reader who lands on it.
+   *
+   * OPTIONAL, AND THE CARD DOES NOT MOVE FOCUS ITSELF. Only a caller knows whether the control it
+   * put inside is about to disappear; a card that grabbed focus on every `onFiles` would take it
+   * away from a designer who is still working further down the panel.
+   */
+  buttonRef?: RefObject<HTMLButtonElement | null>;
 }
 
 export function DropCard({
@@ -98,7 +124,8 @@ export function DropCard({
   disabled,
   validate,
   onFiles,
-  children
+  children,
+  buttonRef
 }: DropCardProps) {
   const cardId = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -213,6 +240,7 @@ export function DropCard({
       >
         <div className="flex flex-wrap items-center gap-2">
           <button
+            ref={buttonRef}
             type="button"
             className="field-button"
             disabled={disabled}

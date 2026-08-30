@@ -19,7 +19,7 @@ from app.core.deps import (
 from app.core.security import create_access_token, verify_password
 from app.schemas.auth import LoginRequest, TokenResponse
 from app.services import access_roster
-from app.services.designers import mark_roster_seen, roster_allows
+from app.services.designers import ensure_empanelled, mark_roster_seen, roster_allows
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -32,9 +32,7 @@ logger = logging.getLogger(__name__)
 # deliberately ended their access — is never mentioned anywhere they can see it. The refusal has
 # to say what happened AND what to do about it, because the person reading it cannot fix it
 # themselves and there is exactly one action that leads anywhere.
-DESIGNER_SUSPENDED_DETAIL = (
-    "Your designer access has been suspended. Contact the administrator."
-)
+DESIGNER_SUSPENDED_DETAIL = "Your designer access has been suspended. Contact the administrator."
 
 # ----------------------------------------------------------------------------------------------
 # THE FOUR THINGS A REFUSED SIGN-IN CAN SAY, AND WHY THEY ARE FOUR AND NOT ONE
@@ -303,7 +301,9 @@ def verify_google_token(token: str) -> dict[str, Any]:
         except ValueError as exc:
             last_error = exc
             logger.info("Google token rejected for configured audience %s: %s", client_id, exc)
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google ID token") from last_error
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google ID token"
+    ) from last_error
 
 
 async def login_with_google(token: str) -> tuple[Any, Any | None]:
@@ -324,7 +324,11 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
     email = id_info["email"].lower()
     settings = get_settings()
     role = role_for_email(email)
-    name = settings.master_admin_name if role == "MASTER_ADMIN" else id_info.get("name") or email.split("@")[0]
+    name = (
+        settings.master_admin_name
+        if role == "MASTER_ADMIN"
+        else id_info.get("name") or email.split("@")[0]
+    )
     avatar_url = id_info.get("picture")
 
     # ADMISSION IS DECIDED HERE, BEFORE ANY WRITE, AND THIS IS THE BIGGEST BEHAVIOURAL CHANGE IN THE
@@ -355,6 +359,22 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
     # promote them by hand, which is exactly the manual step the roster exists to remove.
     rostered = await roster_allows(email)
 
+    # ── THE ACCOUNT IS STILL KEYED ON THE EXACT ADDRESS GOOGLE SENT, AND THAT IS A KNOWN GAP ──────
+    #
+    # Both gates above now ask about the MAILBOX: `access_row` and `roster_allows` look up the
+    # literal address AND its Gmail-canonical form in one query, so an admin's dots no longer decide
+    # whether somebody may sign in (see `app.services.designers.canonical_email`). `User` is NOT a
+    # roster and is deliberately not part of that change — this line is an account-identity lookup,
+    # not an admission decision, and widening it would change which existing account a sign-in
+    # attaches to, which is not a question Fix 2 was asked to answer.
+    #
+    # WHAT THAT LEAVES OPEN, so the next reader does not have to find it the hard way: an account
+    # created by hand through `POST /api/users` at `sandy.craft3@gmail.com`, whose owner then signs
+    # in through Google as `sandycraft3@gmail.com`, is admitted by the gates and then MISSES here —
+    # so a second `User` row is created for one person, and their workshops end up split across two
+    # accounts. It needs Google's own claim and an admin's typing to disagree, which is why it is
+    # rare; it is not impossible, and the fix is a decision about account identity (fold the two, or
+    # refuse the second and say so) rather than another canonicalisation call.
     existing = await db.user.find_unique(where={"email": email})
     if existing:
         data = {"name": name, "avatarUrl": avatar_url, "authProvider": "GOOGLE"}
@@ -431,6 +451,45 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         # master admin is exempt by role AND by configured address, so a break-glass account whose
         # row was never written still gets in.
         access = await assert_access_admits(user.email, is_master=is_break_glass_master(user))
+
+    # AUTO-EMPANELMENT: SOMEBODY THE ALLOW-LIST ADMITS AS A DESIGNER IS EMPANELLED BY DEFAULT.
+    #
+    # An admin who admits an address as a designer has empanelled them, and until this line existed
+    # the product disagreed: the allow-list promoted the account to DESIGNER and the empanelment
+    # gate below then refused it, telling the person their "designer access has been suspended"
+    # about an empanelment nobody had ever granted, with the roster screen showing no row at all to
+    # explain it. See :func:`app.services.designers.ensure_empanelled`, which will only ever CREATE
+    # a row — a suspended one is a revocation and is left exactly where the admin left it.
+    #
+    # **THIS EXACT PLACE, AND NEITHER EARLIER NOR LATER.**
+    #
+    # Not earlier, because the role is not settled until here. On the Google branch the account is
+    # promoted to DESIGNER *inside* ``login_with_google``, out of ``AccessRoster.admitRole``, so
+    # anything upstream of that call reads the role the account held BEFORE this sign-in — a person
+    # an admin has just admitted as a designer is still a volunteer at that point and would not be
+    # empanelled at all, which is precisely the case this feature exists for. Putting it in the two
+    # branches instead would mean writing it twice, and a rule written twice is one door that
+    # quietly stops enforcing it; here it covers the password path and the Google path together.
+    #
+    # Not later, because :func:`assert_roster_admits` on the next line is what refuses a DESIGNER
+    # who has no ACTIVE roster row. After it, this call could only ever run for somebody who
+    # already had one — dead code that empanels nobody, on the one path where it is needed.
+    #
+    # And before ``mark_roster_seen`` below, deliberately: a row created here carries a NULL
+    # ``firstSeenAt``, so the stamp is written by this very sign-in and means what it says.
+    #
+    # The two conditions are both required. ``role_value`` and not ``user.role`` for the trap that
+    # helper exists for — Prisma hands back an enum member on a live row and a bare string on
+    # anything hand-built, and the raw comparison silently answers False for the first of those.
+    # ``access_roster.admits(access)`` and not merely "there is a row": a PENDING or SUSPENDED
+    # allow-list row is not an admission and must not empanel anybody. Today
+    # ``assert_access_admits`` can only have returned an ACTIVE row or None (the master admin, who
+    # is never gated and is not a designer), so the second test is belt-and-braces — it is here so
+    # that it stays true if that function ever learns to return a row it did not admit.
+    if role_value(user) == "DESIGNER" and access_roster.admits(access):
+        # No ``actor_id``: nobody administered this. It was derived from the person's own sign-in,
+        # and naming an admin who took no action would be a fabricated audit trail.
+        await ensure_empanelled(user.email)
 
     # THE SECOND GATE, and still narrow: this one asks whether a DESIGNER is still empanelled, and
     # answers with the empanelment's own sentence. After the platform gate and after the Google

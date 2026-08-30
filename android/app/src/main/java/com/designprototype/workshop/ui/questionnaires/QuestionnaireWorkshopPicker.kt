@@ -1,9 +1,14 @@
 package com.designprototype.workshop.ui.questionnaires
 
-import com.designprototype.workshop.data.DesignWorkshopPageDto
 import com.designprototype.workshop.data.DesignWorkshopDto
+import com.designprototype.workshop.data.DesignWorkshopPageDto
 import com.designprototype.workshop.data.walkDesignWorkshopPages
 import com.designprototype.workshop.ui.SelectOption
+import com.designprototype.workshop.ui.WorkshopListKind
+import com.designprototype.workshop.ui.WorkshopListState
+import com.designprototype.workshop.ui.designWorkshopOptions
+import com.designprototype.workshop.ui.workshopCapLine
+import com.designprototype.workshop.ui.workshopListNotice
 
 /**
  * The design workshops a questionnaire may be ATTACHED to — every one this account may open, not the
@@ -50,31 +55,92 @@ import com.designprototype.workshop.ui.SelectOption
  * screen reports as `truncated`, so the two screens cannot disagree about what the account can see.
  * A designer under the ceiling still pays exactly ONE request, as before: page 2 is asked for only
  * when the server has already said it exists.
+ *
+ * ── WHAT THE 2026-08-29 PASS CHANGED, AND WHY IT IS NOT A REFACTOR ─────────────────────────────────
+ *
+ * This file used to return a bare `List<SelectOption>`, and the loader above it turned EVERY failure
+ * into `emptyList()`. So the three questionnaire screens could not tell "the walk has not answered
+ * yet" from "the walk failed" from "this account is on no workshop" — all three arrived as an empty
+ * list, and all three drew a picker containing one row that says "Not attached" and no words
+ * whatsoever about why. A designer in a courtyard with no signal read that as the repository's
+ * answer. That is the defect DROPDOWN_DESIGN §3.5 names, and the fix is [AttachableWorkshops]: the
+ * walk now hands back WHAT HAPPENED as well as what arrived, and the sentence each state prints is
+ * `WorkshopOptions.kt`'s, shared with the record forms and byte-parallel with the web's.
+ *
+ * The truncation is reported for the first time here too. A walk that stopped at the ceiling, or
+ * that lost the connection at page three, previously returned its prefix silently — which is R4's
+ * failure exactly: a list that quietly stops is indistinguishable from a place with no records.
  */
 
 /**
- * One workshop as the picker shows it: the title a designer recognises, with the craft, cluster and
- * state under it.
+ * The answer a questionnaire screen needs about its attach control: the rows, WHAT HAPPENED, and
+ * whether the walk covered the account.
  *
- * The hint is what disambiguates the rows that matter most here. A granted workshop is somebody
- * else's fieldwork, so its title is one the reader did not choose and may not recognise — the craft
- * and the cluster are how they tell it apart from their own.
+ * ROWS AND NOT OPTIONS, deliberately. The picker's rows depend on one fact this loader cannot know —
+ * the workshop the questionnaire is ALREADY attached to, which may be past the walk's ceiling or
+ * outside a list that failed. Building [SelectOption]s here would mean building them without it, and
+ * the control would then draw "Not attached" over a questionnaire that IS attached. [options] takes
+ * that id, so every mount point supplies its own.
+ *
+ * @property total what the SERVER said this account may open. Kept even when it equals the rows in
+ *   hand, because the difference between the two numbers is the only thing that can make the cap
+ *   sentence honest.
+ * @property truncated the walk ended before it had covered [total] — the ceiling, or a connection
+ *   that dropped mid-walk. Advisory and never blocking: the rows gathered are real.
  */
-internal fun designWorkshopOption(workshop: DesignWorkshopDto): SelectOption = SelectOption(
-    value = workshop.id,
-    label = workshop.title.ifBlank { "Untitled workshop" },
-    hint = listOfNotNull(workshop.craftName, workshop.clusterName, workshop.state)
-        .joinToString(" · ")
-        .takeIf { it.isNotBlank() }
-)
+internal data class AttachableWorkshops(
+    val rows: List<DesignWorkshopDto> = emptyList(),
+    val state: WorkshopListState = WorkshopListState.Loading,
+    /** See `DesignWorkshopPickerState.online`: the OUTBOX's classification, never a network probe. */
+    val online: Boolean = true,
+    val total: Int = 0,
+    val truncated: Boolean = false,
+) {
+    /**
+     * The rows as the picker draws them, with the already-attached workshop kept even when the walk
+     * could not list it.
+     *
+     * @param attachedId the questionnaire's stored `designWorkshopId`, or `""` on a create.
+     */
+    fun options(attachedId: String = ""): List<SelectOption> =
+        designWorkshopOptions(rows = rows, offPageId = attachedId)
+
+    /**
+     * The one §3.5 sentence for the state this walk is in, or null when the list simply arrived.
+     *
+     * Handed to `SearchableSelectField.emptyMessage` AND printed under the control, which on this
+     * client are the same string by construction — see `workshopListNotice`.
+     */
+    fun notice(): String? = workshopListNotice(state, WorkshopListKind.DESIGN, online)
+
+    /** R4: the walk stopped short and says so, with both numbers. Null when it covered everything. */
+    fun capNotice(): String? =
+        if (truncated) workshopCapLine(rows.size, total, WorkshopListKind.DESIGN) else null
+}
 
 /**
  * Every attachable workshop, gathered across as many pages as the server reports.
  *
  * [fetch] is the only IO, which is what lets the paging rule above be pinned by a plain JVM test with
  * no Retrofit, no repository and no coroutine dispatcher.
+ *
+ * A THROW REACHES THE CALLER. `walkDesignWorkshopPages` swallows a failure on any page AFTER the
+ * first — something was already read, and throwing it away would turn a connection that dropped at
+ * page three into the same blank screen as no connection at all — and it rethrows a failure on page
+ * one, because nothing was read and reporting an empty account would be a lie. The caller is what
+ * turns that throw into [WorkshopListState.Failed] and the sentence that goes with it; it is not
+ * caught here, because only the caller holds the repository whose `isTransient` decides WHICH
+ * failure sentence is true.
  */
-internal suspend fun designWorkshopOptionsAcrossPages(
+internal suspend fun walkAttachableDesignWorkshops(
     fetch: suspend (page: Int, pageSize: Int) -> DesignWorkshopPageDto,
-): List<SelectOption> =
-    walkDesignWorkshopPages(fetch = fetch).items.map(::designWorkshopOption)
+): AttachableWorkshops {
+    val listing = walkDesignWorkshopPages(fetch = fetch)
+    return AttachableWorkshops(
+        rows = listing.items,
+        state = WorkshopListState.Listed(count = listing.items.size, total = listing.total),
+        online = true,
+        total = listing.total,
+        truncated = listing.truncated,
+    )
+}

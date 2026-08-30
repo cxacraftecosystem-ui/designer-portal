@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.requests import HTTPConnection
 
 from app.core.config import get_settings
 from app.core.db import db
@@ -16,6 +17,12 @@ from app.core.security import decode_access_token
 # function because there is no cycle to avoid: `services/access_roster` reaches for `core.config`,
 # `core.db` and `services/designers`, and none of those reaches back for this module.
 from app.services import access_roster
+
+# The one string that joins the two halves of the usage stitch — see ``get_current_user``. Imported
+# rather than retyped, on ``feedback.FEEDBACK_FIELDS``' rule: a contract that lives in two files is a
+# contract that will one day disagree with itself. No cycle to avoid: ``services/usage`` reaches for
+# ``core.db`` and ``services/concurrency`` and neither of those reaches back for this module.
+from app.services.usage import USAGE_USER_ID_KEY
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -306,6 +313,42 @@ def can_manage_access_roster(user: Any) -> bool:
     return is_admin(user)
 
 
+def can_read_usage(user: Any) -> bool:
+    """Read the platform-usage aggregates — which screens are reached, and where they are slow:
+    Admin and above.
+
+    ITS OWN PREDICATE THOUGH IT IS ``is_admin`` TODAY, and the duplication is the point. This is the
+    line somebody will move: the moment a consent flow exists, "may a professor running the
+    evaluation read the aggregates" becomes a real question with a defensible yes. ``is_admin`` is
+    consulted from dozens of places about dozens of unrelated powers, so widening it to answer that
+    question would grant everything else it guards at the same time. One name, one power, one line to
+    change — the same reason ``can_download_dataset`` and ``can_create_records`` exist rather than
+    their rank tests being written out at each call site.
+
+    WHY ADMIN AND NOT RESEARCHER, WHICH IS THE FLOOR THE RESEARCH USE CASE WOULD LIKE. Two precedents
+    in this file already answer it. ``can_manage_designer_roster`` gates a READ at Admin purely
+    because the roster reveals colleagues' institutional standing and which of them never took up
+    their empanelment; a usage table is strictly more revealing than that, because it is a record of
+    what people did rather than of what an administrator wrote down about them. And
+    ``/analytics/design-workshops`` — a comparison of CRAFT OUTCOMES, which observes no person at
+    all — is already ``require_admin``. A feature that observes colleagues cannot be gated more
+    loosely than one that observes cloth.
+
+    THE WITHHOLDING FLOOR IS NOT A SUBSTITUTE FOR THIS GATE, and reading it as one is the mistake
+    this paragraph exists to stop. ``usage.MIN_IDENTIFIED_USERS_FOR_ROUTE`` refuses a figure computed
+    from fewer than five identified accounts, which stops one person being picked out of a number —
+    it does not make the remaining numbers public, and the window is chosen by whoever is asking.
+    Defence in depth, not two spellings of the same rule.
+
+    NO GRANT FLAG, unlike ``can_download_dataset``. The three grantable booleans on ``User`` are
+    ``canReview``, ``canDownloadDataset`` and ``canViewProvenance``, and none of them means this;
+    reusing one would make a single checkbox on an admin screen silently confer a second, unrelated
+    power, which is the "one word meaning two things" objection the ladder comment above makes about
+    tier names. If a grant is wanted it is a new column and a deliberate migration.
+    """
+    return is_admin(user)
+
+
 def can_manage_workshops(user: Any) -> bool:
     """Create or update a workshop: Professor and above, RANK ALONE — see ``can_manage_crafts`` for
     why the ``canManageWorkshops`` grant is no longer consulted."""
@@ -494,7 +537,9 @@ async def _load_user(user_id: str, ttl: float) -> Any:
         try:
             # shield: a follower that times out, or whose client hangs up, must not cancel the query
             # the leader is running on everyone's behalf.
-            return await asyncio.wait_for(asyncio.shield(pending[1]), _USER_CACHE_INFLIGHT_WAIT_SECONDS)
+            return await asyncio.wait_for(
+                asyncio.shield(pending[1]), _USER_CACHE_INFLIGHT_WAIT_SECONDS
+            )
         except (_LeaderGone, TimeoutError):
             pass  # load it ourselves — exactly what we would have done with no dedupe at all
 
@@ -613,19 +658,84 @@ async def _user_from_bearer(
 
     user_id = payload.get("sub")
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject"
+        )
 
     user = await resolve_user(user_id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists"
+        )
     return user
 
 
 async def get_current_user(
+    connection: HTTPConnection,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> Any:
-    """The signed-in account. Session tokens only — see the scoped-token banner above."""
-    return await _user_from_bearer(credentials, allowed_scopes=frozenset())
+    """The signed-in account. Session tokens only — see the scoped-token banner above.
+
+    ── THE IDENTITY HALF OF THE USAGE STITCH ──────────────────────────────────────────────────
+    The other half is ``UsageEventMiddleware`` in ``app/main.py``, and neither half can do the job
+    alone: a pure-ASGI middleware never decodes a bearer token, so it knows the route, the status and
+    the duration but not who called; this dependency knows exactly one of those things and none of the
+    others, because it runs before the handler has produced anything. They are joined through
+    ``scope["state"]`` — Starlette's ``.state`` is a thin wrapper that writes straight into that
+    dict BY REFERENCE, so a value set here is visible to the middleware after the router returns, on
+    the 200 path and on the 403-from-a-dependency path alike.
+
+    **``HTTPConnection`` AND NOT ``Request``, AND THE HONEST VERSION OF WHY.** FastAPI fills a
+    ``Request`` parameter only when the connection IS one — ``dependencies/utils.solve_dependencies``
+    guards it with ``isinstance(request, Request)`` and a WebSocket takes the ``elif`` — so a
+    ``Request`` here would mean this function is called with the parameter simply missing on any
+    WebSocket route, i.e. ``TypeError: get_current_user() missing 1 required positional argument:
+    'connection'`` at handshake time, on a route whose author did nothing wrong. This is the
+    dependency every ``require_*`` in this file funnels through, so its signature constrains every
+    route that will ever exist here, and there is no WebSocket route today — which is exactly how the
+    narrower annotation would have sat undetected until the first one was added.
+
+    **IT IS NOT ENOUGH ON ITS OWN, AND SAYING SO IS THE POINT.** ``bearer_scheme`` below it is
+    FastAPI's ``HTTPBearer``, whose own ``__call__(self, request: Request)`` hits the identical guard
+    — measured, 2026-08-30: a WebSocket route depending on this function fails with
+    ``TypeError: HTTPBearer.__call__() missing 1 required positional argument: 'request'``. So a
+    WebSocket route STILL cannot use this dependency; what the annotation here buys is that the
+    remaining blocker is one upstream class rather than two problems, and that this file is not one
+    of them. Whoever adds the first WebSocket route will have to read the token off
+    ``connection.headers`` themselves, or wrap ``HTTPBearer``. ``HTTPConnection`` is the base of both
+    ``Request`` and ``WebSocket``, carries the same ``.state`` (it is defined there, not on
+    ``Request``), and costs nothing on the HTTP path.
+
+    **ONE LINE, AND IT STAYS ONE LINE.** This function runs on every authenticated request in the
+    product. The write is a dict assignment: no query, no await, no branch, and nothing that can
+    raise. Anything the usage feature needs beyond an id — a consent lookup, a rank, a client label —
+    belongs where it can be paid for once rather than on this path; ``usage.resolve_consent`` is
+    deliberately synchronous and column-based for exactly that reason, so that wiring it up later
+    costs no round trip here either. The key name is imported rather than typed, because a stitch is a
+    pair of string literals that must agree and this repository has already been bitten by one
+    contract living in two files.
+
+    **IT ATTRIBUTES NOTHING BY ITSELF.** Whether the id written here reaches the database is decided
+    in ``usage.collection_plan``, and today it does not: with nobody yet asked for consent, the default
+    is to record the request and drop the identity. This is the wiring, not the policy.
+
+    **WHAT THIS DOES NOT COVER, named so it is not rediscovered as a bug.**
+    ``require_dataset_admin`` below calls ``_user_from_bearer`` directly rather than depending on this
+    function, so the bulk dataset API's requests carry no id into the stitch. That is a deliberate
+    trade: covering it means threading a connection through the shared helper and both of its
+    callers, which is a bigger edit to the hottest path in the API for a non-interactive machine
+    client that answers no question about how designers navigate. Unauthenticated requests — the
+    health probes, the public router, a bad token — have no identity to write at all, which is the
+    honest NULL the schema documents rather than a gap.
+    """
+    user = await _user_from_bearer(credentials, allowed_scopes=frozenset())
+    # ``connection.state.usage_user_id = ...`` by another spelling. Starlette's ``State.__setattr__``
+    # writes into ``scope["state"]`` by reference, so the two forms are the same assignment; going
+    # through ``setattr`` is what lets the key be the imported constant instead of a literal retyped
+    # here, where a typo would be invisible — the middleware would simply find nothing and file every
+    # request as anonymous, and no test that did not already know both spellings could tell.
+    setattr(connection.state, USAGE_USER_ID_KEY, get_value(user, "id"))
+    return user
 
 
 async def require_dataset_admin(
@@ -728,6 +838,26 @@ async def require_dataset_downloader(current_user: Any = Depends(get_current_use
     return current_user
 
 
+async def require_usage_reader(current_user: Any = Depends(get_current_user)) -> Any:
+    """Gates the cross-account arms of ``/api/usage`` — see :func:`can_read_usage` for the argument.
+
+    NOT ON ``/usage/me``. A person reading their own trail needs no permission from anybody, and
+    routing that read through this gate would mean a designer had to ask an administrator to see what
+    the system recorded about them. That inversion is worth naming: this dependency exists to stop
+    people reading about EACH OTHER, and applying it to the self-read would turn a transparency
+    surface into a second thing they cannot see.
+    """
+    if not can_read_usage(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Reading how the platform is used requires Admin access or above. Your own usage is "
+                "at /api/usage/me and needs no permission."
+            ),
+        )
+    return current_user
+
+
 def assert_can_create_records(user: Any) -> None:
     """The body-callable half of ``require_record_creator``, for the one route that cannot decide
     from its signature: POST /questionnaire/interviews opens a NEW interview or folds into an
@@ -775,7 +905,18 @@ async def require_designer_roster_manager(current_user: Any = Depends(get_curren
     Read as well as write, unlike most of the ``require_*`` pairs here, because the roster is a
     list of named individuals, their institutions and an admin's private note about the programme
     each was empanelled under. A designer able to GET it would be reading their colleagues'
-    standing — and, from ``firstSeenAt``, which of them has stopped using the app.
+    standing — and, from ``firstSeenAt``, which of them has never opened the app at all.
+
+    THAT LAST CLAUSE USED TO SAY "STOPPED USING", WHICH THE COLUMN CANNOT TELL ANYONE.
+    ``mark_roster_seen`` writes ``firstSeenAt`` under a ``WHERE firstSeenAt IS NULL`` clause
+    (``app/services/designers.py``), so it is stamped once, on the first successful sign-in, and
+    never again — it is a *joined* date, not a *last seen* one. A NULL means the invitation was
+    never taken up; a date six months old means nothing whatever about whether the person signed in
+    this morning. The distinction is worth keeping straight in the one docstring that justifies
+    gating a READ: the justification survives it unchanged, because "who among my colleagues never
+    accepted their empanelment" is exactly as much somebody else's business as the wrong reading
+    was, but a reader who believes this column carries recency will one day build an inactivity
+    report on it and quietly libel every designer who has been using the app daily since March.
     """
     if not can_manage_designer_roster(current_user):
         raise HTTPException(
@@ -838,7 +979,9 @@ def values_match(current_value: Any, next_value: Any) -> bool:
         return str(current_value) == str(next_value)
 
 
-def assert_can_contribute_fields(record: Any, user: Any, data: dict[str, Any], owner_field: str = "createdById") -> None:
+def assert_can_contribute_fields(
+    record: Any, user: Any, data: dict[str, Any], owner_field: str = "createdById"
+) -> None:
     if is_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
         return
 
@@ -874,7 +1017,9 @@ def assert_can_contribute_fields(record: Any, user: Any, data: dict[str, Any], o
         )
 
 
-def assert_can_contribute_relation(record: Any, user: Any, populated: bool, field_name: str, owner_field: str = "createdById") -> None:
+def assert_can_contribute_relation(
+    record: Any, user: Any, populated: bool, field_name: str, owner_field: str = "createdById"
+) -> None:
     if is_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
         return
     if populated:
@@ -900,7 +1045,9 @@ def assert_admin_or_owner(record: Any, user: Any, owner_field: str = "createdByI
 
 def assert_can_delete(user: Any) -> None:
     if not is_admin(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required to delete records")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required to delete records"
+        )
 
 
 async def require_designer(current_user: Any = Depends(get_current_user)) -> Any:

@@ -770,7 +770,9 @@ async def questionnaire_options(
             # So the dropdown can mark "already attached to another workshop" rather than letting a
             # designer reattach one mid-fieldwork and wonder where it went.
             "attachedElsewhere": bool(
-                row.designWorkshopId and designWorkshopId and row.designWorkshopId != designWorkshopId
+                row.designWorkshopId
+                and designWorkshopId
+                and row.designWorkshopId != designWorkshopId
             ),
         }
         for row in rows
@@ -917,7 +919,9 @@ async def reuse_questionnaire_route(
     # copied that could be retired. Passing True would be a claim about the payload that is not
     # false, only meaningless, and the next reader would go looking for the retirement it implies.
     form = await load_form(new_id)
-    return public_encode({"questionnaire": form, "report": report, "sourceQuestionnaireId": record.id})
+    return public_encode(
+        {"questionnaire": form, "report": report, "sourceQuestionnaireId": record.id}
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -1039,7 +1043,9 @@ async def create_section(
 ) -> dict[str, Any]:
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
-    existing = await db.questionnaireformsection.find_many(where={"questionnaireId": questionnaire_id})
+    existing = await db.questionnaireformsection.find_many(
+        where={"questionnaireId": questionnaire_id}
+    )
     codes = {s.code.strip().lower() for s in existing}
     code = (payload.code or "").strip()
     if not code or code.lower() in codes:
@@ -1103,7 +1109,9 @@ async def update_section(
     return public_encode(await load_form(questionnaire_id, include_retired=True))
 
 
-@router.post("/{questionnaire_id}/sections/{section_id}/questions", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{questionnaire_id}/sections/{section_id}/questions", status_code=status.HTTP_201_CREATED
+)
 async def create_question(
     questionnaire_id: str,
     section_id: str,
@@ -1152,8 +1160,12 @@ async def update_question(
         replacement = await supersede_question(
             question,
             prompt=payload.prompt.strip(),
-            helpText=payload.helpText if "helpText" in payload.model_fields_set else question.helpText,
-            isRequired=payload.isRequired if payload.isRequired is not None else question.isRequired,
+            helpText=payload.helpText
+            if "helpText" in payload.model_fields_set
+            else question.helpText,
+            isRequired=payload.isRequired
+            if payload.isRequired is not None
+            else question.isRequired,
             sortOrder=payload.sortOrder or question.sortOrder,
         )
         await bump_version(questionnaire_id)

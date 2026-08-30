@@ -90,7 +90,7 @@ def verify_jwt_configuration() -> None:
     message = (
         f"Insecure JWT signing configuration: {weakness}. Anyone who guesses it can mint a token "
         "for any account, including the master admin. Generate one with "
-        "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"` and set JWT_SECRET."
+        '`python -c "import secrets; print(secrets.token_urlsafe(48))"` and set JWT_SECRET.'
     )
     if settings.allow_weak_jwt_secret:
         logger.critical("%s (ALLOW_WEAK_JWT_SECRET is set — continuing anyway)", message)

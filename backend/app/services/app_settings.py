@@ -167,7 +167,9 @@ def order_violations(order: list[str], rankable: Collection[str]) -> int:
 _recalled_verdicts: dict[str, dict[str, Any]] = {}
 
 
-def remember_key_verdict(key_name: str, *, passing: bool, checked_at: datetime, error: str | None) -> None:
+def remember_key_verdict(
+    key_name: str, *, passing: bool, checked_at: datetime, error: str | None
+) -> None:
     _recalled_verdicts[key_name] = {
         "status": STT_KEY_PASSING if passing else STT_KEY_FAILING,
         "checkedAt": checked_at,

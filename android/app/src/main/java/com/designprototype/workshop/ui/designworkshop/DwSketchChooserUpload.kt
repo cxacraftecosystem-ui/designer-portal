@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DraftMedia
 import com.designprototype.workshop.data.DraftRow
 import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.StageDraft
 import com.designprototype.workshop.data.StageDto
@@ -49,12 +50,14 @@ import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.dwFoldServerStage
 import com.designprototype.workshop.data.dwStageKeyForEntity
 import com.designprototype.workshop.data.isConnectionFailure
+import com.designprototype.workshop.data.liveFields
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
 import java.io.File
 import java.util.UUID
 
@@ -439,6 +442,80 @@ internal fun DwSketchChooserUploadTab(
         }
     }
 
+    /**
+     * Write one measured dimension into the chosen row, then offer the stage.
+     *
+     * ── THE THIRD DOOR, AND IT GOES THROUGH THE SAME WALL AS THE OTHER TWO ────────────────────
+     *
+     * This tab had exactly two writes — [addRow] and [writeMedia] — and both move media or mint a
+     * row. A measurement is neither, which is why "measure a dimension from a photograph" could not
+     * be offered here at all before this: the panel's one output is `onPropose(key, value, technique)`
+     * and there was nothing to hand it to.
+     *
+     * It is written the same way as everything else on this tab and that is the whole of its safety
+     * argument: `WorkshopDraftStore.load` → the row → `WorkshopDraftStore.updateStage` →
+     * `WorkshopSyncEngine.pushStage`. **NO SECOND STORE, NO PARALLEL COLLECTION AND NO NEW
+     * ENDPOINT** — the file header's rule, and a dimension filed from here is the same value in the
+     * same row of the same draft that a designer would have typed on stage 11.
+     *
+     * ── THE TECHNIQUE IS DROPPED HERE, AND THE STAGE FORM DROPS IT TOO ────────────────────────
+     *
+     * `DwPhotoMeasurePanel`'s third argument says WHICH GEOMETRY produced the number. A stage field's
+     * provenance is written by `entry_provenance.merge_entry_provenance`, which has no
+     * `measurementMethods` key to put it under — that mechanism reaches RECORDS only. `FieldRenderer`
+     * drops it at its own mount for exactly this reason and says so; this is the same seam, and when
+     * the stage half lands it is the same one line in both places.
+     */
+    fun writeScalar(half: DwChooserHalf, rowKey: String, fieldKey: String, value: JsonElement?) {
+        val spec = half.spec ?: return
+        val stageKey = half.stageKey ?: return
+        scope.launch {
+            notice = null
+            problem = null
+            val written = runCatching {
+                val draft = WorkshopDraftStore.load(appContext, workshopId)
+                val stage = draft?.stages?.get(stageKey) ?: return@runCatching null
+                val rows = dwChooserWriteScalar(
+                    rows = dwChooserRows(stage, half.entityKey),
+                    rowKey = rowKey,
+                    fieldKey = fieldKey,
+                    value = value,
+                )
+                WorkshopDraftStore.updateStage(
+                    appContext,
+                    workshopId,
+                    dwChooserReplaceRows(stage, half.entityKey, rows),
+                )
+            }
+            written.onFailure { error ->
+                if (error is CancellationException) throw error
+                problem = DW_SKETCH_CHOOSER_MEASUREMENT_NOT_SAVED
+                return@launch
+            }
+            if (written.getOrNull() == null) {
+                // No stage on disk to write into — reachable when a fold failed and the designer has
+                // never opened the stage. The panel should not have been enabled, and saying so is
+                // better than a button that appears to do nothing to a number somebody just measured.
+                problem = DW_SKETCH_CHOOSER_MEASUREMENT_NOT_SAVED
+                return@launch
+            }
+            // ON SCREEN BEFORE THE PUSH IS ATTEMPTED — see the note in `addRow`. The measuring card
+            // reads what the field already holds off the reloaded row, so the other order would make
+            // a proposed dimension appear to VANISH for as long as a metered PUT takes to time out.
+            notice = dwChooserSendingNote("This measurement")
+            attempt++
+            val push = runCatching {
+                WorkshopSyncEngine.pushStage(
+                    context = appContext,
+                    repository = repository,
+                    workshopId = workshopId,
+                    spec = spec,
+                )
+            }.getOrNull()
+            notice = dwChooserSaveNote(push, "This measurement")
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -496,8 +573,10 @@ internal fun DwSketchChooserUploadTab(
             onChooseRow = { sketchRow = it },
             onAdd = { half -> addRow(half) { sketchRow = it } },
             onWriteMedia = { half, rowKey, field, ids -> writeMedia(half, rowKey, field, ids) },
+            onWriteScalar = { half, rowKey, key, value -> writeScalar(half, rowKey, key, value) },
             onOpenStage = onOpenStage,
             workshopId = workshopId,
+            repository = repository,
             media = media,
             onMessage = { notice = it },
             onProblem = { problem = it },
@@ -511,8 +590,10 @@ internal fun DwSketchChooserUploadTab(
             onChooseRow = { prototypeRow = it },
             onAdd = { half -> addRow(half) { prototypeRow = it } },
             onWriteMedia = { half, rowKey, field, ids -> writeMedia(half, rowKey, field, ids) },
+            onWriteScalar = { half, rowKey, key, value -> writeScalar(half, rowKey, key, value) },
             onOpenStage = onOpenStage,
             workshopId = workshopId,
+            repository = repository,
             media = media,
             onMessage = { notice = it },
             onProblem = { problem = it },
@@ -538,8 +619,22 @@ private fun DwChooserUploadHalf(
     onChooseRow: (String) -> Unit,
     onAdd: (DwChooserHalf) -> Unit,
     onWriteMedia: (DwChooserHalf, String, FieldDto, List<String>) -> Unit,
+    /** Write one measured dimension into the chosen row. See `writeScalar` at the call site. */
+    onWriteScalar: (DwChooserHalf, String, String, JsonElement?) -> Unit,
     onOpenStage: (String, String) -> Unit,
     workshopId: String,
+    /**
+     * The repository, for the tracing panel's export card and nothing else on this half.
+     *
+     * A HOST THAT CANNOT OFFER FILE SAVING PASSES NOTHING AND LOSES NOTHING ELSE, which is
+     * [DwTraceExportSlot]'s own contract — but this host CAN, and `FieldRenderer.kt`'s call site
+     * records at length what leaving that slot empty cost the one mount that had it: five finished,
+     * tested surfaces (the five-format table, the route to the public Downloads folder, the share
+     * sheet, the per-format losses, and the one `DwTraceTier.EXPORT` control) reachable from nothing,
+     * behind a defaulted argument and a comment that read as a decision. This tab is not going to
+     * repeat it.
+     */
+    repository: WorkshopRepository,
     media: DwMediaBridge,
     onMessage: (String) -> Unit,
     onProblem: (String) -> Unit,
@@ -657,9 +752,12 @@ private fun DwChooserUploadHalf(
                 Text("Open the stage", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
             }
         }
-        // THE ESCAPE IS NAMED RATHER THAN IMPLIED. Everything this tab cannot do — naming the sketch,
-        // its caption, its measurements, straightening the plate — is on that form, and a designer
-        // who is not told that will look for it here.
+        // THE ESCAPE IS NAMED RATHER THAN IMPLIED. Everything this tab cannot do is on that form, and
+        // a designer who is not told that will look for it here.
+        //
+        // AND WHAT IT CAN DO IS NO LONGER IN THAT LIST — see [DwChooserHalf.stageNote]. This comment
+        // named "straightening the plate" as an escape while the derivation section below composes
+        // the straightening panel on this very screen.
         Text(
             half.stageNote,
             color = MaterialTheme.field.muted,
@@ -667,7 +765,11 @@ private fun DwChooserUploadHalf(
             lineHeight = 16.sp,
         )
 
-        val fields = dwChooserMediaFields(dwChooserEntity(spec, half.entityKey), fieldKeys)
+        // THE WHOLE ENTITY, once — the capture cards narrow it to four keys below, and the
+        // derivation section needs every field it declares. Two lookups of the same collection would
+        // be two answers to "what does this entity declare" a rename could put out of step.
+        val entity = dwChooserEntity(spec, half.entityKey)
+        val fields = dwChooserMediaFields(entity, fieldKeys)
         val chosen = rows.firstOrNull { dwChooserRowKey(it) == chosenRow }
         /*
           SAID IMMEDIATELY ABOVE THE CARDS THEY ARE ABOUT, AND NOT AT THE TOP OF THE SCREEN.
@@ -725,6 +827,183 @@ private fun DwChooserUploadHalf(
                 )
             }
         }
+
+        /*
+          ── THE DERIVATION CARDS, UNDER ONE PHOTOGRAPH — requirements 5, 6, 7, 18 and 20 ─────────
+
+          THE CAPABILITY EXISTED AND THIS TAB COULD NOT REACH IT. "Trace a sketch into line art",
+          "Straighten a photographed sketch" and "Measure a dimension from a
+          photograph" are all built, all tested, and were mounted at exactly ONE place in the app —
+          `FieldRenderer`, inside the stage form, one tap deeper than this screen — while the web
+          puts every one of them on this tab. `RECON_FINDINGS.md` section 9 records the grep:
+          `TracePanel|RectifyPanel|MeasurePanel|dwOffers` across the four chooser files returned
+          nothing at all. This repository's own rule about a finished surface that is reachable from
+          nothing is the argument, and `FieldRenderer.kt` states it about this very feature.
+
+          AND THIS IS WHERE "ONE PHOTOGRAPH FEEDS BOTH CARDS" IS A SENTENCE THAT MEANS SOMETHING.
+          In the stage form the cards sit on two DIFFERENT fields — measuring on the image, tracing
+          and straightening on the file that receives the plate — and are composed from two different
+          field renders, so no composable above them owns both. Here they are siblings under one
+          section, which is exactly the shape `UploadTabHost.tsx` reached on the other client, and
+          [DwSketchDerivationSection] is the owner. Everything about which photograph, what a change
+          of photograph resets, and what is decoded is in that file's header.
+
+          THE FIELDS COME FROM THE WHOLE ENTITY AND NOT FROM THIS TAB'S FOUR KEYS.
+          `dwChooserMediaFields` narrows the entity to the media fields this tab draws CAPTURE CARDS
+          for, which is a different question from which fields a derivation may READ or PROPOSE INTO:
+          a prototype's dimensions are `lengthCm`/`widthCm`/`heightCm`/`diameterCm` and none of them
+          is a media field at all. So the offers are asked of the entity's own `liveFields`, through
+          the same two predicates the stage form uses — nothing here decides anything a second time.
+
+          ── AND THIS IS ONE COMPOSABLE FOR BOTH HALVES, INCLUDING PROTOTYPES — requirement 7 ────
+
+          THE PROTOTYPES HALF GETS THE SAME CALL, AND COMES OUT OF IT WITH A DIFFERENT SCREEN,
+          BECAUSE THE REGISTRY SAYS SO RATHER THAN BECAUSE THIS FILE DOES. `dwOffersSketchRectify`
+          refuses both FILE fields a prototype declares — "Measurement sheet" and "3D model" are not
+          the home of a plate — so `plateField` is null on that half and the straightening and tracing
+          panels are simply not offered. `dwOffersPhotoMeasure` answers true, so the measuring card
+          is. One card, therefore no shared photograph card: [dwSharesOnePhotograph] is where that is
+          decided and argued, and `UploadTabPanel.tsx:391-407` is the other client reaching the same
+          answer for the same reason.
+
+          THIS HALF IS WHERE PROTOTYPES ACTUALLY GAIN SOMETHING, AND IT IS NOT SYMMETRY.
+          `dwChooserDerivationSources` spans EVERY image field the entity declares, so on a prototype
+          the one measuring card here reads `prototypePhotos` and `turntablePhotos` together. The
+          stage form mounts one measuring card PER image field, each able to see only its own — so a
+          designer who shot the frame with the ruler in it into the turn, and the clean frames into
+          the photographs, has the picture they need on one card and the dimension they want on the
+          other. That is the duplicated-work report on this half, and one list is the whole of the
+          fix. See [DwSketchDerivationSection]'s header.
+
+          WHAT DELIBERATELY DID NOT TRANSFER, so the next reader does not "restore" it: the shared
+          photograph card (no second consumer to share with — above), and the measuring card's
+          "Measure a different photograph" disclosure, which is composed only under a hosted supply.
+          `MeasureFromPhotoCard.tsx` offers that control on BOTH halves of the other client's tab and
+          is right to; there it chooses a picture that is on no record at all, which is a thing no
+          panel on this client can be handed. [DwMeasureDifferentPhotograph]'s header carries the
+          long form.
+        */
+        val siblings = remember(entity) { entity?.liveFields.orEmpty().associateBy { it.key } }
+        val derivationSources = dwChooserDerivationSources(chosen, siblings, media)
+        val plateField = siblings.values.firstOrNull { dwOffersSketchRectify(it, siblings) }
+        val measureTargets = if (siblings.values.any { dwOffersPhotoMeasure(it, siblings) }) {
+            dwMeasurableLengthFields(siblings)
+        } else {
+            emptyList()
+        }
+
+        // A ROW WITH NO PHOTOGRAPHS STILL GETS THE SECTION, and the `derivationSources.isNotEmpty()`
+        // that used to be on this line is gone deliberately. The section says what it cannot do and
+        // where a photograph comes from; a section that vanished said neither, and on this tab the
+        // cards are the only sign the capability exists at all. See the empty branch of
+        // [DwSketchDerivationSection], and `UploadTabHost.tsx:1449-1453` for the other client paying
+        // for the same omission. `chosen != null` stays: with no ROW there is nothing to be empty
+        // ABOUT, and the picker immediately above already says to choose one.
+        if (chosen != null) {
+            DwSketchDerivationSection(
+                sources = derivationSources,
+                /*
+                  WHERE A PHOTOGRAPH GOES, AS OPPOSED TO WHICH ONES ARE THERE — and read through the
+                  SAME predicate that built `derivationSources` one line up, not a second filter.
+
+                  [dwSketchSourceFields] is the one answer to "which fields of this entity hold a
+                  photograph a derivation may read"; `dwChooserDerivationSources` walks it for the
+                  media, and this walks it for the labels. Two filters would be two answers, and the
+                  screen would eventually offer a chooser over one set while naming another.
+
+                  IT IS THE ENTITY'S FIELDS AND NOT THIS TAB'S FOUR KEYS, which matters on exactly one
+                  half: a prototype's `prototypePhotos` has no capture card here (the tab draws
+                  `turntablePhotos` and `modelFile`), so a list built from `fields` would name only the
+                  turn — and the empty sentence below would send a designer to the one destination
+                  that is on this screen while staying silent about the one that is not. That is the
+                  defect `MeasureFromPhotoCard.tsx` fixed on the other client for this same half.
+                */
+                photoFieldLabels = dwSketchSourceFields(siblings).map { it.label },
+                rowName = dwChooserRowLabel(chosen, rows.indexOf(chosen)),
+                plateField = plateField,
+                plateFileName = plateField
+                    ?.let { dwChooserHeldMedia(chosen, it.key).firstOrNull() }
+                    ?.let(media.resolve)
+                    ?.displayName,
+                targets = measureTargets,
+                rowValues = chosen.values,
+                // The row's own category seeds the trace subject. `dwTraceSubjectFor` falls back to
+                // the default for anything it does not recognise, absence included, so a row with no
+                // category is not a special case.
+                recordCategory = DwValues.text(chosen.values["category"]).takeIf { it.isNotBlank() },
+                media = media,
+                runtime = rememberDwTraceRuntime(),
+                // THE SAME GATE THE CAPTURE CARDS ARE UNDER, and it has to be: both of these cards
+                // write a row back, and writing over a collection this device has not reconciled is
+                // how a stage loses rows nobody deleted.
+                enabled = half.reconciled,
+                onAttachedToPlate = { id ->
+                    // `plateField` is non-null wherever this lambda can be reached — the section
+                    // composes the two panels that call it only when it has one — but it is read
+                    // through a null check rather than asserted, because a non-null assertion here
+                    // would be a crash in a courtyard to save one line.
+                    plateField?.let { onWriteMedia(half, chosenRow, it, listOf(id)) }
+                },
+                onPropose = { key, value, _ -> onWriteScalar(half, chosenRow, key, value) },
+                onMessage = onMessage,
+                onError = onProblem,
+                exportCard = { slot ->
+                    DwSketchTraceExportCard(
+                        repository = repository,
+                        traceSvg = slot.result.svg,
+                        geometry = slot.result.geometry,
+                        documentWidth = slot.result.width,
+                        documentHeight = slot.result.height,
+                        documentBackground = slot.documentBackground,
+                        sourceName = slot.sourceName,
+                        shapeCount = slot.result.shapeCount,
+                        nodeCount = slot.result.nodeCount,
+                        frameNote = slot.result.frameNote,
+                        isPreview = slot.result.isPreview,
+                        exporter = rememberDwTraceExporter(),
+                        busy = slot.busy,
+                        onBusyChange = slot.onBusyChange,
+                        onError = onProblem,
+                        onBackgroundChange = slot.onBackgroundChange,
+                        onNeedFullResolution = slot.onNeedFullResolution,
+                    )
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Every photograph on one chooser row that a derivation card may read, built ONCE.
+ *
+ * ── ONE DERIVATION OF "WHICH PHOTOGRAPHS", WHICH IS THE WHOLE OF REQUIREMENT 5 ON THIS CLIENT ──
+ *
+ * The stage form builds this list for the tracing and straightening panels and then reads a
+ * DIFFERENT list for the measuring card — that one's own field's ids — and `FieldRenderer.kt`'s own
+ * comment argues against precisely that shape one line above where it does it: *"A second copy of
+ * the SOURCE list would be the same mistake one layer down."* On `sketch` the two happen to
+ * coincide, because the entity declares exactly one image field. On `prototype`, which declares two
+ * image lists, they do not.
+ *
+ * So there is one here, and all three cards read it. It is the entity's non-deprecated image fields
+ * through [dwSketchSourceFields] — the same function the stage form's list uses — resolved against
+ * the bridge, which is what turns an id into a path this device can actually open.
+ *
+ * NOT REMEMBERED, exactly as the stage form's is not: it is a filter over a map that is already in
+ * memory, and a `remember` keyed on a row would have to compare a values map to know whether the
+ * photographs had changed, which is the more expensive half.
+ */
+private fun dwChooserDerivationSources(
+    row: DraftRow?,
+    siblings: Map<String, FieldDto>,
+    media: DwMediaBridge,
+): List<DwSketchSource> {
+    if (row == null) return emptyList()
+    return dwSketchSourceFields(siblings).flatMap { imageField ->
+        dwChooserHeldMedia(row, imageField.key)
+            .mapNotNull(media.resolve)
+            .filter { it.mediaType.equals("IMAGE", ignoreCase = true) }
+            .map { DwSketchSource(fieldLabel = imageField.label, item = it) }
     }
 }
 
@@ -758,14 +1037,24 @@ private data class DwChooserHalf(
     val pickerPlaceholder: String
         get() = if (isSketch) "Choose a sketch" else "Choose a prototype"
 
+    /**
+     * NOTHING ON THIS HALF YET — what the one button here makes, and what it does not.
+     *
+     * ── IT CARRIED THE SAME STALE CLAIM [stageNote] WAS CORRECTED FOR, ONE SENTENCE EARLIER ───
+     *
+     * The sketches branch read *"…naming it, its caption and its measurements are on the stage
+     * form."* Measurements stopped being only there when [DwSketchDerivationSection] was mounted
+     * below: the measuring card proposes into `lengthCm`/`widthCm`/`heightCm` off a photograph, on
+     * this tab. The correction is [stageNote]'s, word for word — what remains elsewhere is TYPING a
+     * dimension in by hand, because the card only ever proposes one measured off a photograph and a
+     * designer who used a tape still has nowhere here to put the number.
+     *
+     * The prototypes branch needed no correction and got none. It never claimed a derivation was
+     * elsewhere, because that half has none to claim — `dwOffersSketchRectify` refuses both FILE
+     * fields a prototype declares. See [dwSharesOnePhotograph].
+     */
     val emptyNote: String
-        get() = if (isSketch) {
-            "This workshop has no sketches yet. \"Add a sketch\" makes the row here; naming it, its " +
-                "caption and its measurements are on the stage form."
-        } else {
-            "This workshop has no prototypes yet. \"Add a prototype\" makes the row here; naming " +
-                "it, its materials and its stage log are on the stage form."
-        }
+        get() = if (isSketch) DW_SKETCH_CHOOSER_NO_SKETCHES_YET else DW_SKETCH_CHOOSER_NO_PROTOTYPES_YET
 
     /**
      * Paragraphs drawn immediately above this half's capture cards, in order.
@@ -773,24 +1062,64 @@ private data class DwChooserHalf(
      * EMPTY FOR SKETCHES, because there is nothing about a sketch's two fields that a designer
      * cannot see: both are images, both print, and a sentence saying so would be noise that trains
      * the reader to skip the place where the prototype's genuinely surprising fact is said.
+     *
+     * ── AND THE THIRD ONE IS THE ACCEPT LIST, WHICH IS THE DIFFERENCE THAT HAD NO WORDS ───────
+     *
+     * [DW_PROTOTYPE_MODEL_FORMATS]. This half takes a kind of file the other half refuses outright,
+     * and until it was written down the only place that fact existed on this client was a wildcard
+     * MIME in `DwMediaCapture.galleryMimeFor` — which says the opposite of what it means. The other client
+     * names the eight formats under its own model button (`PrototypeModelField.tsx:619`); this is
+     * that, in the one place on this half where a paragraph can be added. Neither client refuses
+     * anything, and the constant's own header is careful to say so rather than turning a list into a
+     * gate.
+     *
+     * THE ORDER IS THE READING ORDER OF THE CARDS BELOW, not the order the notes were written in:
+     * the fact about the delivered document first, because it changes whether a designer bothers
+     * with the turn at all; then how to shoot the turn, which is the first capture card; then what
+     * to put in the model box, which is the second.
      */
     val mediaNotes: List<String>
         get() = if (isSketch) {
             emptyList()
         } else {
-            listOf(DW_PROTOTYPE_3D_IN_THE_REPORT, DW_TURNTABLE_CAPTURE_ADVICE)
+            listOf(
+                DW_PROTOTYPE_3D_IN_THE_REPORT,
+                DW_TURNTABLE_CAPTURE_ADVICE,
+                DW_PROTOTYPE_MODEL_FORMATS,
+            )
         }
 
+    /**
+     * Where everything this tab does NOT offer lives — one sentence, per half.
+     *
+     * ── IT NAMED A CAPABILITY THAT IS NOW ON THIS SCREEN, WHICH IS THE WORST KIND OF STALE ────
+     *
+     * The sketches half read *"Everything this tab does not offer — the name, the caption, the
+     * measurements, straightening a photographed sketch into a plate — is on that form."* Two of those
+     * four stopped being true the moment [DwSketchDerivationSection] was mounted below: the
+     * straightening panel is composed on this screen wherever `dwOffersSketchRectify` answers for the
+     * entity's plate field, which on `sketch` is `lineArtFile`, and the measuring card proposes into
+     * `lengthCm`/`widthCm`/`heightCm` from a photograph.
+     *
+     * **A SENTENCE THAT SENDS A DESIGNER AWAY FROM A CONTROL THEY ARE LOOKING AT IS WORSE THAN NO
+     * SENTENCE**, and it is the same defect, in the same direction, that the other client fixed on
+     * its own empty measuring branch — *"a sentence pointing at the wrong place is the defect this tab
+     * has already paid for once"* — and that [dwNoPhotographSentence] was rewritten for. This is the
+     * third instance of it on these two surfaces, which is why it is written down here rather than
+     * quietly corrected.
+     *
+     * SO THE LIST IS WHAT THIS TAB GENUINELY CANNOT REACH, and the derivations are not in it. Typing a
+     * dimension in by hand IS still elsewhere and stays named, because the measuring card only
+     * PROPOSES one off a photograph — a designer who measured the piece with a tape has nowhere here
+     * to put the number.
+     *
+     * THE TWO HALVES ARE ONE VOICE AND NOT ONE STRING, which is the same call [emptyNote] and
+     * [addLabel] make: the shape, the order and the promise are identical and only the entity's own
+     * nouns differ. The prototypes half needed no correction — it never claimed a derivation was
+     * elsewhere, because it has none to claim.
+     */
     val stageNote: String
-        get() = if (isSketch) {
-            "A workshop can hold as many sketches as it documented, and each one is a row on the " +
-                "sketch stage. Everything this tab does not offer — the name, the caption, the " +
-                "measurements, straightening a photographed sketch into a plate — is on that form."
-        } else {
-            "A workshop can hold as many prototypes as it made, and each one is a row on the " +
-                "prototype stage. Everything this tab does not offer — the name, the materials, " +
-                "the stage log, the costing — is on that form."
-        }
+        get() = if (isSketch) DW_SKETCH_CHOOSER_SKETCH_ELSEWHERE else DW_SKETCH_CHOOSER_PROTOTYPE_ELSEWHERE
 }
 
 /**
@@ -819,6 +1148,52 @@ private fun dwChooserStageForField(
 // exist to prevent are WORDING ones, and a wording defect cannot be caught by a test that cannot see
 // the wording. `DwSketchChooserSentenceTest` pins the properties that matter — a failure is never
 // worded as an answer, and a promise about the repository is never made on a phone's behalf.
+
+/*
+  ── WHERE THE REST OF THE RECORD IS, AND THE FOUR SENTENCES THAT SAY IT ──────────────────────────
+
+  THESE WERE INLINE IN `DwChooserHalf` AND THAT IS WHY ONE OF THEM STAYED WRONG. Two of the four make
+  a claim about what this tab does NOT do, and that claim goes stale every time the tab gains a
+  capability — which it did on 2026-08-29, when [DwSketchDerivationSection] put tracing, straightening
+  and measuring on the screen they were sending designers away from. The pass that mounted the section
+  corrected `stageNote` and missed `emptyNote`, one getter above it, saying the same thing in fewer
+  words.
+
+  A private getter on a private data class is invisible to a JVM test, so nothing could have caught
+  it. Hoisted here they are pinnable, and `DwSketchChooserSentenceTest` pins the property rather than
+  the prose: NO SENTENCE ON THIS TAB MAY PUT AN ACT THIS TAB MOUNTS A PANEL FOR SOMEWHERE ELSE. That
+  is a rule the next capability added to this screen has to answer to, rather than a transcription of
+  today's wording that a reader would have to update by hand and would therefore not.
+*/
+
+/**
+ * NO SKETCHES ON THIS WORKSHOP YET.
+ *
+ * "its measurements are on the stage form" stood here until 2026-08-29 and had been false since the
+ * measuring card was mounted below. See [DwChooserHalf.emptyNote] for the correction and
+ * [DW_SKETCH_CHOOSER_SKETCH_ELSEWHERE] for the same narrowing in the sibling sentence: what is
+ * genuinely still elsewhere is TYPING a dimension in, because the card only proposes one it measured.
+ */
+internal const val DW_SKETCH_CHOOSER_NO_SKETCHES_YET: String =
+    "This workshop has no sketches yet. \"Add a sketch\" makes the row here; naming it, its caption " +
+        "and typing a dimension in by hand are on the stage form."
+
+/** NO PROTOTYPES ON THIS WORKSHOP YET. Never carried the stale claim — see [DwChooserHalf.emptyNote]. */
+internal const val DW_SKETCH_CHOOSER_NO_PROTOTYPES_YET: String =
+    "This workshop has no prototypes yet. \"Add a prototype\" makes the row here; naming it, its " +
+        "materials and its stage log are on the stage form."
+
+/** WHERE THE SKETCH HALF'S REMAINING WORK IS. The full argument is at [DwChooserHalf.stageNote]. */
+internal const val DW_SKETCH_CHOOSER_SKETCH_ELSEWHERE: String =
+    "A workshop can hold as many sketches as it documented, and each one is a row on the sketch " +
+        "stage. Everything this tab does not offer — the name, the caption, the category, typing a " +
+        "dimension in by hand — is on that form."
+
+/** WHERE THE PROTOTYPE HALF'S REMAINING WORK IS. Needed no correction; see [DwChooserHalf.stageNote]. */
+internal const val DW_SKETCH_CHOOSER_PROTOTYPE_ELSEWHERE: String =
+    "A workshop can hold as many prototypes as it made, and each one is a row on the prototype " +
+        "stage. Everything this tab does not offer — the name, the materials, the stage log, the " +
+        "costing — is on that form."
 
 /** COULD NOT READ THE STAGE, with no signal. The offline half of the split. */
 internal const val DW_SKETCH_CHOOSER_STAGE_OFFLINE: String =
@@ -865,3 +1240,19 @@ internal const val DW_SKETCH_CHOOSER_FILE_NOT_ATTACHED: String =
     "That file has NOT been attached to the row: this phone could not write to its own draft. The " +
         "file itself was copied into this workshop and is not lost — attach it from the stage form, " +
         "which writes through the same store."
+
+/**
+ * The dimension write failed on the device.
+ *
+ * ITS OWN SENTENCE AND NOT A REUSE OF THE FILE ONE, which is this screen's stated rule: *"Any new
+ * state added to the Upload tab needs its own sentence rather than reuse of one of these."* What is
+ * lost here is different in kind — a file that failed to attach is still in the workshop's media
+ * directory and can be attached again in one press, and a measurement that failed to write is gone
+ * unless somebody re-marks the photograph. Saying that plainly is what stops a designer walking away
+ * from a number they think is filed.
+ */
+internal const val DW_SKETCH_CHOOSER_MEASUREMENT_NOT_SAVED: String =
+    "That measurement has NOT been written to the row: this phone could not write to its own draft. " +
+        "Nothing has changed, and the figure is not kept anywhere — write it down before you leave " +
+        "this screen. Storage being full is the usual cause, and the stage form writes through the " +
+        "same store, so it will refuse in the same way until there is room."

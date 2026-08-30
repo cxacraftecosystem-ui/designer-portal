@@ -6,7 +6,6 @@ an operator makes on purpose, because it is the one setting in this package that
 image.
 """
 
-
 from app.ai_features.errors import ProviderNotConfigured
 from app.ai_features.providers.base import VectorisationProvider
 from app.ai_features.providers.http import post_image
@@ -84,7 +83,9 @@ class VectorizerAiProvider(VectorisationProvider):
             svg=body,
             notes=tuple(notes)
             + overrun_note(
-                deadline, stage="the vectorizer.ai call", capability=capability,
+                deadline,
+                stage="the vectorizer.ai call",
+                capability=capability,
                 provider=self.provider_id,
             ),
         )

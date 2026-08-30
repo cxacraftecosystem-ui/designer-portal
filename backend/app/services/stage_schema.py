@@ -78,37 +78,42 @@ class FieldType(str, Enum):
     its place four times over.
     """
 
-    TEXT = "TEXT"                # single line
-    LONG_TEXT = "LONG_TEXT"      # textarea; becomes report prose
+    TEXT = "TEXT"  # single line
+    LONG_TEXT = "LONG_TEXT"  # textarea; becomes report prose
     # A structured document (app/services/rich_text.py), never HTML. Stored as JSON in the
     # stage entry exactly like any other value, and rendered by every surface from the same
     # block list — see that module for why the storage form is not markup.
     RICH_TEXT = "RICH_TEXT"
     INT = "INT"
     DECIMAL = "DECIMAL"
-    MONEY = "MONEY"              # INR, stored as a decimal string
+    MONEY = "MONEY"  # INR, stored as a decimal string
     PERCENT = "PERCENT"
-    DATE = "DATE"                # ISO-8601 date, no time
-    TIME = "TIME"                # HH:MM
+    DATE = "DATE"  # ISO-8601 date, no time
+    TIME = "TIME"  # HH:MM
     BOOL = "BOOL"
-    ENUM = "ENUM"                # one option from a canonical list
-    MULTI_ENUM = "MULTI_ENUM"    # several options from a canonical list
-    TAGS = "TAGS"                # free-form list; no canonical list exists
-    IMAGE = "IMAGE"              # one media id
-    IMAGE_LIST = "IMAGE_LIST"    # gallery
-    FILE = "FILE"                # a sanction order, a questionnaire PDF
+    ENUM = "ENUM"  # one option from a canonical list
+    MULTI_ENUM = "MULTI_ENUM"  # several options from a canonical list
+    TAGS = "TAGS"  # free-form list; no canonical list exists
+    IMAGE = "IMAGE"  # one media id
+    IMAGE_LIST = "IMAGE_LIST"  # gallery
+    FILE = "FILE"  # a sanction order, a questionnaire PDF
     AUDIO = "AUDIO"
     VIDEO = "VIDEO"
-    GEO = "GEO"                  # {lat, lon, accuracy}
-    REF = "REF"                  # a foreign id: an Artisan, a Craft, another stage entry
+    GEO = "GEO"  # {lat, lon, accuracy}
+    REF = "REF"  # a foreign id: an Artisan, a Craft, another stage entry
     URL = "URL"
     PHONE = "PHONE"
     EMAIL = "EMAIL"
 
     @property
     def is_media(self) -> bool:
-        return self in {FieldType.IMAGE, FieldType.IMAGE_LIST, FieldType.FILE,
-                        FieldType.AUDIO, FieldType.VIDEO}
+        return self in {
+            FieldType.IMAGE,
+            FieldType.IMAGE_LIST,
+            FieldType.FILE,
+            FieldType.AUDIO,
+            FieldType.VIDEO,
+        }
 
     @property
     def is_numeric(self) -> bool:
@@ -128,14 +133,14 @@ class ReportRole(str, Enum):
     field and burying the narrative.
     """
 
-    NARRATIVE = "NARRATIVE"          # a prose paragraph
-    KEY_VALUE = "KEY_VALUE"          # a label/value pair
-    TABLE_COLUMN = "TABLE_COLUMN"    # a column when the entity is a collection
-    CAPTION = "CAPTION"              # the caption of the media field beside it
-    GALLERY = "GALLERY"              # a photo grid
-    COVER_FIELD = "COVER_FIELD"      # a row of the cover-page table
-    METRIC = "METRIC"                # a headline number
-    BULLETS = "BULLETS"              # a bulleted list
+    NARRATIVE = "NARRATIVE"  # a prose paragraph
+    KEY_VALUE = "KEY_VALUE"  # a label/value pair
+    TABLE_COLUMN = "TABLE_COLUMN"  # a column when the entity is a collection
+    CAPTION = "CAPTION"  # the caption of the media field beside it
+    GALLERY = "GALLERY"  # a photo grid
+    COVER_FIELD = "COVER_FIELD"  # a row of the cover-page table
+    METRIC = "METRIC"  # a headline number
+    BULLETS = "BULLETS"  # a bulleted list
     HIDDEN = "HIDDEN"
 
 
@@ -305,15 +310,16 @@ _FORMATS: dict[TextFormat, Callable[[str], str | None]] = {
 _unenforced = [member.name for member in TextFormat if member not in _FORMATS]
 if _unenforced:
     raise RuntimeError(
-        "TextFormat member(s) with no entry in _FORMATS: " + ", ".join(_unenforced)
+        "TextFormat member(s) with no entry in _FORMATS: "
+        + ", ".join(_unenforced)
         + " — a declared format that nothing enforces is published to both clients and refuses "
         "nothing on the way in"
     )
 
 
 class Cardinality(str, Enum):
-    SINGLETON = "SINGLETON"      # one per workshop: the stage's own fields
-    COLLECTION = "COLLECTION"    # many per workshop: sketches, prototypes, respondents
+    SINGLETON = "SINGLETON"  # one per workshop: the stage's own fields
+    COLLECTION = "COLLECTION"  # many per workshop: sketches, prototypes, respondents
 
 
 # How wide a REF field's picker casts its net. Declared as plain strings rather than an Enum
@@ -342,8 +348,8 @@ class FieldSpec:
     required: bool = False
     help: str = ""
     unit: str = ""
-    enum: str = ""               # name of the shared list in ENUMS, for ENUM/MULTI_ENUM
-    ref_model: str = ""          # for REF: "Artisan", "Craft", or a Dw entity name
+    enum: str = ""  # name of the shared list in ENUMS, for ENUM/MULTI_ENUM
+    ref_model: str = ""  # for REF: "Artisan", "Craft", or a Dw entity name
     # THE TWO HALVES OF A CASCADING PICKER, and the reason a designer stops retyping records
     # that are already in the database.
     #
@@ -414,8 +420,8 @@ class FieldSpec:
     min_value: float | None = None
     max_value: float | None = None
     report_role: ReportRole = ReportRole.KEY_VALUE
-    column_width_pct: float = 0.0   # hint for TABLE_COLUMN; 0 means share the remainder
-    caption_for: str = ""        # this field captions that media field
+    column_width_pct: float = 0.0  # hint for TABLE_COLUMN; 0 means share the remainder
+    caption_for: str = ""  # this field captions that media field
     #: HOW THIS FIELD COMPUTES ITSELF when the designer leaves it blank, and the field keys it
     #: computes FROM. Declared here rather than implemented in a client because several fields
     #: already PROMISED it in their help text — "Leave blank to derive it from the start and end
@@ -424,7 +430,7 @@ class FieldSpec:
     #:
     #: One declaration, read by the web form, the Android form and the server's own save path, so
     #: the number a designer watches appear is the number that is stored. See ``derive_value``.
-    derived_kind: str = ""       # DAYS_BETWEEN | PRODUCT | SUM
+    derived_kind: str = ""  # DAYS_BETWEEN | PRODUCT | SUM
     derived_from: tuple[str, ...] = ()
     #: THIS FIELD MAY ONLY EVER STORE THE MASK OF AN IDENTITY NUMBER, WHATEVER IS POSTED TO IT.
     #:
@@ -495,7 +501,7 @@ class FieldSpec:
     #: PHONE, EMAIL); ``validate_registry`` refuses the rest, for the same reason and in the same
     #: words as the ``store_masked`` rule beside it.
     text_format: TextFormat = TextFormat.NONE
-    phase_note: str = ""         # a reviewer comment from the source document
+    phase_note: str = ""  # a reviewer comment from the source document
     deprecated: bool = False
     replaced_by: str = ""
 
@@ -517,14 +523,14 @@ class EntitySpec:
     as its own row so they can be counted, filtered and joined rather than buried in an array.
     """
 
-    key: str                     # stable storage key, e.g. "sketch"
-    name: str                    # PascalCase display/model name, e.g. "DwSketch"
+    key: str  # stable storage key, e.g. "sketch"
+    name: str  # PascalCase display/model name, e.g. "DwSketch"
     cardinality: Cardinality
     title: str
     fields: tuple[FieldSpec, ...]
-    parent: str = ""             # parent entity key, for nesting (iteration under prototype)
+    parent: str = ""  # parent entity key, for nesting (iteration under prototype)
     description: str = ""
-    label_field: str = ""        # which field titles a row in a list; defaults to the first text
+    label_field: str = ""  # which field titles a row in a list; defaults to the first text
 
     @property
     def required_fields(self) -> tuple[FieldSpec, ...]:
@@ -536,8 +542,8 @@ class EntitySpec:
 
 @dataclass(frozen=True, slots=True)
 class StageSpec:
-    number: int                  # 1-22, the source document's own numbering
-    key: str                     # UPPER_SNAKE, stable
+    number: int  # 1-22, the source document's own numbering
+    key: str  # UPPER_SNAKE, stable
     title: str
     purpose: str
     entities: tuple[EntitySpec, ...]
@@ -1621,9 +1627,7 @@ def validate_registry() -> list[str]:
                         )
                 if f.ref_scope:
                     if f.type is not FieldType.REF:
-                        problems.append(
-                            f"field {where} names ref_scope but is {f.type.value}"
-                        )
+                        problems.append(f"field {where} names ref_scope but is {f.type.value}")
                     elif f.ref_scope not in REF_SCOPES:
                         problems.append(
                             f"field {where} names unknown ref_scope {f.ref_scope!r}; expected "
@@ -1638,8 +1642,7 @@ def validate_registry() -> list[str]:
                         )
                     elif not target.type.is_media:
                         problems.append(
-                            f"field {where} captions {f.caption_for!r}, which is not a media "
-                            "field"
+                            f"field {where} captions {f.caption_for!r}, which is not a media field"
                         )
                 # ── A MINIMUM MUST BE SATISFIABLE, OR THE STAGE CAN NEVER BE COMPLETE ──────────
                 #
@@ -1688,8 +1691,11 @@ def validate_registry() -> list[str]:
                 # column holding a full identity number. RICH_TEXT is excluded for the same
                 # reason from the other side: it never reaches that branch at all.
                 if f.store_masked and f.type not in (
-                    FieldType.TEXT, FieldType.LONG_TEXT, FieldType.URL,
-                    FieldType.PHONE, FieldType.EMAIL,
+                    FieldType.TEXT,
+                    FieldType.LONG_TEXT,
+                    FieldType.URL,
+                    FieldType.PHONE,
+                    FieldType.EMAIL,
                 ):
                     problems.append(
                         f"field {where} declares store_masked but is {f.type.value}; only a "
@@ -1706,8 +1712,11 @@ def validate_registry() -> list[str]:
                 # never reaches that branch at all.
                 if f.text_format is not TextFormat.NONE:
                     if f.type not in (
-                        FieldType.TEXT, FieldType.LONG_TEXT, FieldType.URL,
-                        FieldType.PHONE, FieldType.EMAIL,
+                        FieldType.TEXT,
+                        FieldType.LONG_TEXT,
+                        FieldType.URL,
+                        FieldType.PHONE,
+                        FieldType.EMAIL,
                     ):
                         problems.append(
                             f"field {where} declares text_format {f.text_format.value} but is "
@@ -1741,8 +1750,11 @@ def validate_registry() -> list[str]:
                     # A deprecated field with no successor leaves a form with a dead input and
                     # no migration path for the data already stored under it.
                     problems.append(f"field {where} is deprecated with no replaced_by")
-                if f.min_value is not None and f.max_value is not None \
-                        and f.min_value > f.max_value:
+                if (
+                    f.min_value is not None
+                    and f.max_value is not None
+                    and f.min_value > f.max_value
+                ):
                     problems.append(f"field {where} has min_value above max_value")
                 if f.column_width_pct and not 0 < f.column_width_pct <= 100:
                     problems.append(f"field {where} column_width_pct out of range")
@@ -1755,8 +1767,9 @@ def validate_registry() -> list[str]:
         entity_key, _, field_key = path.partition(".")
         entity = next((e for _s, e in all_entities() if e.key == entity_key), None)
         if entity is None:
-            problems.append(f"promoted path {path!r} names entity {entity_key!r}, which does "
-                            "not exist")
+            problems.append(
+                f"promoted path {path!r} names entity {entity_key!r}, which does not exist"
+            )
             continue
         if entity.field(field_key) is None:
             problems.append(f"promoted path {path!r} names no field of {entity_key!r}")
@@ -1779,15 +1792,18 @@ def validate_registry() -> list[str]:
         entity_key, _, ref_field_key = path.partition(".")
         entity = next((e for _s, e in all_entities() if e.key == entity_key), None)
         if entity is None:
-            problems.append(f"hydration path {path!r} names entity {entity_key!r}, which does "
-                            "not exist")
+            problems.append(
+                f"hydration path {path!r} names entity {entity_key!r}, which does not exist"
+            )
             continue
         ref_field = entity.field(ref_field_key)
         if ref_field is None:
             problems.append(f"hydration path {path!r} names no field of {entity_key!r}")
         elif ref_field.type is not FieldType.REF:
-            problems.append(f"hydration path {path!r} names {ref_field.type.value} field "
-                            f"{ref_field_key!r}; only a REF field hydrates a row")
+            problems.append(
+                f"hydration path {path!r} names {ref_field.type.value} field "
+                f"{ref_field_key!r}; only a REF field hydrates a row"
+            )
         for source_key, target_key in mapping.items():
             if entity.field(target_key) is None:
                 problems.append(
@@ -1920,9 +1936,7 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
             # default below is what actually bounds every TAGS box in the registry.
             item_limit = spec.max_length or DEFAULT_MAX_ITEM_CHARS
             if any(len(v) > item_limit for v in items):
-                return None, (
-                    f"{spec.label}: one entry is longer than {item_limit} characters"
-                )
+                return None, (f"{spec.label}: one entry is longer than {item_limit} characters")
             if t is FieldType.MULTI_ENUM:
                 allowed = ENUMS.get(spec.enum, {})
                 unknown = [v for v in items if v not in allowed]
@@ -1930,9 +1944,18 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
                     return None, f"{spec.label}: unknown option(s) {', '.join(unknown)}"
             return items, None
 
-        if t in (FieldType.TEXT, FieldType.LONG_TEXT, FieldType.URL, FieldType.PHONE,
-                 FieldType.EMAIL, FieldType.REF, FieldType.IMAGE, FieldType.FILE,
-                 FieldType.AUDIO, FieldType.VIDEO):
+        if t in (
+            FieldType.TEXT,
+            FieldType.LONG_TEXT,
+            FieldType.URL,
+            FieldType.PHONE,
+            FieldType.EMAIL,
+            FieldType.REF,
+            FieldType.IMAGE,
+            FieldType.FILE,
+            FieldType.AUDIO,
+            FieldType.VIDEO,
+        ):
             # `clean_text` ON THE WAY IN, not only on the way to the renderer.
             #
             # It drops the codepoints no document part and no Postgres text column can carry:
@@ -2084,7 +2107,7 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
             from datetime import date
 
             text = str(raw).strip()[:10]
-            date.fromisoformat(text)   # raises if malformed
+            date.fromisoformat(text)  # raises if malformed
             return text, None
 
         if t is FieldType.TIME:
@@ -2129,8 +2152,9 @@ def _range_checked(spec: FieldSpec, value: float) -> tuple[Any, str | None]:
     return value, None
 
 
-def validate_entry(entity: EntitySpec, data: dict[str, Any], *,
-                   enforce_required: bool = True) -> tuple[dict[str, Any], dict[str, str]]:
+def validate_entry(
+    entity: EntitySpec, data: dict[str, Any], *, enforce_required: bool = True
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Coerce and validate a whole entry against its entity.
 
     Returns the cleaned data and a ``{field key: message}`` map of errors. Unknown keys are
@@ -2193,8 +2217,7 @@ _CONDITIONALLY_REQUIRED: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
-def _check_conditional(entity: EntitySpec, cleaned: dict[str, Any],
-                       errors: dict[str, str]) -> None:
+def _check_conditional(entity: EntitySpec, cleaned: dict[str, Any], errors: dict[str, str]) -> None:
     """Apply the requirements that depend on another answer, at every tier and on every save.
 
     NOT gated on ``enforce_required``: unlike a Basic-tier field, which a designer is entitled to
@@ -2214,9 +2237,7 @@ def _check_conditional(entity: EntitySpec, cleaned: dict[str, Any],
     if spec is None:  # pragma: no cover - the registry audit keeps this reachable
         return
     labels = [entity.field(k).label for k in triggers if entity.field(k) is not None]
-    errors[dependent] = (
-        f"{spec.label} is required once {' or '.join(labels)} is filled in."
-    )
+    errors[dependent] = f"{spec.label} is required once {' or '.join(labels)} is filled in."
 
 
 # --------------------------------------------------------------------------------------
@@ -2488,7 +2509,7 @@ def stage_completeness(
         optional_total=optional_total,
         optional_filled=optional_filled,
         collection_counts=counts,
-        missing=tuple(dict.fromkeys(missing)),   # de-duplicated, order preserved
+        missing=tuple(dict.fromkeys(missing)),  # de-duplicated, order preserved
     )
 
 
@@ -2703,8 +2724,10 @@ def registry_to_dict() -> dict[str, Any]:
     _ensure_installed()
     return {
         "version": registry_version(),
-        "enums": {name: [{"value": v, "label": lbl} for v, lbl in options.items()]
-                  for name, options in ENUMS.items()},
+        "enums": {
+            name: [{"value": v, "label": lbl} for v, lbl in options.items()]
+            for name, options in ENUMS.items()
+        },
         "stages": [stage_to_dict(s) for s in STAGES],
     }
 
@@ -2783,13 +2806,14 @@ def registry_version() -> str:
                 # In DECLARATION order, not sorted: the mapping's order is what decides which
                 # source key wins if two ever named one target, so a reordering is a change.
                 hydration = ",".join(
-                    f"{src}>{dst}"
-                    for src, dst in reference_hydration_for(e.key, f.key).items()
+                    f"{src}>{dst}" for src, dst in reference_hydration_for(e.key, f.key).items()
                 )
-                parts.append(f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
-                             f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
-                             f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}:"
-                             f"{int(f.store_masked)}:{f.text_format.value}:{f.min_items}")
+                parts.append(
+                    f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
+                    f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
+                    f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}:"
+                    f"{int(f.store_masked)}:{f.text_format.value}:{f.min_items}"
+                )
     digest = hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
     return digest[:16]
 

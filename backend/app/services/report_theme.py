@@ -165,7 +165,9 @@ FONT_PRESET_ENUM: dict[str, str] = {key: value[0] for key, value in FONT_PRESETS
 DEFAULT_FONT = "DEFAULT"
 
 
-def resolve_font(requested: object, report_settings: dict[str, object] | None) -> tuple[str, str] | None:
+def resolve_font(
+    requested: object, report_settings: dict[str, object] | None
+) -> tuple[str, str] | None:
     """The (heading, body) families this report is set in, or ``None`` to leave the template's own.
 
     Read in the same order as every other report option — see ``wants_transcripts`` and
@@ -223,7 +225,7 @@ def normalise_hex(value: object) -> str | None:
 
 def _to_rgb(hex_colour: str) -> tuple[float, float, float]:
     """``RRGGBB`` to three 0..1 channels. Only ever called with :func:`normalise_hex` output."""
-    return tuple(int(hex_colour[i:i + 2], 16) / 255.0 for i in (0, 2, 4))  # type: ignore[return-value]
+    return tuple(int(hex_colour[i : i + 2], 16) / 255.0 for i in (0, 2, 4))  # type: ignore[return-value]
 
 
 def _to_hex(rgb: tuple[float, float, float]) -> str:
@@ -283,8 +285,7 @@ def _hsl_to_rgb(hue: float, saturation: float, lightness: float) -> tuple[float,
 
 
 def _hsl_hex(hue: float, saturation: float, lightness: float) -> str:
-    return _to_hex(_hsl_to_rgb(hue, max(0.0, min(1.0, saturation)),
-                               max(0.0, min(1.0, lightness))))
+    return _to_hex(_hsl_to_rgb(hue, max(0.0, min(1.0, saturation)), max(0.0, min(1.0, lightness))))
 
 
 def relative_luminance(hex_colour: str) -> float:
@@ -296,6 +297,7 @@ def relative_luminance(hex_colour: str) -> float:
     pairs is not merely imprecise, it is systematically wrong — green carries seven times the
     luminance of blue for the same channel value, which is exactly what the coefficients say.
     """
+
     def linear(channel: float) -> float:
         return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
 
@@ -357,14 +359,16 @@ _RULE_SATURATION, _RULE_LIGHTNESS = (0.58, 0.45), 0.786
 _ZEBRA_SATURATION, _ZEBRA_LIGHTNESS = (0.84, 0.60), 0.965
 
 
-def _tinted(hue: float, saturation: float, scale_and_cap: tuple[float, float],
-            lightness: float) -> str:
+def _tinted(
+    hue: float, saturation: float, scale_and_cap: tuple[float, float], lightness: float
+) -> str:
     scale, cap = scale_and_cap
     return _hsl_hex(hue, min(saturation * scale, cap), lightness)
 
 
-def _legible_on_paper(hue: float, saturation: float, lightness: float,
-                      minimum: float = MIN_TEXT_CONTRAST) -> str:
+def _legible_on_paper(
+    hue: float, saturation: float, lightness: float, minimum: float = MIN_TEXT_CONTRAST
+) -> str:
     """The colour at this hue and saturation, darkened until it can be read on the page.
 
     Steps the lightness down one hundredth at a time rather than solving for it. The loop is
@@ -410,8 +414,9 @@ def theme_from_accent(accent: object, *, base: ReportTheme | None = None) -> Rep
     accent_hex = _legible_on_paper(hue, saturation, lightness)
     _, _, accent_lightness = _rgb_to_hsl(_to_rgb(accent_hex))
 
-    soft_lightness = min(accent_lightness + (1.0 - accent_lightness) * _SOFT_LIFT,
-                         _SOFT_MAX_LIGHTNESS)
+    soft_lightness = min(
+        accent_lightness + (1.0 - accent_lightness) * _SOFT_LIFT, _SOFT_MAX_LIGHTNESS
+    )
     soft_hex = _legible_on_paper(hue, saturation, soft_lightness)
 
     ink_hex = _tinted(hue, saturation, _INK_SATURATION, _INK_LIGHTNESS)
@@ -420,7 +425,8 @@ def theme_from_accent(accent: object, *, base: ReportTheme | None = None) -> Rep
     # document's own ink rather than pure black, so a header that reverses to dark text is the
     # same dark as the prose under it instead of a second, harder black nobody chose.
     header_text = (
-        PAPER if contrast_ratio(accent_hex, PAPER) >= contrast_ratio(accent_hex, ink_hex)
+        PAPER
+        if contrast_ratio(accent_hex, PAPER) >= contrast_ratio(accent_hex, ink_hex)
         else ink_hex
     )
 
@@ -431,8 +437,12 @@ def theme_from_accent(accent: object, *, base: ReportTheme | None = None) -> Rep
         ink=ink_hex,
         # Darkened where the hue needs it. A page number in the running foot is 7.8pt, and a
         # teal-tinted grey that clears the bar for a heading does not clear it for that.
-        muted=_legible_on_paper(hue, min(saturation * _MUTED_SATURATION[0], _MUTED_SATURATION[1]),
-                                _MUTED_LIGHTNESS, MIN_SMALL_TEXT_CONTRAST),
+        muted=_legible_on_paper(
+            hue,
+            min(saturation * _MUTED_SATURATION[0], _MUTED_SATURATION[1]),
+            _MUTED_LIGHTNESS,
+            MIN_SMALL_TEXT_CONTRAST,
+        ),
         rule=_tinted(hue, saturation, _RULE_SATURATION, _RULE_LIGHTNESS),
         table_header_fill=accent_hex,
         table_header_text=header_text,

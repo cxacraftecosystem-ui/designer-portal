@@ -249,7 +249,11 @@ class RateLimitMiddleware:
 
         if not allowed:
             await self._refuse(
-                scope, receive, send, limit=self.limit, retry_after=retry_after,
+                scope,
+                receive,
+                send,
+                limit=self.limit,
+                retry_after=retry_after,
                 detail=_GENERIC_REFUSAL,
             )
             return
@@ -280,7 +284,11 @@ class RateLimitMiddleware:
         allowed, retry_after = self._credential_buckets.take(identity)
         if not allowed:
             await self._refuse(
-                scope, receive, send, limit=self.credential_limit, retry_after=retry_after,
+                scope,
+                receive,
+                send,
+                limit=self.credential_limit,
+                retry_after=retry_after,
                 detail=_CREDENTIAL_REFUSAL,
             )
             return

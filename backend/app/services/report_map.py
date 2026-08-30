@@ -439,8 +439,9 @@ def _draw_scale_bar(canvas: Raster, scale: float, ink: RGB, muted: RGB) -> None:
     canvas.draw_text_right(int(x + length), int(y + 5 * scale), "500 km", muted, glyph)
 
 
-def render_map_png(block: MapBlock, theme: ReportTheme,
-                   width_px: int) -> tuple[bytes, int, int] | None:
+def render_map_png(
+    block: MapBlock, theme: ReportTheme, width_px: int
+) -> tuple[bytes, int, int] | None:
     """Rasterise ``block`` and return ``(png_bytes, width_px, height_px)``, or ``None``.
 
     ``None`` means the geometry is not on this machine — see :func:`_asset_dirs`. It is not an
@@ -488,7 +489,8 @@ def render_map_png(block: MapBlock, theme: ReportTheme,
     for line in state_borders():
         canvas.stroke_polyline(
             [(project(lon, lat)[0] * scale, project(lon, lat)[1] * scale) for lon, lat in line],
-            rule, border_width,
+            rule,
+            border_width,
         )
 
     missed = _tint_states(canvas, block.highlight, land, tint) if block.highlight else []
@@ -514,7 +516,7 @@ def render_map_png(block: MapBlock, theme: ReportTheme,
 
     for point in points:
         position = _clamp_to_bounds(point)
-        if position is None:      # pragma: no cover - filtered above; kept for the type checker
+        if position is None:  # pragma: no cover - filtered above; kept for the type checker
             continue
         x = position[0] * scale
         y = position[1] * scale
@@ -547,10 +549,16 @@ def render_map_png(block: MapBlock, theme: ReportTheme,
                 # A halo of paper behind the text, for the same reason the pin has one: five-by-
                 # seven strokes over a stroked border are unreadable, and the label is the only
                 # thing that says which cluster this is.
-                canvas.rect(left - scale, top - scale, w + 2 * scale, label_h + 2 * scale,
-                            paper, 0.82)
-                canvas.draw_text(int(left), int(top), text,
-                                 ink if point.kind is MapPointKind.VENUE else muted, glyph)
+                canvas.rect(
+                    left - scale, top - scale, w + 2 * scale, label_h + 2 * scale, paper, 0.82
+                )
+                canvas.draw_text(
+                    int(left),
+                    int(top),
+                    text,
+                    ink if point.kind is MapPointKind.VENUE else muted,
+                    glyph,
+                )
                 break
 
     if missed:

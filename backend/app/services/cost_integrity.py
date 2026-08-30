@@ -67,7 +67,12 @@ from app.services.market_analysis import as_number
 #: registry_declaration` pins the two together, so a head added to the registry fails a test rather
 #: than being silently left out of the roll-up.
 COST_HEADS = (
-    "materialCost", "labourCost", "packagingCost", "finishingCost", "transportCost", "overheadCost",
+    "materialCost",
+    "labourCost",
+    "packagingCost",
+    "finishingCost",
+    "transportCost",
+    "overheadCost",
 )
 
 #: The heads by the label the designer sees, so a message can say which one it could not read.
@@ -134,7 +139,7 @@ class LineRollUp:
     difference between a finding and a false accusation.
     """
 
-    kind: str                                   # MATERIAL | LABOUR
+    kind: str  # MATERIAL | LABOUR
     count: int = 0
     readable: int = 0
     total: float = 0.0
@@ -162,8 +167,9 @@ def roll_up(kind: str, lines: list[dict[str, Any]]) -> LineRollUp:
             continue
         total += amount
         readable += 1
-    return LineRollUp(kind=kind, count=len(lines), readable=readable, total=total,
-                      unreadable=tuple(unreadable))
+    return LineRollUp(
+        kind=kind, count=len(lines), readable=readable, total=total, unreadable=tuple(unreadable)
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -186,10 +192,10 @@ class Check:
 
     key: str
     label: str
-    unit: str                                   # INR | PCT
+    unit: str  # INR | PCT
     declared: float | None
     computed: float | None
-    difference: float | None                    # declared - computed
+    difference: float | None  # declared - computed
     verdict: str
     message: str
     line_count: int = 0
@@ -210,8 +216,9 @@ def _compare(declared: float | None, computed: float | None, tolerance: float) -
     return "AGREES" if abs(declared - computed) <= tolerance else "MISMATCH"
 
 
-def check_subtotal(sheet_label: str, key: str, noun: str, declared_raw: Any,
-                   rolled: LineRollUp) -> Check:
+def check_subtotal(
+    sheet_label: str, key: str, noun: str, declared_raw: Any, rolled: LineRollUp
+) -> Check:
     """One declared subtotal against the lines it summarises.
 
     The order of the refusals is the order of the questions. Are there rows at all? Could they all
@@ -225,41 +232,53 @@ def check_subtotal(sheet_label: str, key: str, noun: str, declared_raw: Any,
         # carried over from a previous workshop — and reporting every one of them as a
         # contradiction would bury the sheets that really are one.
         if declared is None:
-            message = (f"{sheet_label}: no {noun} lines are recorded and no {noun} cost is "
-                       f"declared.")
+            message = f"{sheet_label}: no {noun} lines are recorded and no {noun} cost is declared."
         else:
-            message = (f"{sheet_label}: {_rupees(declared)} is declared as {noun} cost and there "
-                       f"are no {noun} lines to check it against. An un-itemised subtotal is not "
-                       f"an error — it simply cannot be verified from this stage.")
+            message = (
+                f"{sheet_label}: {_rupees(declared)} is declared as {noun} cost and there "
+                f"are no {noun} lines to check it against. An un-itemised subtotal is not "
+                f"an error — it simply cannot be verified from this stage."
+            )
         return Check(key, sheet_label, "INR", declared, None, None, "NOT_ITEMISED", message)
 
     if rolled.unreadable:
         named = ", ".join(rolled.unreadable[:3])
-        message = (f"{sheet_label}: {len(rolled.unreadable)} of {rolled.count} {noun} lines have "
-                   f"no readable amount ({named}), so the lines cannot be totalled and the "
-                   f"declared subtotal cannot be checked. Reopening those lines and saving them "
-                   f"will recompute the Amount column.")
-        return Check(key, sheet_label, "INR", declared, None, None, "INCOMPLETE", message,
-                     rolled.count)
+        message = (
+            f"{sheet_label}: {len(rolled.unreadable)} of {rolled.count} {noun} lines have "
+            f"no readable amount ({named}), so the lines cannot be totalled and the "
+            f"declared subtotal cannot be checked. Reopening those lines and saving them "
+            f"will recompute the Amount column."
+        )
+        return Check(
+            key, sheet_label, "INR", declared, None, None, "INCOMPLETE", message, rolled.count
+        )
 
     if declared is None:
-        message = (f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
-                   f"{_rupees(rolled.total)}; no {noun} cost is declared on the sheet.")
-        return Check(key, sheet_label, "INR", None, rolled.total, None, "NOT_DECLARED", message,
-                     rolled.count)
+        message = (
+            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{_rupees(rolled.total)}; no {noun} cost is declared on the sheet."
+        )
+        return Check(
+            key, sheet_label, "INR", None, rolled.total, None, "NOT_DECLARED", message, rolled.count
+        )
 
     difference = declared - rolled.total
     verdict = _compare(declared, rolled.total, TOLERANCE_RUPEES)
     if verdict == "AGREES":
-        message = (f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
-                   f"{_rupees(rolled.total)}, which is what the sheet declares.")
+        message = (
+            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{_rupees(rolled.total)}, which is what the sheet declares."
+        )
     else:
         direction = "less" if difference < 0 else "more"
-        message = (f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
-                   f"{_rupees(rolled.total)}, but the sheet declares {_rupees(declared)} — "
-                   f"{_rupees(abs(difference))} {direction} than the lines account for.")
-    return Check(key, sheet_label, "INR", declared, rolled.total, difference, verdict, message,
-                 rolled.count)
+        message = (
+            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{_rupees(rolled.total)}, but the sheet declares {_rupees(declared)} — "
+            f"{_rupees(abs(difference))} {direction} than the lines account for."
+        )
+    return Check(
+        key, sheet_label, "INR", declared, rolled.total, difference, verdict, message, rolled.count
+    )
 
 
 def sum_cost_heads(sheet: dict[str, Any]) -> tuple[float | None, tuple[str, ...]]:
@@ -300,30 +319,39 @@ def check_total_cost(sheet_label: str, sheet: dict[str, Any]) -> Check:
     declared = _money(sheet.get("totalCost"))
 
     if unreadable:
-        message = (f"{sheet_label}: {', '.join(unreadable)} could not be read as a number, so the "
-                   f"total cost cannot be checked against the cost heads.")
+        message = (
+            f"{sheet_label}: {', '.join(unreadable)} could not be read as a number, so the "
+            f"total cost cannot be checked against the cost heads."
+        )
         return Check("totalCost", sheet_label, "INR", declared, None, None, "INCOMPLETE", message)
 
     if computed is None:
-        message = (f"{sheet_label}: none of the six cost heads is filled in, so there is no total "
-                   f"to check.")
+        message = (
+            f"{sheet_label}: none of the six cost heads is filled in, so there is no total "
+            f"to check."
+        )
         return Check("totalCost", sheet_label, "INR", declared, None, None, "NOT_ITEMISED", message)
 
     if declared is None:
-        message = (f"{sheet_label}: the cost heads add up to {_rupees(computed)}; no total cost is "
-                   f"stored on the sheet.")
+        message = (
+            f"{sheet_label}: the cost heads add up to {_rupees(computed)}; no total cost is "
+            f"stored on the sheet."
+        )
         return Check("totalCost", sheet_label, "INR", None, computed, None, "NOT_DECLARED", message)
 
     difference = declared - computed
     verdict = _compare(declared, computed, TOLERANCE_RUPEES)
     if verdict == "AGREES":
-        message = (f"{sheet_label}: the stored total cost {_rupees(declared)} matches the six cost "
-                   f"heads.")
+        message = (
+            f"{sheet_label}: the stored total cost {_rupees(declared)} matches the six cost heads."
+        )
     else:
-        message = (f"{sheet_label}: the six cost heads add up to {_rupees(computed)}, but the "
-                   f"stored total cost is {_rupees(declared)}. Total cost is a derived field, so "
-                   f"the stored value is out of date — reopening the sheet and saving it will "
-                   f"recompute it.")
+        message = (
+            f"{sheet_label}: the six cost heads add up to {_rupees(computed)}, but the "
+            f"stored total cost is {_rupees(declared)}. Total cost is a derived field, so "
+            f"the stored value is out of date — reopening the sheet and saving it will "
+            f"recompute it."
+        )
     return Check("totalCost", sheet_label, "INR", declared, computed, difference, verdict, message)
 
 
@@ -384,24 +412,48 @@ def compute_margin(sheet_label: str, sheet: dict[str, Any]) -> Margin:
             reason = "no cost is recorded"
         else:
             reason = "the total cost is zero"
-        return Margin(cost, price, None, None, "NOT_COMPUTABLE",
-                      f"{sheet_label}: no margin can be implied — {reason}.")
+        return Margin(
+            cost,
+            price,
+            None,
+            None,
+            "NOT_COMPUTABLE",
+            f"{sheet_label}: no margin can be implied — {reason}.",
+        )
 
     amount = price - cost
     percent = amount / cost * 100.0
 
     if abs(amount) <= TOLERANCE_RUPEES:
-        return Margin(cost, price, amount, percent, "AT_COST",
-                      f"{sheet_label}: the expected price {_rupees(price)} is the same as the "
-                      f"total cost {_rupees(cost)} — this product earns nothing as priced.")
+        return Margin(
+            cost,
+            price,
+            amount,
+            percent,
+            "AT_COST",
+            f"{sheet_label}: the expected price {_rupees(price)} is the same as the "
+            f"total cost {_rupees(cost)} — this product earns nothing as priced.",
+        )
     if amount < 0:
-        return Margin(cost, price, amount, percent, "BELOW_COST",
-                      f"{sheet_label}: the expected price {_rupees(price)} is below the total cost "
-                      f"{_rupees(cost)} — a loss of {_rupees(abs(amount))} on every piece sold.")
-    return Margin(cost, price, amount, percent, "COMPUTED",
-                  f"{sheet_label}: an expected price of {_rupees(price)} against a total cost of "
-                  f"{_rupees(cost)} implies a margin of {_rupees(amount)}, or {percent:.1f}% on "
-                  f"cost.")
+        return Margin(
+            cost,
+            price,
+            amount,
+            percent,
+            "BELOW_COST",
+            f"{sheet_label}: the expected price {_rupees(price)} is below the total cost "
+            f"{_rupees(cost)} — a loss of {_rupees(abs(amount))} on every piece sold.",
+        )
+    return Margin(
+        cost,
+        price,
+        amount,
+        percent,
+        "COMPUTED",
+        f"{sheet_label}: an expected price of {_rupees(price)} against a total cost of "
+        f"{_rupees(cost)} implies a margin of {_rupees(amount)}, or {percent:.1f}% on "
+        f"cost.",
+    )
 
 
 def check_declared_margin(sheet_label: str, sheet: dict[str, Any], margin: Margin) -> Check:
@@ -413,29 +465,44 @@ def check_declared_margin(sheet_label: str, sheet: dict[str, Any], margin: Margi
     declared = as_number(sheet.get("marginPercent"))
 
     if margin.percent is None:
-        message = (f"{sheet_label}: there is no implied margin to check a declared margin against."
-                   if declared is None else
-                   f"{sheet_label}: a margin of {declared:.1f}% is declared, but the sheet has no "
-                   f"price and cost to imply a margin from, so it cannot be checked.")
-        return Check("marginPercent", sheet_label, "PCT", declared, None, None, "NOT_COMPUTABLE",
-                     message)
+        message = (
+            f"{sheet_label}: there is no implied margin to check a declared margin against."
+            if declared is None
+            else f"{sheet_label}: a margin of {declared:.1f}% is declared, but the sheet has no "
+            f"price and cost to imply a margin from, so it cannot be checked."
+        )
+        return Check(
+            "marginPercent", sheet_label, "PCT", declared, None, None, "NOT_COMPUTABLE", message
+        )
 
     if declared is None:
-        return Check("marginPercent", sheet_label, "PCT", None, margin.percent, None,
-                     "NOT_DECLARED",
-                     f"{sheet_label}: the sheet's figures imply a margin of {margin.percent:.1f}% "
-                     f"on cost; no margin is declared.")
+        return Check(
+            "marginPercent",
+            sheet_label,
+            "PCT",
+            None,
+            margin.percent,
+            None,
+            "NOT_DECLARED",
+            f"{sheet_label}: the sheet's figures imply a margin of {margin.percent:.1f}% "
+            f"on cost; no margin is declared.",
+        )
 
     difference = declared - margin.percent
     verdict = _compare(declared, margin.percent, MARGIN_TOLERANCE_POINTS)
     if verdict == "AGREES":
-        message = (f"{sheet_label}: the declared margin of {declared:.1f}% matches the "
-                   f"{margin.percent:.1f}% implied by the price and cost.")
+        message = (
+            f"{sheet_label}: the declared margin of {declared:.1f}% matches the "
+            f"{margin.percent:.1f}% implied by the price and cost."
+        )
     else:
-        message = (f"{sheet_label}: a margin of {declared:.1f}% is declared, but the expected "
-                   f"price and total cost on this sheet imply {margin.percent:.1f}% on cost.")
-    return Check("marginPercent", sheet_label, "PCT", declared, margin.percent, difference,
-                 verdict, message)
+        message = (
+            f"{sheet_label}: a margin of {declared:.1f}% is declared, but the expected "
+            f"price and total cost on this sheet imply {margin.percent:.1f}% on cost."
+        )
+    return Check(
+        "marginPercent", sheet_label, "PCT", declared, margin.percent, difference, verdict, message
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -451,7 +518,7 @@ class OrphanLine:
     because the point of reporting it is that it EXISTS and is in no total.
     """
 
-    kind: str                                   # MATERIAL | LABOUR
+    kind: str  # MATERIAL | LABOUR
     label: str
     ref: str
     amount: float | None
@@ -529,12 +596,17 @@ def _orphan_caution(noun: str, orphans: list[OrphanLine]) -> str:
     """One sentence naming lines that are in no sheet, and the money that is therefore in no total."""
     named = ", ".join(o.label for o in orphans[:3] if o.label)
     amounts = [o.amount for o in orphans if o.amount is not None]
-    total = f" Their amounts come to {_rupees(sum(amounts))}, counted in no subtotal." if amounts \
+    total = (
+        f" Their amounts come to {_rupees(sum(amounts))}, counted in no subtotal."
+        if amounts
         else " None of them has a readable amount."
+    )
     plural = "line is" if len(orphans) == 1 else "lines are"
-    return (f"{len(orphans)} {noun} {plural} not attached to any cost sheet in this stage"
-            f"{f' ({named})' if named else ''}. The sheet they named may have been deleted after "
-            f"they were recorded.{total}")
+    return (
+        f"{len(orphans)} {noun} {plural} not attached to any cost sheet in this stage"
+        f"{f' ({named})' if named else ''}. The sheet they named may have been deleted after "
+        f"they were recorded.{total}"
+    )
 
 
 def analyse_cost_integrity(
@@ -588,8 +660,10 @@ def analyse_cost_integrity(
     # candidate explanation for any mismatch above.
     orphans: list[OrphanLine] = []
     cautions: list[str] = []
-    for kind, noun, bucket in (("MATERIAL", "material", material_by_sheet),
-                               ("LABOUR", "labour", labour_by_sheet)):
+    for kind, noun, bucket in (
+        ("MATERIAL", "material", material_by_sheet),
+        ("LABOUR", "labour", labour_by_sheet),
+    ):
         label_key = "item" if kind == "MATERIAL" else "task"
         of_kind = [
             OrphanLine(
@@ -598,7 +672,8 @@ def analyse_cost_integrity(
                 ref=str(row.get("costSheetRef") or ""),
                 amount=_money(row.get("amount")),
             )
-            for rows in bucket.values() for row in rows
+            for rows in bucket.values()
+            for row in rows
         ]
         if of_kind:
             orphans.extend(of_kind)

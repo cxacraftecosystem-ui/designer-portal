@@ -286,14 +286,14 @@ class AdoptionGroup:
     worst available reading of a group that simply has not been followed up yet.
     """
 
-    dimension: str          # ARCHIVE | CRAFT | CLUSTER | STATE
+    dimension: str  # ARCHIVE | CRAFT | CLUSTER | STATE
     label: str
     workshops: int
-    observations: int       # decided observations — the denominator, when there is one
+    observations: int  # decided observations — the denominator, when there is one
     adopted: int
     trial: int
     not_adopted: int
-    unknown: int            # reported beside the rate, never inside it
+    unknown: int  # reported beside the rate, never inside it
     rate: float | None
     largest_workshop_share: float
     message: str
@@ -307,8 +307,16 @@ def _percent(value: float) -> str:
     return f"{value * 100:.0f}%"
 
 
-def _adoption_message(label: str, workshops: int, *, observations: int, adopted: int,
-                      unknown: int, rate: float | None, concentration: float) -> str:
+def _adoption_message(
+    label: str,
+    workshops: int,
+    *,
+    observations: int,
+    adopted: int,
+    unknown: int,
+    rate: float | None,
+    concentration: float,
+) -> str:
     """One sentence that a reader can quote without having to add a caveat themselves.
 
     The order of the clauses is the whole point and it is not stylistic. Where a group is dominated
@@ -319,30 +327,42 @@ def _adoption_message(label: str, workshops: int, *, observations: int, adopted:
     where = label or "the archive"
     if rate is None:
         if workshops < MIN_WORKSHOPS_FOR_RATE:
-            return (f"{where}: {adopted} of {observations} recorded outcome(s) adopted, across "
-                    f"{workshops} workshop(s). No adoption rate is given — a rate needs at least "
-                    f"{MIN_WORKSHOPS_FOR_RATE} workshops behind it, or it describes one designer's "
-                    f"fortnight rather than the scheme.")
-        return (f"{where}: {adopted} of {observations} recorded outcome(s) adopted, across "
-                f"{workshops} workshops. No adoption rate is given — {observations} outcome(s) is "
-                f"below the {MIN_OBSERVATIONS_FOR_RATE} this reports a proportion from.")
+            return (
+                f"{where}: {adopted} of {observations} recorded outcome(s) adopted, across "
+                f"{workshops} workshop(s). No adoption rate is given — a rate needs at least "
+                f"{MIN_WORKSHOPS_FOR_RATE} workshops behind it, or it describes one designer's "
+                f"fortnight rather than the scheme."
+            )
+        return (
+            f"{where}: {adopted} of {observations} recorded outcome(s) adopted, across "
+            f"{workshops} workshops. No adoption rate is given — {observations} outcome(s) is "
+            f"below the {MIN_OBSERVATIONS_FOR_RATE} this reports a proportion from."
+        )
 
-    tail = (f" {unknown} further outcome(s) were recorded as not known and are excluded from the "
-            f"rate." if unknown else "")
+    tail = (
+        f" {unknown} further outcome(s) were recorded as not known and are excluded from the rate."
+        if unknown
+        else ""
+    )
     if concentration > CONCENTRATION_LIMIT:
         # `where` is repeated as typed, NOT lower-cased. It is a craft or cluster name off the cover
         # sheet — "Sambalpuri Bandha (Ikat) handloom weaving" — and a sentence in a document a
         # ministry reads must not print somebody's craft in lower case to satisfy a grammar rule.
-        return (f"{where}: {_percent(concentration)} of these outcomes come from a single workshop, "
-                f"so this describes that workshop more than it describes {where} — with that said, "
-                f"{adopted} of {observations} were adopted ({_percent(rate)}), across "
-                f"{workshops} workshops.{tail}")
-    return (f"{where}: {adopted} of {observations} recorded outcomes adopted ({_percent(rate)}), "
-            f"across {workshops} workshops.{tail}")
+        return (
+            f"{where}: {_percent(concentration)} of these outcomes come from a single workshop, "
+            f"so this describes that workshop more than it describes {where} — with that said, "
+            f"{adopted} of {observations} were adopted ({_percent(rate)}), across "
+            f"{workshops} workshops.{tail}"
+        )
+    return (
+        f"{where}: {adopted} of {observations} recorded outcomes adopted ({_percent(rate)}), "
+        f"across {workshops} workshops.{tail}"
+    )
 
 
-def summarise_adoption(dimension: str, label: str,
-                       observations: list[Observation]) -> AdoptionGroup:
+def summarise_adoption(
+    dimension: str, label: str, observations: list[Observation]
+) -> AdoptionGroup:
     """Fold one group's observations into a figure, or into a stated refusal.
 
     `observations` must already be narrowed to the latest interval per workshop — see
@@ -373,9 +393,15 @@ def summarise_adoption(dimension: str, label: str,
         unknown=unknown,
         rate=rate,
         largest_workshop_share=concentration,
-        message=_adoption_message(label, len(workshops), observations=len(decided),
-                                  adopted=adopted, unknown=unknown, rate=rate,
-                                  concentration=concentration),
+        message=_adoption_message(
+            label,
+            len(workshops),
+            observations=len(decided),
+            adopted=adopted,
+            unknown=unknown,
+            rate=rate,
+            concentration=concentration,
+        ),
     )
 
 
@@ -441,14 +467,19 @@ def _cross_section(interval: str, observations: list[Observation]) -> IntervalCr
     if not at_interval:
         message = f"At {label}: no workshop in the archive has recorded a visit at this interval."
     elif rate is None:
-        message = (f"At {label}: {adopted} of {len(decided)} recorded outcome(s) adopted, across "
-                   f"{len(workshops)} workshop(s) — too few to state as a rate.")
+        message = (
+            f"At {label}: {adopted} of {len(decided)} recorded outcome(s) adopted, across "
+            f"{len(workshops)} workshop(s) — too few to state as a rate."
+        )
     else:
-        message = (f"At {label}: {adopted} of {len(decided)} recorded outcomes adopted "
-                   f"({_percent(rate)}), across {len(workshops)} workshops.")
+        message = (
+            f"At {label}: {adopted} of {len(decided)} recorded outcomes adopted "
+            f"({_percent(rate)}), across {len(workshops)} workshops."
+        )
 
-    return IntervalCrossSection(interval, label, len(workshops), len(decided), adopted, rate,
-                                message)
+    return IntervalCrossSection(
+        interval, label, len(workshops), len(decided), adopted, rate, message
+    )
 
 
 def analyse_survival(observations: list[Observation]) -> Survival:
@@ -481,8 +512,12 @@ def analyse_survival(observations: list[Observation]) -> Survival:
     # Named in the sentence, not only in the field beside it. The partially-referenced archive is
     # the case that goes wrong quietly: the cohort numbers below look like the whole picture, and
     # a reader has no way to know they came from a fraction of the visits unless the sentence says.
-    excluded = (f" {unreferenced} follow-up record(s) carry no product reference and cannot join a "
-                f"cohort at all." if unreferenced else "")
+    excluded = (
+        f" {unreferenced} follow-up record(s) carry no product reference and cannot join a "
+        f"cohort at all."
+        if unreferenced
+        else ""
+    )
 
     if not cohort_possible:
         message = (
@@ -527,9 +562,9 @@ class CostRatioGroup:
 
     cluster: str
     workshops: int
-    sheets: int             # sheets a ratio could be computed from
-    uncostable: int         # sheets with no price, no cost, or a cost of zero
-    below_cost: int         # priced under what they cost to make
+    sheets: int  # sheets a ratio could be computed from
+    uncostable: int  # sheets with no price, no cost, or a cost of zero
+    below_cost: int  # priced under what they cost to make
     ratio: Distribution | None
     message: str
 
@@ -599,17 +634,19 @@ def analyse_cost_ratios(workshops: list[WorkshopRows]) -> tuple[list[CostRatioGr
             # that carry no price" (here, with a count and an instruction). `below_cost` is always
             # zero on this branch — BELOW_COST is a computable verdict — and is passed through from
             # the counter anyway so the two branches cannot disagree if that ever stops holding.
-            groups.append(CostRatioGroup(
-                cluster,
-                len(uncostable_workshops.get(cluster, set())),
-                0,
-                uncostable[cluster],
-                below[cluster],
-                None,
-                f"{cluster}: {uncostable[cluster]} cost sheet(s) recorded and not one of them can "
-                f"be costed — each is missing its expected price, missing its cost heads, or "
-                f"totals zero. There is no price-to-cost multiple for this cluster to compare.",
-            ))
+            groups.append(
+                CostRatioGroup(
+                    cluster,
+                    len(uncostable_workshops.get(cluster, set())),
+                    0,
+                    uncostable[cluster],
+                    below[cluster],
+                    None,
+                    f"{cluster}: {uncostable[cluster]} cost sheet(s) recorded and not one of them can "
+                    f"be costed — each is missing its expected price, missing its cost heads, or "
+                    f"totals zero. There is no price-to-cost multiple for this cluster to compare.",
+                )
+            )
             continue
         values = [ratio for _, ratio in entries]
         workshop_count = len({workshop_id for workshop_id, _ in entries})
@@ -617,21 +654,34 @@ def analyse_cost_ratios(workshops: list[WorkshopRows]) -> tuple[list[CostRatioGr
         distribution = describe(values) if enough else None
 
         if distribution is None:
-            message = (f"{cluster}: {len(values)} costed product(s) — too few to describe a "
-                       f"price-to-cost spread. Fewer than {MIN_SHEETS_FOR_RATIO} sheets is a list, "
-                       f"not a distribution.")
+            message = (
+                f"{cluster}: {len(values)} costed product(s) — too few to describe a "
+                f"price-to-cost spread. Fewer than {MIN_SHEETS_FOR_RATIO} sheets is a list, "
+                f"not a distribution."
+            )
         else:
-            message = (f"{cluster}: across {len(values)} costed products in {workshop_count} "
-                       f"workshop(s), the expected price is a median of "
-                       f"{distribution.median:.2f}× the cost to make "
-                       f"(lowest {distribution.minimum:.2f}×, highest {distribution.maximum:.2f}×).")
+            message = (
+                f"{cluster}: across {len(values)} costed products in {workshop_count} "
+                f"workshop(s), the expected price is a median of "
+                f"{distribution.median:.2f}× the cost to make "
+                f"(lowest {distribution.minimum:.2f}×, highest {distribution.maximum:.2f}×)."
+            )
         if below[cluster]:
-            message += (f" {below[cluster]} sheet(s) are priced BELOW what they cost to make.")
+            message += f" {below[cluster]} sheet(s) are priced BELOW what they cost to make."
         if uncostable[cluster]:
-            message += (f" {uncostable[cluster]} further sheet(s) could not be costed at all.")
+            message += f" {uncostable[cluster]} further sheet(s) could not be costed at all."
 
-        groups.append(CostRatioGroup(cluster, workshop_count, len(values), uncostable[cluster],
-                                     below[cluster], distribution, message))
+        groups.append(
+            CostRatioGroup(
+                cluster,
+                workshop_count,
+                len(values),
+                uncostable[cluster],
+                below[cluster],
+                distribution,
+                message,
+            )
+        )
 
     # Clusters that could be summarised first, then by sheet count — a reader scanning for a
     # comparison should not have to skip past six refusals to find the two groups that have one.
@@ -748,7 +798,7 @@ class Reach:
     standing figure, and `not_computed` names the total that cannot be produced.
     """
 
-    rows: int                   # rows at a latest interval, the denominator for the three below
+    rows: int  # rows at a latest interval, the denominator for the three below
     rows_with_revenue: int
     revenue: float
     rows_with_units_sold: int
@@ -773,17 +823,29 @@ def summarise_reach(observations: list[Observation]) -> Reach:
     if not observations:
         message = "No follow-up visit in the archive has recorded units or money."
     elif not revenue:
-        message = (f"None of the {len(observations)} standing follow-up record(s) carries a revenue "
-                   f"figure, so nothing can be said about what the designs earned.")
+        message = (
+            f"None of the {len(observations)} standing follow-up record(s) carries a revenue "
+            f"figure, so nothing can be said about what the designs earned."
+        )
     else:
-        message = (f"₹{total_revenue:,.0f} is recorded across {len(revenue)} of "
-                   f"{len(observations)} standing follow-up record(s), with "
-                   f"{math.fsum(units):,.0f} unit(s) sold reported on {len(units)} of them. "
-                   f"These are the figures at each workshop's most recent visit, not a total over "
-                   f"every visit — see the note on why that total is not produced.")
+        message = (
+            f"₹{total_revenue:,.0f} is recorded across {len(revenue)} of "
+            f"{len(observations)} standing follow-up record(s), with "
+            f"{math.fsum(units):,.0f} unit(s) sold reported on {len(units)} of them. "
+            f"These are the figures at each workshop's most recent visit, not a total over "
+            f"every visit — see the note on why that total is not produced."
+        )
 
-    return Reach(len(observations), len(revenue), total_revenue, len(units), math.fsum(units),
-                 len(orders), math.fsum(orders), message)
+    return Reach(
+        len(observations),
+        len(revenue),
+        total_revenue,
+        len(units),
+        math.fsum(units),
+        len(orders),
+        math.fsum(orders),
+        message,
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -876,8 +938,9 @@ _NOT_COMPUTED: tuple[dict[str, str], ...] = (
 )
 
 
-def _group_by(dimension: str, key: str, workshops: list[WorkshopRows],
-              standing: dict[str, list[Observation]]) -> tuple[list[AdoptionGroup], int]:
+def _group_by(
+    dimension: str, key: str, workshops: list[WorkshopRows], standing: dict[str, list[Observation]]
+) -> tuple[list[AdoptionGroup], int]:
     """Adoption grouped by one header column, and the observations that column was blank for."""
     buckets: dict[str, list[Observation]] = {}
     missing = 0
@@ -898,8 +961,9 @@ def _group_by(dimension: str, key: str, workshops: list[WorkshopRows],
     return groups, missing
 
 
-def analyse_archive(workshops: list[WorkshopRows], *, workshops_in_archive: int,
-                    truncated: bool = False) -> ArchiveFindings:
+def analyse_archive(
+    workshops: list[WorkshopRows], *, workshops_in_archive: int, truncated: bool = False
+) -> ArchiveFindings:
     """The whole cross-workshop comparison, from the rows of stages 9, 17 and 22.
 
     `workshops_in_archive` is the count of LIVE workshops the caller found — including every one
@@ -999,8 +1063,11 @@ def analyse_archive(workshops: list[WorkshopRows], *, workshops_in_archive: int,
             f"is counted once, at the latest interval it reached, so a workshop visited three times "
             f"does not outweigh one visited once."
         )
-    for dimension, missing in (("craft", missing_craft), ("cluster", missing_cluster),
-                               ("state", missing_state)):
+    for dimension, missing in (
+        ("craft", missing_craft),
+        ("cluster", missing_cluster),
+        ("state", missing_state),
+    ):
         if missing:
             notes.append(
                 f"{missing} recorded outcome(s) belong to workshops with no {dimension} on the "
@@ -1025,8 +1092,11 @@ def analyse_archive(workshops: list[WorkshopRows], *, workshops_in_archive: int,
         by_craft=tuple(by_craft),
         by_cluster=tuple(by_cluster),
         by_state=tuple(by_state),
-        missing_dimension={"craft": missing_craft, "cluster": missing_cluster,
-                           "state": missing_state},
+        missing_dimension={
+            "craft": missing_craft,
+            "cluster": missing_cluster,
+            "state": missing_state,
+        },
         survival=analyse_survival(all_observations),
         cost_ratios=tuple(cost_ratios),
         cost_sheets_without_cluster=sheets_without_cluster,

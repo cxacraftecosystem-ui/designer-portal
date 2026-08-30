@@ -125,7 +125,7 @@ generation-7 key nothing will ever ask for again. Delete-based invalidation gets
 change which rows a list returns or what they contain, so all four make the same call:
 
 ```python
-await invalidate_record("artisan")   # after the write commits, before returning the response
+await invalidate_record("artisan")  # after the write commits, before returning the response
 ```
 
 Awaited, not scheduled. Save-then-reload is the most common sequence in this app, and a
@@ -351,7 +351,7 @@ In `app.main.create_app`, **after** `app.add_middleware(UnhandledErrorMiddleware
 
 ```python
 app.add_middleware(UnhandledErrorMiddleware)
-install_rate_limit(app)          # adds nothing at all when the flag is off
+install_rate_limit(app)  # adds nothing at all when the flag is off
 app.add_middleware(CORSMiddleware, ...)
 ```
 

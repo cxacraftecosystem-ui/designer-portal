@@ -34,7 +34,7 @@ flowchart TD
   C1["<b>SECURITY.md</b><br/>risk register"] --> C2["<b>QA_AUDIT.md</b><br/>what is and isn't tested"]
   C2 --> C3["<b>SCALABILITY.md</b><br/>what breaks first"]
 
-  F1["<b>REPO_FACTS.md</b><br/>generated counts"]
+  F1["<b>REPO_FACTS.md</b><br/>generated counts"] --> F2["<b>METHODOLOGY-usage-instrumentation.md</b><br/>what is measured about people,<br/>and what those numbers cannot support"]
 ```
 
 ---
@@ -90,6 +90,7 @@ flowchart TD
 | [AI_FEATURES.md](AI_FEATURES.md) | Background removal, layer separation, vectorisation: providers, costs, and how to turn one on |
 | [RESEARCH_NOTES.md](RESEARCH_NOTES.md) | The measurement write-ups behind the engineering results |
 | [REPO_FACTS.md](REPO_FACTS.md) | **Generated.** Model and enum counts, the API surface, the role ladder, test counts, code volume |
+| [METHODOLOGY-usage-instrumentation.md](METHODOLOGY-usage-instrumentation.md) | How platform use is measured — one row per served request, the route template and never the path — who may read it, and the ten conclusions these numbers **cannot** support. The note to quote beside a figure in a paper; `GET /api/usage/collection` is its machine-readable half and wins where the two disagree |
 
 ### Findings registers
 
@@ -112,6 +113,7 @@ kept in full, because a decision record that deletes the case it lost is worse t
 | [DECISION-identity-card-ocr-on-web.md](DECISION-identity-card-ocr-on-web.md) | The same capability in the browser: no recogniser is bundled, lazily imported or fetched. The browser reads the card where it already can, through the Shape Detection API; everywhere else the server route does it |
 | [DECISION-qr-scanning-on-android.md](DECISION-qr-scanning-on-android.md) | Which QR decoder the handset uses, and the history of changing that answer twice. **Built:** ZXing, on both read surfaces, with the typed box never hidden |
 | [DECISION-photo-geometry-over-vision-measurement.md](DECISION-photo-geometry-over-vision-measurement.md) | Which of the two ways to measure a record's dimensions off a photograph is offered first. The deterministic on-device geometry becomes primary — free, offline, re-derivable, with an error bar — and the vision model is kept as a labelled fallback. **Built:** the Android adapter, deliberately unwired, with the two mounts written out |
+| [DECISION-usage-consent-default.md](DECISION-usage-consent-default.md) | What is recorded about a designer's navigation **before anybody has been asked**, in a codebase that already gates an artisan's recorded voice behind a three-state answer. Three options were written out so the choice is visible; **built:** the middle one — the request is kept, the identity is dropped, and every row says truthfully that nobody was asked. One line changes it |
 | [SALVAGED-BRANCHES-SUPERSEDED.md](SALVAGED-BRANCHES-SUPERSEDED.md) | Four `worktree-*` branches that look like unmerged feature work. Merging any of them regresses `main`; the table says why, branch by branch |
 | [PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md) | The three-tier AI plan and designer-defined sections. **Agreed in principle, not started** — and half of it is "stop building what already exists" |
 

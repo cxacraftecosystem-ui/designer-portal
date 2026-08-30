@@ -138,9 +138,7 @@ def audio_references(entries: list[Any]) -> dict[str, tuple[str, str, str]]:
         fields = audio_fields.get(entity_key)
         if not fields:
             continue
-        stage_key = getattr(row, "stageKey", "") or getattr(
-            entity_stage.get(entity_key), "key", ""
-        )
+        stage_key = getattr(row, "stageKey", "") or getattr(entity_stage.get(entity_key), "key", "")
         data = getattr(row, "data", None) or {}
         for field_key in fields:
             for media_id in _media_ids_in(data.get(field_key)):
@@ -212,7 +210,8 @@ async def enqueue_stage_transcriptions(
         return []
 
     candidates = [
-        row for row in rows
+        row
+        for row in rows
         if str(getattr(row, "mediaType", "")).endswith("AUDIO")
         and str(getattr(row, "transcriptStatus", "") or "").upper()
         not in _SETTLED_TRANSCRIPT_STATUSES

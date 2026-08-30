@@ -64,6 +64,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.onSizeChanged
@@ -356,17 +357,137 @@ private fun dwFirstMark(mode: DwMeasureMode): DwMarkId =
     if (mode == DwMeasureMode.SCALE) DwMarkId.REF_A else DwMarkId.C0
 
 /**
- * THE ONE WORD BOTH COLLAPSE CONTROLS SAY. Internal so `DwPhotoMeasureFieldTest` can pin that the
- * header's door and the foot's door are labelled the same thing — two doors out of one card that
- * disagreed about what they were would read as two different actions.
+ * THE ONE WORD EVERY COLLAPSE CONTROL ON EVERY DERIVATION CARD SAYS.
+ *
+ * Internal so `DwPhotoMeasureFieldTest` can pin that the header's door and the foot's door are
+ * labelled the same thing — two doors out of one card that disagreed about what they were would read
+ * as two different actions.
+ *
+ * ── IT IS THREE CARDS' WORD NOW, NOT ONE CARD'S, AND THAT IS THE POINT ────────────────────────
+ *
+ * The measuring card, the straightening panel and the tracing panel all sit on one record, one under
+ * the other, and until this constant was shared they said "Close" from three separate literals with
+ * three different icon sizes (16 dp here, 14 dp there). Nothing was WRONG on any one screen; what was
+ * wrong was that three cards doing one thing had three descriptions of it, which is the class of
+ * drift requirement 6 is about. See [DwPanelCollapseButton].
  */
-internal const val DW_MEASURE_COLLAPSE_WORD = "Close"
+internal const val DW_PANEL_COLLAPSE_WORD = "Close"
 
 /** What TalkBack is told the press will DO, which a chevron beside the words cannot say. */
 internal const val DW_MEASURE_COLLAPSE_ACTION = "Collapse the measuring card"
 
 /** The other direction of the same sentence. See [DW_MEASURE_COLLAPSE_ACTION]. */
 internal const val DW_MEASURE_EXPAND_ACTION = "Expand the measuring card"
+
+/**
+ * The card's name, said once, in both states. See [DwPanelDisclosureHeader.title].
+ */
+internal const val DW_MEASURE_CARD_TITLE = "Measure a dimension from a photograph"
+
+/**
+ * **WHERE "THESE PHOTOGRAPHS" CAME FROM, ON THE ONE SURFACE WHERE MORE THAN ONE FIELD FEEDS THIS
+ * CARD — requirement 7 made visible.**
+ *
+ * ── WHAT IT IS FOR ────────────────────────────────────────────────────────────────────────────
+ *
+ * `DwSketchDerivationSection` hands one measuring card the photographs of EVERY image field the
+ * entity declares. A prototype declares two — `prototypePhotos` ("Prototype photographs") and
+ * `turntablePhotos` ("360° capture") — and `dwOffersPhotoMeasure` answers true for both, so the stage
+ * form mounts TWO of these cards on one prototype, each able to see only its own field. A designer
+ * who shot the frame with the ruler in it into the turn and the clean frames into the photographs had
+ * the picture they needed on one card and the dimension they wanted on the other. Merging the lists
+ * is the fix; this sentence is the only thing that makes the fix legible, because a merged list of
+ * file names is indistinguishable from an unmerged one at a glance.
+ *
+ * ── WHY IT IS SILENT ON ONE FIELD, WHICH IS A JUDGEMENT AND NOT A SHORTCUT ────────────────────
+ *
+ * **One field is not a merge, and this sentence is about a merge.** On a sketch the list is `image`
+ * alone; on the stage form's mounts the card sits directly underneath the very field it is reading,
+ * with that field's own capture card beside it. Naming the field there tells a designer where they
+ * already are, which is the "printing a fact nobody needed" end of the same failure as printing one
+ * nobody looked up. `RecordMeasureField`'s mount cannot even do it — the photographs there are
+ * captured `Uri`s belonging to no registry field — and passes nothing, which the default handles.
+ *
+ * ── AND "AND", NOT "OR", WHICH IS THE OPPOSITE OF THE OTHER CLIENT'S JOINER AND DELIBERATE ────
+ *
+ * `MeasureFromPhotoCard.tsx`'s `fieldsPhrase` joins with " or " because it is used in a sentence
+ * about where a photograph SHOULD BE ATTACHED — one destination, chosen from several. This one is
+ * used in a sentence about where the photographs on screen ALREADY ARE, which is all of those fields
+ * at once. Copying the joiner would have carried the punctuation and dropped the meaning: "or" would
+ * tell a designer the card is reading one of the two and leave them guessing which.
+ *
+ * Pure and taking strings, so `DwPhotoMeasureFieldTest` can pin the wording with no composition.
+ */
+internal fun dwMeasureSpansFieldsClause(photoFieldLabels: List<String>): String {
+    val named = photoFieldLabels.map { it.trim() }.filter { it.isNotEmpty() }
+    if (named.size < 2) return ""
+    return " These are every photograph on the record — " +
+        named.joinToString(" and ") { "“$it”" } +
+        " together — so the frame with the ruler in it counts wherever it was attached."
+}
+
+/**
+ * What a derivation card is about to write OVER, and therefore what kind of thing is already there.
+ *
+ * Two values because there are two, and both are real. A plate and a line-art drawing are FILES on
+ * the record; a measured dimension is a NUMBER in a registry column. "Attached" is true of the first
+ * and false of the second — a designer told that "24.0" is *attached* to `lengthCm` would be looking
+ * for a paperclip in a form that has never had one — so the noun changes and nothing else does.
+ */
+internal enum class DwPanelHolds {
+    /** A file in a FILE field — what [DwSketchTracePanel] and [DwSketchRectifyPanel] attach. */
+    FILE,
+
+    /** A value in a numeric field — what [DwPhotoMeasurePanel] proposes. */
+    VALUE,
+}
+
+/**
+ * **"THERE IS SOMETHING HERE ALREADY, AND THIS BUTTON REPLACES IT" — said the same way by all three
+ * derivation cards.**
+ *
+ * ── THE DRIFT THIS ENDS ───────────────────────────────────────────────────────────────────────
+ *
+ * One fact, three literals, until 2026-08-29 — and the three cards sit one under the other on one
+ * record, so a designer met all three in a single scroll:
+ *
+ *  * the tracing panel: *"“sheet-3.svg” is attached here now. Attaching replaces it."*
+ *  * the straightening panel, writing into **the same field, from the same button**:
+ *    *"“sheet-3.svg” is attached here now. This replaces it."*
+ *  * the measuring card: *"Currently “24.0”. This replaces it."*
+ *
+ * The first two differ in a verb while describing one act on one field, which is drift with no
+ * argument behind it at all. The third additionally reverses the sentence — the thing that is there
+ * comes second rather than first — so the one clause a designer is scanning for ("what am I about to
+ * lose") sits in a different place on a card eighty pixels further down.
+ *
+ * **THE WARNING BEFORE A DESTRUCTIVE WRITE IS THE LAST PLACE TO BE INVENTIVE.** A designer reading
+ * down this record is deciding whether to overwrite something they cannot get back — a single-valued
+ * FILE field replaces its value and the old media id is gone from the row, and a registry column has
+ * no history — and a sentence they have already read once is a sentence they can check at a glance
+ * the second time. This is the same argument [DW_PANEL_COLLAPSE_WORD] makes about the word "Close",
+ * and it matters more here, because getting a close wrong costs a scroll and getting this wrong
+ * costs the file.
+ *
+ * ── NULL RATHER THAN AN EMPTY STRING, AS THE TWO SUMMARIES DO ─────────────────────────────────
+ *
+ * Nothing there is not a quieter warning, it is the absence of one — the same contract
+ * [dwMeasureSummary] and [dwTraceCardSummary] hold, so a caller cannot accidentally render an empty
+ * warning box. Blank-checked rather than only null-checked because `DwValues.text` answers "" for a
+ * missing key and a `currentFileName` can arrive as whitespace from a resolver.
+ *
+ * Pure, so `DwPhotoMeasureFieldTest` can pin all three cards' wording on the JVM with no composition
+ * to run it in.
+ */
+internal fun dwPanelReplaceWarning(current: String?, holds: DwPanelHolds): String? {
+    val trimmed = current?.trim().orEmpty()
+    if (trimmed.isEmpty()) return null
+    val where = when (holds) {
+        DwPanelHolds.FILE -> "is attached here now"
+        DwPanelHolds.VALUE -> "is in this field now"
+    }
+    return "“$trimmed” $where. This replaces it."
+}
 
 /**
  * Everything a designer TYPED OR PLACED, held by the panel rather than by the open half.
@@ -438,6 +559,29 @@ private class DwMeasureConfig(initialPhotoId: String) {
     var rectUnit by mutableStateOf("mm")
 
     /**
+     * The photograph this card was pointed at INSTEAD of the shared one, or "" for "it is following".
+     *
+     * ── THE ESCAPE HATCH, AND WHY ITS STATE IS THE CARD'S RATHER THAN THE HOST'S ──────────────
+     *
+     * `MeasureFromPhotoCard.tsx:256-282` is the argument and it is exactly right: *"the sheet worth
+     * TRACING is the drawing itself, flat and filling the frame, and the photograph worth MEASURING
+     * is the one with a ruler or a scale card lying beside the object, which is a different
+     * photograph of a different subject. Forcing them to be the same would make the tab worse at one
+     * of its two jobs."*
+     *
+     * It lives HERE, next to the marks, because the marks are what it invalidates: pointing this card
+     * somewhere else is a change of photograph in every sense that matters to a measurement, and
+     * [usePhotograph] is already the one guard that tells "the photograph changed" from "the card was
+     * re-composed". Held by the host instead, this would be a second description of a fact that has
+     * consequences only in this class.
+     *
+     * "" IS THE ABSENCE OF AN OVERRIDE AND NOT A THIRD PHOTOGRAPH. While it is blank the card follows
+     * whatever the shared choice is, including a change made while the card was shut.
+     */
+    var substituteId by mutableStateOf("")
+        private set
+
+    /**
      * Which marks the chosen method needs. ONE reading of that question, so the collapsed summary and
      * the open card can never disagree about how many marks are outstanding.
      *
@@ -485,6 +629,31 @@ private class DwMeasureConfig(initialPhotoId: String) {
         marksPhotoId = id
         marks.clear()
         active = dwFirstMark(mode)
+    }
+
+    /**
+     * Follow the photograph a host above chose — unless this card has been pointed somewhere else.
+     *
+     * CALLED FROM THE PANEL AND NOT THE OPEN HALF, so that a shared choice made while this card is
+     * SHUT still lands: the marks belong to a photograph, and coming back to an expanded card holding
+     * marks placed on a picture that is no longer the subject is precisely the incoherence a shared
+     * owner is supposed to remove rather than introduce.
+     */
+    fun followShared(id: String) {
+        if (substituteId.isNotBlank()) return
+        usePhotograph(id)
+    }
+
+    /** Point this card at a different one of the record's photographs, and nothing else with it. */
+    fun measureInstead(id: String) {
+        substituteId = id
+        usePhotograph(id)
+    }
+
+    /** Put this card back on the shared photograph. */
+    fun backToShared(sharedId: String) {
+        substituteId = ""
+        usePhotograph(sharedId)
     }
 }
 
@@ -556,7 +725,7 @@ internal fun dwMeasureSummary(
  * photograph, a nudge pad, two text fields and a readout tall. A designer who had just placed four
  * marks and read the answer at the bottom had to scroll all of that back up to reach the only way out
  * — and found an untouched card waiting if they ever did it again. Three things changed together and
- * none of them works without the other two: the header row IS the control now (see [DwMeasureHeader]),
+ * none of them works without the other two: the header row IS the control now (see [DwPanelDisclosureHeader]),
  * there is a second identical door at the FOOT where the work actually ends, and [DwMeasureConfig]
  * outlives the collapse so that using either door costs nothing.
  *
@@ -567,9 +736,47 @@ internal fun dwMeasureSummary(
 @Composable
 internal fun DwPhotoMeasurePanel(
     photos: List<DwMediaItem>,
+    /**
+     * The registry labels of the image fields [photos] was drawn from, where the caller knows and
+     * where knowing changes the sentence. Empty is the ordinary case and not a gap.
+     *
+     * ── WHAT THIS IS FOR, AND WHY IT IS THE FIELDS AND NOT THE PHOTOGRAPHS ────────────────────
+     *
+     * `DwSketchDerivationSection` hands ONE of these cards the photographs of EVERY image field the
+     * entity declares. On a sketch that is one field and the parameter changes nothing. On a
+     * prototype it is two — "Prototype photographs" and "360° capture" — and the merge is the whole
+     * of what requirement 7 buys that half: the stage form mounts one of these cards per image field,
+     * each blind to the other's, so a designer who shot the frame with the ruler in it into the turn
+     * had the picture on one card and the dimension they wanted on another. Merged, that is fixed —
+     * and INVISIBLY fixed, because a merged list of file names looks exactly like an unmerged one.
+     * This is the parameter that lets the card say what it is looking at.
+     *
+     * ── A LIST OF FIELD LABELS AND NOT A LABEL PER PHOTOGRAPH, WHICH IS A DELIBERATE LIMIT ────
+     *
+     * The chooser chips below print `displayName` and nothing else, here and on the other client
+     * (`MeasurablePhoto` is `{ key, name, url }` — no field on it either), so neither client can tell
+     * a designer WHICH of two image fields a particular photograph came from. Two of this client's
+     * three choosers can: `DwSketchRectifyPanel`'s and `DwSketchSharedPhotograph`'s both take
+     * `List<DwSketchSource>`, which carries the label, and both put it on the chip. This card cannot
+     * take that type — `RecordMeasureField` mounts it over a plain list of captured `Uri`s that
+     * belong to no registry field at all — and a parallel id-to-label map beside `photos` would be a
+     * second description of one list, which is the shape this feature keeps refusing. So the fields
+     * are named ONCE, in words, which is also exactly what the other client does with its own
+     * `photoFieldLabels`: a sentence, never a chip.
+     */
+    photoFieldLabels: List<String> = emptyList(),
     targets: List<DwMeasureTarget>,
     rowValues: Map<String, JsonElement>,
     enabled: Boolean,
+    /**
+     * Where the photograph comes from — this card's own chooser, or a host above it.
+     *
+     * Defaulted to [DwSketchPhotographSupply.OwnChoice], which is what this card has always done and
+     * is what both of today's mounts (`FieldRenderer`, `RecordMeasureField`) get without changing a
+     * line. See that type for why the three states are one value, and [DwMeasureConfig.substituteId]
+     * for the one thing this card keeps deciding for itself even when a host is supplying.
+     */
+    supply: DwSketchPhotographSupply = DwSketchPhotographSupply.OwnChoice,
     /**
      * Write ONE registry field. Called only from a button the designer pressed.
      *
@@ -589,6 +796,54 @@ internal fun DwPhotoMeasurePanel(
     // to the first — never by rebuilding this holder, which would throw the marks away on an attach.
     val config = remember { DwMeasureConfig(photos.first().id) }
 
+    /*
+      THE SHARED CHOICE LANDS HERE, IN THE HALF THAT IS COMPOSED IN BOTH STATES.
+
+      Not in the open half, deliberately: a host can change the photograph while this card is shut,
+      and a card that only noticed on re-expansion would come back holding marks placed on a picture
+      that is no longer the subject — which is the incoherence a shared owner is supposed to remove
+      rather than introduce. [DwMeasureConfig.followShared] is the guard that ignores it while this
+      card has been deliberately pointed somewhere else.
+    */
+    val sharedId = (supply as? DwSketchPhotographSupply.Hosted)?.source?.item?.id
+    LaunchedEffect(sharedId) {
+        if (sharedId != null) config.followShared(sharedId)
+    }
+
+    /*
+      AN OVERRIDE MAY NOT OUTLIVE THE PHOTOGRAPH IT POINTS AT — the same discipline
+      [DwMeasureConfig.usePhotograph] already documents for `photoId`, owed to the field beside it.
+
+      A PHOTOGRAPH CAN BE DETACHED WHILE THESE CARDS ARE ON SCREEN. On the Upload tab the capture
+      cards sit directly above this section and detach through the same bridge that attached, so
+      "measure a different photograph, then remove that photograph" is two presses on one screen.
+      `photoId` survives that honestly — it is resolved against the list on every read and falls back
+      to the first — and `substituteId` was not resolved anywhere, so it kept the dead id and the card
+      went on believing an override was in force.
+
+      WHAT THAT LOOKED LIKE, WHICH IS WORSE THAN UNTIDY. `inForce` stayed true over a card that had
+      already fallen back to the shared photograph, so the collapsed half printed "Measuring a
+      different photograph — “”" — an empty pair of quotes where the file name goes, because there is
+      no such photograph to name — and the open half printed the SHARED photograph's name under a
+      heading that says this card is measuring something the tracing panel is not. A card whose one
+      job is to stop two panels quietly working from two pictures cannot be the thing that says they
+      are when they are not.
+
+      SO THE DEAD OVERRIDE IS DROPPED AND THE CARD GOES BACK TO FOLLOWING, which is where it would
+      have been had the substitute never been chosen. `backToShared` re-adopts the shared photograph
+      through `usePhotograph`, so the marks — which were placed on the photograph that has just gone —
+      are cleared by the same guard that clears them for any other change of subject.
+
+      KEYED ON THE FACT AND NOT ON `photos`: that list is rebuilt on every composition by
+      `dwChooserDerivationSources`, and a `LaunchedEffect` keyed on it would restart far more often
+      than the thing it is watching actually changes.
+    */
+    val substituteGone = config.substituteId.isNotBlank() &&
+        photos.none { it.id == config.substituteId }
+    LaunchedEffect(substituteGone, sharedId) {
+        if (substituteGone && sharedId != null) config.backToShared(sharedId)
+    }
+
     if (open) {
         DwPhotoMeasureOpen(
             photos = photos,
@@ -596,6 +851,7 @@ internal fun DwPhotoMeasurePanel(
             rowValues = rowValues,
             enabled = enabled,
             config = config,
+            sharedId = sharedId,
             onCollapse = { open = false },
             onPropose = onPropose,
         )
@@ -623,20 +879,53 @@ internal fun DwPhotoMeasurePanel(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        DwMeasureHeader(
+        DwPanelDisclosureHeader(
+            icon = Icons.Filled.Straighten,
+            title = DW_MEASURE_CARD_TITLE,
             expanded = false,
             // The gate the "Measure from a photograph" button has always had. A read-only field must
             // not be openable, because opening it decodes a photograph.
             toggleEnabled = enabled,
+            expandAction = DW_MEASURE_EXPAND_ACTION,
+            collapseAction = DW_MEASURE_COLLAPSE_ACTION,
             onToggle = { open = true },
         )
+
+        if (sharedId != null && config.substituteId.isNotBlank() && config.substituteId != sharedId) {
+            // AN OVERRIDE IN FORCE IS NEVER FOLDED AWAY, and a collapse is the deepest fold there is.
+            // The other client's rule ("a control that is doing something must be visible") reaches
+            // further on a handset, where this card can be shut and a screen away from the shared
+            // preview it is disagreeing with. See [DwMeasureDifferentPhotograph].
+            //
+            // "THE TRACING PANEL" IS NOT AN ASSUMPTION HERE, IT IS AN INVARIANT, and this is where a
+            // reader should be able to check it. `sharedId` is non-null only under
+            // `DwSketchPhotographSupply.Hosted`; the only thing in the app that passes `Hosted` is
+            // `DwSketchDerivationSection`; and it passes it only where `dwSharesOnePhotograph` is
+            // true, which on a record that has a measuring card requires a plate field — and a plate
+            // field is what mounts the tracing panel. So a screen showing this sentence has a tracing
+            // panel above it. On a prototype, which has no plate field, this card is handed
+            // `OwnChoice`, `sharedId` is null, and neither this line nor the escape hatch below it
+            // is composed at all. See [dwDerivationCardCount] for the arithmetic.
+            Text(
+                "$DW_MEASURE_ELSEWHERE_TITLE — “${chosen?.displayName.orEmpty()}”. The tracing panel " +
+                    "is still working from the photograph chosen above.",
+                color = MaterialTheme.field.onWarningContainer,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
 
         if (summary == null) {
             Text(
                 "If a ruler, a scale card or a sheet of paper is in one of these photographs, a " +
                     "dimension can be measured off it here and proposed into " +
                     targets.joinToString(", ") { it.field.label } +
-                    ". It runs on this device and needs no connection.",
+                    ". It runs on this device and needs no connection." +
+                    // SAID HERE AND NOT OVER THE CHIPS, because this is the sentence a designer reads
+                    // before they open anything, and "these photographs" is the phrase the clause
+                    // qualifies. Over the chooser it would be a paragraph between a designer and the
+                    // press they had already decided to make.
+                    dwMeasureSpansFieldsClause(photoFieldLabels),
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -680,13 +969,21 @@ internal fun DwPhotoMeasurePanel(
 }
 
 /**
- * The card's title row, which IS the accordion control — the same one in both states.
+ * The title row of a derivation card, which IS the accordion control — the same one in both states,
+ * on all three cards.
  *
- * ── ONE COMPOSABLE FOR BOTH STATES ────────────────────────────────────────────────────────────
+ * ── ONE COMPOSABLE FOR BOTH STATES, AND SINCE 2026-08-29 FOR ALL THREE CARDS ──────────────────
  *
  * Drawn by the collapsed card and by the open one, so the two cannot drift into disagreeing about
  * where the title sits, which way the chevron points, or what a press announces. A second copy of this
  * would be a second place for the 48dp floor and the state description to go stale in.
+ *
+ * **AND THERE WERE TWO SUCH PLACES UNTIL THIS BECAME SHARED.** The measuring card's heading was a
+ * control; the tracing panel's and the straightening panel's were inert rows — an icon and some text,
+ * no chevron, no `stateDescription`, no `Role.Button`, nothing that answered a press. Three cards
+ * that sit one under the other on one record therefore behaved three different ways when a designer
+ * tapped their titles, and two of the three told a screen reader nothing at all about whether they
+ * were open. Only the words and the icon differ now; the CONTRACT does not.
  *
  * ── `clickable` PLUS A STATE DESCRIPTION, NOT `selectable` ────────────────────────────────────
  *
@@ -705,16 +1002,33 @@ internal fun DwPhotoMeasurePanel(
  * [DwGalleryFloor]'s fill does.
  */
 @Composable
-private fun DwMeasureHeader(
+internal fun DwPanelDisclosureHeader(
+    /** Decorative, always: the title beside it is what carries which card this is. */
+    icon: ImageVector,
+    /**
+     * The card's name, and the SAME name in both states.
+     *
+     * A control whose label changes when you press it reads as a different control — which is what
+     * the tracing panel used to do, calling itself "Trace a photographed sketch into line art" shut
+     * and "Trace a sketch into line art" open. One title per card, chosen once, and chosen to be the
+     * portal's spelling where the portal has one — this card's own title matches its twin at
+     * `MeasureFromPhotoCard.tsx:164` character for character. See [DW_TRACE_CARD_TITLE] for the
+     * tie-break that rule settles.
+     */
+    title: String,
     expanded: Boolean,
     toggleEnabled: Boolean,
+    /** What TalkBack is told the press will DO when the card is shut. Each card's own noun. */
+    expandAction: String,
+    /** The other direction of the same sentence. */
+    collapseAction: String,
     onToggle: () -> Unit,
 ) {
     val reduceMotion = LocalAppPreferences.current.reducedMotion
     val turn by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         animationSpec = if (reduceMotion) snap() else tween(durationMillis = 180),
-        label = "photoMeasureChevron",
+        label = "derivationCardChevron",
     )
     Row(
         modifier = Modifier
@@ -722,7 +1036,7 @@ private fun DwMeasureHeader(
             .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
             .clickable(
                 enabled = toggleEnabled,
-                onClickLabel = if (expanded) DW_MEASURE_COLLAPSE_ACTION else DW_MEASURE_EXPAND_ACTION,
+                onClickLabel = if (expanded) collapseAction else expandAction,
                 role = Role.Button,
                 onClick = onToggle,
             )
@@ -733,13 +1047,16 @@ private fun DwMeasureHeader(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
-            Icons.Filled.Straighten,
+            icon,
             contentDescription = null,
             tint = MaterialTheme.field.muted,
             modifier = Modifier.size(16.dp),
         )
         Text(
-            "Measure a dimension from a photograph",
+            title,
+            // `weight(1f)` AND NOT A FIXED WIDTH, which is what keeps this row honest at the largest
+            // font scale: the title wraps to two or three lines, the row grows with it, and the
+            // chevron and the close button stay on it rather than being pushed off the edge.
             modifier = Modifier.weight(1f),
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 13.sp,
@@ -748,7 +1065,7 @@ private fun DwMeasureHeader(
         // THE EXISTING DOOR, KEPT RATHER THAN REMOVED. A button is a merging semantics node of its
         // own, so it stays a separate TalkBack target inside this clickable row instead of being
         // swallowed by it, and it consumes its own taps so pressing it cannot also fire the row.
-        if (expanded) DwMeasureCollapseButton(prominent = false, onClick = onToggle)
+        if (expanded) DwPanelCollapseButton(prominent = false, title = title, onClick = onToggle)
         Icon(
             Icons.Filled.KeyboardArrowDown,
             // Decorative: the row's own state description already says which state this is, in words.
@@ -762,23 +1079,57 @@ private fun DwMeasureHeader(
 }
 
 /**
- * The way out, drawn TWICE on purpose — once in the header and once at the foot of the contents.
+ * The way out of a derivation card, drawn TWICE on purpose — once in the header and once at the foot
+ * of the contents.
  *
  * The report this answers was not "there is no close button"; there was one. It was that the only one
  * sat at the top of a card the designer had just scrolled to the bottom of. So the second is placed
- * after the propose buttons, at the point where the work is finished, and BOTH are this one composable
- * saying [DW_MEASURE_COLLAPSE_WORD], so the two doors can never come to be labelled differently.
+ * after the work ends, and BOTH are this one composable saying [DW_PANEL_COLLAPSE_WORD], so the two
+ * doors can never come to be labelled differently.
+ *
+ * ── AND IT IS EVERY CARD'S DOOR NOW ───────────────────────────────────────────────────────────
+ *
+ * The tracing panel and the straightening panel each had a hand-rolled copy of this, one of them with
+ * a 16 dp icon against this one's 14, and neither had the second door at the foot — on surfaces that
+ * are considerably taller than this one. `DwSketchTracePanel`'s open half is a frame chooser, a
+ * comparator, two dozen control rows and an export card; its single door was at the top of all of
+ * that. One composable, three cards, one word.
+ *
+ * ── AND THE FOOT'S COPY NAMES THE CARD, WHICH THE HEADER'S DOES NOT NEED TO ───────────────────
+ *
+ * `MeasureFromPhotoCard.tsx:475-477` states it and this client had it wrong until the cards were
+ * stacked: *"A REAL BUTTON WITH THE CARD'S NAME IN IT, not a bare 'Close': at the foot of a long
+ * panel there is no heading in view to say what would be closing, and this card is one of several
+ * stacked disclosures on the tab."*
+ *
+ * **THAT BECAME TRUE HERE ON 2026-08-29 AND WAS NOT TRUE BEFORE IT.** Until the Upload tab gained
+ * [DwSketchDerivationSection] these three cards were never on one screen — each sat on its own
+ * registry field in the stage form, with other fields between them — so one full-width "Close" was
+ * unambiguous by position. Three of them now stack in one column, and three identical full-width
+ * buttons at three card feet is a designer pressing the wrong one and losing an open comparator.
+ *
+ * The header's copy stays bare, deliberately and for the other client's reason: it sits ON the title
+ * row, inside the same `Row` as the name it would be repeating, so naming the card there would print
+ * it twice on one line. The web makes the same split — an icon-only close in its header
+ * (`aria-label="Close the measuring panel"`) and `Collapse “{CARD_TITLE}”` at its foot.
  *
  * @param prominent the foot's copy is full width and outlined, because it has to be findable at the
  *   end of a long card; the header's is the compact text button that has always been there. The SHAPE
- *   differs, the WORD does not.
+ *   differs, and so does whether the card is NAMED; the VERB does not.
+ * @param title the card's own name, for the foot's copy. Unused by the header's, which is drawn
+ *   beside it. Every caller passes the same constant its [DwPanelDisclosureHeader] does.
  */
 @Composable
-private fun DwMeasureCollapseButton(prominent: Boolean, onClick: () -> Unit) {
+internal fun DwPanelCollapseButton(prominent: Boolean, title: String, onClick: () -> Unit) {
     val content: @Composable RowScope.() -> Unit = {
         Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
         Spacer(Modifier.width(4.dp))
-        Text(DW_MEASURE_COLLAPSE_WORD, fontSize = 12.sp)
+        // ONE VERB, TWO LENGTHS — and the verb is the constant, so neither door can be relabelled
+        // without the other. See the note above for why only one of them carries the name.
+        Text(
+            if (prominent) "$DW_PANEL_COLLAPSE_WORD “$title”" else DW_PANEL_COLLAPSE_WORD,
+            fontSize = 12.sp,
+        )
     }
     if (prominent) {
         OutlinedButton(
@@ -806,6 +1157,14 @@ private fun DwPhotoMeasureOpen(
     enabled: Boolean,
     /** Everything a designer typed or placed. Owned by the panel, so it outlives this composable. */
     config: DwMeasureConfig,
+    /**
+     * The photograph a host above chose, or null where this card owns the choice.
+     *
+     * Carried rather than re-derived from `supply` so the open half cannot come to a different answer
+     * from the half that drives [DwMeasureConfig.followShared]. It decides one thing: whether the
+     * chooser here is a plain list (this card's own) or the escape hatch (a host's).
+     */
+    sharedId: String?,
     onCollapse: () -> Unit,
     onPropose: (String, JsonElement?, String?) -> Unit,
 ) {
@@ -1004,16 +1363,53 @@ private fun DwPhotoMeasureOpen(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        DwMeasureHeader(
+        DwPanelDisclosureHeader(
+            icon = Icons.Filled.Straighten,
+            title = DW_MEASURE_CARD_TITLE,
             expanded = true,
             // Collapsing is ALWAYS allowed, even where the field itself is read-only: it writes
             // nothing, and a designer who can see a configured card must be able to put it away
             // again. Expanding keeps its gate (see the collapsed half); this is the other direction.
             toggleEnabled = true,
+            expandAction = DW_MEASURE_EXPAND_ACTION,
+            collapseAction = DW_MEASURE_COLLAPSE_ACTION,
             onToggle = onCollapse,
         )
 
-        if (photos.size > 1) {
+        /*
+          ONE PHOTOGRAPH IS NOT A CHOICE, AND THE ESCAPE HATCH IS NOT DRAWN OVER ONE.
+
+          The chooser this replaces has always been gated on `photos.size > 1` — the `else` branch
+          below still is — for the reason [dwMeasureSummary] gives about naming the photograph: one
+          of something is not a decision anybody made. The hatch lost that gate when it was written,
+          and a sketch with ONE photograph is the commonest record this feature has: the entity
+          declares a single image field and a designer attaches a single frame to it.
+
+          WHAT THAT PUT ON THE SCREEN. A disclosure called "Measure a different photograph", over a
+          paragraph explaining that the sheet worth tracing and the photograph with a ruler beside the
+          object are often two different pictures, which opens onto a chip row containing exactly one
+          chip: the photograph already being measured, labelled "chosen above". A control that offers
+          an act this record cannot perform is the same defect [dwNoPhotographSentence] was rewritten
+          for one file over — naming a capability a designer will then go looking for — and here it is
+          worse by a degree, because it is not a sentence about a control, it IS the control.
+
+          `|| inForce` AND NOT THE COUNT ALONE, so this gate can never strand anybody. An override is
+          only settable from the chip row, which needs two photographs — but the second can be
+          DETACHED afterwards, and the effect in the panel that drops a dead override is one
+          composition behind the list. For that one frame the count says "hide" and the override says
+          "in force", and hiding is the wrong answer: it would take the "Go back to the photograph
+          chosen above" button off a card that is announcing an override directly above it.
+        */
+        val overrideInForce = config.substituteId.isNotBlank() && config.substituteId != sharedId
+        if (sharedId != null && (photos.size > 1 || overrideInForce)) {
+            DwMeasureDifferentPhotograph(
+                photos = photos,
+                config = config,
+                sharedId = sharedId,
+                chosen = photo,
+                enabled = enabled,
+            )
+        } else if (sharedId == null && photos.size > 1) {
             DwPanelLabel("Photograph")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1359,6 +1755,11 @@ private fun DwPhotoMeasureOpen(
                         label = preset.label,
                         selected = false,
                         enabled = enabled,
+                        // A PRESET FILLS IN TWO BOXES; IT IS NOT A THING THAT IS CURRENTLY TRUE.
+                        // Nothing is preselected here on purpose (see [SCALE_PRESETS]), so a chip
+                        // announcing "Not selected" would be reporting a state these do not have —
+                        // and would suggest a designer had failed to pick one.
+                        isChoice = false,
                         onClick = {
                             config.referenceLength = dwTrimNumber(preset.length)
                             config.referenceUnit = preset.unit
@@ -1387,6 +1788,8 @@ private fun DwPhotoMeasureOpen(
                         label = preset.label,
                         selected = false,
                         enabled = enabled,
+                        // An action, not a choice. See the scale presets above.
+                        isChoice = false,
                         onClick = {
                             config.rectWidth = dwTrimNumber(preset.width)
                             config.rectHeight = dwTrimNumber(preset.height)
@@ -1477,7 +1880,212 @@ private fun DwPhotoMeasureOpen(
             fontSize = 11.sp,
             lineHeight = 16.sp,
         )
-        DwMeasureCollapseButton(prominent = true, onClick = onCollapse)
+        DwPanelCollapseButton(prominent = true, title = DW_MEASURE_CARD_TITLE, onClick = onCollapse)
+    }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The escape hatch
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * "Measure a different photograph" — the way out of the shared choice, for this card only.
+ *
+ * ── WHY THIS IS NOT SIMPLY THE CHOOSER CHIPS AGAIN ────────────────────────────────────────────
+ *
+ * `MeasureFromPhotoCard.tsx:792-812` states it and every clause of it holds here: *"It is folded
+ * away, it is named for what it is, and it says what it does not do. Left open beside the shared card
+ * above it, two pickers of equal weight is what the designer was complaining about; hidden behind a
+ * press, it is a way out of the default rather than a rival to it. And the default is stated in the
+ * same breath, so a designer who opens it by accident learns that they did not need to."*
+ *
+ * ── AND AN OVERRIDE IN FORCE IS NEVER FOLDED AWAY ─────────────────────────────────────────────
+ *
+ * The other client's rule, kept: *"a control that is doing something must be visible"*. While this
+ * card is pointed somewhere the tracing panel is not, the card SAYS SO at the top of itself, names
+ * the photograph, and offers the way back — because two cards quietly working from two pictures is
+ * the exact failure one shared choice was introduced to prevent, and an override folded behind a
+ * chevron is how it would happen anyway.
+ *
+ * ── THE ONE PLACE THE TWO CLIENTS GENUINELY DIFFER ────────────────────────────────────────────
+ *
+ * There, the different photograph is a file the designer picks and that is on no record at all —
+ * "displayed and measured and then forgotten". Here it is a different one of the RECORD's own
+ * photographs, because on this client a panel is only ever handed a path to something
+ * `DwMediaBridge.attach` already imported (see `FieldRenderer.kt:126-134`, and
+ * `DwSketchDerivationPhoto`'s header for the whole argument). The act, its name and its promise are
+ * the same; the SET is not, and the copy below says which set it is rather than repeating a sentence
+ * about filing that would be false here.
+ *
+ * ── AND WHY IT IS NOT OFFERED ON THE PROTOTYPES HALF, WHERE THE OTHER CLIENT DOES OFFER IT ────
+ *
+ * `UploadTabHost.tsx:1521-1529` transfers `onUseDifferentPhoto` to its Prototypes half and gives a
+ * good reason: *"the photographs a prototype is judged by and the photograph with a ruler beside it
+ * are rarely the same picture — one is a clean turn against a plain background, the other has a scale
+ * card lying in the frame."* **That reason is right, and the control it asks for does not exist on
+ * this client — because there, "a different photograph" means one that is on NO record, and here
+ * every photograph a panel can see is on the record already.**
+ *
+ * So on a prototype the set this hatch would choose from and the set the card's own chooser already
+ * offers are THE SAME SET, and it would fold a plain chip row behind a disclosure and a paragraph for
+ * no gain. The hatch earns its place on the sketches half only because there is a shared default
+ * above it to depart from, and departing from it is a thing worth naming and worth reporting on the
+ * collapsed card. With no shared default there is nothing to depart from: the chips ARE the choice.
+ *
+ * The designer's remedy on this client is the same one every photograph here goes through — attach
+ * the ruler frame with the capture card, then choose it in the chips. What is lost against the other
+ * client is measuring a picture that is filed nowhere, which this client cannot do on any surface and
+ * has never claimed to.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DwMeasureDifferentPhotograph(
+    photos: List<DwMediaItem>,
+    config: DwMeasureConfig,
+    /** What the host chose — what "go back" goes back to. */
+    sharedId: String,
+    /** What this card is measuring right now, shared or not. */
+    chosen: DwMediaItem,
+    enabled: Boolean,
+) {
+    val inForce = config.substituteId.isNotBlank() && config.substituteId != sharedId
+    var open by remember { mutableStateOf(false) }
+    val showing = open || inForce
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.field.surface50, RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.field.hairline, RoundedCornerShape(8.dp))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (inForce) {
+            Text(
+                DW_MEASURE_ELSEWHERE_TITLE,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            Text(
+                // The other client's sentence, with its one false clause replaced. There: "…and
+                // neither of them has been filed." Here both photographs are already on the record,
+                // so what is owed is the fact that this card changes neither.
+                "“${chosen.displayName}” is being measured here and nowhere else. The tracing panel " +
+                    "above is still working from the photograph chosen at the top of this section, " +
+                    "and nothing on this card changes, moves or detaches either of them.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        } else {
+            // A REAL CONTROL AND NOT A TAPPABLE ROW, with the same three things the card headers owe
+            // a screen reader: what state it is in, what the press will do, and that it is a button.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .semantics(mergeDescendants = true) {
+                        stateDescription = if (showing) "Expanded" else "Collapsed"
+                    }
+                    .clickable(
+                        enabled = enabled,
+                        onClickLabel = if (showing) {
+                            "Fold away the different-photograph chooser"
+                        } else {
+                            "Show the different-photograph chooser"
+                        },
+                        role = Role.Button,
+                    ) { open = !open },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Straighten,
+                    contentDescription = null,
+                    tint = MaterialTheme.field.muted,
+                    modifier = Modifier.size(14.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        // THE SAME NAME AS ON THE OTHER CLIENT, which is the half of this that must
+                        // not vary: it is one act, and a designer who learned it in a browser has to
+                        // find it under the same words on the handset.
+                        DW_MEASURE_DIFFERENT_PHOTOGRAPH,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        DW_MEASURE_DIFFERENT_WHY,
+                        color = MaterialTheme.field.muted,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    // Decorative: the row's own state description says which state this is, in words.
+                    contentDescription = null,
+                    tint = MaterialTheme.field.muted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+
+        if (showing) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                photos.forEach { candidate ->
+                    DwPanelChip(
+                        label = if (candidate.id == sharedId) {
+                            // NAMED AS THE SHARED ONE ON ITS OWN CHIP, so choosing "back" and
+                            // choosing "the same picture again" are visibly one act rather than two
+                            // that could leave the override standing over the right photograph.
+                            "${candidate.displayName} · chosen above"
+                        } else {
+                            candidate.displayName
+                        },
+                        selected = candidate.id == chosen.id,
+                        enabled = enabled,
+                        onClick = {
+                            if (candidate.id == sharedId) {
+                                config.backToShared(sharedId)
+                            } else {
+                                config.measureInstead(candidate.id)
+                            }
+                        },
+                    )
+                }
+            }
+            Text(
+                // Said under the chips rather than only in the header, because this is where the
+                // press happens: a change of photograph is a change of subject, and the marks belong
+                // to the subject.
+                "Choosing a different photograph clears the marks — they are positions on one " +
+                    "picture, and carrying them across would put the reference somewhere nobody aimed.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
+
+        if (inForce) {
+            OutlinedButton(
+                onClick = { config.backToShared(sharedId) },
+                enabled = enabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(DW_MEASURE_BACK_TO_SHARED, fontSize = 12.sp)
+            }
+        }
     }
 }
 
@@ -1626,11 +2234,19 @@ private fun DwMeasurementReadout(
                 Spacer(Modifier.width(6.dp))
                 Text("${target.field.label}: $text ${target.unit}", fontSize = 13.sp)
             }
-            if (current.isNotBlank()) {
+            // THE SENTENCE IS THE OTHER TWO CARDS'; THE SHAPE IS NOT, AND THAT DIFFERENCE IS REAL.
+            // Those cards have ONE destination and print one bordered [DwPanelNote] under it. This
+            // card has one button PER length field — four of them on a prototype — and four bordered
+            // boxes interleaved with four buttons would break the list of destinations into eight
+            // things a designer has to re-read as a list. So the warning stays a line under the
+            // button it belongs to, in the same warning colour, saying the same words in the same
+            // order. See [dwPanelReplaceWarning] for what was wrong with the words before.
+            dwPanelReplaceWarning(current, DwPanelHolds.VALUE)?.let {
                 Text(
-                    "Currently “$current”. This replaces it.",
+                    it,
                     color = MaterialTheme.field.onWarningContainer,
                     fontSize = 11.sp,
+                    lineHeight = 16.sp,
                 )
             }
         }
@@ -1831,27 +2447,69 @@ internal fun DwPanelLabel(text: String) {
 }
 
 /**
- * A chip, drawn selected or not.
+ * A chip, drawn selected or not — and, since 2026-08-29, SAYING which it is.
  *
- * `selected` is carried by the FILL and by the word inside it — a preset chip is never selected, and a
- * mark chip says "placed" or "not placed" in words next to its badge, so nothing here depends on
- * telling two purples apart in direct sunlight.
+ * Shared by all four derivation surfaces, so they have one idea of what a chip is.
  *
- * Shared with [DwSketchRectifyPanel], so both on-photograph panels have one idea of what a chip is.
+ * ── WHAT THIS KDOC USED TO CLAIM, AND WHY IT WAS NOT TRUE ─────────────────────────────────────
+ *
+ * It read: *"`selected` is carried by the FILL and by the word inside it — a preset chip is never
+ * selected, and a mark chip says 'placed' or 'not placed' in words next to its badge, so nothing
+ * here depends on telling two purples apart in direct sunlight."*
+ *
+ * **That was true of the mark chips and of nothing else.** The mark chips do carry their state in
+ * words. The PHOTOGRAPH chips do not — their label is a file name — and neither do the mode chips,
+ * the shape chips, the unit chips or the engine's option chips. On every one of those the selection
+ * was a fill and only a fill: invisible in greyscale, invisible to a designer who cannot tell the
+ * two purples apart in a courtyard at noon, and **silent to TalkBack**, which read out a row of
+ * identically-shaped buttons with nothing to say which one was in force.
+ *
+ * That mattered most on the newest of them. [DwSketchSharedPhotograph]'s chips answer *which
+ * photograph is every card on this record working from* — the whole point of the shared section —
+ * and a screen reader was given no way to hear the answer off the control that sets it.
+ *
+ * ── SO THE STATE IS ANNOUNCED, IN THE SAME GRAMMAR [DwPanelDisclosureHeader] USES ─────────────
+ *
+ * `stateDescription`, exactly as that header announces "Expanded" / "Collapsed", and for the same
+ * reason: it is one string that TalkBack reads after the label, it needs no role change, and it
+ * cannot fall out of step with the fill because both are read off this one parameter.
+ *
+ * **"Selected" IS THE RIGHT NOUN HERE AND THE WRONG ONE THERE**, which is worth stating because
+ * [DwPanelDisclosureHeader] argues against it at length. A disclosure is not a choice among options,
+ * so "selected" tells a reader nothing about what pressing it reveals. A chip in a row of chips IS
+ * a choice among options, and "selected" is what it is.
+ *
+ * @param isChoice false for a chip that ACTS rather than chooses — the scale and rectangle presets,
+ *   which fill in two text boxes and are never "the current one". Announcing "not selected" on those
+ *   would be a state description for a state they do not have, and would tell a designer they had
+ *   failed to select something that cannot be selected. They are ordinary buttons that happen to be
+ *   chip-shaped, and they are announced as ordinary buttons.
  */
 @Composable
 internal fun DwPanelChip(
     label: String,
     selected: Boolean,
     enabled: Boolean,
+    isChoice: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val announce = if (isChoice) {
+        Modifier.semantics { stateDescription = if (selected) "Selected" else "Not selected" }
+    } else {
+        Modifier
+    }
+    // 40dp AND NOT THE APP'S 48, DELIBERATELY: chips come in rows of four to eight inside an already
+    // tall card, they are separated by 6dp of their own, and Material's own chip metrics stop here.
+    // The floor still grows with the font scale, because it is a minimum rather than a height.
+    val shape = Modifier
+        .heightIn(min = 40.dp)
+        .then(announce)
     if (selected) {
-        Button(onClick = onClick, enabled = enabled, modifier = Modifier.heightIn(min = 40.dp)) {
+        Button(onClick = onClick, enabled = enabled, modifier = shape) {
             Text(label, fontSize = 12.sp)
         }
     } else {
-        OutlinedButton(onClick = onClick, enabled = enabled, modifier = Modifier.heightIn(min = 40.dp)) {
+        OutlinedButton(onClick = onClick, enabled = enabled, modifier = shape) {
             Text(label, fontSize = 12.sp)
         }
     }

@@ -664,8 +664,12 @@ val DW_TRACE_TOGGLES: List<DwTraceToggle> = listOf(
         // The handset has a second, MANUAL answer to the same problem that the portal's designer does
         // not have in front of them, and somebody who has already used it should be told that turning
         // this on runs a different search over the top of their own four corners.
+        // The card is named by its constant and not by a literal: this sentence points at a control
+        // one card up the same screen, and a title that moved without this moving would be an
+        // instruction to press something that is not there. `DW_RECTIFY_CARD_TITLE` moved on
+        // 2026-08-29 for exactly that reason, one client over.
         handsetNote = "This is the engine's own automatic search for the sheet. If you have already " +
-            "straightened this photograph with “Straighten a photographed sketch into a plate”, leave " +
+            "straightened this photograph with “$DW_RECTIFY_CARD_TITLE”, leave " +
             "this off — that plate is square to the page already.",
     ),
     DwTraceToggle(

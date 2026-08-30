@@ -9,13 +9,18 @@ branch went further and CREATED an account for any verified Google address on ea
 needs the same gate and has no equivalent of ``DesignerRoster`` to build it on, so this module is
 written to be copied. What a porter must change, and nothing else:
 
-* :func:`normalise_email` is imported from ``app.services.designers`` here because that repository
-  already had one canonical lower-caser and two would be one too many. In an application without a
-  designer roster, inline it — three lines, and the rule it enforces is in its docstring.
+* :func:`normalise_email`, :func:`canonical_email` and :func:`email_match_keys` are imported from
+  ``app.services.designers`` here because that repository already had one canonical lower-caser and
+  two would be one too many. In an application without a designer roster, inline all three — they
+  are short, and the rules they enforce are in their docstrings. Do not drop the Gmail pair as
+  incidental to the roster: they are about the ALLOW-LIST as much as about empanelment, and an
+  application whose only sign-in path is Google has the same one-mailbox-two-keys hole this one had.
 * :func:`designer_empanelment_admits` is the ONE clause in this file that is specific to this
   application: an ACTIVE ``DesignerRoster`` row is accepted as an admission so that an admin who
   empanels a designer has not silently created somebody the gate then refuses. An application with
-  no second allow-list deletes that function and its one call site in ``auth.py``.
+  no second allow-list deletes that function, its one call site in ``auth.py``, and the
+  ``roster_allows`` import it delegates to — that fourth import is the designer roster reaching in
+  here and goes out with the clause, unlike the three above it, which stay.
 * Everything else — the four states, the two distinct refusals, the identity-proof precondition on
   the write, the dedupe, the cap, the rejected-stays-rejected rule — is the feature, and changing
   any of it changes what the user asked for.
@@ -77,8 +82,9 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.db import db
 
-# One lower-caser for the whole repository. See the module docstring for what a porter does with it.
-from app.services.designers import normalise_email
+# One lower-caser, and one Gmail canonicaliser, for the whole repository. See the module docstring
+# for what a porter does with them.
+from app.services.designers import canonical_email, email_match_keys, normalise_email, roster_allows
 
 logger = logging.getLogger(__name__)
 
@@ -143,17 +149,68 @@ def pending_cap() -> int:
     return max(1, int(get_settings().access_pending_max))
 
 
+def _the_row_that_decides(rows: list[Any], literal: str) -> Any:
+    """Which of two rows for ONE mailbox answers the gate. THE REFUSAL WINS.
+
+    Reached only where a Gmail mailbox has rows under two spellings — ``sandy.craft3@gmail.com`` and
+    ``sandycraft3@gmail.com``, say, because one was typed by an admin before this canonicalisation
+    existed and the other written by the pending queue after it. ``email`` is unique on the table
+    and :func:`email_match_keys` yields at most two keys, so this is choosing between at most two
+    rows and never paginating anything.
+
+    **A BARRED ROW BEATS AN ADMITTING ONE, ALWAYS, AND THAT DIRECTION IS THE WHOLE FUNCTION.** The
+    two orderings are not symmetrical mistakes. Preferring the ACTIVE row would mean an admin
+    who rejected or suspended somebody has their decision quietly overturned by a second spelling of
+    the same address — the person signs in, and the only trace is a row on a screen nobody has a
+    reason to open. Preferring the barred row refuses somebody who may in fact be entitled to be
+    here, which is a visible, complainable, five-minute fix by the same administrator on the same
+    screen. This module fails closed everywhere else for exactly that asymmetry (a missing row is a
+    refusal; see :func:`access_row`), and a collision is not the place to start failing open.
+
+    Below that, the row spelled the way the caller actually spelled it wins, because that is the row
+    an admin searching for the address they were given will find and edit. The two tests together
+    are total over the reachable cases: with two keys, every matched row equals one of them, so at
+    most one row can fail the second test and a tie is not reachable.
+    """
+    return min(
+        rows,
+        key=lambda row: (
+            0 if status_of(row) in BARRED else 1,
+            0 if normalise_email(row.email) == literal else 1,
+        ),
+    )
+
+
 async def access_row(email: Any) -> Any | None:
-    """The allow-list row for an address, or None if this address has never been seen.
+    """The allow-list row for a MAILBOX, or None if this address has never been seen.
 
     NONE IS NOT "ADMITTED". Every caller treats a missing row as a refusal — that is what makes the
     gate fail CLOSED for an account created by some path that forgot to admit it, and it is why the
     grandfathering in the migration had to be exhaustive rather than merely thorough.
+
+    **ONE ``IN`` OVER BOTH SPELLINGS, WHICH IS WHY THIS IS NO LONGER A ``find_unique``.** Google is
+    the only sign-in path most people here have and it treats Gmail dots and ``+tags`` as noise, so
+    the address arriving at this gate and the address an admin typed onto the allow-list can be the
+    same mailbox under two different strings — and a ``find_unique`` on the literal one answers
+    None, which every caller reads as "never seen" and refuses. See
+    :func:`app.services.designers.email_match_keys` for why the literal spelling stays in the list
+    (the rows already in the table are stored under it) and why this is one query and not two.
+
+    A row found by the canonical key is returned exactly as a row found by the literal one: the
+    same object, to the same callers, with no marker distinguishing them. There is deliberately no
+    such thing as a second-class admission here — the two strings are one mailbox or they are not,
+    and having decided they are, a sign-in through either must behave identically or the difference
+    becomes a bug report nobody can reproduce.
     """
-    address = normalise_email(email)
-    if not address or len(address) > MAX_EMAIL_LENGTH:
+    keys = [key for key in email_match_keys(email) if len(key) <= MAX_EMAIL_LENGTH]
+    if not keys:
         return None
-    return await db.accessroster.find_unique(where={"email": address})
+    rows = await db.accessroster.find_many(where={"email": {"in": keys}})
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    return _the_row_that_decides(rows, keys[0])
 
 
 async def designer_empanelment_admits(email: Any) -> bool:
@@ -167,12 +224,19 @@ async def designer_empanelment_admits(email: Any) -> bool:
     that, because the roster screen shows the row they added, active, admitting nobody.
 
     Read only when the allow-list has already declined, so the ordinary path costs no extra query.
+
+    **DELEGATED RATHER THAN SPELLED AGAIN, AND THAT CHANGED WHEN THE GMAIL KEY ARRIVED.** This was
+    a three-line copy of :func:`app.services.designers.roster_allows` — the same query asking the
+    same question of the same table — and a copy was tolerable while the question was one equality
+    test. It stopped being tolerable the moment the answer needed a two-key ``IN`` and a rule for
+    what a suspended twin means, because two implementations of "is this mailbox empanelled" that
+    can drift apart are not a duplication smell, they are an authentication bug waiting for somebody
+    to update one of them: one gate would admit a revoked designer that the other refuses, and which
+    one you got would depend on whether the allow-list happened to have a row. It stays a NAMED
+    function here because the porter's note above tells an application without a designer roster to
+    delete this clause, and a name is what makes that a deletion rather than an excavation.
     """
-    address = normalise_email(email)
-    if not address:
-        return False
-    row = await db.designerroster.find_first(where={"email": address, "isActive": True})
-    return row is not None
+    return await roster_allows(email)
 
 
 #: How many barred addresses :func:`barred_emails` will read.
@@ -281,10 +345,21 @@ async def admit(
 
     ``decided`` is false only for the machine-made admissions (the empanelment clause), so that
     ``decidedById`` never claims an administrator reviewed something no administrator saw.
+
+    **A NEW ROW IS WRITTEN UNDER THE MAILBOX; AN EXISTING ROW KEEPS THE SPELLING IT HAS.** The
+    lookup covers both spellings, so an admin admitting ``sandy.craft3@gmail.com`` when the queue
+    already holds ``sandycraft3@gmail.com`` UPDATES that row rather than creating a second one —
+    without which this function would quietly manufacture the very collision the canonicalisation
+    exists to prevent, and the pending request the admin thought they were approving would still be
+    sitting in the queue afterwards. The found row's ``email`` is deliberately left alone: rewriting
+    the address on somebody's row as a side effect of an unrelated approval changes what an admin
+    sees on the screen with nothing to say why, and moving an address between rows is
+    :func:`follow_email_change`'s job, where it is the thing being asked for.
     """
-    address = normalise_email(email)
-    if not address:
+    keys = email_match_keys(email)
+    if not keys:
         raise ValueError("an allow-list row needs an email address")
+    address = canonical_email(email)
     now = datetime.now(UTC)
     grant: dict[str, Any] = {"status": ACTIVE, "joinedAt": now}
     if admit_role:
@@ -297,9 +372,15 @@ async def admit(
         grant["decidedAt"] = now
         grant["decidedById"] = actor_id
 
-    existing = await db.accessroster.find_unique(where={"email": address})
-    if existing is None:
+    matched = await db.accessroster.find_many(where={"email": {"in": keys}})
+    if not matched:
         return await db.accessroster.create(data={**grant, "email": address, "addedById": actor_id})
+    # THE ROW THE GATE WILL READ, and not merely the first row the index hands back. Where a mailbox
+    # somehow has rows under both spellings, :func:`access_row` answers with the barred one, so an
+    # admin who admitted the OTHER one would watch this call succeed and the person be refused
+    # anyway — an approval that visibly took effect on the screen and changed nothing at the door.
+    # Admitting whichever row decides the gate is what makes "I have admitted them" true.
+    existing = _the_row_that_decides(matched, keys[0])
     update = dict(grant)
     # Written once; see the docstring. The read-then-write is safe here because both branches are
     # admin actions on one row, not a contended login path.
@@ -319,12 +400,19 @@ async def follow_email_change(old_email: Any, new_email: Any, *, actor_id: str |
     name of the admin who admitted them follow the person instead of being stranded on an address
     nobody uses. If the new address somehow already has a row (they had asked to join under it, say)
     that row wins and is admitted, because it is the one the gate will actually read.
+
+    **"CHANGED" IS DECIDED ON THE MAILBOX, WHICH IS WHY THE EARLY RETURN COMPARES CANONICAL FORMS.**
+    An admin who tidies ``sandycraft3@gmail.com`` into ``sandy.craft3@gmail.com`` on somebody's
+    account has not moved them anywhere — Google delivers both to the same inbox and the gate reads
+    both as one key — so there is nothing to follow, and treating it as a move would rewrite a live
+    allow-list row for no reason and reset nothing but the reader's confidence in the screen.
     """
-    old = normalise_email(old_email)
-    new = normalise_email(new_email)
-    if not new or old == new:
+    new = canonical_email(new_email)
+    old_keys = email_match_keys(old_email)
+    new_keys = email_match_keys(new_email)
+    if not new or canonical_email(old_email) == new:
         return
-    existing_new = await db.accessroster.find_unique(where={"email": new})
+    existing_new = await db.accessroster.find_first(where={"email": {"in": new_keys}})
     if existing_new is not None:
         await admit(
             new,
@@ -332,7 +420,9 @@ async def follow_email_change(old_email: Any, new_email: Any, *, actor_id: str |
             note="Admitted when an administrator moved an existing account to this address.",
         )
         return
-    old_row = await db.accessroster.find_unique(where={"email": old}) if old else None
+    old_row = (
+        await db.accessroster.find_first(where={"email": {"in": old_keys}}) if old_keys else None
+    )
     if old_row is None:
         await admit(
             new,
@@ -361,8 +451,15 @@ async def record_refused_attempt(email: Any, row: Any | None) -> str:
     writing arbitrary addresses into an admin's queue, however many callers there are. Route the new
     caller through ``assert_access_admits`` after its credential check, never at this function
     directly.
+
+    **THE QUEUED ROW IS KEYED ON THE MAILBOX.** Two refused attempts from ``sandycraft3@gmail.com``
+    and ``sandy.craft3+phone@googlemail.com`` are one person asking twice, and writing them as two
+    rows would give an administrator two entries to decide about for one applicant, of which
+    approving either leaves the other in the queue for ever. The row this function does NOT have to
+    look for is one already stored under the other spelling: ``row`` is passed in by
+    ``assert_access_admits``, which got it from :func:`access_row`, which searched both.
     """
-    address = normalise_email(email)
+    address = canonical_email(email)
     now = datetime.now(UTC)
 
     if row is not None:

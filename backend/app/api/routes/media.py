@@ -105,7 +105,9 @@ MULTIPART_PART_SIZE = 16 * 1024 * 1024
 #:
 #: Kept here rather than beside ``RECORD_STATUSES`` in ``services/records.py`` only because this
 #: route is the sole caller; move it there the day a second module needs it, not before.
-MEDIA_PROCESSING_JOB_STATUSES = frozenset({"QUEUED", "PROCESSING", "COMPLETED", "FAILED", "CANCELLED"})
+MEDIA_PROCESSING_JOB_STATUSES = frozenset(
+    {"QUEUED", "PROCESSING", "COMPLETED", "FAILED", "CANCELLED"}
+)
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -312,7 +314,9 @@ async def presign_media_upload(
 def _assert_owns_object(object_key: str, current_user: Any) -> None:
     """Multipart object keys live under media/<user_id>/ — refuse to touch another user's upload."""
     if not object_key.startswith(f"media/{current_user.id}/"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only manage your own uploads")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="You can only manage your own uploads"
+        )
 
 
 @router.post("/multipart/create", response_model=MultipartCreateResponse)
@@ -363,7 +367,9 @@ async def complete_multipart(
         key=lambda item: item["PartNumber"],
     )
     if not parts:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No parts to complete")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No parts to complete"
+        )
     await asyncio.to_thread(complete_multipart_upload, payload.objectKey, payload.uploadId, parts)
     return {
         "objectKey": payload.objectKey,
@@ -535,7 +541,9 @@ async def analyze_media_measurement(
         # which is the layer that knows which key is missing.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(result.get("message") or "Grid measurement is not configured on this server."),
+            detail=str(
+                result.get("message") or "Grid measurement is not configured on this server."
+            ),
         )
     # ``content`` goes out of scope here. A FAILED read still returns 200: the provider was reachable
     # and answered, the message says so, and both clients already route that to "enter it manually" —
@@ -544,7 +552,9 @@ async def analyze_media_measurement(
     return result
 
 
-async def _finish_pending_media(existing: Any, processing_requests: list[str] | None, user_id: str, settings: Any) -> dict[str, Any]:
+async def _finish_pending_media(
+    existing: Any, processing_requests: list[str] | None, user_id: str, settings: Any
+) -> dict[str, Any]:
     """Return an already-created media row for a retried /complete, enqueuing its processing jobs once
     if the original request died before it could (so a retry never drops transcription)."""
     if processing_requests and not (existing.processingJobs or []):
@@ -641,8 +651,7 @@ def _assert_enqueueable(processing_requests: list[str] | None) -> None:
         {
             token
             for raw in processing_requests or []
-            if (token := str(raw).strip().upper())
-            and token not in ENQUEUEABLE_PROCESSING_REQUESTS
+            if (token := str(raw).strip().upper()) and token not in ENQUEUEABLE_PROCESSING_REQUESTS
         }
     )
     if not unsupported:
@@ -701,7 +710,9 @@ async def complete_media_upload(
     # embeds the uploader id + a per-upload uuid, so a row already present for this key IS this same
     # upload — return it instead of failing with a 500 UniqueViolationError (the bug users hit).
     # The replay is only honoured for the row's own uploader; anyone else gets a 403.
-    existing = await db.mediafile.find_unique(where={"objectKey": payload.objectKey}, include=INCLUDE)
+    existing = await db.mediafile.find_unique(
+        where={"objectKey": payload.objectKey}, include=INCLUDE
+    )
     if existing is not None:
         if getattr(existing, "uploadedById", None) != current_user.id:
             raise HTTPException(
@@ -746,9 +757,13 @@ async def complete_media_upload(
         # clean 404 instead of a ForeignKeyViolation 500 at create time. The row is KEPT rather than
         # discarded: its ``workshopId`` is what this file inherits (see below).
         delegate = _relink_delegate(str(data["linkedRecordType"]).lower())
-        parent = await delegate.find_unique(where={"id": data["linkedRecordId"]}) if delegate else None
+        parent = (
+            await delegate.find_unique(where={"id": data["linkedRecordId"]}) if delegate else None
+        )
         if parent is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linked record not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Linked record not found"
+            )
     data.update(relation_data)
     # THE PARENTS WITH NO TYPED FOREIGN KEY still have a workshop to inherit, and this is where they get
     # it. ``media_relation_data`` only knows the six link types that have a column on MediaFile, but the
@@ -792,9 +807,13 @@ async def complete_media_upload(
         created = await db.mediafile.create(data=data, include=INCLUDE)
     except UniqueViolationError:
         # Lost a race with a concurrent retry that inserted the row first — return that one.
-        racer = await db.mediafile.find_unique(where={"objectKey": payload.objectKey}, include=INCLUDE)
+        racer = await db.mediafile.find_unique(
+            where={"objectKey": payload.objectKey}, include=INCLUDE
+        )
         if racer is not None:
-            return await _finish_pending_media(racer, processing_requests, current_user.id, settings)
+            return await _finish_pending_media(
+                racer, processing_requests, current_user.id, settings
+            )
         raise
     await enqueue_media_processing_jobs(created, processing_requests, current_user.id, settings)
     created = await db.mediafile.find_unique(where={"id": created.id}, include=INCLUDE)
@@ -829,7 +848,11 @@ async def list_media(
     if vis:
         where["AND"] = [vis]
     if search:
-        where["OR"] = [{"originalFilename": contains(search)}, {"caption": contains(search)}, {"mimeType": contains(search)}]
+        where["OR"] = [
+            {"originalFilename": contains(search)},
+            {"caption": contains(search)},
+            {"mimeType": contains(search)},
+        ]
     if mediaType:
         where["mediaType"] = enum_filter_or_422(mediaType, MEDIA_TYPES, field="mediaType")
     if linkedRecordType:
@@ -1140,7 +1163,9 @@ async def relink_media(
     rec_type = payload.linkedRecordType.lower()
     delegate = _relink_delegate(rec_type)
     if delegate is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported record type for re-linking")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported record type for re-linking"
+        )
     target = await delegate.find_unique(where={"id": payload.linkedRecordId})
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target record not found")
@@ -1253,7 +1278,11 @@ async def set_media_transcript(
         )
     updated = await db.mediafile.update(
         where={"id": media.id},
-        data={"transcriptText": payload.text, "transcriptStatus": "COMPLETED", "transcriptError": None},
+        data={
+            "transcriptText": payload.text,
+            "transcriptStatus": "COMPLETED",
+            "transcriptError": None,
+        },
         include=INCLUDE,
     )
     return await _public(updated, current_user)
@@ -1274,7 +1303,9 @@ async def list_media_processing_jobs(
         # ``field="statusFilter"`` names the query parameter the client actually sent, matching the
         # mediaType filter in ``list_media``; the default "status" would name a key that appears
         # nowhere in the request the caller can see.
-        where["status"] = enum_filter_or_422(statusFilter, MEDIA_PROCESSING_JOB_STATUSES, field="statusFilter")
+        where["status"] = enum_filter_or_422(
+            statusFilter, MEDIA_PROCESSING_JOB_STATUSES, field="statusFilter"
+        )
     # Count and page together, for the reason ``records.count_and_page`` exists — spelled out here
     # rather than delegated to it because this read needs ``include=`` and that helper takes
     # ``relations``.
@@ -1357,14 +1388,19 @@ async def retry_media_processing_job(
 
 
 @router.delete("/object", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_staged_object(objectKey: str, current_user: Any = Depends(get_current_user)) -> None:
+async def delete_staged_object(
+    objectKey: str, current_user: Any = Depends(get_current_user)
+) -> None:
     """Delete a staged S3 object that was pre-uploaded but never attached to a saved record.
 
     Scoped to the caller's own ``media/<user_id>/`` prefix, and refuses to touch any object that is
     already referenced by a MediaFile (those are deleted through the normal media delete route).
     """
     if not objectKey.startswith(f"media/{current_user.id}/"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own staged uploads")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only delete your own staged uploads",
+        )
     existing = await db.mediafile.find_first(where={"objectKey": objectKey})
     if existing is not None:
         raise HTTPException(

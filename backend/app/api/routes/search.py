@@ -177,36 +177,61 @@ async def global_search(
     if "artisans" in selected:
         planned.append(("artisans", db.artisan.count(where=artisan_where)))
         planned.append(
-            ("artisans_rows", db.artisan.find_many(where=artisan_where, skip=skip, take=page_size, order=_ORDER))
+            (
+                "artisans_rows",
+                db.artisan.find_many(where=artisan_where, skip=skip, take=page_size, order=_ORDER),
+            )
         )
     if "workshops" in selected:
         planned.append(("workshops", db.workshop.count(where=workshop_where)))
         planned.append(
-            ("workshops_rows", db.workshop.find_many(where=workshop_where, skip=skip, take=page_size, order=_ORDER))
+            (
+                "workshops_rows",
+                db.workshop.find_many(
+                    where=workshop_where, skip=skip, take=page_size, order=_ORDER
+                ),
+            )
         )
     if "products" in selected:
         planned.append(("products", db.productdocumentation.count(where=product_where)))
-        planned.append((
-            "products_rows",
-            db.productdocumentation.find_many(
-                where=product_where, include={"media": True}, skip=skip, take=page_size, order=_ORDER
-            ),
-        ))
+        planned.append(
+            (
+                "products_rows",
+                db.productdocumentation.find_many(
+                    where=product_where,
+                    include={"media": True},
+                    skip=skip,
+                    take=page_size,
+                    order=_ORDER,
+                ),
+            )
+        )
     if "tools" in selected:
         planned.append(("tools", db.tooldocumentation.count(where=tool_where)))
-        planned.append((
-            "tools_rows",
-            db.tooldocumentation.find_many(
-                where=tool_where, include={"media": True}, skip=skip, take=page_size, order=_ORDER
-            ),
-        ))
+        planned.append(
+            (
+                "tools_rows",
+                db.tooldocumentation.find_many(
+                    where=tool_where,
+                    include={"media": True},
+                    skip=skip,
+                    take=page_size,
+                    order=_ORDER,
+                ),
+            )
+        )
     if "media" in selected:
         planned.append(("media", db.mediafile.count(where=media_where)))
         planned.append(
-            ("media_rows", db.mediafile.find_many(where=media_where, skip=skip, take=page_size, order=_ORDER))
+            (
+                "media_rows",
+                db.mediafile.find_many(where=media_where, skip=skip, take=page_size, order=_ORDER),
+            )
         )
 
-    results = dict(zip([name for name, _ in planned], await gather_reads(*(coro for _, coro in planned))))
+    results = dict(
+        zip([name for name, _ in planned], await gather_reads(*(coro for _, coro in planned)))
+    )
 
     totals = {name: results.get(name, 0) for name in SEARCH_TYPES}
     # Unpacked into two named locals rather than passed inline, so both halves are visibly SPENT at

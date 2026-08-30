@@ -12,7 +12,6 @@ not to whoever sets the flag. ``docs/AI_FEATURES.md`` says the same thing where 
 read it.
 """
 
-
 from app.ai_features.errors import ProviderNotConfigured
 from app.ai_features.providers.base import (
     BackgroundRemovalProvider,
@@ -40,7 +39,9 @@ class RemoveBgProvider(BackgroundRemovalProvider, ForegroundSeparationProvider):
             image=cutout,
             notes=notes
             + overrun_note(
-                deadline, stage="the remove.bg call", capability=capability,
+                deadline,
+                stage="the remove.bg call",
+                capability=capability,
                 provider=self.provider_id,
             ),
         )
@@ -65,7 +66,9 @@ class RemoveBgProvider(BackgroundRemovalProvider, ForegroundSeparationProvider):
             notes=notes
             + layer_notes
             + overrun_note(
-                deadline, stage="the remove.bg separation", capability=capability,
+                deadline,
+                stage="the remove.bg separation",
+                capability=capability,
                 provider=self.provider_id,
             ),
         )

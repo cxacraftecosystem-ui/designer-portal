@@ -24,7 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -45,6 +44,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,7 +88,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * "Straighten a photographed sketch into a plate" — the handset's surface over [DwSketchRectify].
+ * "Straighten a photographed sketch" — the handset's surface over [DwSketchRectify].
  *
  * ── WHY THIS IS ON THE PHONE ──────────────────────────────────────────────────────────────────
  *
@@ -215,6 +215,38 @@ internal fun dwOffersSketchRectify(field: FieldDto, siblings: Map<String, FieldD
 @Immutable
 internal data class DwSketchSource(val fieldLabel: String, val item: DwMediaItem)
 
+/**
+ * The card's name, said once, in both states — and on both clients.
+ *
+ * This panel used to call itself "Straighten a photographed sketch into a plate" while shut and
+ * "Straighten a photographed sketch" while open. The heading is the accordion CONTROL now, and a
+ * control whose label changes when you press it reads as a different control — see
+ * [DwPanelDisclosureHeader.title] and [DW_TRACE_CARD_TITLE], which had the same defect and is
+ * resolved the same way.
+ *
+ * ── THE TIE-BREAK IS THE OTHER CLIENT — requirement 20 ────────────────────────────────────────
+ *
+ * The longer wording names the OUTPUT and the shorter one does not, which is a real argument and
+ * loses to a stronger one: **the shorter wording is what the portal calls this panel**, in both of
+ * its own states — `SketchRectifyField.tsx:389` on the collapsed button and `:409` on the open
+ * heading. The two clients naming one panel two things is the defect, and it is a worse one than a
+ * heading that does not name its output, because a designer moving from a laptop to a handset has to
+ * find the same card twice.
+ *
+ * IT IS STILL DISTINGUISHABLE FROM THE TRACING CARD DIRECTLY BELOW IT, which was the original
+ * concern: "Straighten a photographed sketch" and "Trace a sketch into line art" differ in the verb,
+ * which is the word a designer is choosing between. And the output is named immediately underneath
+ * in both states — the collapsed blurb and the open heading's note both say the plate is a new file
+ * added to this field, exactly as the portal's `:411` does.
+ */
+internal const val DW_RECTIFY_CARD_TITLE: String = "Straighten a photographed sketch"
+
+/** What TalkBack is told the header press will DO. The grammar is `DW_MEASURE_EXPAND_ACTION`'s. */
+internal const val DW_RECTIFY_EXPAND_ACTION: String = "Expand the straightening card"
+
+/** The other direction of the same sentence. See [DW_RECTIFY_EXPAND_ACTION]. */
+internal const val DW_RECTIFY_COLLAPSE_ACTION: String = "Collapse the straightening card"
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Choices
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -300,6 +332,13 @@ internal fun DwSketchRectifyPanel(
     /** The file already in this field, so the panel can say what attaching would replace. */
     currentFileName: String?,
     enabled: Boolean,
+    /**
+     * Where the photograph comes from — this card's own chooser, or a host above it.
+     *
+     * Defaulted to [DwSketchPhotographSupply.OwnChoice], which is the stage form's mount and is what
+     * this panel has always done. See that type for why the three states are one value.
+     */
+    supply: DwSketchPhotographSupply = DwSketchPhotographSupply.OwnChoice,
     /** Write the new media id into this FILE field. Called only from a button the designer pressed. */
     onAttached: (String) -> Unit,
     onMessage: (String) -> Unit,
@@ -316,20 +355,20 @@ internal fun DwSketchRectifyPanel(
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    Icons.Filled.AutoFixHigh,
-                    contentDescription = null,
-                    tint = MaterialTheme.field.muted,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    "Straighten a photographed sketch into a plate",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
+            // THE TITLE ROW IS THE CONTROL, as it is on the other two cards. It was an inert Row here
+            // — no chevron, no state description, nothing that answered a press — so three cards on
+            // one record behaved three different ways when a designer tapped their headings. See
+            // [DwPanelDisclosureHeader].
+            DwPanelDisclosureHeader(
+                icon = Icons.Filled.AutoFixHigh,
+                title = DW_RECTIFY_CARD_TITLE,
+                expanded = false,
+                // A read-only field must not be openable: opening it decodes a photograph.
+                toggleEnabled = enabled,
+                expandAction = DW_RECTIFY_EXPAND_ACTION,
+                collapseAction = DW_RECTIFY_COLLAPSE_ACTION,
+                onToggle = { open = true },
+            )
             Text(
                 "Mark the four corners of the sheet in one of the photographs on this record and the " +
                     "paper is squared to the page, with the pencil brought out as black line on white. " +
@@ -339,7 +378,16 @@ internal fun DwSketchRectifyPanel(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
-            OutlinedButton(onClick = { open = true }, enabled = enabled) {
+            OutlinedButton(
+                onClick = { open = true },
+                enabled = enabled,
+                // THE 48dp FLOOR, WHICH THIS ONE BUTTON DID NOT HAVE. Every other way into every
+                // other derivation card carries it — the measuring card's, the tracing panel's, both
+                // header rows — and this was the single control in the three that a designer with
+                // large fingers, on a bus, could miss. `ISLAND_TOUCH_TARGET` in ui/AppNavigation.kt
+                // is the app-wide figure and it is not a preference.
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
                 Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Straighten a sketch", fontSize = 13.sp)
@@ -354,6 +402,7 @@ internal fun DwSketchRectifyPanel(
         media = media,
         currentFileName = currentFileName,
         enabled = enabled,
+        supply = supply,
         onClose = { open = false },
         onAttached = onAttached,
         onMessage = onMessage,
@@ -369,6 +418,7 @@ private fun DwSketchRectifyOpen(
     media: DwMediaBridge,
     currentFileName: String?,
     enabled: Boolean,
+    supply: DwSketchPhotographSupply,
     onClose: () -> Unit,
     onAttached: (String) -> Unit,
     onMessage: (String) -> Unit,
@@ -377,8 +427,46 @@ private fun DwSketchRectifyOpen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    /**
+     * Which photograph is being straightened, and who decided.
+     *
+     * WHEN A HOST OWNS THE CHOICE, `sourceId` IS NOT CONSULTED AT ALL — see the identical note in
+     * `DwSketchTraceOpen`. A local selection kept alongside a hosted one drifts the first time the
+     * host changes its mind while this panel is shut, and this card would then be straightening a
+     * photograph the preview above it is not showing.
+     */
     var sourceId by remember { mutableStateOf(sources.first().item.id) }
-    val source = sources.firstOrNull { it.item.id == sourceId } ?: sources.first()
+    val hosted = supply as? DwSketchPhotographSupply.Hosted
+    val source = hosted?.source
+        ?: sources.firstOrNull { it.item.id == sourceId }
+        ?: sources.first()
+
+    /**
+     * [source]'s id as something a COROUTINE CAN READ LATER — which the `val` above is not.
+     *
+     * ── THE BUG THIS EXISTS FOR, WHICH IS A KOTLIN FACT AND NOT A COMPOSE ONE ─────────────────
+     *
+     * [findTheSheet] and [build] both capture the photograph they are about, suspend for hundreds of
+     * milliseconds, and then compare what they captured against what the panel is pointed at NOW —
+     * because "the answer arrived after the designer moved on" is the whole of what those two guards
+     * are for, and each of them says so at length directly above itself.
+     *
+     * **A guard is only a guard if the second read is live.** `source` is a plain local, recomputed
+     * on every composition, and a lambda that mentions it captures THAT composition's value. So
+     * `builtFrom != source.item.id` inside the coroutine compares a captured string with the same
+     * captured string, is false forever, and lets every abandoned result land — the exact outcome
+     * `build`'s own comment calls "a lie in the archive". `sourceId` did not have that problem, being
+     * a `mutableStateOf` delegate: a lambda mentioning it captures the STATE and reads it at the
+     * moment the line runs. The two guards were moved off it on 2026-08-29 for a good reason — under
+     * a host `sourceId` never moves, so it was the wrong question — and the live read went with it.
+     *
+     * `rememberUpdatedState` is that reason and that live read together: the value is the effective
+     * photograph, hosted or chosen here, and it is behind a `State` that every recomposition writes
+     * and every suspended coroutine sees. Reachable input: two photographs on the record, four
+     * corners placed, "Make the plate" pressed, and the other photograph tapped while the spinner is
+     * up — on the tab, the same two taps against the shared photograph card.
+     */
+    val currentSourceId by rememberUpdatedState(source.item.id)
 
     var image by remember { mutableStateOf<DwDisplayImage?>(null) }
     var sourcePlane by remember { mutableStateOf<GreyPlane?>(null) }
@@ -562,14 +650,19 @@ private fun DwSketchRectifyOpen(
         // outline would be drawn over a DIFFERENT picture, at coordinates that mean nothing in it,
         // and "Use these corners" would move four handles to a shape found somewhere else. The
         // LaunchedEffect that clears `guess` on a switch cannot help: this write happens after it.
-        val searchedId = sourceId
+        // `source.item.id` AND NOT `sourceId`: the two are the same only while this card owns its
+        // own chooser. Under a host they are not — `sourceId` never moves — and a guard on the
+        // stale one would let a search finished after a host's change land on the new photograph.
+        // The far side of the suspension reads [currentSourceId] and not `source.item.id`, because
+        // the second is captured by this closure and would be compared against itself.
+        val searchedId = source.item.id
         working = true
         guess = null
         guessNote = null
         scope.launch {
             val found = withContext(Dispatchers.Default) { dwGuessSheetCorners(plane) }
             working = false
-            if (searchedId != sourceId) return@launch
+            if (searchedId != currentSourceId) return@launch
             if (found == null) {
                 // Silent in the module, said out loud here — the designer pressed a button and is
                 // owed an answer, and "I could not tell" is an answer. What it must never do is
@@ -622,7 +715,10 @@ private fun DwSketchRectifyOpen(
         //
         // The `LaunchedEffect(source.item.id)` above clears `plate` on a switch and cannot help:
         // these writes happen after it.
-        val builtFrom = sourceId
+        // See the note on `searchedId`: the guard has to be the photograph actually in use, which
+        // under a host is not this panel's own selection — and it has to be READ on the far side of
+        // the suspension rather than captured with it. See [currentSourceId].
+        val builtFrom = source.item.id
         working = true
         plate = null
         plateBitmap = null
@@ -645,7 +741,7 @@ private fun DwSketchRectifyOpen(
                     DwPlateOptions(aspect = shape.aspect, lineArt = lineArt),
                 )
             }
-            if (builtFrom != sourceId) {
+            if (builtFrom != currentSourceId) {
                 // `working` is cleared even on the abandoned path: it is a flag about the panel and
                 // not about this photograph, and leaving it set would disable every button on a
                 // screen whose work has simply moved on.
@@ -663,7 +759,7 @@ private fun DwSketchRectifyOpen(
                     working = false
                     // The second suspension, and the second check. A render that finished after the
                     // switch is a bitmap of the previous photograph.
-                    if (builtFrom != sourceId) return@launch
+                    if (builtFrom != currentSourceId) return@launch
                     if (rendered == null) {
                         refusal = "There was not enough memory on this device to build the plate. " +
                             "Close the other photographs on this stage and try again."
@@ -681,7 +777,7 @@ private fun DwSketchRectifyOpen(
     /**
      * File the plate on screen as this field's image.
      *
-     * NO `sourceId` GUARD, DELIBERATELY, and this is the one place in the panel where its absence is
+     * NO PHOTOGRAPH GUARD, DELIBERATELY, and this is the one place in the panel where its absence is
      * the correct answer rather than an omission. [build] and [findTheSheet] guard because their
      * results are ABOUT a photograph and would be drawn over a different one; this writes the plate
      * the designer was looking at when they pressed the button, into a field that is the same field
@@ -735,34 +831,44 @@ private fun DwSketchRectifyOpen(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    Icons.Filled.AutoFixHigh,
-                    contentDescription = null,
-                    tint = MaterialTheme.field.muted,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    "Straighten a photographed sketch",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 48.dp)) {
-                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Close", fontSize = 12.sp)
-            }
-        }
+        DwPanelDisclosureHeader(
+            icon = Icons.Filled.AutoFixHigh,
+            title = DW_RECTIFY_CARD_TITLE,
+            expanded = true,
+            // Collapsing is ALWAYS allowed, even where the field itself is read-only: it writes
+            // nothing, and a designer who can see a card must be able to put it away again.
+            toggleEnabled = true,
+            expandAction = DW_RECTIFY_EXPAND_ACTION,
+            collapseAction = DW_RECTIFY_COLLAPSE_ACTION,
+            onToggle = onClose,
+        )
 
-        if (sources.size > 1) {
-            DwPanelLabel("Which photograph")
+        if (hosted != null) {
+            // NO CHOOSER HERE, AND THE ONE THAT EXISTS IS NAMED — `SketchTraceField.tsx:283-286`'s
+            // rule, applied to this panel for the same reason: two chip rows over one photograph is
+            // the duplication a shared choice exists to end, and an unexplained absence reads as a
+            // capability this card has lost.
+            Text(
+                // The tracing panel's sentence in this panel's verb — see [DwSketchTracePanel] for
+                // why the shared card is NAMED here rather than pointed at.
+                hosted.source?.let {
+                    "Straightening “${it.item.displayName}” — chosen in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
+                        "above. Every other panel here works from the same one."
+                } ?: ("No photograph has been chosen yet. Choose one in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
+                    "above — it is the photograph this card straightens and the cards beside it use."),
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        } else if (sources.size > 1) {
+            // "Photograph", NOT "Which photograph" — one label for one control, on both cards and on
+            // both clients. This chooser and `DwPhotoMeasureOpen`'s are the same control doing the
+            // same job on two cards that sit one above the other on the same record, and they were
+            // labelled two things; the portal's own rectify field settles the tie at
+            // `SketchRectifyField.tsx:426`, where the field label is the bare noun. Requirement 6 is
+            // about exactly this class of difference — nothing was wrong on either screen, and two
+            // descriptions of one thing is the defect.
+            DwPanelLabel("Photograph")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1185,14 +1291,28 @@ private fun DwSketchRectifyOpen(
                 ) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Attach as ${field.label}", fontSize = 13.sp)
+                    // NAMES THE ARTEFACT AND NOT ONLY THE DESTINATION, which is the whole point: the
+                    // tracing panel below writes into this same FILE field from a button that read
+                    // the same four words, and a single-valued field keeps no history of the id it
+                    // replaces. The grammar is `SketchTraceField.tsx`'s "Add the line art to “…”";
+                    // the noun is this panel's own, because a browser has no straightening panel to
+                    // copy a string from. See that button for the long form.
+                    //
+                    // "PLATE" AND NOT "STRAIGHTENED SKETCH", because it is the word this panel already
+                    // uses for what it makes — `plate`, `plateBitmap`, `plateNote` — and the word the
+                    // registry's own field is the home of. It covers both outputs of the toggle above:
+                    // "Line art — black on white" and "Straightened only — keep the tones" are two
+                    // renderings of one rectified plate, not two different things to attach.
+                    Text("Add the straightened plate to “${field.label}”", fontSize = 13.sp)
                 }
-                if (!currentFileName.isNullOrBlank()) {
-                    Text(
-                        "“$currentFileName” is attached here now. This replaces it.",
-                        color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 11.sp,
-                    )
+                // THE SAME WARNING THE TRACING PANEL PRINTS, IN THE SAME BOX, FROM THE SAME FUNCTION.
+                // This was a bare coloured line while the tracing panel's was a bordered note with a
+                // warning icon — two cards one above the other, writing into the SAME FILE field from
+                // buttons that read the same, telling a designer the same irreversible fact at two
+                // different volumes. The louder of the two is the right one: what is about to be lost
+                // is a file, and a single-valued field keeps no history of the id it replaces.
+                dwPanelReplaceWarning(currentFileName, DwPanelHolds.FILE)?.let {
+                    DwPanelNote(warning = true, text = it)
                 }
                 Text(
                     "The photograph in ${source.fieldLabel} is not read again after this, not " +
@@ -1218,6 +1338,16 @@ private fun DwSketchRectifyOpen(
                 )
             }
         }
+
+        /* ── The way out, at the point the work ends ────────────────────────────────────────── */
+
+        /*
+         * THE SECOND DOOR, from the same composable the other two cards use. The header's door is a
+         * photograph, a nudge pad, a proportion picker and a plate preview above this point by the
+         * time a designer has attached anything — which is the report `DwPhotoMeasureOpen` was given
+         * its foot door for, and this surface is no shorter.
+         */
+        DwPanelCollapseButton(prominent = true, title = DW_RECTIFY_CARD_TITLE, onClick = onClose)
     }
 }
 

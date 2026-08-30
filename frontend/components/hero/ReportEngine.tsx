@@ -1,7 +1,16 @@
 "use client";
 
 import { motion, type Variants } from "framer-motion";
-import { FileText, FileWarning, MonitorPlay, Palette, ScrollText, Smartphone } from "lucide-react";
+import {
+  BarChart3,
+  FileClock,
+  FileText,
+  FileWarning,
+  MonitorPlay,
+  Palette,
+  ScrollText,
+  Smartphone
+} from "lucide-react";
 
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 import { STAGE_COUNT_WORD_LOWER } from "@/components/hero/workshopArc";
@@ -187,6 +196,73 @@ const FACTS = [
     title: "Generated on the handset, with nothing to connect to",
     copy:
       "The phone builds the document from its own local draft and writes both files on the device, so a fortnight in a cluster ends in a document rather than in a queue. It is candid about the three annexures a handset can be short of, in a sentence each rather than a silent hole in the file: transcripts, because workshop audio is transcribed on the server; the answers to an attached questionnaire, until this phone has read that questionnaire once with a connection, after which they print offline too; and machine-assisted text, the one gap nothing on the phone can close. The browser's report is the other way round: it needs the API."
+  },
+  /*
+    ── THE FIFTH CARD: REPORT HISTORY ─────────────────────────────────────────────────────────────
+    The strongest capability this page had never mentioned. Every generated file was ALREADY being
+    recorded — `DwReportExport` carries each one's checksum, size, page count, template, registry
+    version and timestamp, including the ones a phone wrote with no network — and none of it was on
+    a screen anywhere, so a reviewer's "did you update the cost sheet before you resubmitted?" had
+    no answer at all. `app/(protected)/design-workshops/[id]/report/history/page.tsx` is the screen
+    and `lib/reportDiff.ts` is the comparison.
+
+    ⚠ THE ASYMMETRY IS THE FEATURE AND MUST SURVIVE EVERY EDIT OF THIS COPY. `reportDiff.ts`'s
+    header divides what is knowable from what is not, and the division is not tidiness: no snapshot
+    of the stage data is kept at export time, so the only evidence is each row's createdAt /
+    updatedAt / deletedAt. A stage NOBODY SAVED between two files provably carried identical data —
+    a proof, not a guess. A stage that WAS saved supports nothing beyond "written to", because
+    `save_stage` updates every row the payload names without comparing it to what is stored, so
+    correcting one word stamps the whole stage.
+
+    ⚠ AND THE VERB IS "WRITTEN", NEVER "CHANGED", for that same reason. Upgrading this copy to
+    "shows you what changed" would be the exact confident answer to the exact question a ministry
+    reviewer is asking, and the system cannot support it. Both files' own headers say so; do not
+    make this page the one place in the repository that promises a field-level diff.
+  */
+  {
+    icon: FileClock,
+    title: "Every file you have generated, and what provably did not change",
+    copy:
+      "A report goes to a ministry and comes back for revision three or four times. Each of those files was already recorded — its checksum, its size, its page count, the template and the registry it was built against, including the ones a phone wrote with no signal — and now they are on a screen, with a comparison between any two of them. The comparison is careful about which direction it can be certain in: a stage nobody saved between two files carried identical data in both, and that is a proof rather than a likelihood. A stage that was saved is reported as written to, and never as a field that changed, because nothing stored can say which one."
+  },
+  /*
+    ── THE SIXTH CARD: THE FIGURES ────────────────────────────────────────────────────────────────
+    `report_builder.py#FIGURES` is the whole placement table: SEVEN ChartBlocks, each keyed to the
+    stage section it is drawn from. Two of them are new — SURVEY_RESPONDENTS and
+    SURVEY_PRICE_EXPECTATIONS — and the section had no card about figures at all, so naming the
+    family is worth more than announcing the two additions on their own.
+
+    ⚠ THIS COMMENT AND THE COPY BELOW BOTH SAID FIVE, and the miscount came from listing the two
+    NEW figures plus the three the author happened to scroll past. The table is seven: OUTPUT_COUNTS
+    and PROTOTYPE_STATUS (both on WORKSHOP_OUTCOMES), SURVEY_RESPONDENTS and
+    SURVEY_PRICE_EXPECTATIONS (MARKET_SURVEY_CAPTURE), COST_BY_HEAD and PRICE_BANDS
+    (COSTING_MARKET_LINKAGE), and ADOPTION (POST_WORKSHOP_FOLLOWUP). Count it, never recall it:
+    `grep -n '": ("' backend/app/services/report_builder.py` inside the FIGURES block. Undercounting
+    is the more expensive direction here — a reader who has seen the yield bar chart and the
+    prototype donut in a real document reads "five figures" as a page describing a different
+    product, and the two omitted ones are the pair a template prints under its own "Outcomes in
+    figures" heading (`report_templates.OUTCOME_FIGURES`), which is to say the most visible two.
+
+    ⚠ "WHEREVER THE TEMPLATE CARRIES THE STAGE" IS NOT A HEDGE, IT IS THE MECHANISM. `_charts_for`
+    matches a stage section against that table and `TemplateSection.include_figures` defaults true,
+    so a figure appears exactly where its stage does. Counted in that file on 2026-08-28: four of
+    the six templates carry MARKET_SURVEY_CAPTURE; COMPACT_SUMMARY and the buyer-facing
+    PHOTO_CATALOGUE do not print the stage and therefore gain nothing. A flat "five figures in every
+    report" would be false for two of the six.
+
+    The cost-head sentence is `_chart_cost_by_head`'s own argument, kept because it is the most
+    legible example of the discipline this whole section is about: on a document that becomes a
+    sanctioned amount, "Transport ₹ 0" and "nobody entered transport" are different claims.
+
+    SIX CARDS STILL DIVIDE THE GRID. `md:grid-cols-2` below is three full rows, no orphan. A seventh
+    would leave one card alone on a row, which is the thing the RENDERERS list's own comment warns
+    about one grid up.
+  */
+  {
+    icon: BarChart3,
+    title: "Figures the report draws for itself",
+    copy:
+      "Who the market survey actually asked, and what those people said they would pay; where the money went, head by head; the price bands the workshop's own cost sheets fall into; sketches against prototypes against final products, and how the review dispositioned each one; and how many products were still being made at three, six and twelve months. Seven figures, each drawn from the stages as they stand wherever the chosen template carries the stage it comes from — so a chart cannot quietly disagree with the table above it. A cost head nobody entered is left off rather than drawn as zero, because “Transport ₹ 0” beside four real heads reads as a claim that transport was free."
   }
 ];
 

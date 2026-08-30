@@ -36,6 +36,7 @@ people had already covered BEFORE the task existed. That number is not an answer
 create was asked, and neither client reads it — both toast the count and refetch the batch list,
 which derives properly.
 """
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -513,7 +514,13 @@ def _record_key(task: Any, kind: str, artisan_key: tuple) -> tuple:
 
 
 def _section_key(task: Any, artisan_key: tuple) -> tuple:
-    return ("sections", task.assigneeId, task.workshopId, artisan_key, tuple(sorted(task.sectionIds)))
+    return (
+        "sections",
+        task.assigneeId,
+        task.workshopId,
+        artisan_key,
+        tuple(sorted(task.sectionIds)),
+    )
 
 
 async def derive_progress(tasks: list[Any]) -> dict[str, dict[str, Any]]:
@@ -828,7 +835,9 @@ def batch_summary(tasks: list[Any], serialized: list[dict[str, Any]]) -> dict[st
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_task(payload: TaskCreate, current_user: Any = Depends(require_admin)) -> dict[str, Any]:
+async def create_task(
+    payload: TaskCreate, current_user: Any = Depends(require_admin)
+) -> dict[str, Any]:
     """Single-assignee create. The scope fields are optional here — a bare "title + assignee" task
     is still valid for ad-hoc work — but anything supplied is validated exactly like a batch."""
     await assert_assignable(current_user, payload.assigneeId)
@@ -993,7 +1002,9 @@ async def list_tasks(
         where["assigneeId"] = current_user.id
     else:
         if not is_admin(current_user):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
+            )
         if view == "created":
             where["createdById"] = current_user.id
         if assigneeId:
@@ -1096,7 +1107,8 @@ async def list_task_batches(
     visible = [task for key in window for task in grouped[key]]
     serialized = {item["id"]: item for item in await serialize_tasks(visible)}
     items = [
-        batch_summary(grouped[key], [serialized[task.id] for task in grouped[key]]) for key in window
+        batch_summary(grouped[key], [serialized[task.id] for task in grouped[key]])
+        for key in window
     ]
     return page_payload(items, total, page, page_size)
 
@@ -1175,7 +1187,11 @@ async def task_progress(
         )
     # Busiest-outstanding first: the person with the most unfinished work is the one to chase.
     assignees.sort(
-        key=lambda row: (-row["openCount"], -row["taskCount"], (row["user"] or {}).get("name") or "")
+        key=lambda row: (
+            -row["openCount"],
+            -row["taskCount"],
+            (row["user"] or {}).get("name") or "",
+        )
     )
 
     return {

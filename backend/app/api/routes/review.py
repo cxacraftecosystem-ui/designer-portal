@@ -71,7 +71,9 @@ def delegate_for(record_type: str) -> tuple[Any, str, str]:
     }
     key = record_type.lower()
     if key not in mapping:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported review record type")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported review record type"
+        )
     return mapping[key]
 
 
@@ -497,7 +499,9 @@ async def edit_reviewed_record(
     # stringify decimals before anything compares the payload against the stored row. An identity
     # number that came back as its own mask is dropped here for the same reason PATCH /artisans
     # drops it — a reviewer's form is fed by the same masked responses.
-    data = drop_masked_identity_numbers(decimal_to_string(clean_data(parsed.model_dump(exclude_unset=True))))
+    data = drop_masked_identity_numbers(
+        decimal_to_string(clean_data(parsed.model_dump(exclude_unset=True)))
+    )
     if not data:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -516,7 +520,11 @@ async def edit_reviewed_record(
     jsonify_metadata(data)
     updated = await delegate.update(where={"id": record_id}, data=data)
 
-    summary = f"{EDIT_LOG_PREFIX}: {', '.join(changed)}" if changed else f"{EDIT_LOG_PREFIX}: no values changed"
+    summary = (
+        f"{EDIT_LOG_PREFIX}: {', '.join(changed)}"
+        if changed
+        else f"{EDIT_LOG_PREFIX}: no values changed"
+    )
     note = (payload.note or "").strip()
     await db.reviewlog.create(
         data={
@@ -532,7 +540,9 @@ async def edit_reviewed_record(
     if payload.approve:
         # Re-reads the freshly edited row and re-applies the late-submission gate, so approving here
         # is identical to calling /approve straight afterwards — including its own ReviewLog entry.
-        return await set_review_status(record_type, record_id, "APPROVED", ReviewAction(notes=payload.note), reviewer)
+        return await set_review_status(
+            record_type, record_id, "APPROVED", ReviewAction(notes=payload.note), reviewer
+        )
     return public_encode(updated)
 
 

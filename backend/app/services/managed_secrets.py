@@ -289,7 +289,9 @@ def _probe_anthropic(value: str) -> tuple[bool, str | None]:
 
 
 def _probe_elevenlabs(value: str) -> tuple[bool, str | None]:
-    return _probe_http("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": value}, secret=value)
+    return _probe_http(
+        "https://api.elevenlabs.io/v1/user", headers={"xi-api-key": value}, secret=value
+    )
 
 
 def _probe_deepgram(value: str) -> tuple[bool, str | None]:
@@ -470,7 +472,9 @@ async def refresh_if_stale(force: bool = False) -> None:
     # Flag (once) anything we could not open, so the UI can tell the admin to re-enter it instead of
     # silently serving the stale environment value forever.
     for row in undecryptable:
-        logger.error("Managed secret %s could not be decrypted; falling back to the environment", row.key)
+        logger.error(
+            "Managed secret %s could not be decrypted; falling back to the environment", row.key
+        )
         if row.lastStatus == _STATUS_FAILED and row.lastError == _UNDECRYPTABLE_ERROR:
             continue
         with suppress(Exception):
@@ -658,7 +662,9 @@ def _override_is_readable(row: Any | None) -> bool:
     return bool(token) and decrypt(token) is not None
 
 
-def _describe(spec: ManagedKey, row: Any | None, verdict: dict[str, Any] | None = None) -> dict[str, Any]:
+def _describe(
+    spec: ManagedKey, row: Any | None, verdict: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The safe, value-free projection of one managed key. NEVER add the plaintext to this dict.
 
     ``verdict`` is the durable SecretTestResult for an ENVIRONMENT-supplied key, and is consulted
@@ -786,7 +792,12 @@ async def reveal_secret(key: str) -> dict[str, Any]:
     # this ciphertext, so there is no window in which they can describe different keys.
     override = decrypt(token) if token else None
     if override:
-        return {"key": key, "value": override, "source": SOURCE_DATABASE, "overrideUnreadable": False}
+        return {
+            "key": key,
+            "value": override,
+            "source": SOURCE_DATABASE,
+            "overrideUnreadable": False,
+        }
     environment = env_value(key)
     return {
         "key": key,

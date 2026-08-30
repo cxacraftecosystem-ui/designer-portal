@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
+
 # The driver's own name for "a unique index refused this INSERT". Imported for the singleton race
 # below rather than matched on a message: `save_stage` recovers from exactly this and re-raises
 # everything else, and a string match would either miss a driver upgrade's rewording or swallow an
@@ -66,6 +67,7 @@ from app.services.report_docx import render_docx
 from app.services.report_model import ImageRef, PageSize, ReportMeta
 from app.services.report_pdf import render_pdf
 from app.services.report_questionnaires import attach_questionnaires, questionnaire_warnings
+
 # The ONE masking rule this application has, imported rather than reimplemented. See the note on
 # `pehchanCardNumber` in the Artisan reference model for why a card number crossing into a stage
 # entry has to go through it, and `record_fields.py:270-283` for the defect that settled it.
@@ -86,6 +88,7 @@ from app.services.records import (
     mask_identity_number,
     viewable_where,
 )
+
 # THE MEASUREMENT-METHOD VOCABULARY, IMPORTED AND NOT RESTATED. `METHOD_CLAUSES` is the two phrases
 # the record sheet, every .xlsx sheet and both CSV exports already print for a machine-produced
 # dimension; `field_method` is the one reader of the stamp `records.merge_field_provenance` writes.
@@ -204,9 +207,7 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
                 detail="This workshop is deleted. Restore it before editing.",
             )
         if not admin:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Record not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     return record
 
 
@@ -395,8 +396,9 @@ def _step_lines(process: Any) -> str | None:
     reader counts as a step. One documented step is now one bullet whatever its note contains.
     """
     steps = getattr(process, "steps", None) or []
-    ordered = sorted(steps, key=lambda s: (getattr(s, "sortOrder", 0) or 0,
-                                           str(getattr(s, "name", "") or "")))
+    ordered = sorted(
+        steps, key=lambda s: (getattr(s, "sortOrder", 0) or 0, str(getattr(s, "name", "") or ""))
+    )
     lines: list[str] = []
     for index, step in enumerate(ordered, start=1):
         # The NAME goes through `_one_line` as well as the note, and not out of symmetry: it is
@@ -486,7 +488,7 @@ def _interview_artisan_count(interview: Any) -> int:
 
 
 def _interview_artisan_phrase(interview: Any) -> str | None:
-    """"6 artisans" for the picker's sublabel, or None for a sitting with none recorded.
+    """ "6 artisans" for the picker's sublabel, or None for a sitting with none recorded.
 
     None rather than "0 artisans": the sublabel is a `_joined` list of identifying facts and a zero
     there reads as a defect in the picker rather than as a fact about the sitting. The DATA key uses
@@ -597,7 +599,7 @@ def _interview_sections_covered(interview: Any) -> int | None:
     """
     covered: set[str] = set()
     section_by_question: dict[str, str] = {}
-    for row in (getattr(interview, "responses", None) or []):
+    for row in getattr(interview, "responses", None) or []:
         question = getattr(row, "question", None)
         code = _norm_section_code(getattr(question, "sectionCode", None))
         if not code:
@@ -611,7 +613,7 @@ def _interview_sections_covered(interview: Any) -> int | None:
         if str(getattr(row, "answerText", "") or "").strip():
             covered.add(code)
     unresolved: set[str] = set()
-    for row in (getattr(interview, "media", None) or []):
+    for row in getattr(interview, "media", None) or []:
         meta = _meta(row)
         code = _norm_section_code(meta.get("sectionCode"))
         if not code:
@@ -646,7 +648,8 @@ def _interview_questions_answered(interview: Any) -> int:
     instrument becomes wrong without anybody touching the report.
     """
     return sum(
-        1 for r in (getattr(interview, "responses", None) or [])
+        1
+        for r in (getattr(interview, "responses", None) or [])
         if str(getattr(r, "answerText", "") or "").strip()
     )
 
@@ -1309,7 +1312,8 @@ def _translated(table: Mapping[str, str | None], value: Any) -> str | None:
         logger.error(
             "Reference carry: %r is not in its translation table, so it hydrates blank. Add it "
             "to the table in design_workshops (spelled None, with a reason, if it has no honest "
-            "counterpart).", token,
+            "counterpart).",
+            token,
         )
         return None
     return table[token]
@@ -1398,7 +1402,7 @@ class ReferenceModel:
     instant it is chosen rather than after a round trip.
     """
 
-    delegate: str                                   # the attribute on the Prisma client
+    delegate: str  # the attribute on the Prisma client
     label: Callable[[Any], str]
     sublabel: Callable[[Any], str]
     data: Callable[[Any, ReferencePhoto | None], dict[str, Any]]
@@ -1460,8 +1464,9 @@ def _artisan_workshop_where(workshop_id: str) -> dict[str, Any]:
     # existed. Reading one of them would leave a designer staring at a picker that does not
     # contain the artisan sitting in front of them, and they would type the name in — which is
     # the exact behaviour this whole feature exists to end.
-    return {"OR": [{"workshopId": workshop_id},
-                   {"workshops": {"some": {"workshopId": workshop_id}}}]}
+    return {
+        "OR": [{"workshopId": workshop_id}, {"workshops": {"some": {"workshopId": workshop_id}}}]
+    }
 
 
 REFERENCE_MODELS: dict[str, ReferenceModel] = {
@@ -1499,8 +1504,10 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "localName": r.localName,
             # The craft is the closest thing the artisan table has to a specialisation, and it
             # is what a researcher typed into the free metadata before the relation existed.
-            "specialisation": (_rel(r, "craft", "name")
-                               or _meta_value(_meta(r), "specialisation", "specialization")),
+            "specialisation": (
+                _rel(r, "craft", "name")
+                or _meta_value(_meta(r), "specialisation", "specialization")
+            ),
             # ── THE TWO ANSWERS THIS TABLE COULD NOT GIVE, AND NOW CAN ───────────────────────
             #
             # `experienceYears` and `age` had NO COLUMN on `Artisan` and were read only from legacy
@@ -1549,14 +1556,16 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "experienceYears": (
                 derived
                 if (derived := derive_experience_years(r.craftStartDate)) is not None
-                else r.experienceYears if r.experienceYears is not None
+                else r.experienceYears
+                if r.experienceYears is not None
                 else _meta_value(_meta(r), "experienceYears", "experience", "yearsOfExperience")
             ),
             # `is not None` and NOT `or`: a derived age of 0 is a real answer (an infant), and
             # `or` would read it as absent and fall through to a stale metadata value. Nobody
             # documents a newborn artisan, which is exactly why this would never be noticed.
             "age": (
-                derived if (derived := derive_age(r.dateOfBirth)) is not None
+                derived
+                if (derived := derive_age(r.dateOfBirth)) is not None
                 else _meta_value(_meta(r), "age")
             ),
             "gender": r.gender,
@@ -1716,8 +1725,9 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         artisan_field="artisanId",
         media_field="productId",
         label=lambda r: str(r.productName or ""),
-        sublabel=lambda r: _joined(r.artisanName, r.craftName, _money(r.sellingPrice),
-                                   _review_flag(r)),
+        sublabel=lambda r: _joined(
+            r.artisanName, r.craftName, _money(r.sellingPrice), _review_flag(r)
+        ),
         data=lambda r, photo: {
             "name": r.productName,
             "localName": r.localName,
@@ -1785,8 +1795,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # THE SENTENCE THAT STOPS THE THREE NUMBERS ABOVE BEING READ AS A PERSON'S MEASUREMENT.
             # `None` for a record whose dimensions are all typed or all legacy, which leaves the box
             # blank — see `_measurement_method_note` for why silence is the honest rendering there.
-            "measurementMethodNote": _measurement_method_note(
-                "product", "ProductDocumentation", r),
+            "measurementMethodNote": _measurement_method_note("product", "ProductDocumentation", r),
             # The free-text size, which is what a product the measured boxes do not suit is
             # actually described by ("king size", "9 yards"). It lands on `dimensionsNote`, which
             # is the box that was already sitting opposite it.
@@ -1862,8 +1871,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # behind `recordMediaNote` — the tool record's media card is mounted TWICE, once for the
         # ordered "Process stages" sequence and once for general footage, and one still image was the
         # whole of what could reach a report. See `_media_note`.
-        include={"location": True, "media": True,
-                 "artisanLinks": {"include": {"artisan": True}}},
+        include={"location": True, "media": True, "artisanLinks": {"include": {"artisan": True}}},
         label=lambda r: str(r.toolkitName or ""),
         sublabel=lambda r: _joined(r.englishName, r.artisanName, r.place, _review_flag(r)),
         data=lambda r, photo: {
@@ -1963,8 +1971,9 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # and `_reference_photos` resolves ONE image, so a tool documented as a nine-photograph
             # sequence reached the report as a single still with nothing admitting the rest existed.
             # `numbered_prefix` is what lets the sentence say the sequence is a sequence.
-            "recordMediaNote": _media_note("tool", _rel_obj(r, "media"),
-                                           numbered_prefix="STAGE_STEP_"),
+            "recordMediaNote": _media_note(
+                "tool", _rel_obj(r, "media"), numbered_prefix="STAGE_STEP_"
+            ),
             "usedByArtisans": _linked_artisan_names(r),
             "documentedOn": _iso_date(r.recordedAt),
             "photo": photo.id if photo else None,
@@ -2273,10 +2282,12 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # `_reference_place` returns `(row.place, "", "")` for every model but `Artisan`. An interview
         # also has no STATED address to carry: it is an event, not a residence, so the
         # artisan/product/tool pattern of four stated columns plus a subject pin has no analogue here.
-        include={"responses": {"include": {"question": True}},
-                 "artisans": True,
-                 "media": True,
-                 "workshop": True},
+        include={
+            "responses": {"include": {"question": True}},
+            "artisans": True,
+            "media": True,
+            "workshop": True,
+        },
         # NO `media_field`, AND IT IS A DECISION RATHER THAN AN ABSENCE. `MediaFile
         # .questionnaireInterviewId` exists and is indexed, so `"questionnaireInterviewId"` COULD be
         # added to `_PHOTO_PARENT_COLUMNS` — and should not be. An interview's images are photographs
@@ -2294,8 +2305,13 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # list it believes was narrowed. (Deliberately unlike the process/product cascade below, where
         # the parent column exists and is non-nullable.)
         label=lambda r: str(r.title or ""),
-        sublabel=lambda r: _joined(_iso_date(r.interviewDate), r.place, r.language,
-                                   _interview_artisan_phrase(r), _review_flag(r)),
+        sublabel=lambda r: _joined(
+            _iso_date(r.interviewDate),
+            r.place,
+            r.language,
+            _interview_artisan_phrase(r),
+            _review_flag(r),
+        ),
         # ── A FLAT CITATION SUMMARY, AND THE HIERARCHY EXPLICITLY DOES NOT CROSS ──────────────────
         #
         # A reference carries a FLAT dict and a questionnaire is sections -> questions -> hundreds of
@@ -2384,8 +2400,7 @@ class _ProbeRow:
 def reference_data_keys() -> dict[str, frozenset[str]]:
     """The key set each reference model's ``data`` lambda actually produces."""
     return {
-        model: frozenset(spec.data(_ProbeRow(), None))
-        for model, spec in REFERENCE_MODELS.items()
+        model: frozenset(spec.data(_ProbeRow(), None)) for model, spec in REFERENCE_MODELS.items()
     }
 
 
@@ -2460,11 +2475,17 @@ def _dw_entity(model: str) -> EntitySpec | None:
     return next((e for _s, e in all_entities() if e.name == model), None)
 
 
-async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_ALL,
-                            filter_by: str | None = None, search: str | None = None,
-                            limit: int = REFERENCE_LIMIT_DEFAULT,
-                            record_id: str | None = None,
-                            viewer: Any = None) -> dict[str, Any]:
+async def reference_options(
+    record: Any,
+    model: str,
+    *,
+    scope: str = REF_SCOPE_ALL,
+    filter_by: str | None = None,
+    search: str | None = None,
+    limit: int = REFERENCE_LIMIT_DEFAULT,
+    record_id: str | None = None,
+    viewer: Any = None,
+) -> dict[str, Any]:
     """The options one REF picker shows, for the workshop ``record``.
 
     ``scope`` is the field's own :data:`REF_SCOPES` value, sent back by the client so the server
@@ -2645,7 +2666,9 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
         # so there is nothing to reset here.
         found = await getattr(db, spec.delegate).find_many(
             where={"AND": [c for c in clauses if c is not workshop_clause]},
-            order=spec.order, take=1, include=spec.include or None,
+            order=spec.order,
+            take=1,
+            include=spec.include or None,
         )
         out_of_scope_row = found[0] if found else None
 
@@ -2654,11 +2677,15 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
         [r.id for r in rows] + ([out_of_scope_row.id] if out_of_scope_row is not None else []),
     )
     return _reference_payload(
-        model, scope, scoped, filtered,
+        model,
+        scope,
+        scoped,
+        filtered,
         [_reference_option(spec, row, photos) for row in rows],
         truncated=truncated,
-        out_of_scope_option=(None if out_of_scope_row is None
-                             else _reference_option(spec, out_of_scope_row, photos)),
+        out_of_scope_option=(
+            None if out_of_scope_row is None else _reference_option(spec, out_of_scope_row, photos)
+        ),
     )
 
 
@@ -2670,14 +2697,24 @@ def _reference_option(spec: Any, row: Any, photos: dict[str, Any]) -> dict[str, 
         "sublabel": spec.sublabel(row),
         # `_reference_data` and NOT `spec.data`: see its docstring for the formatted-prose
         # column that otherwise reaches this payload as raw JSON and lands in a table cell.
-        "data": {k: v for k, v in _reference_data(spec, row, photos.get(row.id)).items()
-                 if v not in (None, "")},
+        "data": {
+            k: v
+            for k, v in _reference_data(spec, row, photos.get(row.id)).items()
+            if v not in (None, "")
+        },
     }
 
 
-def _reference_payload(model: str, scope: str, scoped: bool, filtered: bool,
-                       options: list[dict[str, Any]], *, truncated: bool,
-                       out_of_scope_option: dict[str, Any] | None = None) -> dict[str, Any]:
+def _reference_payload(
+    model: str,
+    scope: str,
+    scoped: bool,
+    filtered: bool,
+    options: list[dict[str, Any]],
+    *,
+    truncated: bool,
+    out_of_scope_option: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """The picker's whole answer. Every flag on it exists so a short list can say WHY it is short.
 
     ``scopedToWorkshop``, ``filtered`` and ``truncated`` all describe the LIST in ``options`` —
@@ -2880,22 +2917,22 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, R
         # interpolation is the wrong order to do it in. Bind it in the edit that widens those stubs.
         raise ValueError(f"Unsafe measurement-grid marker: {MEASUREMENT_GRID_PURPOSE!r}")
     rows = await db.query_raw(
-        f'WITH candidate AS ('
+        f"WITH candidate AS ("
         f'SELECT m."{column}" AS parent, m."id" AS id, m."caption" AS caption, '
         f'm."createdAt" AS created_at, ('
         # INTERPOLATED, AND VETTED FIRST — see the marker guard above, which is why. This is the
         # statement's SECOND interpolation and it went in unchecked, three lines under a guard whose
         # whole reason for existing is to stop unvetted strings reaching this SQL.
-        f'COALESCE(m."extraMetadata"->>\'purpose\', \'\') = \'{MEASUREMENT_GRID_PURPOSE}\' '
-        f'OR COALESCE(m."caption", \'\') LIKE \'% grid (measurement) for %\' '
-        f'OR m."originalFilename" LIKE \'grid-%\' '
-        f'OR m."originalFilename" LIKE \'measure-grid-%\''
-        f') AS is_grid '
+        f"COALESCE(m.\"extraMetadata\"->>'purpose', '') = '{MEASUREMENT_GRID_PURPOSE}' "
+        f"OR COALESCE(m.\"caption\", '') LIKE '% grid (measurement) for %' "
+        f"OR m.\"originalFilename\" LIKE 'grid-%' "
+        f"OR m.\"originalFilename\" LIKE 'measure-grid-%'"
+        f") AS is_grid "
         f'FROM "MediaFile" m '
         f'WHERE m."mediaType" = \'IMAGE\'::"MediaType" AND m."{column}" = ANY($1::text[])'
-        f') '
-        f'SELECT DISTINCT ON (parent) parent, id, caption FROM candidate '
-        f'ORDER BY parent, is_grid ASC, created_at ASC, id ASC',
+        f") "
+        f"SELECT DISTINCT ON (parent) parent, id, caption FROM candidate "
+        f"ORDER BY parent, is_grid ASC, created_at ASC, id ASC",
         ids,
     )
     return {
@@ -2907,8 +2944,9 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, R
     }
 
 
-async def _in_record_options(record: Any, entity: EntitySpec, search: str | None,
-                             take: int, *, record_id: str = "") -> dict[str, Any]:
+async def _in_record_options(
+    record: Any, entity: EntitySpec, search: str | None, take: int, *, record_id: str = ""
+) -> dict[str, Any]:
     """Options for a ref that points INSIDE this workshop — a sketch, a prototype, a roster row.
 
     Always scoped to the workshop whatever the field's declared scope says, because there is no
@@ -2937,13 +2975,15 @@ async def _in_record_options(record: Any, entity: EntitySpec, search: str | None
         | ({"OR": [{"id": record_id}, {"clientKey": record_id}]} if record_id else {}),
         order={"ordinal": "asc"},
     )
-    label_key = entity.label_field or next(
-        (f.key for f in entity.fields if f.is_free_text), ""
-    )
+    label_key = entity.label_field or next((f.key for f in entity.fields if f.is_free_text), "")
     # A second printable field, so two prototypes both called "Bag" are told apart by their code.
     sub_key = next(
-        (f.key for f in entity.fields
-         if f.key != label_key and f.is_free_text and not f.deprecated), ""
+        (
+            f.key
+            for f in entity.fields
+            if f.key != label_key and f.is_free_text and not f.deprecated
+        ),
+        "",
     )
     term = (search or "").strip().casefold()
 
@@ -2957,8 +2997,9 @@ async def _in_record_options(record: Any, entity: EntitySpec, search: str | None
         options.append({"id": row.id, "label": label, "sublabel": sublabel, "data": {}})
 
     truncated = len(options) > take
-    return _reference_payload(entity.name, REF_SCOPE_WORKSHOP, True, False,
-                              options[:take], truncated=truncated)
+    return _reference_payload(
+        entity.name, REF_SCOPE_WORKSHOP, True, False, options[:take], truncated=truncated
+    )
 
 
 @dataclass(slots=True)
@@ -2971,8 +3012,8 @@ class PendingEntry:
     """
 
     entity: EntitySpec
-    data: dict[str, Any]          # the cleaned values, mutated in place by hydration
-    previous: dict[str, Any]      # what the row held before this save; empty for a new row
+    data: dict[str, Any]  # the cleaned values, mutated in place by hydration
+    previous: dict[str, Any]  # what the row held before this save; empty for a new row
     row_id: str | None
     ordinal: int
     client_key: str | None
@@ -3656,7 +3697,8 @@ async def seed_designer_prefill(
             # down: a named designer with no profile must leave the designer block EMPTY, because a
             # blank required field is visible to the completeness score and to the report warnings
             # while somebody else's name in it is visible to nobody.
-            **(await prefill_from_profile(designer_id or actor.id)), **dict(extra or {})
+            **(await prefill_from_profile(designer_id or actor.id)),
+            **dict(extra or {}),
         }
         if not values:
             return record
@@ -3704,45 +3746,55 @@ async def seed_designer_prefill(
                     # the designer's phone number.
                     logger.warning(
                         "Designer prefill dropped %d value(s) on %s.%s for workshop %s: %s",
-                        len(refused), spec.key, entity.key, getattr(record, "id", None),
+                        len(refused),
+                        spec.key,
+                        entity.key,
+                        getattr(record, "id", None),
                         "; ".join(f"{k}: {v}" for k, v in sorted(refused.items())),
                     )
                 if not clean:
                     continue
-                await db.dwstageentry.create(data={
-                    "designWorkshopId": record.id,
-                    "stageKey": spec.key,
-                    "entityKey": entity.key,
-                    "ordinal": 0,
-                    "data": _json(clean),
-                    # THE RESERVED KEY, BECAUSE THIS IS THE OTHER WRITER OF SINGLETON ROWS AND THE
-                    # ONE THAT RUNS FIRST. `save_stage` is where the key is documented, but this
-                    # create is what puts `workshopSetup` — the singleton carrying the promoted
-                    # columns — into essentially every new workshop, and a row seeded without the
-                    # key is a row `@@unique([designWorkshopId, entityKey, clientKey])` cannot see
-                    # for the workshop's whole life: Postgres treats NULLs as distinct, and no
-                    # later save rewrites a key it did not have to. The invariant the schema
-                    # states is "one row per (workshop, entity)", and an invariant with one
-                    # unkeyed writer is not an invariant.
-                    "clientKey": singleton_client_key(spec.key),
-                    # STAMPED TO THE ACTOR AS A DESIGNER VALUE, not as a reference one, and — since
-                    # `designer_id` arrived — not to the person whose profile it came from either.
-                    # The docstring's provenance paragraph carries the whole argument; the short
-                    # version is that `entry_provenance` declares exactly TWO sources, that sentence
-                    # is pinned word for word against Android, and a value lifted out of somebody
-                    # else's profile at an admin's request is honestly neither of them. Of the two
-                    # answers that exist, the ACTOR is the only one that is not a fabrication: they
-                    # caused this write, and the designer has not seen these values. `source:
-                    # "reference"` is reserved for a value copied off a RECORD somebody else
-                    # recorded, which is a different question about a different table. Leaving these
-                    # unstamped would instead hand them to whichever co-designer next saves stage 1
-                    # without changing them.
-                    "fieldProvenance": _json(entry_provenance.merge_entry_provenance(
-                        previous={}, previous_data={}, new_data=clean,
-                        hydrated={}, user=actor,
-                    )),
-                    "createdById": actor.id,
-                })
+                await db.dwstageentry.create(
+                    data={
+                        "designWorkshopId": record.id,
+                        "stageKey": spec.key,
+                        "entityKey": entity.key,
+                        "ordinal": 0,
+                        "data": _json(clean),
+                        # THE RESERVED KEY, BECAUSE THIS IS THE OTHER WRITER OF SINGLETON ROWS AND THE
+                        # ONE THAT RUNS FIRST. `save_stage` is where the key is documented, but this
+                        # create is what puts `workshopSetup` — the singleton carrying the promoted
+                        # columns — into essentially every new workshop, and a row seeded without the
+                        # key is a row `@@unique([designWorkshopId, entityKey, clientKey])` cannot see
+                        # for the workshop's whole life: Postgres treats NULLs as distinct, and no
+                        # later save rewrites a key it did not have to. The invariant the schema
+                        # states is "one row per (workshop, entity)", and an invariant with one
+                        # unkeyed writer is not an invariant.
+                        "clientKey": singleton_client_key(spec.key),
+                        # STAMPED TO THE ACTOR AS A DESIGNER VALUE, not as a reference one, and — since
+                        # `designer_id` arrived — not to the person whose profile it came from either.
+                        # The docstring's provenance paragraph carries the whole argument; the short
+                        # version is that `entry_provenance` declares exactly TWO sources, that sentence
+                        # is pinned word for word against Android, and a value lifted out of somebody
+                        # else's profile at an admin's request is honestly neither of them. Of the two
+                        # answers that exist, the ACTOR is the only one that is not a fabrication: they
+                        # caused this write, and the designer has not seen these values. `source:
+                        # "reference"` is reserved for a value copied off a RECORD somebody else
+                        # recorded, which is a different question about a different table. Leaving these
+                        # unstamped would instead hand them to whichever co-designer next saves stage 1
+                        # without changing them.
+                        "fieldProvenance": _json(
+                            entry_provenance.merge_entry_provenance(
+                                previous={},
+                                previous_data={},
+                                new_data=clean,
+                                hydrated={},
+                                user=actor,
+                            )
+                        ),
+                        "createdById": actor.id,
+                    }
+                )
                 # Only columns this subset actually filled, and only the string-valued ones.
                 # `_coerce_promoted` is deliberately NOT reused: it nulls every promoted column of
                 # a touched entity, which here would blank the workshop's own title on creation.
@@ -3915,9 +3967,7 @@ def refused_answer_count(errors: Mapping[str, Any]) -> int:
     would silently return a character count, and "the server refused 47 answers" for one refused
     field is the kind of number nobody can trace back to a bug.
     """
-    return sum(
-        len(fields) if isinstance(fields, Mapping) else 1 for fields in errors.values()
-    )
+    return sum(len(fields) if isinstance(fields, Mapping) else 1 for fields in errors.values())
 
 
 async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any) -> dict[str, Any]:
@@ -3975,9 +4025,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # Inserting a fresh row would have orphaned every one of those references.
     definition, existing, header_row = await gather_reads(
         custom_sections.load_definition(workshop_id),
-        db.dwstageentry.find_many(
-            where={"designWorkshopId": workshop_id, "stageKey": spec.key}
-        ),
+        db.dwstageentry.find_many(where={"designWorkshopId": workshop_id, "stageKey": spec.key}),
         db.designworkshop.find_unique(where={"id": workshop_id}),
     )
     custom_specs = definition.fields_for(spec.key)
@@ -4059,13 +4107,17 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # The sentinel-keyed row first, for the reason the singleton fallback below gives: on a workshop
     # that already holds two `_custom` rows, "the first live one" alternates between them and each
     # save writes half the answers into a row the next read may not choose.
-    custom_row = next(
-        (r for r in live if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY
-         and r.clientKey == singleton_key), None
-    ) or next(
-        (r for r in live if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
-    ) or next(
-        (r for r in existing if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
+    custom_row = (
+        next(
+            (
+                r
+                for r in live
+                if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY and r.clientKey == singleton_key
+            ),
+            None,
+        )
+        or next((r for r in live if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None)
+        or next((r for r in existing if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None)
     )
     # EVERY DECISION ABOUT THE CONTAINER IS MADE IN ONE PURE CALL — what to store, what to refuse
     # and what to report — so the combination of merge, rejected-value preservation and the submit
@@ -4112,16 +4164,16 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         # droppedKeys to ignore it, which is the one thing it must not become: it is how a
         # server notices a phone is running a newer registry than it is.
         dropped.extend(
-            f"{entity.key}.{k}" for k in entry.data
-            if k not in known and not k.startswith("_")
+            f"{entity.key}.{k}" for k in entry.data if k not in known and not k.startswith("_")
         )
 
-        clean, entry_errors = validate_entry(
-            entity, entry.data, enforce_required=payload.submit
-        )
+        clean, entry_errors = validate_entry(entity, entry.data, enforce_required=payload.submit)
         if entry_errors:
-            key = entity.key if entity.cardinality is Cardinality.SINGLETON \
+            key = (
+                entity.key
+                if entity.cardinality is Cardinality.SINGLETON
                 else f"{entity.key}[{index}]"
+            )
             errors[key] = entry_errors
             # Keep going. A stage with one bad number still saves its other twenty fields; the
             # alternative loses everything the designer typed because of one typo.
@@ -4200,8 +4252,10 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # `SINGLETON_CLIENT_KEY` is the one the backfill migration picked, and picking it every
             # time is what makes an existing pair CONVERGE instead of alternating.
             row = (
-                next((r for r in live
-                      if r.entityKey == entity.key and r.clientKey == singleton_key), None)
+                next(
+                    (r for r in live if r.entityKey == entity.key and r.clientKey == singleton_key),
+                    None,
+                )
                 or next((r for r in live if r.entityKey == entity.key), None)
                 or next((r for r in existing if r.entityKey == entity.key), None)
             )
@@ -4279,20 +4333,26 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # collision is still REPORTED, because a client sending two entries for one singleton
             # is a bug somebody should be able to find.
             held.data.update(clean)
-            dropped.append(f"{entity.key} (second singleton entry in payload, folded into the first)")
+            dropped.append(
+                f"{entity.key} (second singleton entry in payload, folded into the first)"
+            )
             continue
 
         item = PendingEntry(
-            entity=entity, data=clean, previous=previous,
+            entity=entity,
+            data=clean,
+            previous=previous,
             row_id=row.id if row is not None else None,
-            ordinal=ordinal, client_key=client_key,
+            ordinal=ordinal,
+            client_key=client_key,
             previous_provenance=previous_provenance,
             # ONLY A SINGLETON. A collection row's key belongs to the client that made it and is
             # how that client finds its own row again after an offline sync; overwriting it would
             # strand the phone's copy and duplicate the row on the next replay.
             adopt_client_key=(
                 _reserved_key_upgrade(row, entity.key, singleton_key, existing)
-                if entity.cardinality is Cardinality.SINGLETON else None
+                if entity.cardinality is Cardinality.SINGLETON
+                else None
             ),
         )
         pending.append(item)
@@ -4328,30 +4388,34 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # for a row that was never deleted writing None over None costs nothing. Clearing it
             # only when the row looked deleted would mean reading a value that another request
             # may have changed between the SELECT above and this UPDATE.
-            updates.append((
-                item.row_id,
-                {
-                    "data": _json(item.data),
-                    "ordinal": item.ordinal,
-                    "deletedAt": None,
-                    "fieldProvenance": _json(field_provenance),
-                    # Present only when this row is a singleton that predates the reserved key;
-                    # `_reserved_key_upgrade` returns None in every other case and the column is
-                    # then not written at all.
-                    **({"clientKey": item.adopt_client_key} if item.adopt_client_key else {}),
-                },
-            ))
+            updates.append(
+                (
+                    item.row_id,
+                    {
+                        "data": _json(item.data),
+                        "ordinal": item.ordinal,
+                        "deletedAt": None,
+                        "fieldProvenance": _json(field_provenance),
+                        # Present only when this row is a singleton that predates the reserved key;
+                        # `_reserved_key_upgrade` returns None in every other case and the column is
+                        # then not written at all.
+                        **({"clientKey": item.adopt_client_key} if item.adopt_client_key else {}),
+                    },
+                )
+            )
         else:
-            creates.append({
-                "designWorkshopId": workshop_id,
-                "stageKey": spec.key,
-                "entityKey": item.entity.key,
-                "ordinal": item.ordinal,
-                "data": _json(item.data),
-                "fieldProvenance": _json(field_provenance),
-                "clientKey": item.client_key,
-                "createdById": user.id,
-            })
+            creates.append(
+                {
+                    "designWorkshopId": workshop_id,
+                    "stageKey": spec.key,
+                    "entityKey": item.entity.key,
+                    "ordinal": item.ordinal,
+                    "data": _json(item.data),
+                    "fieldProvenance": _json(field_provenance),
+                    "clientKey": item.client_key,
+                    "createdById": user.id,
+                }
+            )
 
     # THE CUSTOM ROW'S OWN WRITE, built exactly like a singleton's and deliberately reusing all
     # three of the rules the loop above applies — because the row's keys are TOP LEVEL, which is the
@@ -4391,33 +4455,37 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             custom_key_upgrade = _reserved_key_upgrade(
                 custom_row, custom_sections.CUSTOM_ENTITY_KEY, singleton_key, existing
             )
-            updates.append((
-                custom_row.id,
-                {
-                    "data": _json(custom_to_store),
-                    "ordinal": 0,
-                    "deletedAt": None,
-                    "fieldProvenance": _json(custom_provenance),
-                    **({"clientKey": custom_key_upgrade} if custom_key_upgrade else {}),
-                },
-            ))
+            updates.append(
+                (
+                    custom_row.id,
+                    {
+                        "data": _json(custom_to_store),
+                        "ordinal": 0,
+                        "deletedAt": None,
+                        "fieldProvenance": _json(custom_provenance),
+                        **({"clientKey": custom_key_upgrade} if custom_key_upgrade else {}),
+                    },
+                )
+            )
         else:
-            creates.append({
-                "designWorkshopId": workshop_id,
-                "stageKey": spec.key,
-                "entityKey": custom_sections.CUSTOM_ENTITY_KEY,
-                "ordinal": 0,
-                "data": _json(custom_to_store),
-                "fieldProvenance": _json(custom_provenance),
-                # THE SAME RESERVED KEY A SINGLETON GETS, because this row is one: there is exactly
-                # one `_custom` row per (workshop, stage) and `entityKey` is the reserved literal,
-                # so `@@unique([designWorkshopId, entityKey, clientKey])` covers it once the key is
-                # not null. It matters MORE here than on a registry singleton, because a second
-                # `_custom` row is a second copy of every answer the designer wrote to their own
-                # questions and nothing in the read path would say which one it was showing.
-                "clientKey": singleton_key,
-                "createdById": user.id,
-            })
+            creates.append(
+                {
+                    "designWorkshopId": workshop_id,
+                    "stageKey": spec.key,
+                    "entityKey": custom_sections.CUSTOM_ENTITY_KEY,
+                    "ordinal": 0,
+                    "data": _json(custom_to_store),
+                    "fieldProvenance": _json(custom_provenance),
+                    # THE SAME RESERVED KEY A SINGLETON GETS, because this row is one: there is exactly
+                    # one `_custom` row per (workshop, stage) and `entityKey` is the reserved literal,
+                    # so `@@unique([designWorkshopId, entityKey, clientKey])` covers it once the key is
+                    # not null. It matters MORE here than on a registry singleton, because a second
+                    # `_custom` row is a second copy of every answer the designer wrote to their own
+                    # questions and nothing in the read path would say which one it was showing.
+                    "clientKey": singleton_key,
+                    "createdById": user.id,
+                }
+            )
 
     # Rows the client no longer has, in the entities it actually sent. Restricting the sweep to
     # touched entities is what keeps a web form editing one collection from deleting another.
@@ -4451,9 +4519,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         # A singleton is never swept whichever list names it: it is updated in place or created,
         # never deleted by omission — otherwise saving a stage's collection would erase its
         # narrative.
-        collection_keys = {
-            e.key for e in spec.entities if e.cardinality is Cardinality.COLLECTION
-        }
+        collection_keys = {e.key for e in spec.entities if e.cardinality is Cardinality.COLLECTION}
         # AN ENTITY WHOSE OWN ENTRIES SAID `merge: true` IS NOT SWEPT, because the payload is then
         # making two contradictory claims about it and only one of them can be honoured: "I have
         # not seen the server's copy" (the entry) and "delete every row I did not name" (the
@@ -4545,9 +4611,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         # ONCE. A second violation is not this race — it means something is generating colliding
         # keys — and swallowing it in a loop would turn a bug into a hang on the request a designer
         # is waiting on. It is raised, and the route answers 500 as it did before.
-        creates, updates = await _absorb_key_collisions(
-            workshop_id, spec.key, creates, updates
-        )
+        creates, updates = await _absorb_key_collisions(workshop_id, spec.key, creates, updates)
         await write_everything()
 
     rows = await entry_rows(workshop_id, stage_key=spec.key)
@@ -4720,15 +4784,17 @@ async def _absorb_key_collisions(
         if row_id is None:
             still_creates.append(data)
             continue
-        absorbed.append((
-            row_id,
-            {
-                "data": data["data"],
-                "ordinal": data["ordinal"],
-                "deletedAt": None,
-                "fieldProvenance": data["fieldProvenance"],
-            },
-        ))
+        absorbed.append(
+            (
+                row_id,
+                {
+                    "data": data["data"],
+                    "ordinal": data["ordinal"],
+                    "deletedAt": None,
+                    "fieldProvenance": data["fieldProvenance"],
+                },
+            )
+        )
     return still_creates, absorbed
 
 
@@ -4789,9 +4855,7 @@ def _coerce_promoted(promoted: dict[str, Any], touched_entities: set[str]) -> di
 # --------------------------------------------------------------------------------------
 
 
-def workshop_completeness(
-    entries: list[Any], *, definition: Any = None
-) -> dict[str, Any]:
+def workshop_completeness(entries: list[Any], *, definition: Any = None) -> dict[str, Any]:
     """Score every stage from the entry rows, in one pass.
 
     ``definition`` is this workshop's custom sections, as ``custom_sections.load_definition``
@@ -4835,7 +4899,9 @@ def workshop_completeness(
     out: dict[str, Any] = {}
     for spec in stages():
         score = stage_completeness(
-            spec, singletons.get(spec.key, {}), collections.get(spec.key, {}),
+            spec,
+            singletons.get(spec.key, {}),
+            collections.get(spec.key, {}),
             custom_fields=fields_by_stage.get(spec.key, ()),
             custom_values=custom_values.get(spec.key, {}),
         )
@@ -4956,8 +5022,11 @@ def reference_ids(entries: list[Any]) -> dict[str, set[str]]:
     ref_keys: dict[str, dict[str, str]] = {}
     for spec in stages():
         for entity in spec.entities:
-            keys = {f.key: f.ref_model for f in entity.fields
-                    if f.type is FieldType.REF and f.ref_model in REFERENCE_MODELS}
+            keys = {
+                f.key: f.ref_model
+                for f in entity.fields
+                if f.type is FieldType.REF and f.ref_model in REFERENCE_MODELS
+            }
             if keys:
                 ref_keys[entity.key] = keys
 
@@ -5109,8 +5178,10 @@ async def load_report_references(entries: list[Any]) -> dict[str, ReferencedReco
     # model still loses only its own references, never the report.
     models = sorted(wanted)
     results = await gather_reads(
-        *(_load_one_reference_model(REFERENCE_MODELS[model], wanted[model], model)
-          for model in models)
+        *(
+            _load_one_reference_model(REFERENCE_MODELS[model], wanted[model], model)
+            for model in models
+        )
     )
     for model, (rows, photos) in zip(models, results, strict=True):
         spec = REFERENCE_MODELS[model]
@@ -5311,9 +5382,7 @@ class MediaIndex:
                 self._blobs[image.source] = None
                 continue
             declared = self._sizes.get(image.source, 0)
-            if declared and (
-                declared > per_image or self.budget_spent + declared > ceiling
-            ):
+            if declared and (declared > per_image or self.budget_spent + declared > ceiling):
                 # Refused without a round trip. The declared size is a claim, so it can only be
                 # trusted in this direction: a row that says it is too big is not worth fetching to
                 # find out, while a row that says it is small is checked against what arrives.
@@ -5563,8 +5632,7 @@ async def attach_report_ai_layers(
         # is what decides whether a layer may print; `acceptedAt` on the row decides only what the
         # warnings say about it.
         printable = {
-            str(getattr(row, "id", "") or "")
-            for row in await accepted_layers(workshop_id)
+            str(getattr(row, "id", "") or "") for row in await accepted_layers(workshop_id)
         }
     except Exception:
         # Blind, exactly as :func:`attach_report_questionnaires` is blind, and for its reason: one
@@ -5616,42 +5684,42 @@ async def attach_report_ai_layers(
         text_withheld = root is None or root.withheld_from(readable)
         if text_withheld:
             withheld_count += 1
-        items.append(AiLayerItem(
-            layer_id=layer_id,
-            kind=str(getattr(row, "kind", "") or ""),
-            tier=str(getattr(row, "tier", "") or ""),
-            provider=str(getattr(row, "provider", "") or ""),
-            model_id=str(getattr(row, "modelId", "") or ""),
-            model_version=str(getattr(row, "modelVersion", "") or ""),
-            language=str(getattr(row, "language", "") or ""),
-            source_language=str(getattr(row, "sourceLanguage", "") or ""),
-            target_language=str(getattr(row, "targetLanguage", "") or ""),
-            produced_at=_iso_or_blank(getattr(row, "producedAt", None)),
-            # `printable`, not `acceptedAt is not None`. See the docstring.
-            accepted=layer_id in printable,
-            accepted_at=_iso_or_blank(getattr(row, "acceptedAt", None)),
-            accepted_by=_acceptor_name(row),
-            accepted_by_id=str(getattr(row, "acceptedById", "") or ""),
-            source_kind=source_kind,
-            source_id=source_id,
-            # THE NOTE A VERB WAS RUN OVER IS THE "MADE FROM" EVIDENCE FOR THAT LAYER, so it reaches
-            # the page as the source LABEL — there is no row for a reader to look up instead. It goes
-            # with the content when the text is withheld, for `layer_payload`'s reason: serving the
-            # passage while withholding the correction of it hands over the same words in a slightly
-            # worse spelling.
-            source_label="" if text_withheld else source_text,
-            text="" if text_withheld else str(getattr(row, "text", "") or ""),
-            text_withheld=text_withheld,
-        ))
+        items.append(
+            AiLayerItem(
+                layer_id=layer_id,
+                kind=str(getattr(row, "kind", "") or ""),
+                tier=str(getattr(row, "tier", "") or ""),
+                provider=str(getattr(row, "provider", "") or ""),
+                model_id=str(getattr(row, "modelId", "") or ""),
+                model_version=str(getattr(row, "modelVersion", "") or ""),
+                language=str(getattr(row, "language", "") or ""),
+                source_language=str(getattr(row, "sourceLanguage", "") or ""),
+                target_language=str(getattr(row, "targetLanguage", "") or ""),
+                produced_at=_iso_or_blank(getattr(row, "producedAt", None)),
+                # `printable`, not `acceptedAt is not None`. See the docstring.
+                accepted=layer_id in printable,
+                accepted_at=_iso_or_blank(getattr(row, "acceptedAt", None)),
+                accepted_by=_acceptor_name(row),
+                accepted_by_id=str(getattr(row, "acceptedById", "") or ""),
+                source_kind=source_kind,
+                source_id=source_id,
+                # THE NOTE A VERB WAS RUN OVER IS THE "MADE FROM" EVIDENCE FOR THAT LAYER, so it reaches
+                # the page as the source LABEL — there is no row for a reader to look up instead. It goes
+                # with the content when the text is withheld, for `layer_payload`'s reason: serving the
+                # passage while withholding the correction of it hands over the same words in a slightly
+                # worse spelling.
+                source_label="" if text_withheld else source_text,
+                text="" if text_withheld else str(getattr(row, "text", "") or ""),
+                text_withheld=text_withheld,
+            )
+        )
 
     attach_ai_layers(data, items)
     warnings = ai_warnings(items)
     # NAMED, NEVER SILENT — the same rule `attach_report_transcripts` follows one function above for
     # exactly this case. A designer who cannot read a colleague's recordings should learn that from
     # the generator, not by counting headings in a sixty-page document.
-    printable_withheld = sum(
-        1 for item in items if item.text_withheld and item.accepted
-    )
+    printable_withheld = sum(1 for item in items if item.text_withheld and item.accepted)
     if printable_withheld:
         warnings.append(
             f"{printable_withheld} accepted machine-assisted passage(s) are named in the annexure "
@@ -5882,9 +5950,7 @@ async def attach_report_questionnaires(data: WorkshopData, workshop_id: str) -> 
         # Blind, and for the reason ``_load_one_reference_model`` is blind: one unreadable annexure
         # must not lose a report that is the end of two weeks of fieldwork. The designer is told.
         logger.exception("Could not load questionnaires for workshop %s", workshop_id)
-        return [
-            "The questionnaire annexure could not be loaded and was left out of this report."
-        ]
+        return ["The questionnaire annexure could not be loaded and was left out of this report."]
     if not items:
         return []
     attach_questionnaires(data, items)
@@ -5922,8 +5988,9 @@ def resolve_template_id(requested: Any, settings: Mapping[str, Any] | None, reco
     return str(getattr(record, "templateId", "") or "")
 
 
-def report_meta(record: Any, template_id: str,
-                settings: Mapping[str, Any] | None = None) -> ReportMeta:
+def report_meta(
+    record: Any, template_id: str, settings: Mapping[str, Any] | None = None
+) -> ReportMeta:
     """The cover page and the running furniture.
 
     ``settings`` is the stage-20 ``reportSettings`` entry. Every value it can carry is an OVERRIDE
@@ -5948,7 +6015,8 @@ def report_meta(record: Any, template_id: str,
     subtitle_parts = [p for p in (record.craftName, record.clusterName, record.state) if p]
     derived_subtitle = (
         " — ".join([*subtitle_parts[:1], ", ".join(subtitle_parts[1:])])
-        if len(subtitle_parts) > 1 else (subtitle_parts[0] if subtitle_parts else "")
+        if len(subtitle_parts) > 1
+        else (subtitle_parts[0] if subtitle_parts else "")
     )
 
     # The page size is an enum on the wire and a free string in the JSON column, so an unknown
@@ -5977,8 +6045,9 @@ def report_meta(record: Any, template_id: str,
     )
 
 
-def render_report(data: WorkshopData, template_id: str, resolver: Any, record: Any,
-                  fmt: str, options: Any) -> tuple[bytes, list[str], int | None]:
+def render_report(
+    data: WorkshopData, template_id: str, resolver: Any, record: Any, fmt: str, options: Any
+) -> tuple[bytes, list[str], int | None]:
     """Build and render, synchronously. The route calls this inside ``asyncio.to_thread``.
 
     Loading the media BYTES happens here too, and only for the images the document actually
@@ -6041,14 +6110,16 @@ def render_report(data: WorkshopData, template_id: str, resolver: Any, record: A
     template = apply_report_settings(
         template,
         settings,
-        include_photographs=(getattr(options, "includePhotographs", None)
-                             if options is not None else None),
+        include_photographs=(
+            getattr(options, "includePhotographs", None) if options is not None else None
+        ),
         # THE ONE SECTION THIS FUNCTION ADDS RATHER THAN REMOVES, and the only one driven by the
         # request alone. It is not in any template and has no stage-20 answer behind it: an annexure
         # of machine-written text is a decision made per document, by the person who is about to
         # hand that document to somebody. See `SpecialSection.ANNEXURE_AI_LAYERS`.
-        include_ai_layers=(getattr(options, "includeAiLayers", None)
-                           if options is not None else None),
+        include_ai_layers=(
+            getattr(options, "includeAiLayers", None) if options is not None else None
+        ),
         # THE DESIGNER'S OWN SECTIONS, READ BACK OFF THE DATA THEY WERE LOADED ONTO rather than
         # loaded a second time. One definition reaches both the template and the renderer, so the
         # section this places after stage 13 is the same section the builder then draws — two loads
@@ -6060,8 +6131,9 @@ def render_report(data: WorkshopData, template_id: str, resolver: Any, record: A
         custom_sections=custom_sections_of(data),
     )
 
-    document, warnings = build_report(data, template_id, resolver.ref, meta=meta, theme=theme,
-                                      template=template)
+    document, warnings = build_report(
+        data, template_id, resolver.ref, meta=meta, theme=theme, template=template
+    )
 
     # Only now, when the document is built, is it known which images it actually contains — a
     # template that excludes photographs must not pay to download forty of them.
@@ -6128,8 +6200,9 @@ def _font_warnings() -> list[str]:
     fonts = register_fonts()
     said: list[str] = []
     if fonts.missing_glyphs:
-        listed = ", ".join(f"{character} — {purpose}" for character, purpose in
-                           fonts.missing_glyphs)
+        listed = ", ".join(
+            f"{character} — {purpose}" for character, purpose in fonts.missing_glyphs
+        )
         said.append(
             f"This PDF prints empty boxes where these characters belong: {listed}. The server has "
             f"no font that can draw them. The Word document in the same download is correct."
@@ -6176,9 +6249,7 @@ def _dropped_warnings(dropped: list[str]) -> list[str]:
         said.append(
             f"{figures} figure(s) could not be drawn. Their numbers are still in the tables."
         )
-    photographs = sum(
-        1 for item in dropped if not item.startswith(("map:", "chart:", "figure:"))
-    )
+    photographs = sum(1 for item in dropped if not item.startswith(("map:", "chart:", "figure:")))
     if photographs:
         said.append(f"{photographs} photograph(s) could not be included in the file.")
     return said

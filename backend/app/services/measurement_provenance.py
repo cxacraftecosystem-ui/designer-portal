@@ -705,7 +705,9 @@ class MeasurementProvenance:
 UNRECORDED_PROVENANCE = MeasurementProvenance(method=MeasurementMethod.UNRECORDED)
 
 
-def vision_model_provenance(analysis: Any, *, provider: str, model_id: str) -> MeasurementProvenance:
+def vision_model_provenance(
+    analysis: Any, *, provider: str, model_id: str
+) -> MeasurementProvenance:
     """The provenance of a reading ``POST /media/analyze-measurement`` just produced.
 
     ``provider`` and ``model_id`` are keyword-only and have no defaults, so a caller with nothing to
@@ -995,7 +997,4 @@ def method_stamps(markers: Any, *, fields: Any = None) -> dict[str, dict[str, An
         touched = {field for field in sent if field in DIMENSION_FIELDS}
     else:
         touched = {field for field in fields if field in DIMENSION_FIELDS}
-    return {
-        field: provenance_of_marker(sent.get(field)).stamp()
-        for field in sorted(touched)
-    }
+    return {field: provenance_of_marker(sent.get(field)).stamp() for field in sorted(touched)}

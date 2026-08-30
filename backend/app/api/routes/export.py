@@ -316,9 +316,7 @@ async def dataset_manifest(
     step_ids = [s.id for p in processes for s in (p.steps or [])]
     for tag, ids in (("process", proc_ids), ("processstep", step_ids)):
         if ids:
-            media_or.append(
-                {"AND": [{"linkedRecordType": tag}, {"linkedRecordId": {"in": ids}}]}
-            )
+            media_or.append({"AND": [{"linkedRecordType": tag}, {"linkedRecordId": {"in": ids}}]})
     media: list[Any] = []
     if media_or:
         media_where: dict[str, Any] = {"OR": media_or}
@@ -367,10 +365,12 @@ async def dataset_manifest(
         for m in media_by.get((rtype, rid), []):
             leaf = _seg(m.originalFilename, m.id)
             if m.url:
-                files.append({
-                    "path": _uniq(f"{prefix}/{leaf}", used_files),
-                    "url": m.url,
-                })
+                files.append(
+                    {
+                        "path": _uniq(f"{prefix}/{leaf}", used_files),
+                        "url": m.url,
+                    }
+                )
                 continue
             # A NULL ``url`` USED TO MEAN "SILENTLY NOT IN THE ZIP", and it is not a broken row.
             # ``MediaFile.url`` is nullable and ``s3.public_url_for_key`` returns None whenever
@@ -463,7 +463,7 @@ async def dataset_manifest(
             pbase = _uniq(f"{base}/Processes/{_seg(proc.name, proc.id)}", used_dirs)
             add_text(pbase, "details.txt", _details("process", proc))
             add_media(pbase, "process", proc.id)
-            for step in (proc.steps or []):
+            for step in proc.steps or []:
                 sbase = _uniq(f"{pbase}/{_seg(step.name, step.id)}", used_dirs)
                 add_media(sbase, "processstep", step.id)
 
@@ -480,7 +480,7 @@ async def dataset_manifest(
         label = _seg(interview_label(interview), interview.id)
         base = _uniq(f"{prefix}/Questionnaires/{label}", used_dirs)
         answers = []
-        for r in (interview.responses or []):
+        for r in interview.responses or []:
             q = getattr(r, "question", None)
             prompt = getattr(q, "prompt", r.questionId) if q else r.questionId
             code = getattr(q, "sectionCode", "") if q else ""
@@ -490,7 +490,7 @@ async def dataset_manifest(
 
     interviews_for_artisan: dict[str, list[Any]] = {}
     for it in interviews:
-        for link in (it.artisans or []):
+        for link in it.artisans or []:
             interviews_for_artisan.setdefault(link.artisanId, []).append(it)
 
     # Products and tools are filed under exactly one (workshop, artisan) folder, so index them by
@@ -525,10 +525,12 @@ async def dataset_manifest(
         # artisan with no craft lands in "No craft" rather than the old "_OtherCrafts" lump, which
         # also swallowed artisans whose craft simply was not on the workshop's declared list.
         craft_names: dict[str, str] = {}
-        for link in (ws.crafts or []):
+        for link in ws.crafts or []:
             if link.craftId:
                 craft = getattr(link, "craft", None)
-                craft_names.setdefault(link.craftId, _seg(getattr(craft, "name", None), link.craftId))
+                craft_names.setdefault(
+                    link.craftId, _seg(getattr(craft, "name", None), link.craftId)
+                )
         # Declared crafts first (so the zip's folder order matches the workshop's own list), then
         # any further craft an artisan brought with them.
         buckets: dict[str | None, list[Any]] = {craft_id: [] for craft_id in craft_names}

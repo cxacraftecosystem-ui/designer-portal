@@ -8,7 +8,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 
 @Serializable
 data class LoginRequest(
@@ -751,6 +753,26 @@ data class ArtisanCreateRequest(
      * because an artisan who says "about thirty years" and cannot name a year is the ordinary case.
      */
     val experienceYears: Int? = null,
+    /**
+     * The MONTHS on top of those years, 0..11, and a remainder rather than a total.
+     *
+     * NOTHING ADDS THE TWO UP. `Artisan.experienceMonths` carries `CHECK (experienceMonths BETWEEN 0
+     * AND 11)` and `ArtisanCreate`/`ArtisanUpdate` bound it identically, because twelve months is a
+     * year the field above already holds. "32 years" and "6 months" are read back exactly as they
+     * were chosen.
+     *
+     * NULL, ABSENT AND 0 ARE THREE ANSWERS, and this client's `explicitNulls = false` is what makes
+     * the first two different on the wire: a null property is OMITTED, which the server reads as
+     * "leave the stored value alone", while an explicit null clears the column — which is why
+     * `experienceMonths` had to be added to `api/routes/artisans._CLEARABLE_COLUMNS` before an
+     * un-answer was reachable at all. See [WorkshopRepository.ARTISAN_CLEARABLE_COLUMNS], which is
+     * this client's mirror of that list and where the key has to appear for a PATCH to clear it.
+     *
+     * ⚠ NO FORM WRITES THIS YET. The artisan form lives in `MainActivity.kt`, which the change that
+     * added this column could not touch; the wire contract is here so the form is a single edit when
+     * that file is next opened. Read it as a column waiting for its control, not as a dead field.
+     */
+    val experienceMonths: Int? = null,
     val pehchanCardAvailable: Boolean? = null,
     val pehchanCardNumber: String? = null,
     // Newline-separated, numbered Do's (positive prompt) and Don'ts (negative prompt). Required on the
@@ -1173,6 +1195,45 @@ data class LocationDto(
     val extraMetadata: JsonObject? = null
 )
 
+/**
+ * A stored location as the body an edit re-sends.
+ *
+ * ── EVERY FIELD HAS TO BE HERE, AND A FORGOTTEN ONE IS NOT REJECTED, IT IS ERASED ─────────────
+ *
+ * `attach_location` builds a BRAND NEW `Location` row out of this body on update — it does not
+ * patch the stored one — and `forbid_clearing_location` deliberately lets an update through
+ * without a stated address, because the records written before those columns existed have none. So
+ * anything this omits is silently dropped on the next save. That is exactly how the district, the
+ * village and the subject's pin came to be nulled away by a phone opening a web-entered record to
+ * correct a phone number, and it is why this is one function rather than one per screen.
+ *
+ * IT LIVES HERE, BESIDE THE TWO TYPES IT CONVERTS BETWEEN, so a screen does not have to own a copy.
+ * `MainActivity` still carries a private twin of this from before there was anywhere shared to put
+ * it; the two must not drift, and the private one should be deleted in favour of this by whoever
+ * next has that file open.
+ */
+fun LocationDto.toLocationRequest(): LocationRequest = LocationRequest(
+    latitude = latitude,
+    longitude = longitude,
+    altitude = altitude,
+    accuracy = accuracy,
+    address = address,
+    // The read model can carry a place name the row never had; falling back to the address keeps an
+    // edit from blanking the one human-readable label a legacy row has.
+    placeName = placeName ?: address,
+    state = state,
+    district = district,
+    village = village,
+    pincode = pincode,
+    subjectLatitude = subjectLatitude,
+    subjectLongitude = subjectLongitude,
+    capturedAt = capturedAt,
+    // The pre-column shape of the same four answers, carried through untouched so that a record
+    // written by a phone that predates the columns keeps its only copy of them. A client has no
+    // business deleting a key it does not recognise.
+    extraMetadata = extraMetadata
+)
+
 @Serializable
 data class ArtisanDetailDto(
     val id: String,
@@ -1192,6 +1253,8 @@ data class ArtisanDetailDto(
     // The joining date the experience is derived from; see [ArtisanCreateRequest.craftStartDate].
     val craftStartDate: String? = null,
     val experienceYears: Int? = null,
+    /** The months on top of the years; see [ArtisanCreateRequest.experienceMonths]. */
+    val experienceMonths: Int? = null,
     val pehchanCardAvailable: Boolean = true,
     val pehchanCardNumber: String? = null,
     val dos: String? = null,
@@ -3095,6 +3158,20 @@ data class DesignerProfileDto(
     val qualification: String? = null,
     val specialisation: String? = null,
     val experienceYears: Int? = null,
+    /**
+     * The MONTHS half of the same answer, 0..11, and a REMAINDER rather than a total.
+     *
+     * "5 years" beside "6 months" is what the owner asked the two boxes to say, and the read-back
+     * hands back exactly what was chosen — the server never adds them up and neither does this
+     * client. Twelve is not a bigger month, it is a year the box above already holds, which is why
+     * the column carries `CHECK (experienceMonths BETWEEN 0 AND 11)` and the API bounds it 0..11.
+     *
+     * NULL AND 0 ARE DIFFERENT ANSWERS. Null is "nobody was ever asked"; 0 is "no odd months",
+     * which somebody chose from a picker. Nothing here may default one to the other — a
+     * `= 0` default would put "and no months" on record for every profile written before this
+     * column existed, as though its owner had answered a question they were never shown.
+     */
+    val experienceMonths: Int? = null,
     /** The paragraph that appears as "Designer's profile" in stage 3 of every report. */
     val biography: String? = null,
     val phone: String? = null,
@@ -3121,6 +3198,30 @@ data class DesignerProfileDto(
     val empanelmentNo: String? = null,
     /** ISO-8601, and a STRING rather than a date — see [DesignerProfileUpdateBody.empanelmentDate]. */
     val empanelmentDate: String? = null,
+    /**
+     * ── THE SECOND ADDRESS ON THIS ROW, AND WHY BOTH OF THEM ARE HERE ──────────────────────────
+     *
+     * `DesignerProfile` is the seventh owner of `Location`, so a designer's DISTRICT and MAP POINT
+     * are stored exactly as an artisan's are — this is the same [LocationDto] `ArtisanDetailDto`
+     * carries, byte for byte, and one renderer serves both.
+     *
+     * THE FOUR FLAT COLUMNS ABOVE DID NOT GO ANYWHERE, and a client that renders only one of the
+     * two shows some designers a blank where their address is. The migration that added the
+     * relation backfilled NOTHING, deliberately: `Location.latitude`/`longitude` are NOT NULL for
+     * all seven owners, so a `Location` row cannot be manufactured for an address that never had a
+     * coordinate without INVENTING the coordinate — which is the precise failure that put fifteen
+     * artisans documented in Rajasthan, Gujarat, Uttarakhand and Andhra Pradesh at a desk in
+     * Kharagpur. So every live row's address is still in `addressLine`/`city`/`state`/`pincode`,
+     * and those four are what the report prefill copies; this carries the district and the point,
+     * which nothing else can hold. The server's `profile_payload` decides that split once and
+     * writes it down; do not re-decide it here.
+     *
+     * [locationId] IS PUBLISHED BESIDE IT so that "this designer has no address row" (null) can be
+     * told from "this response did not load the address row", which are indistinguishable from
+     * [location] alone.
+     */
+    val locationId: String? = null,
+    val location: LocationDto? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null
 )
@@ -3150,6 +3251,8 @@ data class DesignerProfileUpdateBody(
     val specialisation: String? = null,
     /** Bounded 0..70 by the server, matching the registry's `designerExperience` field it prefills. */
     val experienceYears: Int? = null,
+    /** Bounded 0..11 by the server. A remainder, never a total — see [DesignerProfileDto.experienceMonths]. */
+    val experienceMonths: Int? = null,
     val biography: String? = null,
     val phone: String? = null,
     val email: String? = null,
@@ -3167,7 +3270,26 @@ data class DesignerProfileUpdateBody(
      * `DesignWorkshopCreateBody.startDate`). A body that took a real date here and a string there
      * would 422 exactly one of the two screens, for a reason its author could not see from either.
      */
-    val empanelmentDate: String? = null
+    val empanelmentDate: String? = null,
+    /**
+     * The designer's stated address and map point, in the SAME [LocationRequest] the six
+     * field-record bodies send. There is exactly one way to send an address to this API.
+     *
+     * ── THIS ONE KEY BREAKS THIS BODY'S "EVERY KEY, ALWAYS" RULE, AND IT HAS TO ────────────────
+     *
+     * Every other property here is written to the wire on every save, with an explicit JSON `null`
+     * for a cleared box, because that is the only way an omitted value can mean "clear it". This
+     * one is OMITTED when null and may NEVER be sent as `null`: the server's
+     * `forbid_clearing_location` answers an explicit null with a 422, and it is right to. Its
+     * `attach_location` writes a BRAND NEW `Location` row on every save and never updates one, so
+     * "clear it" has no honest implementation — it would orphan the stored row and leave the
+     * profile with no district instead of with a corrected address. A designer who moves house
+     * REPLACES their location; nobody deletes one. See [designerProfileUpdateJson].
+     *
+     * A NULL HERE IS THEREFORE "KEEP WHAT IS STORED", which is also exactly what the card produces
+     * when there is no coordinate: a `LocationRequest` cannot exist without one.
+     */
+    val location: LocationRequest? = null
 )
 
 /**
@@ -3193,6 +3315,17 @@ private fun textOrNull(value: String?): JsonElement {
  * `exclude_unset` would then leave the old value in place. The failure is silent and only visible on
  * the next load, which is far enough from the action that nobody connects the two.
  */
+/**
+ * The one encoder in this file that DROPS null properties instead of writing them.
+ *
+ * `LocationRequest` carries fourteen optional columns and the API forbids unknown keys but is happy
+ * with these absent, so `explicitNulls = false` is what lets a body name a state and a coordinate
+ * without also asserting "and no altitude, and no village". It mirrors `ApiClient`'s own Json, which
+ * is what every other location body on this client is already encoded with — a location that
+ * serialised differently depending on which screen sent it would be two wire shapes for one object.
+ */
+private val locationBodyJson = Json { explicitNulls = false; encodeDefaults = false }
+
 fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = buildJsonObject {
     put("displayName", textOrNull(body.displayName))
     put("localName", textOrNull(body.localName))
@@ -3202,6 +3335,11 @@ fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = bui
     put("qualification", textOrNull(body.qualification))
     put("specialisation", textOrNull(body.specialisation))
     put("experienceYears", body.experienceYears?.let(::JsonPrimitive) ?: JsonNull)
+    // An UNANSWERED months box is an explicit null, exactly as every other cleared box on this
+    // screen is, and that is what un-answers the question. It is NOT collapsed with 0: the picker
+    // offers "Not stated" as its own row above 0, so the two are separately reachable and the
+    // server stores them separately.
+    put("experienceMonths", body.experienceMonths?.let(::JsonPrimitive) ?: JsonNull)
     put("biography", textOrNull(body.biography))
     put("phone", textOrNull(body.phone))
     put("email", textOrNull(body.email))
@@ -3215,6 +3353,18 @@ fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = bui
     put("cvMediaId", textOrNull(body.cvMediaId))
     put("empanelmentNo", textOrNull(body.empanelmentNo))
     put("empanelmentDate", textOrNull(body.empanelmentDate))
+    /*
+     * THE ONE KEY THAT IS OMITTED RATHER THAN NULLED, AND THE ONLY EXCEPTION IN THIS FUNCTION.
+     *
+     * Everything above is written on every save so that an emptied box CLEARS the stored value.
+     * `"location": null` does not clear a location: `forbid_clearing_location` answers it with a
+     * 422, so writing it here would make every save from this screen fail for every designer who
+     * has not given a coordinate — which is nearly all of them, because nothing was backfilled.
+     * An ABSENT key is what says "keep the stored address", and that is also the honest reading:
+     * the card cannot produce a `LocationRequest` without a coordinate, so null here means "the
+     * designer has not given a point", never "the designer asked to remove their address".
+     */
+    body.location?.let { put("location", locationBodyJson.encodeToJsonElement(it)) }
 }
 
 /**

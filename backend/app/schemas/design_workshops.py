@@ -39,9 +39,7 @@ from app.services.report_templates import TEMPLATES
 # The DesignWorkshopStatus enum, mirrored from schema.prisma. Kept as a frozenset here
 # rather than imported from the generated Prisma client so validating a request body does
 # not require the client to have been generated.
-DESIGN_WORKSHOP_STATUSES = frozenset(
-    {"DRAFT", "IN_PROGRESS", "COMPLETE", "SUBMITTED", "ARCHIVED"}
-)
+DESIGN_WORKSHOP_STATUSES = frozenset({"DRAFT", "IN_PROGRESS", "COMPLETE", "SUBMITTED", "ARCHIVED"})
 REPORT_TEMPLATE_IDS = frozenset(t.id for t in TEMPLATES)
 
 # A single stage submission is bounded so one malformed client cannot post an unbounded blob
@@ -201,16 +199,15 @@ class DesignWorkshopCreate(APIModel):
     district: str | None = Field(default=None, max_length=80)
     startDate: str | None = None
     endDate: str | None = None
-    workshopId: str | None = Field(default=None, max_length=64,
-                                   description="Links this design workshop to a Workshop record.")
+    workshopId: str | None = Field(
+        default=None, max_length=64, description="Links this design workshop to a Workshop record."
+    )
     notes: str | None = Field(default=None, max_length=MAX_NOTES_CHARS)
 
     @model_validator(mode="after")
     def _known_template(self) -> "DesignWorkshopCreate":
         if self.templateId not in REPORT_TEMPLATE_IDS:
-            raise ValueError(
-                f"templateId must be one of {', '.join(sorted(REPORT_TEMPLATE_IDS))}"
-            )
+            raise ValueError(f"templateId must be one of {', '.join(sorted(REPORT_TEMPLATE_IDS))}")
         return self
 
 
@@ -249,13 +246,9 @@ class DesignWorkshopUpdate(APIModel):
         allowed values, which is what the client can actually act on.
         """
         if self.status is not None and self.status not in DESIGN_WORKSHOP_STATUSES:
-            raise ValueError(
-                f"status must be one of {', '.join(sorted(DESIGN_WORKSHOP_STATUSES))}"
-            )
+            raise ValueError(f"status must be one of {', '.join(sorted(DESIGN_WORKSHOP_STATUSES))}")
         if self.templateId is not None and self.templateId not in REPORT_TEMPLATE_IDS:
-            raise ValueError(
-                f"templateId must be one of {', '.join(sorted(REPORT_TEMPLATE_IDS))}"
-            )
+            raise ValueError(f"templateId must be one of {', '.join(sorted(REPORT_TEMPLATE_IDS))}")
         return self
 
 
@@ -475,7 +468,7 @@ class ReportGenerateIn(APIModel):
             # designer's integration script is the caller that will hit it.
             raise ValueError(
                 "ask for one format per request: this endpoint returns a single file. Send "
-                "{\"formats\": [\"DOCX\"]} and {\"formats\": [\"PDF\"]} as two requests."
+                '{"formats": ["DOCX"]} and {"formats": ["PDF"]} as two requests.'
             )
         # Still `sorted(...)` over the set, on a one-element list, so the stored value is normalised
         # (upper-cased, de-duplicated) exactly as it always was.
@@ -691,9 +684,7 @@ class CustomSectionsIn(APIModel):
     question, and it destroys no recorded answer.
     """
 
-    sections: list[CustomSectionIn] = Field(
-        default_factory=list, max_length=MAX_CUSTOM_SECTIONS
-    )
+    sections: list[CustomSectionIn] = Field(default_factory=list, max_length=MAX_CUSTOM_SECTIONS)
     customSchemaVersion: str | None = Field(
         default=None,
         max_length=64,

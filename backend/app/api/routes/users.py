@@ -46,9 +46,14 @@ def assert_role(role: str | None, current_user: Any) -> None:
     if not role:
         return
     if role not in ALLOWED_ROLES:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid user role")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid user role"
+        )
     if role == "MASTER_ADMIN" and not is_master_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the master admin can grant master admin")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the master admin can grant master admin",
+        )
     if ROLE_RANK[role] > role_rank(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -97,9 +102,7 @@ def assert_can_manage_target(current_user: Any, target_user: Any) -> None:
         # anyway, because a predicate that answers a different question from the one the UI asks
         # is how these two got out of step in the first place.
         if role_value(target_user) == "MASTER_ADMIN" and target_user.id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail=_MASTER_PEER_DETAIL
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_MASTER_PEER_DETAIL)
         return
     if role_rank(target_user) >= role_rank(current_user):
         raise HTTPException(
@@ -114,13 +117,20 @@ def is_master_email(email: str | None) -> bool:
     return email.lower() == get_settings().master_admin_email.lower()
 
 
-def assert_not_demoting_master(target_user: Any, payload_role: str | None, current_user: Any) -> None:
+def assert_not_demoting_master(
+    target_user: Any, payload_role: str | None, current_user: Any
+) -> None:
     if not is_master_email(target_user.email):
         return
     if not is_master_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The master admin account is protected")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="The master admin account is protected"
+        )
     if payload_role and payload_role != "MASTER_ADMIN":
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The master admin must keep MASTER_ADMIN role")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The master admin must keep MASTER_ADMIN role",
+        )
 
 
 @router.get("/directory")
@@ -143,7 +153,12 @@ async def user_directory(
     # ``/designers/directory`` already spells it this way for the same reason.
     users = await db.user.find_many(where=where, order=with_id_tiebreak({"name": "asc"}), take=500)
     return [
-        {"id": u.id, "name": u.name, "email": u.email, "role": str(getattr(u.role, "value", u.role))}
+        {
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "role": str(getattr(u.role, "value", u.role)),
+        }
         for u in users
     ]
 
@@ -177,7 +192,9 @@ async def list_users(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_user(payload: UserCreate, current_user: Any = Depends(require_admin)) -> dict[str, Any]:
+async def create_user(
+    payload: UserCreate, current_user: Any = Depends(require_admin)
+) -> dict[str, Any]:
     role = "MASTER_ADMIN" if is_master_email(payload.email) else payload.role
     assert_role(role, current_user)
     existing = await db.user.find_unique(where={"email": payload.email.lower()})
@@ -282,9 +299,7 @@ async def update_user(
         # THE ALLOW-LIST IS KEYED BY EMAIL. An admin correcting a typo in an address would otherwise
         # lock the account out at its next sign-in — the new address has no row, and the gate reads
         # a missing row as "never approved". See `access_roster.follow_email_change`.
-        await access_roster.follow_email_change(
-            user.email, data["email"], actor_id=current_user.id
-        )
+        await access_roster.follow_email_change(user.email, data["email"], actor_id=current_user.id)
     return serialize_user(updated)
 
 
@@ -312,12 +327,14 @@ async def _records_created_by(user_id: str) -> list[tuple[str, int]]:
     """``[(noun, count)]`` for everything this account made, biggest first, empties dropped."""
     from app.services.concurrency import gather_reads
 
-    counts = await gather_reads(*(
-        db_model.count(where={column: user_id})
-        for db_model, column in (
-            (getattr(db, model), column) for model, column, _noun in _CREATOR_RELATIONS
+    counts = await gather_reads(
+        *(
+            db_model.count(where={column: user_id})
+            for db_model, column in (
+                (getattr(db, model), column) for model, column, _noun in _CREATOR_RELATIONS
+            )
         )
-    ))
+    )
     named = [
         (noun, count)
         for (_model, _column, noun), count in zip(_CREATOR_RELATIONS, counts, strict=True)
@@ -355,9 +372,15 @@ async def delete_user(user_id: str, current_user: Any = Depends(require_admin)) 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if is_master_email(user.email):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The master admin account cannot be deleted")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The master admin account cannot be deleted",
+        )
     if user.id == current_user.id:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="You cannot delete your own account")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="You cannot delete your own account",
+        )
     assert_can_manage_target(current_user, user)
     try:
         await db.user.delete(where={"id": user_id})

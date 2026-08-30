@@ -14,6 +14,7 @@ import com.designprototype.workshop.data.liveFields
 import com.designprototype.workshop.data.rowsFor
 import com.designprototype.workshop.data.singleton
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -302,6 +303,45 @@ internal fun dwChooserWriteMedia(
 }
 
 /**
+ * Write one SCALAR — a measured dimension — back into [fieldKey] on the row [rowKey] names.
+ *
+ * ── WHY THIS IS A SECOND FUNCTION AND NOT A FLAG ON [dwChooserWriteMedia] ─────────────────────
+ *
+ * They look alike and they are not the same write. That one takes a list of media ids and decides
+ * between a bare string and an array by the REGISTRY's declared type; this one takes a value that has
+ * already been through `DwValues.coerce` — the same coercion a typed answer goes through, so a
+ * measurement cannot enter the draft in a shape typing could not have produced — and stores it
+ * exactly as handed over. Folding the two together would mean one function whose behaviour depended
+ * on which of two unrelated arguments was null, and the shape it writes is the thing `coerce_value`
+ * refuses silently on this device and visibly in a document a ministry receives a fortnight later.
+ *
+ * A NULL VALUE REMOVES THE KEY rather than storing `null`, which is `StageScreen.put`'s own rule and
+ * [dwChooserWriteMedia]'s: hundreds of fields across twenty-two stages would otherwise accumulate a
+ * null apiece to be re-sent on every metered sync.
+ *
+ * A [rowKey] that names no row returns the list unchanged, for [dwChooserWriteMedia]'s stated reason:
+ * a fold can sweep the chosen row out from under the designer, and a write that invented a row to
+ * satisfy the reference would be a row nobody asked for — in a collection a report reads.
+ */
+internal fun dwChooserWriteScalar(
+    rows: List<DraftRow>,
+    rowKey: String,
+    fieldKey: String,
+    value: JsonElement?,
+): List<DraftRow> = rows.map { row ->
+    if (dwChooserRowKey(row) != rowKey) {
+        row
+    } else {
+        val values = if (value == null || value is JsonNull) {
+            row.values - fieldKey
+        } else {
+            row.values + (fieldKey to value)
+        }
+        row.copy(values = values)
+    }
+}
+
+/**
  * Replace one entity's rows inside a stage draft, leaving every other entity's rows where they are.
  *
  * `StageDraft.rows` is ONE flat list holding every collection on the stage, keyed by the entity
@@ -377,23 +417,14 @@ internal fun dwChooserDefaultWorkshop(
     return workshops.first().id
 }
 
-/**
- * The line under a workshop row that tells two of them apart: what craft, where, and when.
- *
- * Assembled from what is present rather than printed with empty gaps, because a workshop whose stage
- * 1 is unfinished legitimately has nulls in all three — `title` is denormalised from stage 1 by
- * `promoted_values()` and the rest are not promoted at all. The three facts and their order are
- * `DesignWorkshopField`'s, so a designer meets one description of a workshop across the app.
- */
-internal fun dwChooserWorkshopHint(workshop: DesignWorkshopDto): String = listOfNotNull(
-    workshop.craftName?.takeIf { it.isNotBlank() },
-    workshop.clusterName?.takeIf { it.isNotBlank() } ?: workshop.state?.takeIf { it.isNotBlank() },
-    workshop.startDate?.take(10)?.takeIf { it.isNotBlank() },
-).joinToString(" · ")
-
-/** A workshop's name on the picker, or an honest placeholder for one whose stage 1 is unfinished. */
-internal fun dwChooserWorkshopLabel(workshop: DesignWorkshopDto): String =
-    workshop.title.ifBlank { "Untitled workshop" }
+// `dwChooserWorkshopHint` and `dwChooserWorkshopLabel` used to live here — the workshop-chooser's
+// own copy of the label/hint pair `WorkshopOptions.kt` now provides as `designWorkshopLabel` and
+// `designWorkshopHint`. Retired 2026-08-30 once `SketchesAndPrototypesScreen.kt` (their only
+// caller) was moved onto those shared functions: the local copy had drifted from the one
+// `DesignWorkshopField` draws — it carried no status word, so a SUBMITTED workshop and one still
+// running read as the same kind of row here and not on any other picker in the app. See
+// `WorkshopOptions.kt`'s own file header, which named this pair as two of the "three copies of the
+// same hint builder... still in the tree" it was written to retire.
 
 // --------------------------------------------------------------------------------------
 // Keeping a selection, and saying what a save actually achieved

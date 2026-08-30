@@ -68,6 +68,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CloudOff, DraftingCompass, Info, Plus } from "lucide-react";
 
+import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { DateRangePicker, toIsoDate } from "@/components/forms/DateTimeField";
@@ -122,6 +123,14 @@ import {
   designWorkshopDefaultNote,
   readDesignWorkshopDefault
 } from "@/lib/designWorkshopDefault";
+import {
+  TYPE_DETAILS_INSTEAD,
+  WORKSHOP_OPTION_PAGE_SIZE,
+  designWorkshopOptions,
+  fieldWorkshopOptions,
+  workshopCutSentence,
+  type WorkshopListState
+} from "@/lib/workshopOptions";
 
 /**
  * The five statuses `DesignWorkshopStatus` declares, plus the reserved empty option.
@@ -314,6 +323,10 @@ function DesignWorkshopsPageBody() {
     thing to offer.
   */
   const [sourceWorkshops, setSourceWorkshops] = useState<Workshop[]>([]);
+  // The server's TOTAL for this scope, not `sourceWorkshops.length` — the two part company the
+  // moment this account can reach more than `WORKSHOP_OPTION_PAGE_SIZE` of them, which is exactly
+  // the gap `workshopCutSentence` below exists to state rather than leave silent.
+  const [sourceWorkshopsTotal, setSourceWorkshopsTotal] = useState(0);
   const [sourceWorkshopId, setSourceWorkshopId] = useState("");
   const formRef = useRef<HTMLFormElement | null>(null);
   /**
@@ -499,12 +512,20 @@ function DesignWorkshopsPageBody() {
       is authoritative and why there is no fallback.
     */
     listResource<Workshop>("/workshops", {
-      pageSize: 100,
+      // `WORKSHOP_OPTION_PAGE_SIZE`, not the round number `100` this used to ask for: it is
+      // `RENDER_CAP` under another name, and asking for more than `SearchableSelect` will ever draw
+      // is how a picker ends up with two disagreeing cap sentences — its own panel silently trimming
+      // at 80 while a sentence beside it still spoke of a hundred. See that constant's own header in
+      // `lib/workshopOptions.ts`.
+      pageSize: WORKSHOP_OPTION_PAGE_SIZE,
       workshopType: "DESIGN_PROTOTYPE",
       accessibleOnly: "true"
     })
       .then((result) => {
-        if (!cancelled) setSourceWorkshops(sortWorkshopsByOccurrence(result.items ?? []));
+        if (!cancelled) {
+          setSourceWorkshops(sortWorkshopsByOccurrence(result.items ?? []));
+          setSourceWorkshopsTotal(result.total);
+        }
       })
       // Silent: this picker is a convenience over boxes the designer can always type into, and an
       // error banner for a shortcut that failed would read as the form itself being broken.
@@ -513,6 +534,26 @@ function DesignWorkshopsPageBody() {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * ROUTED THROUGH THE SHARED BUILDER, so this row's label and hint match every other workshop
+   * picker in the app rather than adding an eighth hand-rolled spelling of "title, then place" — see
+   * `lib/workshopOptions.ts`'s header on why that drifted to six different formats before it had one
+   * owner. `group: true` because the request narrows by `workshopType` alone; it says nothing about
+   * whether a workshop's window has closed, so an ended one still needs its own heading same as
+   * everywhere else this table is offered (an ended workshop is a legitimate template for a record
+   * filed after the fact, never `disabled` — §2.6 of that file). `offPage: "refuse"` because
+   * `sourceWorkshopId` is transient picker state, not a value stored on a record: there is nothing to
+   * recover.
+   */
+  const sourceWorkshopOptions = useMemo(
+    () =>
+      fieldWorkshopOptions(
+        { kind: "ok", rows: sourceWorkshops, total: sourceWorkshopsTotal },
+        { group: true, offPage: { mode: "refuse" } }
+      ),
+    [sourceWorkshops, sourceWorkshopsTotal]
+  );
 
   /**
    * Copy a chosen workshop's cover details into the form.
@@ -931,13 +972,14 @@ function DesignWorkshopsPageBody() {
             <Dropdown
               value={sourceWorkshopId}
               onChange={applySourceWorkshop}
-              options={[
-                { value: "", label: "Do not link a workshop — type the details below" },
-                ...sourceWorkshops.map((w) => ({
-                  value: w.id,
-                  label: w.place ? `${w.title} · ${w.place}` : w.title
-                }))
-              ]}
+              options={sourceWorkshopOptions.options}
+              // The create flow's own "none" row: the fields below are the alternative to a link,
+              // and {@link TYPE_DETAILS_INSTEAD} is the one shared sentence for that — see
+              // `lib/workshopOptions.ts` for why there are four such strings and why a hand-built
+              // `{ value: "", label: … }` row in `options` is never a second one of them (a
+              // duplicate React key on `""`, and a control that can no longer say which layer drew
+              // the row it is showing).
+              noneLabel={TYPE_DETAILS_INSTEAD}
               ariaLabel="Start from a recorded workshop"
               searchable
             />
@@ -946,6 +988,14 @@ function DesignWorkshopsPageBody() {
                 ? "Only workshops filed as a Design & Prototype Development Workshop, and only ones you have access to, appear here."
                 : "No design & prototype workshops are open to this account. Mark one on the Workshops page — or ask an admin for access to it — to use it here."}
             </p>
+            {/*
+              WHAT THAT SENTENCE DOES NOT COVER: a scope can be correct and the list still CUT. The
+              box above is client-side — it searches only the `WORKSHOP_OPTION_PAGE_SIZE` rows
+              already fetched, never the server — so `searchable: false` here on purpose; see
+              `workshopCutSentence`'s own header on why that argument means "does the box reach past
+              the cut", not "is there a box on screen".
+            */}
+            <CappedListNotice cuts={[workshopCutSentence(sourceWorkshopOptions, { searchable: false })]} />
           </FieldBlock>
 
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
@@ -1455,6 +1505,7 @@ function DesignWorkshopsPageBody() {
 function ContinueOnAllocatedWorkshop() {
   const router = useRouter();
   const [rows, setRows] = useState<DwSummary[] | null>(null);
+  const [total, setTotal] = useState(0);
   const [chosen, setChosen] = useState("");
   const [note, setNote] = useState<string | null>(null);
 
@@ -1462,11 +1513,12 @@ function ContinueOnAllocatedWorkshop() {
     let cancelled = false;
     void (async () => {
       const [page, fallback] = await Promise.all([
-        listDesignWorkshops({ page: 1, pageSize: 50 }).catch(() => null),
+        listDesignWorkshops({ page: 1, pageSize: WORKSHOP_OPTION_PAGE_SIZE }).catch(() => null),
         readDesignWorkshopDefault()
       ]);
       if (cancelled) return;
       setRows(page?.items ?? []);
+      setTotal(page?.total ?? 0);
       // THE DEFAULT IS ONLY APPLIED IF IT IS IN THE LIST. A workshop the default names and the page
       // does not carry would select a value with no option behind it, which every dropdown in this
       // app draws as nothing selected — a control that silently disagrees with itself.
@@ -1480,6 +1532,33 @@ function ContinueOnAllocatedWorkshop() {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * ROUTED THROUGH THE SHARED BUILDER rather than a hand-rolled `.map()`, and fetched at
+   * `WORKSHOP_OPTION_PAGE_SIZE` rather than the round number `50` this used to ask for.
+   *
+   * The two are one fix, not two. `50` happened to sit under `RENDER_CAP` (80), so the picker itself
+   * never had to trim what this component handed it — but nothing here ever asked the server for a
+   * TOTAL, so a designer allocated a 51st workshop was missing from this shortcut with nothing on
+   * screen to say so, indistinguishable from a designer who only has fifty. `designWorkshopOptions`
+   * reads `total` off the page and reports what it left out, and asking for exactly
+   * `WORKSHOP_OPTION_PAGE_SIZE` is what keeps that count from ever landing beside a second, silent
+   * cap inside `SearchableSelect`'s own panel (see that constant's header). `group: true` because
+   * nothing here narrowed the request by status, so a submitted or archived workshop needs its own
+   * heading same as everywhere else this table is offered. `offPage: "refuse"` because `chosen` is
+   * picker state, not a value stored on a record — there is nothing to recover.
+   *
+   * Built BEFORE the "nothing to offer" return below, and deliberately: a hook cannot follow a
+   * conditional return, and this one has to run on every render regardless of what `rows` holds.
+   */
+  const optionSet = useMemo(
+    () =>
+      designWorkshopOptions(
+        { kind: "ok", rows: rows ?? [], total },
+        { group: true, offPage: { mode: "refuse" } }
+      ),
+    [rows, total]
+  );
 
   // Nothing to offer: either the list could not be read, or this designer genuinely has none. The
   // panel's own sentence already covers the second case ("Ask an admin to create it for your
@@ -1498,23 +1577,23 @@ function ContinueOnAllocatedWorkshop() {
             setChosen(id);
             setNote(null);
           }}
-          options={rows.map((row) => ({
-            value: row.id,
-            label: row.title || "Untitled workshop",
-            hint:
-              [row.craftName, row.clusterName ?? row.state, row.startDate?.slice(0, 10)]
-                .filter((part) => !!part && String(part).trim() !== "")
-                .join(" · ") || undefined
-          }))}
+          options={optionSet.options}
           placeholder="Choose a workshop"
-          // The options are RECORDS, so §11.5 says the filter box belongs here — and the list is one
-          // page of fifty against a `RENDER_CAP` of eighty, so nothing the box can be typed at is
-          // missing from what it filters.
+          // The options are RECORDS, so §11.5 says the filter box belongs here — it searches this
+          // page's rows and nothing past `WORKSHOP_OPTION_PAGE_SIZE`, which is exactly what the cut
+          // sentence below is for.
           searchable
           // It navigates, so the panel it lives in must not steal focus back to the next field.
           advanceOnSelect={false}
         />
       </FieldBlock>
+      {/*
+        The box above is client-side and reaches only the rows already fetched, not the server's
+        `search=` — so `searchable: false` here, which is a question about whether the CUT is
+        reachable, not about whether the trigger has a filter box (see `workshopCutSentence`'s own
+        header on the distinction).
+      */}
+      <CappedListNotice cuts={[workshopCutSentence(optionSet, { searchable: false })]} />
       <div>
         <button
           type="button"

@@ -24,17 +24,25 @@
  * THE TARGET LIST IS PASSED IN, NEVER FETCHED HERE
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `workshops` is the list the calling page already holds from `listDesignWorkshops({ pageSize: 100 })`
- * → `GET /design-workshops`. For a NON-ADMIN the server scopes it with `visible_to_clause`
+ * `workshops` is the list the calling page already holds from
+ * `listDesignWorkshops({ pageSize: WORKSHOP_OPTION_PAGE_SIZE })` → `GET /design-workshops`. For a
+ * NON-ADMIN the server scopes it with `visible_to_clause`
  * (`createdById = me OR viewers.some(userId = me)`) — the same door `load_workshop_or_404` opens for
  * the attachment check, which is what makes the picker's contents and the server's answer agree.
  * Fetching a list here would be a second, unscoped source of truth for "which workshops may this
  * account write to", exactly as `UploadDialog` avoids by taking its own workshops as a prop.
  *
- * FOR AN ADMIN THAT CLAUSE IS NOT APPLIED AT ALL. `list_design_workshops` runs it under
- * `elif not is_admin(current_user)`, so an admin's list is the newest 100 of the WHOLE archive rather
- * than a scoped set. Harmless for authorization — an admin may write to every one of them — and
- * stated here because it is the account class for which this picker is the archive AND truncated.
+ * THAT PAGE SIZE USED TO BE A ROUND HUNDRED, and the number is worth naming rather than rounding:
+ * `SearchableSelect` draws at most `RENDER_CAP` (80) rows, so a hundred-row page handed this dialog
+ * twenty workshops it silently would not draw, in a band where nothing on screen said anything at
+ * all. `WORKSHOP_OPTION_PAGE_SIZE` IS `RENDER_CAP`, so one number governs the fetch and the render
+ * and two truncation sentences with two different totals cannot both be true at once.
+ *
+ * FOR AN ADMIN THE SCOPE CLAUSE IS NOT APPLIED AT ALL. `list_design_workshops` runs it under
+ * `elif not is_admin(current_user)`, so an admin's list is the newest page of the WHOLE archive
+ * rather than a scoped set. Harmless for authorization — an admin may write to every one of them —
+ * and stated here because it is the account class for which this picker is the archive AND
+ * truncated.
  *
  * AND THE LIST IS NEVER THE REFUSAL. Three documented gaps mean a workshop the account genuinely may
  * write to can be missing from it: it is ONE page ordered `createdAt desc`, `list_design_workshops`
@@ -68,8 +76,22 @@ import { Field, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { listQuestionnaires, reuseQuestionnaire, type QFormReuseResult } from "@/lib/questionnaireForms";
+import { ATTACH_LATER, designWorkshopOptions, type DesignWorkshopRow } from "@/lib/workshopOptions";
 
-export type ReuseTarget = { id: string; title: string };
+/**
+ * A design workshop the copy could be made at.
+ *
+ * ── IT USED TO BE `{ id, title }`, AND A BARE TITLE IS NOT ENOUGH TO PICK BY ────────────────────
+ *
+ * Two workshops in the same craft, a fortnight apart, drew as two identical rows here — and this is
+ * the control where picking the wrong one is discovered a month later, in a report annexure, by
+ * somebody who is not the designer who pressed the button. `DesignWorkshopRow` is the nine fields
+ * `lib/workshopOptions` reads, so the picker gains the craft, the cluster and the day the workshop
+ * ran, in the same shape as every other workshop picker in the app. A `DwSummary` satisfies it, so
+ * the two pages that mount this dialog hand their own scoped rows straight over — which is the rule
+ * this file's header states and which has not changed: the list is never fetched here.
+ */
+export type ReuseTarget = DesignWorkshopRow;
 
 /** The suffix the SERVER appends when no title is sent. Mirrored so the pre-filled box shows the
  * name the row will actually get — a placeholder that guessed differently would be a field a
@@ -115,7 +137,8 @@ export function ReuseDialog({
   questionnaireId,
   sourceTitle,
   sourceWorkshopId,
-  workshops
+  workshops,
+  workshopsNotice
 }: {
   open: boolean;
   onClose: () => void;
@@ -127,6 +150,18 @@ export function ReuseDialog({
   sourceWorkshopId?: string | null;
   /** Design workshops this account may write to — passed in from the page's own scoped list. */
   workshops: ReuseTarget[];
+  /**
+   * WHAT THE PAGE HAS TO SAY ABOUT THAT LIST — one string, chosen by the page, drawn here.
+   *
+   * A string and not the list's state, because this dialog does not do the read and must not be able
+   * to describe it differently from the page that did. The page holds one `WorkshopListState` and
+   * asks `lib/workshopOptions` which of §3.5's four sentences is true, or `cappedListNotice` for the
+   * numbered cut when there are rows and some were left out. The two are never both non-empty.
+   *
+   * It is drawn IN ADDITION to the standing paragraph below and never instead of it — see there for
+   * why that paragraph is unconditional.
+   */
+  workshopsNotice?: string;
 }) {
   const [designWorkshopId, setDesignWorkshopId] = useState("");
   const [title, setTitle] = useState("");
@@ -155,6 +190,44 @@ export function ReuseDialog({
   const defaultTitle = useMemo(() => reusedTitle(sourceTitle, atTarget ?? []), [sourceTitle, atTarget]);
   /** The same name with no counting, purely to detect that counting happened and say so. */
   const plainDefault = useMemo(() => reusedTitle(sourceTitle, []), [sourceTitle]);
+
+  /**
+   * The targets, in the one shared vocabulary, with the source's own workshop marked.
+   *
+   * ── THE ANNOTATION MOVED FROM THE LABEL INTO THE HINT, AND THAT IS NOT COSMETIC ────────────────
+   *
+   * It used to be appended to the title: `${workshop.title} — where this one already is`. The label
+   * is what `SearchableSelect` prints in the collapsed trigger and what `filterOptions` ranks a
+   * typed title against, so a suffix on it pushed the workshop's own name out of a one-line trigger
+   * and made an exact-title match rank as a mid-word one. The hint is drawn beneath the label AND
+   * searched, so the annotation is just as visible, just as findable, and no longer competing with
+   * the name. `lib/workshopOptions` already puts the craft, the cluster and the day it ran there, in
+   * that order, so this rides in front of them where the eye lands first.
+   *
+   * ANNOTATED AND NOT REMOVED, which is the older ruling and is unchanged: reusing an instrument at
+   * the workshop that already holds it is legitimate — a baseline round and a follow-up round, which
+   * a sitting has no notion of — and the options endpoint's `attachedElsewhere` annotates for the
+   * same reason. `group: true` for the other half of the same idea: a copy made into a SUBMITTED
+   * workshop is allowed and is something the reader must be able to see they are doing.
+   */
+  const targets = useMemo(() => {
+    const built = designWorkshopOptions(
+      // A prop, not a read: this dialog never fetches, so what arrives is by definition an answer.
+      // The page that DID do the read owns the four sentences and hands one down as `workshopsNotice`.
+      { kind: "ok", rows: workshops, total: workshops.length },
+      { group: true, offPage: { mode: "refuse" } }
+    );
+    return built.options.map((option) =>
+      option.value && option.value === sourceWorkshopId
+        ? {
+            ...option,
+            hint: option.hint
+              ? `where this one already is · ${option.hint}`
+              : "where this one already is"
+          }
+        : option
+    );
+  }, [workshops, sourceWorkshopId]);
 
   const reset = useCallback(() => {
     setDesignWorkshopId("");
@@ -334,54 +407,83 @@ export function ReuseDialog({
         {/* FieldBlock rather than Field: `Field` is a <label>, and a <label> wrapped round a themed
             dropdown forwards a stray click into the menu and slams it shut after one pick. */}
         <FieldBlock label="Design workshop for the copy">
+          {/*
+            THE BRANCH STAYS, AND THE SENTENCE IS DRAWN ON BOTH SIDES OF IT. With nothing to offer, a
+            dropdown holding only its un-file row is a control whose one answer is the answer the
+            field already has; a sentence says the same thing and says what to do instead. What is
+            NOT allowed back is the older shape, where the way out was drawn ONLY on the empty side —
+            a full list here is one page, and this box searches only the rows in it, so a workshop
+            this account may genuinely write to can be missing from a dropdown that looks complete.
+          */}
           {workshops.length ? (
             <div className="grid gap-2">
               <Dropdown
                 value={designWorkshopId}
                 onChange={setDesignWorkshopId}
-                options={[
-                  // NAMED, not left as a blank first row. This is a real and useful outcome — a
-                  // template the designer owns and attaches later — and an unlabelled empty option
-                  // reads as "nothing chosen yet".
-                  { value: "", label: "Don't attach it yet" },
-                  ...workshops.map((workshop) => ({
-                    value: workshop.id,
-                    // ANNOTATED, NOT REMOVED, following `attachedElsewhere` on the options endpoint.
-                    label:
-                      workshop.id === sourceWorkshopId
-                        ? `${workshop.title} — where this one already is`
-                        : workshop.title
-                  }))
-                ]}
+                options={targets}
+                /*
+                  "Don't attach it yet" IS THE PRIMITIVE'S ROW NOW, and its label is the shared
+                  `ATTACH_LATER` constant. It is one of the four "none" strings this app keeps, and a
+                  different one from the record forms' "Not filed under a design workshop": this is a
+                  COPY operation where the answer can genuinely be deferred and the copy is still
+                  made, which is a fact about this dialog rather than about the field. Two layers must
+                  not both build the row — a hand-built one plus `noneLabel` gives two options sharing
+                  the React key "", and a control that cannot say which of the two is selected.
+                */
+                noneLabel={ATTACH_LATER}
                 ariaLabel="Design workshop for the copy"
                 searchable
                 disabled={busy}
                 advanceOnSelect={false}
               />
               {/*
-                DRAWN BESIDE A FULL DROPDOWN, NOT ONLY INSTEAD OF AN EMPTY ONE. This list is ONE page
-                of 100 ordered `createdAt desc`, and the dropdown filters it CLIENT-SIDE as you type —
-                so a workshop on page two answers "No matches", and absence in a picker reads as "I am
-                not allowed to reuse into that workshop". The same page also omits soft-deleted
-                workshops an admin may still edit. The sentence is cheap and the wrong conclusion is
-                not.
+                WHAT THE PAGE'S READ HAS TO SAY — on this branch, the numbered cut. It carries the
+                NUMBER the paragraph below cannot: this dialog does not do the read and must not
+                count what it did not fetch, and a cap asserted without its number is rule 10 wearing
+                a hedge. The page chooses the sentence so that its own picker, this one and the upload
+                dialog cannot word one read three ways.
+              */}
+              {workshopsNotice ? (
+                <p className="text-xs leading-5 text-ink-500" aria-live="polite">
+                  {workshopsNotice}
+                </p>
+              ) : null}
+              {/*
+                DRAWN BESIDE A FULL DROPDOWN, NOT ONLY INSTEAD OF AN EMPTY ONE. Three documented gaps
+                mean a workshop this account may genuinely write to can be missing from a list that
+                looks complete: it is ONE page ordered `createdAt desc`; `list_design_workshops`
+                hardcodes `deletedAt: None` while `load_workshop_or_404` still admits an admin to a
+                soft-deleted workshop; and this control's box filters the rows already fetched rather
+                than asking the repository. Absence in a picker reads as "I am not allowed to reuse
+                into that workshop", and the route out is one sentence.
               */}
               <p className="text-xs leading-5 text-ink-500">
                 This list is one page of the newest workshops, so a workshop you may write to can be missing from it —
-                including a deleted one an admin can still edit. If the one you want is not here, leave this as
-                &ldquo;Don&rsquo;t attach it yet&rdquo; and attach the copy from its own page afterwards: that asks the
-                server the same question this dropdown would have.
+                including a deleted one an admin can still edit, and one this box cannot reach because it searches only
+                the rows drawn here. If the one you want is not here, leave this as &ldquo;{ATTACH_LATER}&rdquo; and
+                attach the copy from its own page afterwards: that asks the server the same question this dropdown
+                would have.
               </p>
             </div>
           ) : (
-            // A SENTENCE, NOT AN EMPTY SELECT. The workshop list is one page ordered by creation date
-            // and excludes soft-deleted workshops that an admin may still edit, so "not in this list"
-            // does not mean "not allowed" — and an unattached copy is attachable from its own page,
-            // which is the same PATCH with the same check on it.
-            <p className="text-sm leading-6 text-ink-700">
-              No design workshops are listed for this account here, so the copy is made unattached. You can attach it from
-              its own page afterwards — that asks the server the same question this dropdown would have.
-            </p>
+            <div className="grid gap-2">
+              {/*
+                A SENTENCE, NOT AN EMPTY SELECT — and now one that says WHICH kind of empty this is.
+                It used to say "No design workshops are listed for this account here" whatever the
+                reason, a read that had failed included, which is a claim about a grant table made
+                from a request that never arrived. `workshopsNotice` is the page's answer to that
+                question; the paragraph under it is what does not change with the answer.
+              */}
+              {workshopsNotice ? (
+                <p className="text-sm leading-6 text-ink-700" aria-live="polite">
+                  {workshopsNotice}
+                </p>
+              ) : null}
+              <p className="text-sm leading-6 text-ink-700">
+                No design workshop is on offer here, so the copy is made unattached. You can attach it from its own
+                page afterwards — that asks the server the same question this dropdown would have.
+              </p>
+            </div>
           )}
         </FieldBlock>
 

@@ -13,15 +13,30 @@ Every update body is applied with ``exclude_unset``: a key that is absent leaves
 alone, and a key that is present and null clears it. That distinction is load-bearing on
 ``DesignerProfileUpdate`` — but NOT
 because a client sends a subset of it, because neither client does any more. Both profile editors
-render all twenty-one fields and put every key on the wire on every save
+render every column field and put every key on the wire on every save
 (``designerProfileUpdateJson`` in ``ApiModels.kt``, ``fullDesignerProfileBody`` in
 ``frontend/lib/designers.ts``), which is exactly why an explicit null has to be the thing that
 clears a column.
 
+THE COUNT IS TWENTY-TWO SINCE 2026-08-29, and it is stated as a count rather than a list because a
+prose copy of a field list goes stale the first time the list grows — which it just did, with
+``experienceMonths``. Both encoders are HAND-WRITTEN maps, so a column added here is a key that
+silently never reaches the server until each of them is edited too: there is no reflection behind
+either, and a missing ``put`` reads on screen as a box that saves and then comes back empty.
+
+``location`` IS THE ONE KEY THAT IS LEGITIMATELY OMITTED, and it is not an exception to the rule
+above so much as the rule applied to a relation. The clients build it with ``locationFromForm``,
+which answers ``undefined`` when either coordinate box is empty, and ``JSON.stringify`` drops an
+``undefined`` — so a profile with no coordinate sends no ``location`` key and keeps whatever is
+stored. That is the ONLY way to leave it alone: an explicit null is refused outright, because
+``attach_location`` writes a brand-new ``Location`` row on every save and never updates one, so
+"clear it" would orphan a row and leave the profile with no district rather than with a corrected
+address. See :func:`app.schemas.common.forbid_clearing_location`.
+
 The partial PUT is the ADMIN's. An admin maintaining the empanelment identifiers a government
 report has to carry — which the designer often does not have to hand — sends those two keys and
 nothing else, which is what ``test_an_admin_may_write_a_designers_profile`` sends. A body applied
-without ``exclude_unset`` would read the other nineteen absent keys as "clear" and blank the
+without ``exclude_unset`` would read every other absent key as "clear" and blank the
 institution, the biography and the signature the designer typed on the web the week before — the
 sort of loss nobody notices until a report prints without them.
 
@@ -38,9 +53,9 @@ those boxes empty.
 
 from typing import Any
 
-from pydantic import EmailStr, Field, ValidationInfo, field_validator
+from pydantic import EmailStr, Field, ValidationInfo, field_validator, model_validator
 
-from app.schemas.common import APIModel
+from app.schemas.common import APIModel, LocationInput, forbid_clearing_location
 
 #: The profile columns that may not be CLEARED, and the words a designer knows them by.
 #:
@@ -49,7 +64,7 @@ from app.schemas.common import APIModel
 #: The owner's instruction of 2026-08-27 — "Name, qualification, email, and phone number should be
 #: mandatory fields as well" — is a statement about the RECORD, and a rule only the browser enforces
 #: is a rule the API does not have. Two clients write this table (``fullDesignerProfileBody`` on the
-#: web, ``designerProfileUpdateJson`` on the handset), both send all twenty-one keys on every save,
+#: web, ``designerProfileUpdateJson`` on the handset), both send every column key on every save,
 #: and anything else holding a bearer token can PUT whatever it likes. The web form marks these four
 #: with `required` so the refusal is met in the box rather than as a round trip; this is what makes
 #: the refusal true of the repository.
@@ -111,12 +126,18 @@ class DesignerRosterUpdate(APIModel):
 
 class DesignerProfileUpdate(APIModel):
     """Every column of ``DesignerProfile`` a person may write — which is all of them but the
-    identifiers and the timestamps.
+    identifiers, the timestamps and ``locationId``.
 
-    These twenty-one values are typed once and copied into every report the designer generates, so
+    These twenty-two values are typed once and copied into every report the designer generates, so
     the field lengths here are the ones the report layout was measured against rather than
     arbitrary caps: a designation that runs to three hundred characters does not fail, it prints
     over the next line of the cover page.
+
+    ``locationId`` IS NOT ON THIS BODY AND MUST NOT BE. A client sends ``location`` — the address
+    itself, in the one shape this API already accepts from six other record types — and the server
+    creates the row and keeps the id. A body that took a raw id would let any caller point their
+    profile at another record's ``Location`` row, and would make "the address" two round trips that
+    can disagree.
 
     ``empanelmentDate`` is an ISO-8601 date string rather than a ``date``, matching every other
     date this API accepts (see ``DesignWorkshopCreate.startDate``). The clients send strings, and
@@ -136,6 +157,37 @@ class DesignerProfileUpdate(APIModel):
     # 400 years would prefill a stage the stage's own validator then rejects, and the designer
     # would be told their workshop has an error in a box they never typed in.
     experienceYears: int | None = Field(default=None, ge=0, le=70)
+    # ── THE SECOND HALF OF THE SAME ANSWER — 0..11, A REMAINDER AND NEVER A TOTAL ──────────────
+    #
+    # The form asks for "5 years" beside "6 months" and the read-back hands back exactly what was
+    # chosen. Twelve is not a bigger month, it is a year the box above already holds, which is why
+    # the ceiling is 11 and not 12; ``DesignerProfile.experienceMonths`` in schema.prisma carries the
+    # argument for two columns rather than one derived total.
+    #
+    # THE BOUND IS DECLARED HERE BECAUSE POSTGRES'S IS THE WRONG KIND OF REFUSAL. The column already
+    # carries ``CHECK (experienceMonths BETWEEN 0 AND 11)``, but a CHECK violation reaches this API
+    # as a driver error raised from inside the write — a bare 500 that names no field, on a save the
+    # designer cannot correct because nothing on the screen says which box was wrong. ``ge``/``le``
+    # here is a 422 whose ``loc`` is ``["body", "experienceMonths"]``, which is what the web client's
+    # ``describeApiDetail`` turns into a message under that control. The CHECK stays as the backstop
+    # for anything that reaches the table another way; it is not the thing a person is meant to meet.
+    #
+    # NO CEILING IS MIRRORED FROM THE REGISTRY, unlike ``experienceYears`` above, and the difference
+    # is worth stating: that column is bounded 0..70 because it is COPIED into a stage field bounded
+    # 0..70, and a wider body would prefill a box the stage then silently drops. This column is
+    # copied into nothing yet — there is no ``designerExperienceMonths`` field on stage 3, so it is
+    # listed in ``PREFILL_EXEMPT`` in tests/test_designer_prefill_contract.py with what it owes — so
+    # 0..11 is the column's own rule and the only one it has.
+    #
+    # ABSENT, NULL AND 0 ARE THREE DIFFERENT ANSWERS, and pydantic's unset-versus-None distinction is
+    # what keeps them apart. The route dumps this body with ``exclude_unset=True``: a key the client
+    # never sent is not in the dict at all, so ``update_profile``'s loop skips it and the stored value
+    # stands; a key sent as ``null`` is present and writes NULL, which is how a designer un-answers
+    # the question; and ``0`` is present, is not ``None``, and stores 0 — "no odd months", an answer
+    # somebody picked. A ``default=0`` here would collapse the first and the last, and would put "and
+    # no months" on record for every profile written before this column existed, as though its owner
+    # had chosen it in a dropdown they were never shown.
+    experienceMonths: int | None = Field(default=None, ge=0, le=11)
     biography: str | None = Field(default=None, max_length=20000)
     phone: str | None = Field(default=None, max_length=40)
     email: EmailStr | None = None
@@ -157,12 +209,64 @@ class DesignerProfileUpdate(APIModel):
     cvMediaId: str | None = Field(default=None, max_length=64)
     empanelmentNo: str | None = Field(default=None, max_length=120)
     empanelmentDate: str | None = Field(default=None, max_length=32)
+    # ── WHERE THE DESIGNER IS BASED, IN THE SHAPE EVERY OTHER RECORD IN THIS SYSTEM ALREADY USES ─
+    #
+    # The SAME :class:`app.schemas.common.LocationInput` the six field-record bodies take — unchanged
+    # and unsubclassed, so there is exactly ONE way to send an address to this API and a client can
+    # reuse the encoder it already has. ``attach_location`` in app/services/records.py turns it into a
+    # ``Location`` row and hands the id back to ``update_profile``; the profile is the seventh owner
+    # of that table, not a seventh spelling of an address.
+    #
+    # THE FOUR FLAT COLUMNS ABOVE STAY, AND STAY WRITABLE. Nothing was backfilled by the migration
+    # that added the relation and nothing is copied across on save. Which of the two is authoritative
+    # for what is decided, once, in ``designers.profile_payload``; read that before writing a client
+    # that renders one of them.
+    #
+    # ── A STATED ADDRESS WITH NO COORDINATE CANNOT BE STORED, AND THAT IS THE ANSWER, NOT A GAP ──
+    #
+    # ``LocationInput.latitude``/``longitude`` are required floats with NO default, because
+    # ``Location.latitude``/``longitude`` are NOT NULL for all seven owners. So a body that names a
+    # state and a district and carries no coordinate is a 422 from this field, before any handler
+    # runs — and on the web the location card refuses the save in the box instead, saying so in
+    # words: "The state and district are stored with the coordinates, so this record needs one before
+    # they can be saved."
+    #
+    # THAT REFUSAL IS THE POINT. The alternative is manufacturing a coordinate, and a fabricated 0,0
+    # or a default Kharagpur pin is precisely the failure the two-group split was built to end:
+    # fifteen live artisans documented in Rajasthan, Gujarat, Uttarakhand and Andhra Pradesh already
+    # carry Kharagpur coordinates because the schema once had nowhere else to put "where the subject
+    # is". Relaxing the NOT NULL to spare the profile a click would weaken that invariant on all six
+    # field-record owners and retype every reader of a location from ``float`` to ``float | None``.
+    #
+    # ── AND WHAT ARRIVES IS ALWAYS A POINT A PERSON GAVE. THIS PATH NEVER GEOCODES ─────────────
+    #
+    # Nothing on the server derives, defaults or looks up a coordinate, a place name or an address:
+    # the row that is written holds the numbers the body carried and no others. The profile is the
+    # one form in this system whose SUBJECT IS THE PERSON FILLING IT IN, always edited from a desk,
+    # so an auto-captured fix here would read as "designer based in Kharagpur" and nobody would
+    # question it. The server cannot tell a deliberately pressed GPS from an automatic one — both
+    # arrive as two floats — so that check cannot live here, and it lives in the client instead:
+    # ``LocationFields`` switches auto-capture off whenever it is handed an ``initial``, and the
+    # profile screen, which is always an edit of one's own record, must always hand it one. Whoever
+    # writes the next client needs to know that this line is not a second safety net.
+    location: LocationInput | None = None
+
+    # Omit it to keep the stored address; send one to replace it; you may not send ``null``. The same
+    # rule the six record bodies carry, for the same reason: ``attach_location`` writes a BRAND NEW
+    # ``Location`` row on every save and never updates one, so "clear it" has no honest
+    # implementation — it would orphan the old row and leave the profile with no district rather
+    # than with a corrected address. A designer who moves house REPLACES their location.
+    #
+    # WHAT IS DELIBERATELY NOT APPLIED IS ``require_location``. That demands a coordinate AND a state
+    # AND a district, and it is a CREATE rule written for a field record made while standing at the
+    # place. A profile has no create at all — ``get_or_create_profile`` mints the row on first read —
+    # and a designer must be able to save their name, qualification, phone and e-mail without having
+    # first decided where they live, on a form whose four mandatory columns are none of these.
+    _location_kept = model_validator(mode="after")(forbid_clearing_location)
 
     @field_validator("displayName", "qualification", "phone", "email")
     @classmethod
-    def _mandatory_columns_may_not_be_cleared(
-        cls, value: Any, info: ValidationInfo
-    ) -> Any:
+    def _mandatory_columns_may_not_be_cleared(cls, value: Any, info: ValidationInfo) -> Any:
         """Refuse a SUPPLIED name, qualification, phone or e-mail that is null or all whitespace.
 
         See :data:`REQUIRED_PROFILE_COLUMNS` for why this rule is on the API rather than only in the

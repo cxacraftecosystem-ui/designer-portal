@@ -85,7 +85,7 @@
  * file may call it from an effect.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, CloudOff } from "lucide-react";
 
@@ -115,8 +115,9 @@ import {
 } from "@/lib/designWorkshops";
 import type { MediaFile } from "@/lib/types";
 
-import { UploadTabPanel } from "./upload/UploadTabPanel";
-import { MeasureFromPhotoCard, type MeasurePhotos } from "./upload/MeasureFromPhotoCard";
+import { UploadTabPanel, type ChosenPhotograph } from "./upload/UploadTabPanel";
+import { MeasureFromPhotoCard, type MeasurePhotos, type WorkingPhoto } from "./upload/MeasureFromPhotoCard";
+import { decodeToPixels, isDecoded, type DecodedPixels } from "./upload/decodeToPixels";
 import { readStageRows, rowKeyOf, rowLabel, type StageRows } from "./stageRows";
 import { syncPassLanded, syncPassNote } from "./syncNote";
 
@@ -383,6 +384,117 @@ function useMeasurablePhotos(refs: string[]): MeasurePhotos {
   return state;
 }
 
+/**
+ * A photograph the designer chose on this tab, before either derivation has been made from it.
+ *
+ * THE `id` IS THE IDENTITY, NOT THE `File`. Everything downstream — the tracing panel's adopt guard,
+ * the measuring panel's remount key, the memo that builds {@link ChosenPhotograph} — has to be able
+ * to say "this is still the same photograph" about records that are rebuilt as the decode settles,
+ * and has to say "this is a different one" when the same file is chosen twice in a row. A number
+ * minted at the pick answers both; the `File` object answers only the first, and identity by name or
+ * by size answers neither.
+ */
+type PhotoPick = { readonly id: number; readonly file: File };
+
+/**
+ * Turn a pick into something an `<img>` can draw, and release it when it stops being the pick.
+ *
+ * ── CREATED AND REVOKED IN ONE EFFECT, WHICH IS THE WHOLE OF THE RULE ──────────────────────────
+ *
+ * The same discipline `useMeasurablePhotos` above states and for the same two failures: revoked
+ * anywhere else, an object URL either leaks for the life of the tab — pinning a photograph-sized
+ * blob per pick — or is released while an `<img>` is still reading it, and the second looks to a
+ * designer like a photograph that vanished. §12.10 states it repo-wide. Nothing outside this hook
+ * may call `URL.createObjectURL` on a picked photograph, which is why the panels are handed a URL
+ * rather than a `File` to make one from.
+ *
+ * ── AND WHY THE ANSWER LAGS THE PICK BY ONE COMMIT, DELIBERATELY ───────────────────────────────
+ *
+ * The url is minted in the effect, so between `setPick` and the effect running this still returns the
+ * PREVIOUS photograph — id and url together, consistent with each other. The alternative, keeping the
+ * url in its own state beside the pick, produces the one state that must never exist: the new
+ * photograph's id over the old photograph's url. A consumer keyed on the id would then treat the old
+ * picture as the new one, which is exactly the "traces A, files it under B's name" class of failure
+ * `SketchTraceField.pickRef` was written for, arriving from the other end.
+ */
+function usePhotoUrl(pick: PhotoPick | null): { id: number; file: File; url: string } | null {
+  const [held, setHeld] = useState<{ id: number; file: File; url: string } | null>(null);
+
+  useEffect(() => {
+    if (!pick) {
+      setHeld(null);
+      return;
+    }
+    const url = URL.createObjectURL(pick.file);
+    setHeld({ id: pick.id, file: pick.file, url });
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [pick]);
+
+  return held;
+}
+
+/**
+ * Decode a picked photograph to pixels ONCE, for the one panel on this tab that reads pixels.
+ *
+ * ── WHY IT IS HERE AND NOT IN THE PANEL THAT USES IT ───────────────────────────────────────────
+ *
+ * Because two panels work from one pick and only one of them can use this. `decodeToPixels` resizes
+ * and calls `getImageData` — hundreds of milliseconds for a 4096px photograph on a handset — and it
+ * feeds the trace, the comparison plates and the frame chooser, none of which ever see the `File`.
+ * The measuring panel beside it reads no pixels at all (`PhotoMeasureField`'s own header, under "NO
+ * NETWORK, NO CANVAS READBACK, NO RE-ENCODING") and needs the object URL above instead. So one owner
+ * makes both derivations, once each, from one file: that is what "upload it once" means here, and
+ * leaving the decode inside the tracing panel would have meant paying for it again every time the
+ * designer switched to the Prototypes half and back, because that panel unmounts with the section.
+ *
+ * MEMOISED ON THE PICK AND NOTHING ELSE. The dependency is the pick record, whose identity changes
+ * exactly when a different photograph is chosen — not a fresh object literal per render, which would
+ * re-decode on every keystroke anywhere on the tab, and not the raw `File` from an event handler,
+ * which is the same thing wearing a different coat.
+ *
+ * A REFUSAL IS AN ANSWER, NOT AN ABSENCE. `decodeToPixels` says in a sentence why a browser could not
+ * read an image, and that sentence is carried out of here so it can be printed beside the picker the
+ * designer used. Returning a bare null would have made "still reading" and "this cannot be read"
+ * indistinguishable, which is the state this tab's own copy rules forbid everywhere else.
+ */
+function useDecodedPhotograph(
+  pick: PhotoPick | null
+): { id: number; pixels: DecodedPixels | null; problem: string | null } | null {
+  const [decoded, setDecoded] = useState<{ id: number; pixels: DecodedPixels | null; problem: string | null } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!pick) {
+      setDecoded(null);
+      return;
+    }
+    let cancelled = false;
+    // Cleared before the await so the panels see "reading…" rather than the previous photograph's
+    // pixels under this photograph's name for as long as the decode takes.
+    setDecoded(null);
+    void (async () => {
+      const outcome = await decodeToPixels(pick.file);
+      // ONE MORE GUARD THAN LOOKS NECESSARY, AND IT IS THE ONE THAT MATTERS: picking again after a
+      // mis-tap is ordinary, the second decode can finish first, and a late answer written without
+      // this would put photograph A's pixels under photograph B's id.
+      if (cancelled) return;
+      setDecoded(
+        isDecoded(outcome)
+          ? { id: pick.id, pixels: outcome, problem: null }
+          : { id: pick.id, pixels: null, problem: outcome.reason }
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pick]);
+
+  return decoded;
+}
+
 export function UploadTabHost({ workshopId, registry }: { workshopId: string; registry: DwRegistry | null }) {
   const [sketches, setSketches] = useState<StageRows | null>(null);
   const [prototypes, setPrototypes] = useState<StageRows | null>(null);
@@ -391,6 +503,239 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  /* ── ONE PHOTOGRAPH FOR THE WHOLE SKETCHES HALF ─────────────────────────────────────────────
+
+     THE DEFECT: a designer photographed a sketch once and uploaded it twice. There was never a
+     second picker to blame — the tracing panel owned the only file dialog on this half and the
+     measuring card owned none — so the same bytes took two routes: straight into the decoder here,
+     and the long way round into the measuring card, which could see a photograph only after it had
+     been attached to the chosen row, written by `putDraftStage`, carried up by a sync pass, reloaded
+     and re-resolved by `useMeasurablePhotos`. Measuring before filing was impossible, and a
+     photograph filed against a DIFFERENT row than the one selected was invisible to it entirely.
+
+     THIS IS THE SINGLE OWNER. It holds the pick, it makes both derivations from it — the decode for
+     the tracing panel, the object URL for the measuring one — and it hands each panel the one it can
+     use. It is the right owner rather than the nearest one: `UploadTabPanel` is the closer common
+     ancestor in the DOM, but the measuring card reaches it as an already-rendered node (see that
+     file's slot note), so nothing there can put a photograph inside it; and this file already owns
+     the only other object-URL create/revoke pair on the tab, which is the pairing §12.10 says must
+     not be split across owners.
+
+     NOTHING HERE FILES ANYTHING. A pick is a pick: the bytes reach a record only through the panels'
+     own attach buttons, down the same `stageLocalMedia` → `putDraftStage` → `syncDesignWorkshopDrafts`
+     path every other file on this tab takes, with the same two phases and the same two sentences. */
+  const [sketchPick, setSketchPick] = useState<PhotoPick | null>(null);
+  /**
+   * The measuring card's escape hatch — a DIFFERENT photograph, for measuring and nothing else.
+   *
+   * Held apart from {@link sketchPick} rather than replacing it, because the two panels are then
+   * demonstrably working from two different pictures and each says which. Folding them into one slot
+   * would mean the tracing panel silently re-tracing whatever the measuring card was pointed at.
+   * Its own card explains why the hatch exists at all rather than the second picker being deleted.
+   */
+  const [sketchMeasurePick, setSketchMeasurePick] = useState<PhotoPick | null>(null);
+  /**
+   * The same escape hatch on the PROTOTYPES half, where it is the only unfiled photograph there is.
+   *
+   * ── WHY THIS EXISTS WHEN {@link sketchPick} HAS NO PROTOTYPE TWIN ──────────────────────────────
+   *
+   * The two are not the same feature and it is worth being exact about which one crossed over.
+   * `sketchPick` is a SHARED photograph: two panels read it, so the host holds it unfiled until a
+   * button in one of them is pressed. Nothing on the prototypes half is shared — the turntable files
+   * its frames the instant they are picked, and a model file is not something a measuring panel can
+   * read at all — so there is no shared pick here and `PrototypeModelField`'s header argues at length
+   * that there must not be one.
+   *
+   * What DID cross over is the measuring card's own picker, because the want it answers has nothing
+   * to do with sharing: a dimension comes off a photograph with a ruler or a scale card lying beside
+   * the object, and the photographs of a prototype are shot as a clean turn with nothing else in
+   * frame. Making the designer file the ruler shot onto the record to measure it is the same "attach
+   * it before you can look at it" round trip this whole change removed on the other half, and it is
+   * worse here, because what they would be filing it into is the field the reviewer sees.
+   *
+   * SEPARATE STATE FROM {@link sketchMeasurePick} AND NOT ONE SHARED SLOT. The two sections are two
+   * different records with two different rows chosen, a designer moves between them freely, and a
+   * single slot would silently carry a sketch's ruler photograph into the prototype's measuring card
+   * under a sentence naming the wrong entity. They share `pickCount`, so their ids can never collide.
+   */
+  const [prototypeMeasurePick, setPrototypeMeasurePick] = useState<PhotoPick | null>(null);
+  /**
+   * Which pick has been filed, and onto WHICH ROW, or null for none.
+   *
+   * WITHOUT THIS THE MEASURING CARD LISTS ONE PHOTOGRAPH TWICE and calls one of the copies unfiled.
+   * "Attach the photograph only" writes the pick onto the row; the row then resolves it back through
+   * `useMeasurablePhotos` as an ordinary attached photograph — so the same picture would appear both
+   * as the row's and as this tab's not-yet-attached one, under a sentence claiming nothing had been
+   * written anywhere. The pick itself is deliberately KEPT: the tracing panel is still holding its
+   * decode and its drawing, and throwing those away because the photograph was filed would punish
+   * the designer for doing the thing the tab asked them to do.
+   *
+   * THE ROW IS HALF OF THE FACT AND NOT DECORATION. "Filed" is a claim about one row: the same
+   * photograph is on the record for the sketch it was attached to and is on no record at all for the
+   * next one down the picker. An id alone would make it disappear out of the measuring card the
+   * moment the designer moved to a different sketch — the photograph in their hand, hidden because
+   * of something they did to a different row. Pairing it with the row is what keeps the answer true
+   * on both sides of that change, with no reset to remember.
+   */
+  const [sketchPhotoFiled, setSketchPhotoFiled] = useState<{ id: number; rowKey: string } | null>(null);
+  /**
+   * Where a pick's `id` comes from. A ref, because it is read and written in an event handler and
+   * nothing renders from it — the ids it mints are what render.
+   *
+   * SHARED BETWEEN THE TWO PICKERS ON PURPOSE, so a shared photograph and a measure-only one can
+   * never collide on an id, which would make one card's remount key match the other card's pick.
+   * Starts at zero, so zero is free to mean "no photograph" everywhere downstream.
+   */
+  const pickCount = useRef(0);
+
+  const heldSketchPhoto = usePhotoUrl(sketchPick);
+  const decodedSketchPhoto = useDecodedPhotograph(sketchPick);
+  const heldMeasurePhoto = usePhotoUrl(sketchMeasurePick);
+  /*
+    THE SAME HOOK AND DELIBERATELY NOT `useDecodedPhotograph` BESIDE IT. A measuring photograph is
+    only ever displayed: `PhotoMeasureField` reads no pixels — its own header says so under "NO
+    NETWORK, NO CANVAS READBACK, NO RE-ENCODING" — so a decode here would be hundreds of milliseconds
+    of `getImageData` on a handset producing a value nothing would read. The trace decode exists on
+    the sketches half because there is a panel there that consumes pixels; there is none here.
+  */
+  const heldPrototypeMeasurePhoto = usePhotoUrl(prototypeMeasurePick);
+
+  /**
+   * The record both panels are handed: one file, its url, and its pixels once they have settled.
+   *
+   * THE MEMO IS THE POINT, not tidiness. `SketchTraceField` takes this photograph up through the same
+   * door a locally-picked one goes through — every reset a new photograph owes it — and it decides
+   * "is this a new photograph" by the `id`. Built inline in the JSX this object would be new on every
+   * render, and while that alone would not re-trigger the adopt (the id would be unchanged) it would
+   * re-run the effect that watches it several times per keystroke on the tab. Built here it changes
+   * exactly twice per photograph: once when it is picked, once when its decode lands.
+   *
+   * THE URL AND THE PIXELS ARE PAIRED BY `id` RATHER THAN ASSUMED TO AGREE. The two derivations
+   * settle at different times, and a decode that lands after the next photograph has been picked
+   * would otherwise be published against it.
+   */
+  const sketchPhotograph = useMemo<ChosenPhotograph | null>(() => {
+    if (!heldSketchPhoto) return null;
+    const settled = decodedSketchPhoto && decodedSketchPhoto.id === heldSketchPhoto.id ? decodedSketchPhoto : null;
+    return {
+      id: heldSketchPhoto.id,
+      file: heldSketchPhoto.file,
+      url: heldSketchPhoto.url,
+      pixels: settled?.pixels ?? null,
+      problem: settled?.problem ?? null
+    };
+  }, [heldSketchPhoto, decodedSketchPhoto]);
+
+  const chooseSketchPhoto = useCallback((file: File | null) => {
+    pickCount.current += 1;
+    setSketchPick(file ? { id: pickCount.current, file } : null);
+    // A NEW PHOTOGRAPH IS NOT THE FILED ONE, whatever was filed for the last one. Left standing, this
+    // would make the measuring card treat a photograph nobody has attached as already on the record.
+    setSketchPhotoFiled(null);
+  }, []);
+
+  const chooseSketchMeasurePhoto = useCallback((file: File | null) => {
+    pickCount.current += 1;
+    setSketchMeasurePick(file ? { id: pickCount.current, file } : null);
+  }, []);
+
+  const choosePrototypeMeasurePhoto = useCallback((file: File | null) => {
+    pickCount.current += 1;
+    setPrototypeMeasurePick(file ? { id: pickCount.current, file } : null);
+  }, []);
+
+  /**
+   * Whether the photograph in the designer's hand is on the row they are looking at RIGHT NOW.
+   *
+   * ── ONE EXPRESSION, BECAUSE TWO CARDS ANSWER THIS QUESTION ON ONE SCREEN AND MUST AGREE ────────
+   *
+   * This used to be a local `filedHere` inside {@link sketchWorking} and nothing else read it, so
+   * the shared card at the top of the section had no way to know and said the only thing it could:
+   * "Nothing has been filed yet". That sentence stopped being true the moment either button in the
+   * tracing panel was pressed — both of them route the photograph through `onAttachSketchSource`
+   * (`SketchTraceField.fileSourceOnce`, reached from "Attach the photograph only" AND from "Add the
+   * line art …") — and the disagreement was visible without scrolling: the measuring card switched
+   * at that same instant from "the photograph chosen above, which is not attached to anything yet"
+   * to "Measuring against the photograph attached to “…”", directly under a card still insisting
+   * nothing had been written anywhere. Two cards, one photograph, opposite claims. The tab's whole
+   * subject is telling a designer whether their file is safe, so this is the one contradiction it
+   * may not print.
+   *
+   * DERIVED HERE RATHER THAN RECOMPUTED IN THE CARD, and that is the point rather than tidiness: a
+   * second copy of `id === id && rowKey === row` is a second copy that drifts, and the two readers
+   * are a sentence and a list — the drift would show up as a card claiming the photograph is unfiled
+   * beside a card measuring it as filed, which is exactly what was already on screen.
+   *
+   * `sketchPhotograph !== null` IS LOAD-BEARING AND WAS FREE TO OMIT BEFORE. Optional chaining makes
+   * `undefined === undefined` true, so with no photograph and nothing filed the old inline form
+   * evaluated TRUE — harmless while the only reader was guarded by `if (sketchPhotograph && …)`, and
+   * a claim that an absent photograph is filed the moment anything reads it on its own.
+   */
+  const sketchPhotoOnRow =
+    sketchPhotograph !== null &&
+    sketchPhotoFiled?.id === sketchPhotograph.id &&
+    sketchPhotoFiled?.rowKey === sketchRow;
+
+  /**
+   * What the SKETCH measuring card measures that is not on the record: the override if there is one,
+   * otherwise the shared photograph until it has been filed.
+   *
+   * THE ORDER IS THE ANSWER TO "WHICH ONE AM I LOOKING AT". An explicit choice beats a default, and
+   * the card prints a different sentence for each of the two so the pair can never quietly diverge.
+   */
+  const sketchWorking = useMemo<WorkingPhoto | null>(() => {
+    if (heldMeasurePhoto) {
+      return {
+        photo: {
+          key: `dwpick:${heldMeasurePhoto.id}`,
+          name: heldMeasurePhoto.file.name,
+          url: heldMeasurePhoto.url
+        },
+        source: "own"
+      };
+    }
+    if (sketchPhotograph && !sketchPhotoOnRow) {
+      return {
+        photo: {
+          key: `dwpick:${sketchPhotograph.id}`,
+          name: sketchPhotograph.file.name,
+          url: sketchPhotograph.url
+        },
+        source: "shared"
+      };
+    }
+    return null;
+    // `sketchPhotoOnRow` REPLACES `sketchPhotoFiled` AND `sketchRow` HERE, which is the whole list
+    // shrinking rather than a name being swapped: those two were only ever read to compute it, and
+    // naming the value this memo actually reads is what keeps the list honest instead of suppressed.
+  }, [heldMeasurePhoto, sketchPhotograph, sketchPhotoOnRow]);
+
+  /**
+   * The same answer for the PROTOTYPE measuring card, which has exactly one of the two sources.
+   *
+   * ── `"own"` OR NOTHING, AND NO `sketchPhotoFiled` EQUIVALENT ───────────────────────────────────
+   *
+   * The sketch memo above has two arms because that half has a shared photograph the tab may or may
+   * not have filed yet, and a whole piece of bookkeeping (`sketchPhotoFiled`) exists to stop the same
+   * picture being listed twice once it has been. Neither applies here and the reason is the same one
+   * `PrototypeModelField`'s header gives: this half has no shared pick, and the one uploader that
+   * takes photographs hands them over AT THE PICK — so a prototype photograph is either on the row,
+   * where `useMeasurablePhotos` finds it, or it was chosen on the measuring card itself, where
+   * nothing will ever file it. There is no third state to disambiguate, so there is nothing to
+   * remember about which row it went to.
+   */
+  const prototypeWorking = useMemo<WorkingPhoto | null>(() => {
+    if (!heldPrototypeMeasurePhoto) return null;
+    return {
+      photo: {
+        key: `dwpick:${heldPrototypeMeasurePhoto.id}`,
+        name: heldPrototypeMeasurePhoto.file.name,
+        url: heldPrototypeMeasurePhoto.url
+      },
+      source: "own"
+    };
+  }, [heldPrototypeMeasurePhoto]);
 
   const reload = useCallback(async () => {
     const [sketch, prototype] = await Promise.all([
@@ -996,6 +1341,28 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           turntableCount={turntableHeld}
           disabled={busy || !anythingReady}
           /*
+            ── THE ONE PICKER FOR THE SKETCHES HALF, AND WHAT IT IS FOR ─────────────────────────
+
+            Passing these four is what moves the file dialog out of the tracing panel and up to the
+            top of the section, where both panels can be handed the same photograph. See the state
+            above for the defect that arrangement ends, and `SketchTraceField.photograph` for why the
+            panel reads the PRESENCE of `onChooseSketchPhoto` rather than a flag: a host that passes
+            neither gets the shape that shipped before this existed, which is the record-form mount.
+          */
+          sketchPhotograph={sketchPhotograph}
+          sketchImageLabel={sketchImage?.label ?? "Sketch image"}
+          sketchRowName={chosenSketch ? rowLabel(chosenSketch, chosenSketchIndex) : null}
+          /*
+            THE SAME FACT THE MEASURING CARD BELOW IS ALREADY ACTING ON, so the two cards cannot
+            print opposite claims about one photograph. See `sketchPhotoOnRow`: the shared card had
+            no way to learn that a button in the tracing panel had just filed the photograph it is
+            showing, and went on saying "Nothing has been filed yet" over a photograph that was on
+            the row — while the card under it had already switched to measuring it as an attached
+            one.
+          */
+          sketchPhotoFiled={sketchPhotoOnRow}
+          onChooseSketchPhoto={chooseSketchPhoto}
+          /*
             THE HANDLERS ANSWER THE PANEL, and the answer is what stops a green tick appearing over a
             red refusal. `attach` resolves true once EVERY file it was handed is on this device (phase
             two owns its own sentence); a synchronous `refuse` resolves false, because `refuse` has
@@ -1027,7 +1394,17 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               refuse("sketch");
               return false;
             }
-            return attach(
+            /*
+              WHICH PICK THIS IS, TAKEN BEFORE THE AWAIT. The panel hands back the very `File` the
+              shared card chose, so the two can be matched by object identity — and they are matched
+              HERE rather than after the write, because `sketchPhotograph` is a memo the write's own
+              `reload()` may have rebuilt by the time this resolves. See `sketchPhotoFiled`: without
+              it the measuring card lists this photograph twice, once as the row's and once as this
+              tab's not-yet-attached one.
+            */
+            const filedPick = sketchPhotograph?.file === file ? sketchPhotograph.id : 0;
+            const filedRow = sketchRow;
+            const landed = await attach(
               {
                 stageKey: sketches.stageKey,
                 entityKey: "sketch",
@@ -1039,6 +1416,11 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               [file],
               () => sketchImage.label
             );
+            // ONLY ON A REAL LANDING. `attach` answers false for a refusal and for a partial, and in
+            // both of those the photograph is still unfiled — marking it filed would take it out of
+            // the measuring card on the strength of a write that did not happen.
+            if (landed && filedPick) setSketchPhotoFiled({ id: filedPick, rowKey: filedRow });
+            return landed;
           }}
           onAttachModel={async (file) => {
             if (!prototypes?.stageKey || !prototypeReady) {
@@ -1121,7 +1503,24 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               targets={sketchTargets}
               row={chosenSketch ?? NO_ROW}
               photoFieldLabels={sketchPhotoFields.map((entry) => entry.label)}
+              /*
+                NARROWER THAN THE PANEL'S OWN `disabled`, WHICH IS `busy || !anythingReady`, and the
+                pair is deliberate rather than drifted. The panel takes files for either half and a
+                workshop very often has sketches and no prototypes yet, so ANDing the two halves
+                would grey out the tracing card because nobody has made a prototype — see
+                `anythingReady` above. This card writes a number into a SKETCH row, so the sketch
+                half being writable is the whole of its question.
+              */
               disabled={busy || !sketchReady}
+              /*
+                THE SAME PHOTOGRAPH THE TRACING PANEL IS WORKING FROM, so one upload serves both —
+                and the escape hatch beside it, so a designer who needs a DIFFERENT picture here (the
+                sheet worth tracing and the shot with a ruler beside the object are often two
+                different photographs) is not forced to choose between the two panels. Both are
+                display-only: nothing on that card can put a file on a record.
+              */
+              working={sketchWorking}
+              onUseDifferentPhoto={chooseSketchMeasurePhoto}
               // Two parameters against a three-parameter type, deliberately — see the note on
               // `proposeDimension` for the marker this stage save has nowhere to put yet.
               onPropose={(key, value) => {
@@ -1140,6 +1539,49 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
             />
           }
           prototypeMeasure={
+            /*
+              ── REQUIREMENT 7 IS DECIDED HERE, AND THE TWO HALVES OF IT GO OPPOSITE WAYS ─────────
+
+              This comment used to say the prototypes half gets neither `working` nor
+              `onUseDifferentPhoto`, because its two uploaders write "two different registry fields of
+              one entity … NEITHER OF WHICH IS A PHOTOGRAPH A SECOND PANEL ALSO READS". The second
+              half of that sentence was simply wrong, and it is the kind of wrong that survives
+              because nobody re-runs the grep: `prototypePhotoFields` is `imageFieldsOf(prototypeEntity)`
+              a few hundred lines up, which answers `prototypePhotos` AND `turntablePhotos` — so the
+              turntable frames this tab uploads are read straight back by the card below. One upload,
+              two consumers, exactly the shape requirement 5 is about.
+
+              NO SHARED PHOTOGRAPH ON THIS HALF, WHICH IS NOT THE SAME FACT AS NO `working`. What
+              made the sketches half painful was not two consumers, it was the WINDOW: that
+              photograph is held unfiled on purpose (two panels want it before it lands anywhere,
+              and `sketch.image` is a single IMAGE field an attach REPLACES), so measuring it meant
+              filing it first and waiting out a `putDraftStage`, a sync and a reload. There is no
+              such window here. `turntablePhotos` is an append-only IMAGE_LIST, `PrototypeModelField`
+              hands its frames over at the moment of the pick, and `attach` above awaits its own
+              `reload()` — so by the time that call resolves the frames are on the row and this card
+              has already re-read them. That is why nothing hoists a picker above this half, and why
+              `source: "shared"` is a value `prototypeWorking` can never carry.
+
+              THE PROP IS STILL PASSED, AND CUTTING IT IS THE ONE EDIT THIS PARAGRAPH EXISTS TO STOP.
+              For one revision the lines above read "NO `working` … a state that cannot occur" three
+              lines over `working={prototypeWorking}`, which is a comment and a call arguing with each
+              other on one screen — and the comment is the half a reader trusts. Tidying the code to
+              agree with it cuts the only route the escape hatch's photograph has into `Body`'s
+              `usable` list, and what that leaves on screen is a picker that opens a file dialog,
+              takes a photograph and changes nothing: worse than no picker at all, because the
+              designer believes they have chosen something. `prototypeWorking` is `"own"` or null and
+              its own memo above says so; `WorkingPhoto`'s doc says both halves pass the prop.
+
+              `onUseDifferentPhoto` IS THE HALF THAT TRANSFERRED WHOLE. That control was
+              never about the shared pick — it is "measure a picture that is not on this record", and
+              the want is stronger here than on the other half. The photographs of a prototype are
+              shot as a clean turn, same light, same background, nothing else in frame; a dimension
+              comes off a photograph with a ruler or a scale card lying beside the object. Refusing
+              the control here would tell a designer to file the ruler shot into the very field a
+              reviewer looks at, which is a worse version of the round trip this whole change removed.
+              The card's own copy differs by `what` and says so; nothing on it files anything on
+              either half.
+            */
             <MeasureFromPhotoCard
               what="prototype"
               rowName={chosenPrototype ? rowLabel(chosenPrototype, chosenPrototypeIndex) : null}
@@ -1148,6 +1590,8 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               row={chosenPrototype ?? NO_ROW}
               photoFieldLabels={prototypePhotoFields.map((entry) => entry.label)}
               disabled={busy || !prototypeReady}
+              onUseDifferentPhoto={choosePrototypeMeasurePhoto}
+              working={prototypeWorking}
               onPropose={(key, value) => {
                 const chosenTarget = prototypeTargets.find((entry) => entry.field.key === key);
                 if (!prototypes?.stageKey || !prototypeReady || !chosenTarget) {

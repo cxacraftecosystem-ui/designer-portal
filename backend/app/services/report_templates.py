@@ -39,7 +39,7 @@ class Presentation(str, Enum):
     TABLE = "TABLE"
     CARDS = "CARDS"
     GALLERY = "GALLERY"
-    AUTO = "AUTO"          # let the builder decide from the fields' report_role
+    AUTO = "AUTO"  # let the builder decide from the fields' report_role
 
 
 class SpecialSection(str, Enum):
@@ -136,11 +136,11 @@ class TemplateSection:
     presentation: Presentation = Presentation.AUTO
     include_photos: bool = True
     photo_columns: int = 2
-    max_photos: int = 0          # 0 = no cap; a photo catalogue wants every one
+    max_photos: int = 0  # 0 = no cap; a photo catalogue wants every one
     page_break_before: bool = False
     omit_if_empty: bool = True
-    intro: str = ""              # a fixed sentence printed before the data
-    entities: tuple[str, ...] = ()   # restrict to these entity keys; empty means all
+    intro: str = ""  # a fixed sentence printed before the data
+    entities: tuple[str, ...] = ()  # restrict to these entity keys; empty means all
     # MAY THIS STAGE SECTION PRINT ITS OWN FIGURES. On by default, because a chart that has to be
     # opted into per template is a chart six templates forget. Turned off where an infographic
     # would say something the audience must not be told — see the price list in PHOTO_CATALOGUE.
@@ -188,7 +188,7 @@ class ReportTemplate:
     theme: ReportTheme = field(default_factory=ReportTheme)
     number_headings: bool = True
     organisation: str = ""
-    show_empty_note: bool = True   # print "Not recorded." rather than a silent gap
+    show_empty_note: bool = True  # print "Not recorded." rather than a silent gap
 
     def section_for(self, stage_key: str) -> TemplateSection | None:
         return next((s for s in self.sections if s.stage_key == stage_key), None)
@@ -248,10 +248,14 @@ _TABULAR = {
     "POST_WORKSHOP_FOLLOWUP": Presentation.TABLE,
 }
 
-_HEAVY_STAGES = frozenset({
-    "PROTOTYPE_DEVELOPMENT", "FINAL_PROTOTYPE_DOCUMENTATION", "SKETCH_DEVELOPMENT",
-    "MARKET_SURVEY_CAPTURE",
-})
+_HEAVY_STAGES = frozenset(
+    {
+        "PROTOTYPE_DEVELOPMENT",
+        "FINAL_PROTOTYPE_DOCUMENTATION",
+        "SKETCH_DEVELOPMENT",
+        "MARKET_SURVEY_CAPTURE",
+    }
+)
 
 
 #: The map, placed immediately after the participant roster in every template that carries it.
@@ -275,30 +279,31 @@ OUTCOME_FIGURES = TemplateSection(
 )
 
 
-def _standard_sections(*, photos: bool = True, photo_columns: int = 2,
-                       figures: bool = False) -> tuple[TemplateSection, ...]:
+def _standard_sections(
+    *, photos: bool = True, photo_columns: int = 2, figures: bool = False
+) -> tuple[TemplateSection, ...]:
     """The default running order, used by most templates with small overrides."""
     sections: list[TemplateSection] = [
         TemplateSection(special=SpecialSection.COVER),
         TemplateSection(special=SpecialSection.TOC),
-        TemplateSection(special=SpecialSection.SUMMARY_METRICS,
-                        heading="Workshop at a glance"),
+        TemplateSection(special=SpecialSection.SUMMARY_METRICS, heading="Workshop at a glance"),
     ]
     if figures:
         sections.append(OUTCOME_FIGURES)
     for stage_key in NARRATIVE_ORDER:
-        sections.append(TemplateSection(
-            stage_key=stage_key,
-            presentation=_TABULAR.get(stage_key, Presentation.AUTO),
-            include_photos=photos,
-            photo_columns=photo_columns,
-            # A stage that fills several pages reads better from the top of one.
-            page_break_before=stage_key in _HEAVY_STAGES,
-        ))
+        sections.append(
+            TemplateSection(
+                stage_key=stage_key,
+                presentation=_TABULAR.get(stage_key, Presentation.AUTO),
+                include_photos=photos,
+                photo_columns=photo_columns,
+                # A stage that fills several pages reads better from the top of one.
+                page_break_before=stage_key in _HEAVY_STAGES,
+            )
+        )
         if figures and stage_key == "WORKSHOP_PLAN_PARTICIPANTS_OPENING":
             sections.append(MAP_SECTION)
-    sections.append(TemplateSection(special=SpecialSection.SIGNATURES,
-                                    page_break_before=True))
+    sections.append(TemplateSection(special=SpecialSection.SIGNATURES, page_break_before=True))
     return tuple(sections)
 
 
@@ -340,20 +345,33 @@ QUESTIONNAIRE_ANNEXURE = TemplateSection(
 
 
 DCH_THEME = ReportTheme(
-    accent="1F3864", accent_soft="2F5496", table_header_fill="1F3864",
-    zebra_fill="F2F5FA", rule="B8C4D9",
+    accent="1F3864",
+    accent_soft="2F5496",
+    table_header_fill="1F3864",
+    zebra_fill="F2F5FA",
+    rule="B8C4D9",
 )
 DIC_THEME = ReportTheme(
-    accent="1B4332", accent_soft="2D6A4F", table_header_fill="1B4332",
-    zebra_fill="EFF6F1", rule="BBD3C4",
+    accent="1B4332",
+    accent_soft="2D6A4F",
+    table_header_fill="1B4332",
+    zebra_fill="EFF6F1",
+    rule="BBD3C4",
 )
 AGENCY_THEME = ReportTheme(
-    accent="6B2737", accent_soft="8C3A4D", table_header_fill="6B2737",
-    zebra_fill="FBF1F3", rule="E0C3CB",
+    accent="6B2737",
+    accent_soft="8C3A4D",
+    table_header_fill="6B2737",
+    zebra_fill="FBF1F3",
+    rule="E0C3CB",
 )
 CATALOGUE_THEME = ReportTheme(
-    accent="1B1B1B", accent_soft="4A4A4A", table_header_fill="2B2B2B",
-    zebra_fill="F5F5F4", rule="D6D3D1", base_size_pt=10.0,
+    accent="1B1B1B",
+    accent_soft="4A4A4A",
+    table_header_fill="2B2B2B",
+    zebra_fill="F5F5F4",
+    rule="D6D3D1",
+    base_size_pt=10.0,
 )
 
 
@@ -366,8 +384,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             "(Handicrafts): cover, contents, every stage in the reader's order, photographs, "
             "cost sheets and sign-off."
         ),
-        sections=(*_standard_sections(figures=True), QUESTIONNAIRE_ANNEXURE,
-                  TRANSCRIPT_ANNEXURE),
+        sections=(*_standard_sections(figures=True), QUESTIONNAIRE_ANNEXURE, TRANSCRIPT_ANNEXURE),
         organisation="Office of the Development Commissioner (Handicrafts)",
         theme=DCH_THEME,
     ),
@@ -393,24 +410,32 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
         sections=(
             TemplateSection(special=SpecialSection.COVER),
             TemplateSection(special=SpecialSection.TOC),
-            TemplateSection(special=SpecialSection.SUMMARY_METRICS,
-                            heading="Outcomes at a glance"),
+            TemplateSection(special=SpecialSection.SUMMARY_METRICS, heading="Outcomes at a glance"),
             TemplateSection(stage_key="WORKSHOP_OUTCOMES", presentation=Presentation.NARRATIVE),
-            TemplateSection(stage_key="FINAL_PROTOTYPE_DOCUMENTATION",
-                            presentation=Presentation.CARDS, page_break_before=True),
+            TemplateSection(
+                stage_key="FINAL_PROTOTYPE_DOCUMENTATION",
+                presentation=Presentation.CARDS,
+                page_break_before=True,
+            ),
             TemplateSection(stage_key="COSTING_MARKET_LINKAGE", presentation=Presentation.TABLE),
             TemplateSection(stage_key="PROTOTYPE_VALIDATION", presentation=Presentation.TABLE),
-            TemplateSection(stage_key="WORKSHOP_PLAN_PARTICIPANTS_OPENING",
-                            presentation=Presentation.TABLE, page_break_before=True,
-                            heading="Annexure A — Participants"),
-            TemplateSection(stage_key="CLUSTER_CRAFT_BACKGROUND",
-                            presentation=Presentation.KEY_VALUE,
-                            heading="Annexure B — Cluster and craft background"),
-            TemplateSection(stage_key="MARKET_SURVEY_CAPTURE",
-                            presentation=Presentation.TABLE,
-                            heading="Annexure C — Market survey"),
-            TemplateSection(stage_key="POST_WORKSHOP_FOLLOWUP",
-                            presentation=Presentation.TABLE),
+            TemplateSection(
+                stage_key="WORKSHOP_PLAN_PARTICIPANTS_OPENING",
+                presentation=Presentation.TABLE,
+                page_break_before=True,
+                heading="Annexure A — Participants",
+            ),
+            TemplateSection(
+                stage_key="CLUSTER_CRAFT_BACKGROUND",
+                presentation=Presentation.KEY_VALUE,
+                heading="Annexure B — Cluster and craft background",
+            ),
+            TemplateSection(
+                stage_key="MARKET_SURVEY_CAPTURE",
+                presentation=Presentation.TABLE,
+                heading="Annexure C — Market survey",
+            ),
+            TemplateSection(stage_key="POST_WORKSHOP_FOLLOWUP", presentation=Presentation.TABLE),
             TemplateSection(special=SpecialSection.SIGNATURES, page_break_before=True),
             QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
@@ -427,21 +452,37 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
         max_tier=Tier.BASIC,
         sections=(
             TemplateSection(special=SpecialSection.COVER),
-            TemplateSection(special=SpecialSection.SUMMARY_METRICS,
-                            heading="Workshop at a glance"),
+            TemplateSection(special=SpecialSection.SUMMARY_METRICS, heading="Workshop at a glance"),
             TemplateSection(stage_key="WORKSHOP_SETUP", presentation=Presentation.KEY_VALUE),
-            TemplateSection(stage_key="CLUSTER_CRAFT_BACKGROUND",
-                            presentation=Presentation.NARRATIVE, include_photos=False),
-            TemplateSection(stage_key="MARKET_ANALYSIS_DIRECTION",
-                            presentation=Presentation.NARRATIVE, include_photos=False),
-            TemplateSection(stage_key="DESIGN_BRIEF", presentation=Presentation.NARRATIVE,
-                            include_photos=False),
-            TemplateSection(stage_key="FINAL_PROTOTYPE_DOCUMENTATION",
-                            presentation=Presentation.TABLE, photo_columns=3, max_photos=6),
-            TemplateSection(stage_key="COSTING_MARKET_LINKAGE", presentation=Presentation.TABLE,
-                            include_photos=False),
-            TemplateSection(stage_key="WORKSHOP_OUTCOMES", presentation=Presentation.NARRATIVE,
-                            include_photos=False),
+            TemplateSection(
+                stage_key="CLUSTER_CRAFT_BACKGROUND",
+                presentation=Presentation.NARRATIVE,
+                include_photos=False,
+            ),
+            TemplateSection(
+                stage_key="MARKET_ANALYSIS_DIRECTION",
+                presentation=Presentation.NARRATIVE,
+                include_photos=False,
+            ),
+            TemplateSection(
+                stage_key="DESIGN_BRIEF", presentation=Presentation.NARRATIVE, include_photos=False
+            ),
+            TemplateSection(
+                stage_key="FINAL_PROTOTYPE_DOCUMENTATION",
+                presentation=Presentation.TABLE,
+                photo_columns=3,
+                max_photos=6,
+            ),
+            TemplateSection(
+                stage_key="COSTING_MARKET_LINKAGE",
+                presentation=Presentation.TABLE,
+                include_photos=False,
+            ),
+            TemplateSection(
+                stage_key="WORKSHOP_OUTCOMES",
+                presentation=Presentation.NARRATIVE,
+                include_photos=False,
+            ),
             TemplateSection(special=SpecialSection.SIGNATURES),
             QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
@@ -458,12 +499,16 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
         ),
         sections=(
             *_standard_sections(photo_columns=2, figures=True),
-            TemplateSection(special=SpecialSection.ANNEXURE_MEDIA, page_break_before=True,
-                            heading="Annexure — Photographic record"),
+            TemplateSection(
+                special=SpecialSection.ANNEXURE_MEDIA,
+                page_break_before=True,
+                heading="Annexure — Photographic record",
+            ),
             QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
-            TemplateSection(special=SpecialSection.COMPLETENESS,
-                            heading="Annexure — Data completeness"),
+            TemplateSection(
+                special=SpecialSection.COMPLETENESS, heading="Annexure — Data completeness"
+            ),
         ),
         theme=DCH_THEME,
     ),
@@ -476,21 +521,31 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
         ),
         sections=(
             TemplateSection(special=SpecialSection.COVER),
-            TemplateSection(stage_key="FINAL_PROTOTYPE_DOCUMENTATION",
-                            presentation=Presentation.CARDS, photo_columns=1,
-                            heading="Products"),
-            TemplateSection(stage_key="COSTING_MARKET_LINKAGE",
-                            presentation=Presentation.TABLE, include_photos=False,
-                            heading="Price list", page_break_before=True,
-                            # NO COST BREAKDOWN IN A DOCUMENT THAT GOES TO A BUYER. This template
-                            # is the buyer-facing catalogue, and the cost-by-head figure prints
-                            # the maker's material and labour cost beside the price the buyer is
-                            # being quoted. Every other template wants that chart; this one hands
-                            # the cluster's margin to the person negotiating against it.
-                            include_figures=False),
-            TemplateSection(stage_key="WORKSHOP_PLAN_PARTICIPANTS_OPENING",
-                            presentation=Presentation.TABLE, include_photos=False,
-                            heading="The makers"),
+            TemplateSection(
+                stage_key="FINAL_PROTOTYPE_DOCUMENTATION",
+                presentation=Presentation.CARDS,
+                photo_columns=1,
+                heading="Products",
+            ),
+            TemplateSection(
+                stage_key="COSTING_MARKET_LINKAGE",
+                presentation=Presentation.TABLE,
+                include_photos=False,
+                heading="Price list",
+                page_break_before=True,
+                # NO COST BREAKDOWN IN A DOCUMENT THAT GOES TO A BUYER. This template
+                # is the buyer-facing catalogue, and the cost-by-head figure prints
+                # the maker's material and labour cost beside the price the buyer is
+                # being quoted. Every other template wants that chart; this one hands
+                # the cluster's margin to the person negotiating against it.
+                include_figures=False,
+            ),
+            TemplateSection(
+                stage_key="WORKSHOP_PLAN_PARTICIPANTS_OPENING",
+                presentation=Presentation.TABLE,
+                include_photos=False,
+                heading="The makers",
+            ),
             QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
         ),
@@ -708,10 +763,7 @@ def apply_report_settings(
                 # CUSTOM_SECTION can only ever sit directly after the stage it belongs to, so
                 # walking past them cannot walk past anybody else's.
                 at = anchor + 1
-                while (
-                    at < len(sections)
-                    and sections[at].special is SpecialSection.CUSTOM_SECTION
-                ):
+                while at < len(sections) and sections[at].special is SpecialSection.CUSTOM_SECTION:
                     at += 1
                 sections.insert(at, block)
                 continue

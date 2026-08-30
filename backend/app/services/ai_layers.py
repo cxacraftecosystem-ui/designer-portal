@@ -249,16 +249,18 @@ PREVIEW_CHARS = 280
 # --------------------------------------------------------------------------------------
 
 #: Kinds whose principal content is prose in ``text``.
-TEXT_KINDS: frozenset[LayerKind] = frozenset({
-    LayerKind.RAW_TRANSCRIPT,
-    LayerKind.CLEANED_TRANSCRIPT,
-    LayerKind.SUMMARY,
-    LayerKind.OCR_TEXT,
-    LayerKind.PROOFREAD,
-    LayerKind.EXPANDED,
-    LayerKind.TRANSLATION,
-    LayerKind.CAPTION,
-})
+TEXT_KINDS: frozenset[LayerKind] = frozenset(
+    {
+        LayerKind.RAW_TRANSCRIPT,
+        LayerKind.CLEANED_TRANSCRIPT,
+        LayerKind.SUMMARY,
+        LayerKind.OCR_TEXT,
+        LayerKind.PROOFREAD,
+        LayerKind.EXPANDED,
+        LayerKind.TRANSLATION,
+        LayerKind.CAPTION,
+    }
+)
 
 #: Kinds whose principal content is structure in ``payload``. ``STRUCTURED_TEXT`` is here rather
 #: than above because the thing that makes it "structured" IS the structure: the identity-card read
@@ -271,12 +273,14 @@ TEXT_KINDS: frozenset[LayerKind] = frozenset({
 #: about where a line begins. It carries ``text`` as well — a plain reading of the same cues — so the
 #: annexure has something to print and a search has something to match; see :func:`_check_content`
 #: for why the secondary slot is permitted rather than forbidden.
-STRUCTURED_KINDS: frozenset[LayerKind] = frozenset({
-    LayerKind.STRUCTURED_TEXT,
-    LayerKind.TAGS,
-    LayerKind.METADATA,
-    LayerKind.SUBTITLES,
-})
+STRUCTURED_KINDS: frozenset[LayerKind] = frozenset(
+    {
+        LayerKind.STRUCTURED_TEXT,
+        LayerKind.TAGS,
+        LayerKind.METADATA,
+        LayerKind.SUBTITLES,
+    }
+)
 
 #: Kinds that derive directly from a ``MediaFile`` — the bottom rung of each chain, and the only
 #: rungs whose evidence is not itself a layer.
@@ -325,12 +329,14 @@ STRUCTURED_KINDS: frozenset[LayerKind] = frozenset({
 #:   in the provider's answer about the audio; a subtitle rung standing on a ``RAW_TRANSCRIPT`` would
 #:   have to invent when each line was spoken, and an invented timestamp is a fabricated fact of
 #:   exactly the kind rule 2 exists to prevent. So it is media-rooted or it does not exist.
-MEDIA_ROOTED_KINDS: frozenset[LayerKind] = frozenset({
-    LayerKind.RAW_TRANSCRIPT,
-    LayerKind.OCR_TEXT,
-    LayerKind.CAPTION,
-    LayerKind.SUBTITLES,
-})
+MEDIA_ROOTED_KINDS: frozenset[LayerKind] = frozenset(
+    {
+        LayerKind.RAW_TRANSCRIPT,
+        LayerKind.OCR_TEXT,
+        LayerKind.CAPTION,
+        LayerKind.SUBTITLES,
+    }
+)
 
 #: Kinds that may stand on words the caller supplied — see :attr:`SourceKind.SUPPLIED_TEXT`.
 #:
@@ -345,11 +351,13 @@ MEDIA_ROOTED_KINDS: frozenset[LayerKind] = frozenset({
 #: ``PROOFREAD`` and ``TRANSLATION`` are here as well as in :data:`ALLOWED_PARENTS`, because both are
 #: wanted in both places: a designer proofreads a note they are typing AND a transcript they are
 #: about to submit, and both are transformations of words that already exist rather than inventions.
-TEXT_ROOTED_KINDS: frozenset[LayerKind] = frozenset({
-    LayerKind.PROOFREAD,
-    LayerKind.EXPANDED,
-    LayerKind.TRANSLATION,
-})
+TEXT_ROOTED_KINDS: frozenset[LayerKind] = frozenset(
+    {
+        LayerKind.PROOFREAD,
+        LayerKind.EXPANDED,
+        LayerKind.TRANSLATION,
+    }
+)
 
 #: How many characters of supplied text a layer may carry as its source.
 #:
@@ -754,9 +762,7 @@ def media_ids_to_check(roots: Mapping[str, ChainRoot]) -> set[str]:
     repository measured at 756 ms, which is a screen that never finishes opening.
     """
     return {
-        root.media_id
-        for root in roots.values()
-        if root.kind is RootKind.MEDIA and root.media_id
+        root.media_id for root in roots.values() if root.kind is RootKind.MEDIA and root.media_id
     }
 
 
@@ -1332,9 +1338,7 @@ def acceptance_plan(
     )
 
 
-def withdrawal_plan(
-    row: Any, *, actor_id: str, note: str | None = None
-) -> DecisionPlans:
+def withdrawal_plan(row: Any, *, actor_id: str, note: str | None = None) -> DecisionPlans:
     """A person takes their name off this layer. The layer itself is untouched and stays readable.
 
     The acceptance columns are cleared and the LOG is not, deliberately. A report generated while
@@ -1578,6 +1582,7 @@ def _iso(value: Any) -> str | None:
 # Everything above this line is pure and is what tests/test_ai_layers.py exercises. Everything below
 # is a thin call site: it reads rows, or it applies a plan built above. No rule is decided here.
 # --------------------------------------------------------------------------------------
+
 
 def _writable_model(table: str) -> Any:
     """The Prisma model one writable table name maps to.

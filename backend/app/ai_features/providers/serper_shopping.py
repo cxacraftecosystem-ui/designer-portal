@@ -73,8 +73,11 @@ class SerperShoppingProvider(MarketResearchProvider):
                     break
                 retrieved_at = _now()
                 for row in rows:
-                    out.append(_listing(row, provider=self.provider_id, query=query,
-                                        retrieved_at=retrieved_at))
+                    out.append(
+                        _listing(
+                            row, provider=self.provider_id, query=query, retrieved_at=retrieved_at
+                        )
+                    )
                 collected += len(rows)
                 if len(rows) < _PAGE_SIZE:
                     break  # a short page is the last page; asking for another spends a credit

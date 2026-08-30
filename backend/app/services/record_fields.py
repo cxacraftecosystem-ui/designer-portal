@@ -398,8 +398,10 @@ ARTISAN = RecordSpec(
         _f("Address", lambda a: a.address),
         _f(
             "Pincode",
-            lambda a: _rel(a, "location", "pincode")
-            or meta_val(meta_of(a), "pincode", "pinCode", "postalCode"),
+            lambda a: (
+                _rel(a, "location", "pincode")
+                or meta_val(meta_of(a), "pincode", "pinCode", "postalCode")
+            ),
         ),
         _f("Phone", lambda a: a.phone),
         _f("Email", lambda a: a.email),
@@ -430,10 +432,13 @@ ARTISAN = RecordSpec(
         _f("Date of birth", lambda a: getattr(a, "dateOfBirth", None)),
         # `is not None` and NOT `or`: a derived 0 is a real answer and `or` would read it
         # as absent and print a stale metadata value instead.
-        _f("Age", lambda a: _first_answer(
-            derive_age(getattr(a, "dateOfBirth", None)),
-            meta_val(meta_of(a), "age"),
-        )),
+        _f(
+            "Age",
+            lambda a: _first_answer(
+                derive_age(getattr(a, "dateOfBirth", None)),
+                meta_val(meta_of(a), "age"),
+            ),
+        ),
         _f("Gender", lambda a: a.gender),
         # THE JOIN DATE IS PRINTED AND THE EXPERIENCE IS DERIVED BESIDE IT, in that order, for the
         # same reason the date of birth and the age are printed that way six lines up: they are two

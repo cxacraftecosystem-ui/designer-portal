@@ -85,7 +85,9 @@ class RembgLocalProvider(BackgroundRemovalProvider, ForegroundSeparationProvider
             matte=normalised,
             notes=notes
             + overrun_note(
-                deadline, stage="local separation", capability=capability,
+                deadline,
+                stage="local separation",
+                capability=capability,
                 provider=self.provider_id,
             ),
         )

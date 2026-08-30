@@ -104,10 +104,14 @@ async def list_crafts(
         # Either reading counts: the craft's own workshopId column, or the WorkshopCraft join
         # (relation named ``workshops``) that carried the link before the column existed. Nested under
         # AND so it can never overwrite the free-text search OR above.
-        where["AND"] = [{"OR": [
-            {"workshopId": workshopId},
-            {"workshops": {"some": {"workshopId": workshopId}}},
-        ]}]
+        where["AND"] = [
+            {
+                "OR": [
+                    {"workshopId": workshopId},
+                    {"workshops": {"some": {"workshopId": workshopId}}},
+                ]
+            }
+        ]
     # ORDERING IS DELIBERATE — alphabetical by name, NOT newest-first. Do not flip it to
     # ``createdAt desc`` for consistency with the other record lists: every consumer of this endpoint
     # is a PICKER (the craft dropdown in the artisan/product/tool/workshop forms, the media entry
@@ -123,7 +127,9 @@ async def list_crafts(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_craft(payload: CraftCreate, current_user: Any = Depends(require_craft_manager)) -> dict[str, Any]:
+async def create_craft(
+    payload: CraftCreate, current_user: Any = Depends(require_craft_manager)
+) -> dict[str, Any]:
     data = clean_data(payload.model_dump())
     # Workshop entries: enforce assignment, then flag a late submission for admin approval. Craft has
     # no status column, so pinning is a no-op here; wired for parity with the other record types.
@@ -135,7 +141,9 @@ async def create_craft(payload: CraftCreate, current_user: Any = Depends(require
     try:
         created = await db.craft.create(data=data, include=INCLUDE)
     except UniqueViolationError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Craft name already exists") from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Craft name already exists"
+        ) from exc
     # The explicit column ADDS to the WorkshopCraft join every existing query still reads through.
     await link_workshop_craft(created.workshopId, created.id)
     return public_encode(created)
@@ -192,7 +200,9 @@ async def update_craft(
     try:
         updated = await db.craft.update(where={"id": craft_id}, data=data, include=INCLUDE)
     except UniqueViolationError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Craft name already exists") from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Craft name already exists"
+        ) from exc
     # BIDIRECTIONAL, unlike the create path's one-way ``link_workshop_craft`` twenty lines up. An
     # edit can REMOVE a workshop, and until this call the removal stopped at the column: ``workshopId``
     # is in ``records.CLEARABLE_KEYS`` so an explicit null really does clear the column, but the old

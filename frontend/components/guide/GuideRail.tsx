@@ -110,9 +110,18 @@ export function GuideRail({
               The panel is `sticky top-28`, so it never leaves the viewport — which means anything
               taller than the viewport has no way of being reached AT ALL: scrolling the page moves
               the steps past it and leaves the rail exactly where it was. At ten steps the panel was
-              about 470px and the question did not arise. At nineteen it is around 770px, which
+              about 470px and the question did not arise. At nineteen it was around 770px, which
               overflows a 1366×768 laptop — the size of machine this web client is actually used on
               — and silently swallowed the last five entries, the whole designer arc among them.
+
+              THE ARRAY GREW AGAIN ON 2026-08-29 and this box absorbed it with no edit, which is the
+              behaviour it was built for: a row is about 30px, so the list itself is roughly
+              `rows × 30px` and the panel is that plus about 200px of ring, readout and rule. Nothing
+              is dropped — `steps.map` below has no `slice` — and the readout above says "Step n of
+              N", so the total is on screen even when the last rows are below the fold. **Adding a
+              step stays free. Adding a ROW OF CHROME above this list does not, and owes `19rem` a
+              recount**, because every pixel of chrome comes straight off the height the list has to
+              scroll in.
 
               `100vh` minus 19rem is the sticky offset (7rem), the panel's padding, the ring row, the
               nav's own spacing and a little air at the bottom, rounded up rather than derived

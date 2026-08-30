@@ -88,17 +88,21 @@ def _decode_value(payload: Mapping[str, Any]) -> Any:
 
 def encode_cursor(*, sort_field: str, value: Any, record_id: str, descending: bool = True) -> str:
     """Mint the opaque token that means "resume after this row"."""
-    body = base64.urlsafe_b64encode(
-        json.dumps(
-            {
-                "f": sort_field,
-                "k": _encode_value(value),
-                "i": record_id,
-                "d": bool(descending),
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).decode("ascii").rstrip("=")
+    body = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "f": sort_field,
+                    "k": _encode_value(value),
+                    "i": record_id,
+                    "d": bool(descending),
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        .decode("ascii")
+        .rstrip("=")
+    )
     return f"{body}.{_sign(body)}"
 
 
@@ -180,7 +184,9 @@ def after_where(cursor: Cursor, *, id_field: str = "id") -> dict[str, Any]:
     }
 
 
-def order_by(sort_field: str, *, descending: bool = True, id_field: str = "id") -> list[dict[str, str]]:
+def order_by(
+    sort_field: str, *, descending: bool = True, id_field: str = "id"
+) -> list[dict[str, str]]:
     """The ordering keyset paging requires: the sort column, then the id as a unique tie-break.
 
     Safe to adopt on the offset path at the same time, and worth doing independently — see the

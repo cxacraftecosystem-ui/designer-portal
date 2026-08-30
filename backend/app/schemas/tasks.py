@@ -16,6 +16,7 @@ Values are validated on the route (against the known record-type set and against
 artisan / section rows) rather than here, so the caller gets a specific "these ids do not exist"
 message instead of a generic pydantic error.
 """
+
 from datetime import datetime
 
 from pydantic import Field

@@ -429,11 +429,18 @@ class DwPhotoMeasureFieldTest {
      * ──────────────────────────────────────────────────────────────────────────────────────────── */
 
     /** The unit tests run with `app/` as the working directory — see `DwSketchRectifyFieldTest`. */
-    private fun panelSource(): String {
-        val file = File(
-            "src/main/java/com/designprototype/workshop/ui/designworkshop/DwPhotoMeasureField.kt"
-        )
-        assertTrue("DwPhotoMeasureField.kt is missing — a rename must move this guard", file.exists())
+    private fun panelSource(): String = sourceOf("DwPhotoMeasureField.kt")
+
+    /**
+     * One file of this package, verbatim.
+     *
+     * Named rather than inlined because the shared shell reaches three files now: the collapse
+     * control and the disclosure header live here and are called from the tracing and straightening
+     * panels, so a guard about "all three cards" has to be able to read all three.
+     */
+    private fun sourceOf(name: String): String {
+        val file = File("src/main/java/com/designprototype/workshop/ui/designworkshop/$name")
+        assertTrue("$name is missing — a rename must move this guard", file.exists())
         return file.readText(Charsets.UTF_8)
     }
 
@@ -542,25 +549,52 @@ class DwPhotoMeasureFieldTest {
 
         assertTrue(
             "the header's collapse control is missing — the existing door must be kept, not replaced",
-            code.contains("DwMeasureCollapseButton(prominent = false")
+            code.contains("DwPanelCollapseButton(prominent = false")
         )
         assertTrue(
             "the foot's collapse control is missing — without it the only way out is back at the top",
-            code.contains("DwMeasureCollapseButton(prominent = true")
+            code.contains("DwPanelCollapseButton(prominent = true")
         )
         assertTrue(
-            "both doors must say DW_MEASURE_COLLAPSE_WORD, so neither can be relabelled alone",
-            code.contains("Text(DW_MEASURE_COLLAPSE_WORD")
+            // ONE VERB, TWO LENGTHS. The foot's door names the card and the header's does not — the
+            // header sits ON the title row, so naming it there prints it twice on one line, and the
+            // foot of a long panel has no heading in view to say what would be closing. That is the
+            // other client's own split (`MeasureFromPhotoCard.tsx:475-477`), and it became necessary
+            // here the day three of these cards started stacking in one column: three identical
+            // full-width "Close" buttons is a designer pressing the wrong one.
+            "every door must build its label from DW_PANEL_COLLAPSE_WORD, so none can be relabelled " +
+                "alone — the difference between the two is whether the card is NAMED, never the verb",
+            code.contains("if (prominent) \"\$DW_PANEL_COLLAPSE_WORD “\$title”\" else DW_PANEL_COLLAPSE_WORD")
         )
         assertEquals(
-            "the collapse control must be ONE composable used twice; a second definition is a second " +
-                "place for the wording and the 48dp floor to drift",
+            "each foot door must pass the SAME title constant its own header passes; a literal here " +
+                "is a second spelling of a card's name, which is the defect the titles were just " +
+                "unified to remove",
+            listOf(
+                "DwPanelCollapseButton(prominent = true, title = DW_MEASURE_CARD_TITLE",
+                "DwPanelCollapseButton(prominent = true, title = DW_TRACE_CARD_TITLE",
+                "DwPanelCollapseButton(prominent = true, title = DW_RECTIFY_CARD_TITLE",
+            ),
+            listOf(
+                "DwPhotoMeasureField.kt" to "DW_MEASURE_CARD_TITLE",
+                "DwSketchTracePanel.kt" to "DW_TRACE_CARD_TITLE",
+                "DwSketchRectifyField.kt" to "DW_RECTIFY_CARD_TITLE",
+            ).map { (file, constant) ->
+                val call = "DwPanelCollapseButton(prominent = true, title = $constant"
+                if (sourceOf(file).contains(call)) call else "$file does not carry `$call`"
+            },
+        )
+        assertEquals(
+            "the collapse control must be ONE composable used by all three derivation cards; a " +
+                "second definition is a second place for the wording, the icon size and the 48dp " +
+                "floor to drift — which is exactly what the tracing and straightening panels' " +
+                "hand-rolled copies had done (16dp against this one's 14dp)",
             1,
-            code.split("private fun DwMeasureCollapseButton(").size - 1,
+            code.split("internal fun DwPanelCollapseButton(").size - 1,
         )
 
         val readout = code.indexOf("DwMeasurementReadout(")
-        val foot = code.indexOf("DwMeasureCollapseButton(prominent = true")
+        val foot = code.indexOf("DwPanelCollapseButton(prominent = true")
         assertTrue("DwMeasurementReadout is no longer composed by the open card", readout > 0)
         assertTrue(
             "the foot's collapse control must come AFTER the readout and its propose buttons — that " +
@@ -617,6 +651,321 @@ class DwPhotoMeasureFieldTest {
         assertTrue(
             "and must wrap its contents, over a floor, while there is nothing to show",
             code.contains("Modifier.heightIn(min = EMPTY_VIEWPORT_MIN_HEIGHT)")
+        )
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────────────────────
+     * One photograph, both cards — requirements 5, 18 and 20
+     * ──────────────────────────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * **A HOST CAN CHANGE THE PHOTOGRAPH WHILE THIS CARD IS SHUT, AND THE MARKS MUST GO WITH IT.**
+     *
+     * The marks are positions on ONE picture. The panel half — the one composed in both states — is
+     * therefore where the shared choice has to land: driven from the open half instead, a change made
+     * while the card was collapsed would not be noticed until the next expansion, and the designer
+     * would come back to an expanded card holding marks placed on a photograph that is no longer the
+     * subject. That is worse than the state the shared owner was introduced to remove.
+     *
+     * `followShared` is also the guard that must NOT fire while this card has been deliberately
+     * pointed somewhere else, which is the whole of the escape hatch.
+     */
+    @Test
+    fun `the shared choice lands in the half that is composed in both states`() {
+        val code = panelCode()
+
+        // `internal`, NOT `private`: this header became shared with the tracing and straightening
+        // panels when it became the accordion contract for all three. A delimiter that no longer
+        // occurs makes `substringBefore` return the WHOLE remainder of the file, which silently
+        // widens this window from one composable to everything after it — the assertions below would
+        // still pass, on evidence from somewhere else entirely.
+        val panel = code.substringAfter("internal fun DwPhotoMeasurePanel(")
+            .substringBefore("internal fun DwPanelDisclosureHeader(")
+        assertTrue(
+            "the shared choice must be read and applied in DwPhotoMeasurePanel, not in the open " +
+                "half — a card that only noticed on re-expansion comes back holding marks placed " +
+                "on a photograph that is no longer the subject",
+            panel.contains("config.followShared(sharedId)")
+        )
+        assertTrue(
+            "the supply must be the three-valued DwSketchPhotographSupply, defaulted to OwnChoice " +
+                "so both of today's mounts are unchanged",
+            panel.contains("supply: DwSketchPhotographSupply = DwSketchPhotographSupply.OwnChoice")
+        )
+
+        val follow = code.substringAfter("fun followShared(").substringBefore("fun measureInstead(")
+        assertTrue(
+            "followShared must decline while an override is in force, or choosing a different " +
+                "photograph to measure would be undone by the next shared change",
+            follow.contains("if (substituteId.isNotBlank()) return")
+        )
+    }
+
+    /**
+     * **THE ESCAPE HATCH IS OFFERED, NAMED THE SAME AS ON THE WEB, AND NEVER FOLDED AWAY IN FORCE.**
+     *
+     * `MeasureFromPhotoCard.tsx` carries the argument and this client carries the same words: it is
+     * one act — measure a picture that is not the one the tracing panel is using — and a designer who
+     * learned it in a browser has to find it under the same name on the handset. The last assertion
+     * is the other client's rule that "a control that is doing something must be visible": an
+     * override in force is drawn open, and it is reported on the COLLAPSED card too, because on a
+     * handset this card can be shut and a screen away from the preview it is disagreeing with.
+     */
+    @Test
+    fun `the different-photograph control is named the web's name and shows itself when in force`() {
+        val code = panelCode()
+
+        assertTrue(
+            "the escape hatch must be composed when a host owns the choice",
+            code.contains("DwMeasureDifferentPhotograph(")
+        )
+        assertTrue(
+            "the control must be named by the shared constant, which is the web's own label",
+            code.contains("DW_MEASURE_DIFFERENT_PHOTOGRAPH")
+        )
+        assertTrue(
+            "the way back must be named by the shared constant too",
+            code.contains("DW_MEASURE_BACK_TO_SHARED")
+        )
+
+        val hatch = code.substringAfter("private fun DwMeasureDifferentPhotograph(")
+        assertTrue(
+            "an override in force must not be folded away — the other client's stated rule, and it " +
+                "reaches further here because this card can be collapsed as well as folded",
+            hatch.contains("val showing = open || inForce")
+        )
+        assertTrue(
+            "the collapsed card must report an override in force; otherwise the one place a " +
+                "designer can see that the two cards disagree is behind two presses",
+            code.contains("DW_MEASURE_ELSEWHERE_TITLE")
+        )
+    }
+
+    /**
+     * **THE PANEL STILL DOES NOT OWN A PICKER, AND MUST NOT GROW ONE.**
+     *
+     * Every photograph this card can see has already been imported into `filesDir` by
+     * `DwMediaBridge.attach` — that is the whole reason a panel can be handed a path. A file dialog
+     * here would be a second import route into a feature whose entire premise is that there is one,
+     * and the bytes it produced would be a content Uri scoped to a task rather than a durable copy.
+     * `DwSketchDerivationPhoto`'s header is the argument; this is the guard.
+     */
+    @Test
+    fun `the measuring card opens no file dialog of its own`() {
+        val code = panelCode()
+        assertFalse(
+            "a launcher has appeared in the measuring card. Photographs reach this panel by being " +
+                "imported first; a picker here would be a second import route into a feature whose " +
+                "premise is that there is exactly one.",
+            code.contains("rememberLauncherForActivityResult") || code.contains("ActivityResultContracts")
+        )
+    }
+
+    /**
+     * **ONE WARNING BEFORE A DESTRUCTIVE WRITE, SAID THE SAME WAY BY ALL THREE CARDS.**
+     *
+     * This is [DW_PANEL_COLLAPSE_WORD]'s rule applied where the stakes are highest. Until the
+     * sentence was shared, the tracing panel said "Attaching replaces it" and the straightening
+     * panel said "This replaces it" about THE SAME FILE FIELD from buttons that read the same, and
+     * the measuring card put the thing being lost at the end of the sentence instead of the start.
+     * A designer scrolling one record met all three.
+     *
+     * The FILE half and the VALUE half differ in one noun, and that difference is load-bearing
+     * rather than cosmetic: "24.0 is attached to lengthCm" would send somebody looking for a
+     * paperclip in a column that has never had one. See [dwPanelReplaceWarning].
+     */
+    @Test
+    fun `all three cards warn about replacing in the same words`() {
+        assertNull(
+            "nothing there is the absence of a warning, not a quieter one — the same contract the " +
+                "two collapsed summaries hold, so no caller can render an empty warning box",
+            dwPanelReplaceWarning("", DwPanelHolds.FILE)
+        )
+        assertNull(
+            "a resolver can hand back whitespace; that is still nothing there",
+            dwPanelReplaceWarning("   ", DwPanelHolds.VALUE)
+        )
+        assertNull("a missing value is nothing there", dwPanelReplaceWarning(null, DwPanelHolds.FILE))
+
+        assertEquals(
+            "“sheet-3.svg” is attached here now. This replaces it.",
+            dwPanelReplaceWarning("sheet-3.svg", DwPanelHolds.FILE)
+        )
+        assertEquals(
+            "a number is not attached to anything — the noun is the one thing that changes",
+            "“24.0” is in this field now. This replaces it.",
+            dwPanelReplaceWarning("24.0", DwPanelHolds.VALUE)
+        )
+
+        // THE CLAUSE A DESIGNER SCANS FOR COMES FIRST IN BOTH, which is the half of this that a
+        // shared function alone would not guarantee if the two branches were written as whole
+        // sentences instead of one sentence with a noun in it.
+        listOf(
+            dwPanelReplaceWarning("sheet-3.svg", DwPanelHolds.FILE),
+            dwPanelReplaceWarning("24.0", DwPanelHolds.VALUE),
+        ).forEach { sentence ->
+            assertTrue(
+                "the thing about to be lost must open the sentence: $sentence",
+                sentence!!.startsWith("“")
+            )
+            assertTrue(
+                "and every card must end on the same three words: $sentence",
+                sentence.endsWith("This replaces it.")
+            )
+        }
+    }
+
+    /**
+     * **AND NO CARD KEEPS A PRIVATE COPY OF IT.**
+     *
+     * A shared function that two of three cards call is not shared; it is a third literal with a
+     * function beside it. The failure is silent — the screen looks right on whichever card you are
+     * reading — so it is pinned at the source rather than left to a reviewer noticing a string.
+     *
+     * THE SENTENCE IS COUNTED ACROSS ALL THREE FILES RATHER THAN FORBIDDEN IN EACH, because one of
+     * them has to contain it: [dwPanelReplaceWarning] is declared in `DwPhotoMeasureField.kt`,
+     * beside the other things all three cards share. One occurrence in code is the definition; a
+     * second is a card that has started saying it for itself.
+     */
+    @Test
+    fun `no derivation card writes its own replace warning`() {
+        val cards = listOf(
+            "DwPhotoMeasureField.kt",
+            "DwSketchTracePanel.kt",
+            "DwSketchRectifyField.kt",
+        )
+
+        var written = 0
+        cards.forEach { name ->
+            val code = sourceOf(name)
+                .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), " ")
+                .replace(Regex("""//[^\n]*"""), " ")
+            assertTrue(
+                "$name must reach the warning through dwPanelReplaceWarning rather than a literal",
+                code.contains("dwPanelReplaceWarning(")
+            )
+            assertFalse(
+                "$name still spells the measuring card's old reversed wording, which put the thing " +
+                    "about to be lost at the END of the sentence",
+                code.contains("Currently “")
+            )
+            written += Regex("""replaces it\.""").findAll(code).count()
+        }
+
+        assertEquals(
+            "the replace warning must be written exactly once across the three cards — the " +
+                "declaration in DwPhotoMeasureField.kt. A second occurrence is a card that has " +
+                "grown its own copy, which is the drift dwPanelReplaceWarning exists to end.",
+            1,
+            written
+        )
+    }
+
+    /**
+     * **A CHIP SAYS WHICH ONE IS IN FORCE; IT DOES NOT ONLY PAINT IT.**
+     *
+     * Until this guard the selection was a fill and nothing else on every chip whose label did not
+     * happen to contain its own state — the photograph chips, the mode chips, the shape chips, the
+     * unit chips and the engine's option chips. That is invisible in greyscale, invisible to a
+     * designer who cannot separate the two purples in direct sun, and silent to TalkBack, which read
+     * a row of identically-shaped buttons with nothing to say which was current.
+     *
+     * It matters most on the newest row of them: [DwSketchSharedPhotograph]'s chips are the control
+     * that answers *which photograph is every card on this record working from*, and a screen reader
+     * could not hear the answer off the control that sets it.
+     *
+     * THE PRESETS ARE THE ONE EXEMPTION AND IT IS CHECKED RATHER THAN TRUSTED. They fill in two text
+     * boxes and are never "the current one", so "Not selected" would be a state description for a
+     * state they do not have. See [DwPanelChip].
+     */
+    @Test
+    fun `every chooser chip announces which one is in force`() {
+        val code = panelCode()
+        val chip = code.substringAfter("internal fun DwPanelChip(").substringBefore("\n}")
+
+        assertTrue(
+            "DwPanelChip must announce its state, not only fill it — the same grammar " +
+                "DwPanelDisclosureHeader uses for Expanded/Collapsed",
+            chip.contains("stateDescription")
+        )
+        assertTrue(
+            "the announcement must read off the same parameter the fill does, or the two can " +
+                "disagree about which chip is current",
+            chip.contains("if (selected) \"Selected\" else \"Not selected\"")
+        )
+        assertTrue(
+            "a chip that ACTS rather than chooses must be able to opt out of the announcement",
+            chip.contains("isChoice")
+        )
+
+        // The two preset rows, which are actions wearing a chip's shape. Counted, so that a third
+        // preset row added later without the flag fails here rather than telling a designer they
+        // forgot to select a scale card.
+        assertEquals(
+            "both preset rows must opt out of the selected-state announcement",
+            2,
+            Regex("""isChoice = false""").findAll(code).count()
+        )
+        assertEquals(
+            "and nothing else may: every other chip in this file is one of a set",
+            2,
+            Regex("""selected = false""").findAll(code).count()
+        )
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────────────────────
+     * The merge, on the one half that has one — requirement 7
+     * ──────────────────────────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * **A PROTOTYPE'S TWO IMAGE FIELDS FEED ONE CARD, AND THE CARD HAS TO SAY SO.**
+     *
+     * `dwOffersPhotoMeasure` answers true for both `prototypePhotos` and `turntablePhotos`, so the
+     * stage form mounts TWO measuring cards on one prototype, each blind to the other field's
+     * photographs. `DwSketchDerivationSection` hands ONE card the whole of `sources`, which spans
+     * both — and that is requirement 7's real gain on this half: a designer who shot the frame with
+     * the ruler in it into the turn, and the clean frames into the photographs, had the picture on one
+     * card and the dimension they wanted on the other.
+     *
+     * **THE GAIN IS INVISIBLE WITHOUT THIS SENTENCE**, because a merged list of file names looks
+     * exactly like an unmerged one, and the chooser chips carry the filename alone on both clients.
+     */
+    @Test
+    fun `the measuring card names the image fields it merged`() {
+        val clause = dwMeasureSpansFieldsClause(listOf("Prototype photographs", "360° capture"))
+        assertTrue(
+            "both field names must appear, or the sentence describes a merge without naming it",
+            clause.contains("“Prototype photographs”") && clause.contains("“360° capture”"),
+        )
+        assertTrue(
+            "joined with AND: this sentence is about where the photographs on screen ALREADY are, " +
+                "which is both fields at once. The other client's `fieldsPhrase` joins with OR " +
+                "because it names one DESTINATION to attach to — same punctuation, opposite meaning",
+            clause.contains("“Prototype photographs” and “360° capture”"),
+        )
+        assertTrue(
+            "and it must say what the merge is FOR, in the designer's terms",
+            clause.contains("wherever it was attached"),
+        )
+    }
+
+    /**
+     * **AND IT IS SILENT WHERE THERE IS NO MERGE, WHICH IS A JUDGEMENT AND NOT A SHORTCUT.**
+     *
+     * One field is not a merge. On a sketch the list is `image` alone; at the stage form's mounts the
+     * card sits directly under the very field it reads, with that field's capture card beside it, so
+     * naming the field tells a designer where they already are. `RecordMeasureField`'s mount cannot
+     * name one at all — its photographs are captured `Uri`s belonging to no registry field — and
+     * passes nothing, which the default has to handle without printing a dangling dash.
+     */
+    @Test
+    fun `the merge sentence is silent where one field feeds the card`() {
+        assertEquals("", dwMeasureSpansFieldsClause(emptyList()))
+        assertEquals("", dwMeasureSpansFieldsClause(listOf("Sketch image")))
+        assertEquals(
+            "a blank label is not a field name and must not become one half of a pair",
+            "",
+            dwMeasureSpansFieldsClause(listOf("Sketch image", "   ")),
         )
     }
 }

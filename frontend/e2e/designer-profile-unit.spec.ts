@@ -175,7 +175,14 @@ test.describe("the photograph, signature and CV cards get the row they ask for",
     // Three wrappers, three `min-w-0`s, and they are not the fix — see above. They are here because a
     // `MediaCaptureField` and a rendered PDF are wide content in a grid item, and `min-width: auto`
     // is what would let one of them widen the column rather than scroll inside it.
-    const wrappers = FORM_CODE.match(/className="min-w-0 md:col-span-2"/g) ?? [];
+    //
+    // MATCHED BY WHAT THEY WRAP, NOT BY THE CLASS ALONE. `min-w-0 md:col-span-2` stopped being unique
+    // to these three on 2026-08-30: the experience pair and the location card each take the full row
+    // of the same two-column grid for their own reasons. A bare count of the class would have failed
+    // on a correct change and, worse, would have gone on passing if one of the media wrappers lost
+    // its `min-w-0` while an unrelated full-width block gained one. The assertion above still holds
+    // the rule that matters for every wrapper on the form, this one holds it for these three.
+    const wrappers = FORM_CODE.match(/className="min-w-0 md:col-span-2">\s*<(?:MediaSlot|DocumentSlot)\b/g) ?? [];
     expect(wrappers.length, "the photograph, signature and CV wrappers").toBe(3);
   });
 
@@ -235,6 +242,10 @@ test.describe("the mandatory fields", () => {
       "department",
       "specialisation",
       "experienceYears",
+      // Added 2026-08-30 with the Years + Months pair (requirement 14). Optional for the same reason
+      // the years are: a designer whose months were never asked for must still be able to save their
+      // biography, and "not recorded" is a real answer that a required box would forbid.
+      "experienceMonths",
       "biography",
       "website",
       "addressLine",
@@ -254,7 +265,7 @@ test.describe("the mandatory fields", () => {
           "empanelment number the designer has not been issued would stop them saving a biography"
       ).toBe(false);
     }
-    // 4 + 17 = the twenty-one writable columns, so the two lists together are the whole record and
+    // 4 + 18 = the twenty-two writable columns, so the two lists together are the whole record and
     // a new column cannot be added without a decision being made about it here.
     expect(DESIGNER_PROFILE_REQUIRED_FIELDS.length + optional.length).toBe(
       Object.keys(DESIGNER_PROFILE_LABELS).length

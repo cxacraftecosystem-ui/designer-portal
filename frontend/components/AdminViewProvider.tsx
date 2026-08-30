@@ -223,6 +223,19 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     label: "The task assignment board",
     blurb: "Handing documentation work to the people below you, then holding it to account.",
     alternative: { href: "/tasks", label: "Go to my tasks" }
+  },
+  {
+    // Not "/settings/analytics" — the name is taken. See usage.py's module docstring: a second,
+    // unrelated meaning of "analytics" would leave every future reader working out which one a name
+    // meant, in a codebase where one of the two is a privacy surface. This one aggregates navigation
+    // across every account; /admin/analytics (listed above) aggregates workshop CONTENT and observes
+    // no person at all — the two are deliberately distinct rows here for the reader comparing them.
+    path: "/settings/usage",
+    label: "Usage",
+    blurb: "Which screens are reached, how often, how fast, and how often broken — aggregated across every account.",
+    // No `alternative`: an account's own trail (`GET /usage/me`) has no UI yet, so there is nothing
+    // ordinary-user to send a refused visitor to.
+    alternative: undefined
   }
 ];
 

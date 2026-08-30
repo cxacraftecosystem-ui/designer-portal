@@ -415,7 +415,9 @@ async def delete_tool(tool_id: str, current_user: Any = Depends(get_current_user
 
 
 @router.get("/{tool_id}/artisans")
-async def list_tool_artisans(tool_id: str, current_user: Any = Depends(get_current_user)) -> list[dict[str, Any]]:
+async def list_tool_artisans(
+    tool_id: str, current_user: Any = Depends(get_current_user)
+) -> list[dict[str, Any]]:
     await require_record(db.tooldocumentation, tool_id)
     return await _assigned_artisans(tool_id, current_user)
 
@@ -455,9 +457,7 @@ async def assign_tool_artisans(
                 "assign this tool to artisans created by someone else; you may only assign "
                 "it to your own artisans.",
             )
-    await db.toolartisan.create_many(
-        data=[{"toolId": tool_id, "artisanId": aid} for aid in wanted]
-    )
+    await db.toolartisan.create_many(data=[{"toolId": tool_id, "artisanId": aid} for aid in wanted])
     return await _assigned_artisans(tool_id, current_user)
 
 

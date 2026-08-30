@@ -15,6 +15,7 @@ numbers, neither pretending to be the other.
 Nothing here is a download. The counts are counts and the recent list is titles; taking the data out
 still goes through /export and /data, which are gated as they always were.
 """
+
 from typing import Any
 
 from fastapi import APIRouter, Depends

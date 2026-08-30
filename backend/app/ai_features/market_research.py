@@ -195,37 +195,127 @@ _MIN_TOKEN = 3
 #: precisely because every listing has it. Kept small and English-only for the reason that module
 #: gives: the survey text is frequently Odia, Hindi or transliterated, and a large English stop
 #: list strips the rare words that make a match meaningful.
-_STOPWORDS = frozenset({
-    "and", "are", "but", "for", "from", "has", "have", "its", "not", "our", "that", "the",
-    "their", "there", "they", "this", "was", "were", "will", "with", "you", "more", "most",
-    "some", "such", "than", "then", "these", "those", "can", "could", "would", "should",
-    "may", "might", "also", "very", "much", "many",
-    # Listing furniture. "buy handloom saree online best price" is one content word wearing five.
-    "buy", "online", "shop", "price", "prices", "best", "top", "new", "sale", "offer", "offers",
-    "free", "delivery", "shipping", "discount", "off", "com", "www",
-})
+_STOPWORDS = frozenset(
+    {
+        "and",
+        "are",
+        "but",
+        "for",
+        "from",
+        "has",
+        "have",
+        "its",
+        "not",
+        "our",
+        "that",
+        "the",
+        "their",
+        "there",
+        "they",
+        "this",
+        "was",
+        "were",
+        "will",
+        "with",
+        "you",
+        "more",
+        "most",
+        "some",
+        "such",
+        "than",
+        "then",
+        "these",
+        "those",
+        "can",
+        "could",
+        "would",
+        "should",
+        "may",
+        "might",
+        "also",
+        "very",
+        "much",
+        "many",
+        # Listing furniture. "buy handloom saree online best price" is one content word wearing five.
+        "buy",
+        "online",
+        "shop",
+        "price",
+        "prices",
+        "best",
+        "top",
+        "new",
+        "sale",
+        "offer",
+        "offers",
+        "free",
+        "delivery",
+        "shipping",
+        "discount",
+        "off",
+        "com",
+        "www",
+    }
+)
 
 #: Symbol or alias to ISO 4217. Small on purpose: every entry is a currency this fieldwork has
 #: actually met or a currency a global marketplace quotes in. An unknown symbol is reported as
 #: unparsed rather than guessed, because a wrong currency is a wrong price by a factor of eighty.
 _CURRENCY_ALIASES: dict[str, str] = {
-    "₹": "INR", "₨": "INR", "rs": "INR", "rs.": "INR", "inr": "INR", "rupees": "INR",
-    "$": "USD", "us$": "USD", "usd": "USD",
-    "€": "EUR", "eur": "EUR",
-    "£": "GBP", "gbp": "GBP",
-    "¥": "JPY", "jpy": "JPY",
-    "a$": "AUD", "aud": "AUD", "c$": "CAD", "cad": "CAD",
-    "aed": "AED", "sgd": "SGD",
+    "₹": "INR",
+    "₨": "INR",
+    "rs": "INR",
+    "rs.": "INR",
+    "inr": "INR",
+    "rupees": "INR",
+    "$": "USD",
+    "us$": "USD",
+    "usd": "USD",
+    "€": "EUR",
+    "eur": "EUR",
+    "£": "GBP",
+    "gbp": "GBP",
+    "¥": "JPY",
+    "jpy": "JPY",
+    "a$": "AUD",
+    "aud": "AUD",
+    "c$": "CAD",
+    "cad": "CAD",
+    "aed": "AED",
+    "sgd": "SGD",
 }
 
 #: Query parameters that identify a campaign rather than a product. Stripped before two URLs are
 #: compared, because the same listing arriving from two queries carries two different ``utm_source``
 #: values and would otherwise be counted twice — inflating the sample with one product.
-_TRACKING_PARAMS = frozenset({
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
-    "gclid", "fbclid", "msclkid", "srsltid", "ref", "ref_", "tag", "psc", "th", "_encoding",
-    "sr", "qid", "keywords", "sprefix", "crid", "linkcode", "creative", "camp",
-})
+_TRACKING_PARAMS = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "utm_id",
+        "gclid",
+        "fbclid",
+        "msclkid",
+        "srsltid",
+        "ref",
+        "ref_",
+        "tag",
+        "psc",
+        "th",
+        "_encoding",
+        "sr",
+        "qid",
+        "keywords",
+        "sprefix",
+        "crid",
+        "linkcode",
+        "creative",
+        "camp",
+    }
+)
 
 #: How many characters of a planned query are sent. Search APIs truncate long queries anyway, and
 #: a brief pasted from a document should not become a 4 kB request body.
@@ -420,7 +510,7 @@ def _amount_from_digits(run: str) -> float | None:
     if not separators:
         return float(run)
     last = separators[-1]
-    tail = run[last + 1:]
+    tail = run[last + 1 :]
     if not tail.isdigit():
         return None
     head = run[:last].replace(",", "").replace(".", "")
@@ -452,7 +542,7 @@ def _digit_runs(text: str) -> list[tuple[str, int]]:
             if text[index].isdigit():
                 end = index
             index += 1
-        runs.append((text[start:end + 1], end + 1))
+        runs.append((text[start : end + 1], end + 1))
     return runs
 
 
@@ -486,7 +576,7 @@ def parse_price(text: Any, *, default_currency: str = "") -> ParsedPrice | None:
     candidates: list[float] = []
     indian_grouping = False
     for run, after in _digit_runs(raw):
-        if raw[after:after + 2].lstrip().startswith("%"):
+        if raw[after : after + 2].lstrip().startswith("%"):
             continue  # a discount, not a price
         amount = _amount_from_digits(run)
         if amount is None or not math.isfinite(amount) or amount <= 0:
@@ -630,11 +720,13 @@ def reject_outliers(
         if item.price is None or low <= item.price <= high:
             kept.append(item)
             continue
-        rejected.append((
-            item,
-            f"price {item.price:,.0f} is outside the {low:,.0f}-{high:,.0f} fence "
-            f"({OUTLIER_IQR_MULTIPLIER:g} x IQR in log space over {len(priced)} listings)",
-        ))
+        rejected.append(
+            (
+                item,
+                f"price {item.price:,.0f} is outside the {low:,.0f}-{high:,.0f} fence "
+                f"({OUTLIER_IQR_MULTIPLIER:g} x IQR in log space over {len(priced)} listings)",
+            )
+        )
     return tuple(kept), tuple(rejected)
 
 
@@ -737,11 +829,13 @@ def consolidate(
     else:
         for item in parsed:
             if item.relevance < MIN_RELEVANCE:
-                rejected.append((
-                    item,
-                    f"shares {item.relevance:.0%} of the brief's words (below "
-                    f"{MIN_RELEVANCE:.0%}) - probably not a comparable product",
-                ))
+                rejected.append(
+                    (
+                        item,
+                        f"shares {item.relevance:.0%} of the brief's words (below "
+                        f"{MIN_RELEVANCE:.0%}) - probably not a comparable product",
+                    )
+                )
 
     deduped, duplicates_removed = deduplicate(relevant)
     if duplicates_removed:
@@ -753,10 +847,12 @@ def consolidate(
         deduped, preferred=brief.currency or settings.market_research_currency
     )
     for item in off_currency:
-        rejected.append((
-            item,
-            f"quoted in {item.currency}, not {currency}; this package does not convert currencies",
-        ))
+        rejected.append(
+            (
+                item,
+                f"quoted in {item.currency}, not {currency}; this package does not convert currencies",
+            )
+        )
     if other_currencies:
         cautions.append(
             f"{sum(other_currencies.values())} listing(s) in "
@@ -765,9 +861,7 @@ def consolidate(
             f"number in a report later."
         )
 
-    in_currency, outliers = reject_outliers(
-        [item for item in deduped if item.currency == currency]
-    )
+    in_currency, outliers = reject_outliers([item for item in deduped if item.currency == currency])
     rejected.extend(outliers)
     if outliers:
         notes.append(
@@ -877,13 +971,15 @@ def to_price_observations(
             continue
         seller = item.seller or "unnamed seller"
         where = item.source_url or item.provider
-        out.append(PriceObservation(
-            amount=item.price,
-            category=resolved_category,
-            source=RETRIEVED_SOURCE,
-            group="",
-            label=f"{item.name} - {seller} (retrieved {item.retrieved_at} from {where})",
-        ))
+        out.append(
+            PriceObservation(
+                amount=item.price,
+                category=resolved_category,
+                source=RETRIEVED_SOURCE,
+                group="",
+                label=f"{item.name} - {seller} (retrieved {item.retrieved_at} from {where})",
+            )
+        )
     return out
 
 
@@ -901,9 +997,7 @@ def assert_surveyed(observations: Iterable[PriceObservation], *, where: str) -> 
     is cheap to fix.
     """
     offending = tuple(
-        item.label or f"{item.amount:g}"
-        for item in observations
-        if item.source == RETRIEVED_SOURCE
+        item.label or f"{item.amount:g}" for item in observations if item.source == RETRIEVED_SOURCE
     )
     if not offending:
         return

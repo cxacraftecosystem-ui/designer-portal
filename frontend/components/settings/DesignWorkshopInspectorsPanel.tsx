@@ -6,7 +6,6 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { SearchInput } from "@/components/SearchInput";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
-import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import {
@@ -21,9 +20,19 @@ import {
   type DwInspector
 } from "@/lib/designWorkshopInspections";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { roleLabel } from "@/lib/permissions";
+import {
+  designWorkshopOptions,
+  deviceLooksOffline,
+  WORKSHOP_OPTION_PAGE_SIZE,
+  workshopCutSentence,
+  workshopEmptyLabel,
+  workshopListNotice,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 
 /**
  * WHO INSPECTS ONE DESIGN & PROTOTYPE WORKSHOP — the admin's half of the fifth scope.
@@ -88,13 +97,14 @@ import { roleLabel } from "@/lib/permissions";
 /**
  * How many rows each list asks for.
  *
- * `RENDER_CAP` for the workshops, and that is the skill's number rather than a guess: the picker
- * draws at most 80 rows, so asking for 100 would print two truncation sentences with two different
- * totals, one above the other, and say nothing at all between 81 and 100. The eligible accounts are
- * whatever the server's own ceiling answers, which is its business and not this panel's — what this
- * panel owes there is to say when the answer was cut.
+ * `WORKSHOP_OPTION_PAGE_SIZE` for the workshops, which IS `RENDER_CAP` and is now reached through
+ * `lib/workshopOptions` so that every workshop picker in the app names one number: the picker draws
+ * at most 80 rows, so asking for 100 would print two truncation sentences with two different totals,
+ * one above the other, and say nothing at all between 81 and 100. The eligible accounts are whatever
+ * the server's own ceiling answers, which is its business and not this panel's — what this panel
+ * owes there is to say when the answer was cut.
  */
-const WORKSHOP_PAGE = RENDER_CAP;
+const WORKSHOP_PAGE = WORKSHOP_OPTION_PAGE_SIZE;
 
 /**
  * How long after the last keystroke a search goes out.
@@ -108,12 +118,18 @@ const WORKSHOP_PAGE = RENDER_CAP;
  */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** Title plus the day it ran, never an id — the same shape the viewers panel labels a workshop with. */
-function designWorkshopLabel(summary: DwSummary): string {
-  const title = summary.title?.trim() || "Untitled design workshop";
-  const when = formatDate(summary.startDate ?? summary.createdAt ?? null);
-  return when === "-" ? title : `${title} · ${when}`;
-}
+/*
+  THE LOCAL `designWorkshopLabel` IS GONE, AND THAT IS THE POINT OF THE CHANGE RATHER THAN TIDYING.
+
+  It built `title · date`, one of SIX label shapes the app shipped for one question — this panel's
+  and the viewers panel's `title · date`, the record picker's `title` with a `craft · cluster · date`
+  hint, `/design-review`'s `title · date` with a `workshopCode` hint, the questionnaires' bare
+  `title`, and two more on the other table. Three of those live on screens an admin walks between in
+  one sitting. `lib/workshopOptions::designWorkshopOptions` is now the only thing in the web client
+  that turns a workshop into a row, and its ruling is that the LABEL is the title alone and every
+  fact that tells two workshops apart goes in the `hint` — which `SearchableSelect` searches as well
+  as draws, so nothing became unreachable by moving.
+*/
 
 /** Name a person without ever leaking an id: their name, else their email, else a neutral fallback. */
 function personLabel(person: { name?: string | null; email?: string | null } | null | undefined): string {
@@ -155,10 +171,21 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
 
   /* ── The workshop being administered ────────────────────────────────────── */
 
-  /** What the admin has typed to find a workshop. Sent to the server; never used to filter locally. */
+  /**
+   * What the admin has typed to find a workshop. Sent to the server; never used to filter locally.
+   *
+   * IT NOW LIVES INSIDE THE PICKER'S OWN BOX rather than in a `SearchInput` above it. The box was
+   * mounted separately because there was no way to get a term out of `SearchableSelect`, which cost
+   * this control the panel's `role="status"` live region and its "Searching…" arm and put two
+   * unrelated boxes on one panel. `serverQuery` is that way; the term still goes to the repository
+   * and this control still never filters the array it was handed.
+   */
   const [workshopSearch, setWorkshopSearch] = useState("");
-  const [summaries, setSummaries] = useState<DwSummary[] | null>(null);
-  const [summariesTotal, setSummariesTotal] = useState(0);
+  /** What the workshop read answered — three states, so a failure cannot draw as an empty table. */
+  const [workshops, setWorkshops] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
+  /** Was the device reachable when that read FAILED? Captured in the catch, for the reason
+   *  `DesignWorkshopSelect` gives: it is a fact about the moment the request died. */
+  const [workshopsOnline, setWorkshopsOnline] = useState(true);
   const [workshopId, setWorkshopId] = useState("");
   /**
    * Every workshop this panel has seen, across every search it has run.
@@ -220,8 +247,7 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
         listDesignWorkshops({ page: 1, pageSize: WORKSHOP_PAGE, search: term || undefined })
           .then((result) => {
             if (workshopGeneration.current !== current) return;
-            setSummaries(result.items);
-            setSummariesTotal(result.total);
+            setWorkshops({ kind: "ok", rows: result.items, total: result.total });
             setKnownWorkshops((previous) => {
               const next = new Map(previous);
               for (const summary of result.items) next.set(summary.id, summary);
@@ -229,12 +255,20 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
             });
             setWorkshopsSearching(false);
           })
-          .catch((err) => {
+          .catch(() => {
             if (workshopGeneration.current !== current) return;
             setWorkshopsSearching(false);
-            setSummaries([]);
-            setSummariesTotal(0);
-            setLoadError(describeFailure(err, "Unable to load the design workshops"));
+            /*
+              NOT `setLoadError`, AND NOT AN EMPTY ARRAY EITHER. `setSummaries([])` was the second
+              half of the bug this whole parcel exists to close: a timeout drew as a repository with
+              no workshops in it. The red strip is not the answer either — the sentence belongs on
+              the control it is about, in the four words §3.5 gives every workshop picker on both
+              clients, and a banner saying one thing above a picker saying another teaches a reader
+              that neither is worth reading. `loadError` still carries the failures of the OTHER two
+              reads on this panel, which have no control of their own to speak through.
+            */
+            setWorkshopsOnline(!deviceLooksOffline());
+            setWorkshops({ kind: "failed" });
           });
       },
       term ? SEARCH_DEBOUNCE_MS : 0
@@ -322,21 +356,64 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
     [knownWorkshops, workshopId]
   );
 
-  const workshopOptions = useMemo(() => {
-    const options: DropdownOption[] = [];
-    const seen = new Set<string>();
-    for (const summary of summaries ?? []) {
-      if (seen.has(summary.id)) continue;
-      seen.add(summary.id);
-      options.push({ value: summary.id, label: designWorkshopLabel(summary) });
-    }
-    // The chosen workshop stays on offer even when the current search does not reach it, or the
-    // dropdown would draw a trigger with no matching row and read as though nothing were chosen.
-    if (workshopId && !seen.has(workshopId) && selectedWorkshop) {
-      options.push({ value: workshopId, label: designWorkshopLabel(selectedWorkshop) });
-    }
-    return options;
-  }, [summaries, workshopId, selectedWorkshop]);
+  /**
+   * The rows, in one vocabulary, with the chosen workshop kept on offer.
+   *
+   * ── THE HAND-ROLLED PIN BECAME `offPage`, AND IT IS THE SAME ARGUMENT IT ALWAYS WAS ────────────
+   *
+   * This memo used to append the chosen workshop by hand when the current search did not reach it,
+   * with the note that otherwise "the dropdown would draw a trigger with no matching row and read as
+   * though nothing were chosen". That is `"recover"`: the control is describing an administration
+   * that is ALREADY TRUE — the roster underneath it is that workshop's — and withholding the row
+   * withholds nothing while inviting an admin to point the panel somewhere else. `WorkshopSelect`
+   * and `DesignWorkshopSelect` re-implemented the same three lines, three times, with three
+   * different placements in the list; the builder now draws it under "Already on this record", which
+   * is what keeps the scope of the rest of the list honest.
+   *
+   * `"refuse"` — the other answer, and the one `AdoptLocalDraftDialog` takes — is for a control that
+   * AUTHORISES a one-way write. Nothing here is one-way: an inspection is a set an admin edits and
+   * saves, and unpicking it is one press.
+   *
+   * MEMOISED BECAUSE THIS IS A `serverQuery` CONTROL. `SearchableSelect` re-takes its pin snapshot
+   * on `options` identity, which is how it knows a new answer landed; a fresh array every render
+   * would make that effect set state on every render. See `DesignWorkshopSelect` for the full note.
+   */
+  const workshopSet = useMemo(
+    () =>
+      designWorkshopOptions(workshops, {
+        group: true,
+        offPage: { mode: "recover", row: selectedWorkshop }
+      }),
+    [workshops, selectedWorkshop]
+  );
+
+  /**
+   * SCOPED. `list_design_workshops` applies `visible_to_clause` to everybody but an admin — and this
+   * panel is admin-only, so in practice the answer is the whole archive. It stays `true` because the
+   * sentence it picks has to be true for the account reading it: an admin who genuinely sees nothing
+   * has an empty repository, and "No design workshops are open to this account" is the weaker and
+   * therefore safer of the two claims. See `WorkshopListVoice.scoped`.
+   */
+  const workshopVoice = useMemo<WorkshopListVoice>(
+    () => ({ table: "design", scoped: true, online: workshopsOnline }),
+    [workshopsOnline]
+  );
+
+  /*
+    The three guards a server-searched picker needs are written out in full on
+    `components/forms/DesignWorkshopSelect.tsx`; these are the same three. In short: a notice about
+    an empty list is a claim about the TERM once a term is typed, so it is asked of the unnarrowed
+    list only; the control must not stand down while the box holds the term that emptied it; and
+    `serverQuery.truncated` is not passed, because this route reports a real total and the cut is
+    stated once, below, in `selectFilter.ts`'s words.
+  */
+  const workshopSearchTerm = workshopSearch.trim();
+  const workshopNotice =
+    workshops.kind === "ok" && workshopSearchTerm ? "" : workshopListNotice(workshops, workshopVoice);
+  const workshopCut = workshopCutSentence(workshopSet, {
+    term: workshopSearch,
+    searchable: true
+  });
 
   /* ── The picker's options ───────────────────────────────────────────────── */
 
@@ -512,51 +589,56 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
         <>
           <div className="mt-4">
             <FieldBlock label="Design workshop">
-              <div className="grid gap-2">
-                {/* The SERVER'S search, because the picker below sees only one page of the table.
-                    THE LENGTH CAP HERE IS THIS PANEL'S OWN AND NOT A MIRROR: `list_design_workshops`
-                    declares a bare `search: str | None` with no `max_length`, unlike the two
-                    inspection endpoints, so nothing would refuse a long paste — it would simply run
-                    a very long `ILIKE` that matches nothing. Borrowing the inspection endpoints'
-                    number keeps one bound on this panel rather than two, and it is stated as a
-                    borrowing so nobody reads it as a rule the server enforces. */}
-                <SearchInput
-                  onChange={(next) => setWorkshopSearch(next.slice(0, ELIGIBLE_INSPECTOR_SEARCH_MAX))}
-                  placeholder="Search design workshops by title, craft, cluster or code"
-                  value={workshopSearch}
-                />
-                <Dropdown
-                  // Filters the screen it sits on, so focus stays on the control being adjusted
-                  // rather than jumping to the next field.
-                  advanceOnSelect={false}
-                  ariaLabel="Design workshop"
-                  capHint="Use the search box above to reach the rest — it asks the repository, so it sees every workshop."
-                  emptyLabel={
-                    workshopsSearching
-                      ? "Searching…"
-                      : workshopSearch.trim()
-                        ? "No design workshop matches that search."
-                        : "No design workshops yet"
-                  }
-                  onChange={setWorkshopId}
-                  options={workshopOptions}
-                  placeholder={summaries === null ? "Loading design workshops…" : "Select a design workshop"}
-                  // OFF, deliberately: the box above is the search and it reaches the whole table,
-                  // while this control's own filter box would search only the page that was fetched
-                  // and answer "No matches" for a workshop that exists.
-                  searchable={false}
-                  value={workshopId}
-                />
-              </div>
+              <Dropdown
+                // Filters the screen it sits on, so focus stays on the control being adjusted
+                // rather than jumping to the next field.
+                advanceOnSelect={false}
+                ariaLabel="Design workshop"
+                /*
+                  THE SERVER'S SEARCH, NOW IN THE PANEL'S OWN BOX. It was a `SearchInput` mounted
+                  above the picker with `searchable={false}` underneath it — the only arrangement
+                  available before the primitive could hand a term out, and it cost this control the
+                  panel's diacritic folding, its live region and its three-way empty arm while
+                  putting two boxes on a panel that asks about two different tables. `serverQuery`
+                  forces the box on, BYPASSES the local filter pass — `options` already IS the answer
+                  to this term, and filtering it again would drop rows the server matched on
+                  `workshopCode`, which the label deliberately does not show — and makes the empty
+                  line three-way: pending, matched-nothing-on-the-server, nothing-here-at-all.
+
+                  THE LENGTH CAP IS THIS PANEL'S OWN AND NOT A MIRROR: `list_design_workshops`
+                  declares a bare `search: str | None` with no `max_length`, unlike the two
+                  inspection endpoints, so nothing would refuse a long paste — it would simply run a
+                  very long `ILIKE` that matches nothing. Borrowing the inspection endpoints' number
+                  keeps one bound on this panel rather than two, and it is stated as a borrowing so
+                  nobody reads it as a rule the server enforces.
+
+                  `truncated` is deliberately absent — see the note beside `workshopCut`.
+                */
+                serverQuery={{
+                  value: workshopSearch,
+                  onChange: (next) => setWorkshopSearch(next.slice(0, ELIGIBLE_INSPECTOR_SEARCH_MAX)),
+                  pending: workshopsSearching
+                }}
+                emptyLabel={workshopEmptyLabel(workshops, workshopVoice)}
+                onChange={setWorkshopId}
+                options={workshopSet.options}
+                placeholder="Select a design workshop"
+                value={workshopId}
+              />
             </FieldBlock>
           </div>
 
-          {/* Every row the fetch left out is counted and explained. A selector that quietly stops is
-              indistinguishable from a repository with nothing in it. */}
-          {summaries !== null && summariesTotal > summaries.length ? (
-            <p className="mt-2 text-xs leading-5 text-ink-500">
-              Showing {summaries.length} of {summariesTotal} design workshops
-              {workshopSearch.trim() ? " matching that search" : ""}. Search to reach the rest.
+          {/* Every row the fetch left out is counted and explained, in `selectFilter.ts`'s words so
+              that this line and the panel's own footer cannot describe one cut two ways. A selector
+              that quietly stops is indistinguishable from a repository with nothing in it. */}
+          {workshopCut ? <p className="mt-2 text-xs leading-5 text-ink-500">{workshopCut}</p> : null}
+          {/* WHICH OF THE FOUR EMPTY STATES THIS IS — the read failed, the device never had the
+              list, no workshop is open to this account, or the repository is empty. They have four
+              different next moves and used to have one sentence. `aria-live` because in three of
+              them the trigger is not somewhere a reader can land. */}
+          {workshopNotice ? (
+            <p className="mt-2 text-xs leading-5 text-ink-500" aria-live="polite">
+              {workshopNotice}
             </p>
           ) : null}
 

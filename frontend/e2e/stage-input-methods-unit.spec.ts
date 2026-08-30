@@ -630,8 +630,14 @@ test("(e2) THE ANDROID RECORD FORMS ASK FOR THE SAME SCOPED LIST AS THE WEB", ()
 
   const forms = read(ANDROID_FORMS);
   // The record forms' one picker. `rememberWorkshopPicker` is mounted by all six of them, so this is
-  // the single line that decides what a designer is offered on the handset.
-  expect(forms).toContain("repository.workshopsIMaySubmitTo()");
+  // the single line that decides what a designer is offered on the handset. It reads
+  // `workshopsIMaySubmitToPage()` and not the plain `workshopsIMaySubmitTo()` pinned above — a second,
+  // later change gave the picker the server's `total` too, so the handset can print the same cap
+  // sentence the web control does, and `WorkshopRepository.workshopsIMaySubmitToPage`'s own doc is
+  // explicit that this widens WHAT the picker reads, not WHO may see it: the page is still resolved
+  // through `workshops(accessibleOnly = true)`, the same scoped call `workshopsIMaySubmitTo()` makes,
+  // so the guarantee this test exists to pin — the SCOPED list and nothing wider — still holds.
+  expect(forms).toContain("repository.workshopsIMaySubmitToPage()");
   // And nothing in the picker falls back to the wide list "just in case" the scoped one is empty —
   // an empty dropdown is the honest answer and is what the web control does.
   expect(forms).not.toContain("workshopsByOccurrence() }.onSuccess");

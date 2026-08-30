@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.CustomQuestionnaireDto
 import com.designprototype.workshop.ui.SearchableSelectField
-import com.designprototype.workshop.ui.SelectOption
+import com.designprototype.workshop.ui.ATTACH_LATER
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 
@@ -133,7 +133,7 @@ internal fun ReuseCard(busy: Boolean, onOpen: () -> Unit) {
 @Composable
 internal fun ReuseQuestionnaireDialog(
     source: CustomQuestionnaireDto,
-    workshops: List<SelectOption>,
+    workshops: AttachableWorkshops,
     busy: Boolean,
     onDismiss: () -> Unit,
     onCopy: (designWorkshopId: String?, title: String?, description: String?, changeDescription: Boolean) -> Unit,
@@ -150,9 +150,10 @@ internal fun ReuseQuestionnaireDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(REUSE_BLURB, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
 
+                val options = workshops.options()
                 SearchableSelectField(
                     label = "Attach the copy to",
-                    options = workshops,
+                    options = options,
                     selectedValue = workshopId,
                     // The empty row is a REAL ANSWER and the server's own default: an empty call
                     // makes a copy this account owns and no workshop holds, which is what a designer
@@ -160,26 +161,57 @@ internal fun ReuseQuestionnaireDialog(
                     // [placeholder], so the placeholder is written as the answer rather than as a
                     // prompt — "Select" over a row that means "unattached" reads as an unfilled
                     // required field.
-                    placeholder = "Leave it unattached",
+                    //
+                    // ATTACH_LATER is the constant behind these words: a COPY is the one operation
+                    // where the answer can honestly be deferred, which is a different fact from a
+                    // record that is filed under nothing, and DROPDOWN_DESIGN §2.7 keeps the two
+                    // spellings apart on both clients rather than letting nine strings mean four
+                    // things.
+                    placeholder = ATTACH_LATER,
                     includeNone = true,
                     enabled = !busy,
+                    emptyMessage = workshops.notice(),
                     onSelect = { workshopId = it },
                 )
-                Text(
-                    if (workshops.isEmpty()) {
-                        // Not an error and not a blocked dialog. `designWorkshopOptions` answers with
-                        // an empty list when the walk could not be made — no signal, most often — and
-                        // an unattached copy is still a perfectly good outcome.
-                        "No workshops could be listed, so the copy will be unattached. It can be " +
-                            "attached later from its own screen."
-                    } else {
+                /*
+                  WHY THIS SENTENCE IS NOW TWO SENTENCES.
+
+                  It used to read "No workshops could be listed, so the copy will be unattached"
+                  whenever the list was empty — one wording for three different facts, because the
+                  loader spelled all three `emptyList()`. It was right about the consequence and
+                  silent about the cause, and the cause is the only part a designer can act on: a
+                  walk that failed on one bar of signal is fixed by walking outside, and an account
+                  that is genuinely on no workshop is fixed by an administrator. §3.5's sentence says
+                  which; this file keeps the consequence, which is true in every one of them and is
+                  the reason nothing here is blocked.
+                */
+                if (options.isEmpty()) {
+                    workshops.notice()?.let { line ->
+                        Text(
+                            "$line The copy will be unattached, and it can be attached later from " +
+                                "its own screen.",
+                            color = MaterialTheme.field.muted,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                } else {
+                    Text(
                         "Only workshops this account can already open are listed. The server refuses " +
-                            "a workshop it has not shown you."
-                    },
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                )
+                            "a workshop it has not shown you.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                    workshops.capNotice()?.let { cap ->
+                        Text(
+                            cap,
+                            color = MaterialTheme.field.muted,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                }
 
                 OutlinedTextField(
                     value = title,

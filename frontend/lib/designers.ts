@@ -37,7 +37,7 @@
  */
 
 import { apiFetch, buildQuery } from "@/lib/api";
-import type { PageResult, UserRole } from "@/lib/types";
+import type { LocationPayload, PageResult, UserRole } from "@/lib/types";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Media
@@ -298,9 +298,18 @@ export function listDesignerDirectory(params: { search?: string | null; includeS
  * and the timestamps — in the order the form and the read-only view both render them.
  *
  * NAMED ONCE, HERE, and consumed by the encoder, the form and the display alike. The backend names
- * the same twenty-one in `PROFILE_FIELDS` for the same reason and says it plainly: three copies of a
- * twenty-one-name list is two copies that will disagree, and the way that failure surfaces is a field
+ * the same twenty-two in `PROFILE_FIELDS` for the same reason and says it plainly: three copies of a
+ * twenty-two-name list is two copies that will disagree, and the way that failure surfaces is a field
  * the designer can save and then cannot see.
+ *
+ * ⚠ `location` IS NOT ON THIS LIST AND MUST NEVER BE ADDED TO IT. It is a RELATION, not a column:
+ * the server creates a `Location` row from the `location` key of a PUT body and keeps the id in
+ * `locationId`, which the wire body does not accept at all (`extra="forbid"` makes it a 422). Every
+ * name on this list becomes a REQUIRED key of `DesignerProfileUpdateBody` and is sent on every save,
+ * an empty box carrying an explicit null — and `"location": null` is precisely what the server
+ * refuses (`forbid_clearing_location`), so a designer with no address would be unable to save their
+ * own name. It is declared as one OPTIONAL key on the body type instead, and absent means "keep the
+ * address already stored".
  */
 export const DESIGNER_PROFILE_FIELDS = [
   "displayName",
@@ -311,6 +320,12 @@ export const DESIGNER_PROFILE_FIELDS = [
   "qualification",
   "specialisation",
   "experienceYears",
+  // The months half of the experience pair, added 2026-08-30 for requirement 14 ("experience in
+  // years" becomes Years + Months, two dropdowns on one line). A SECOND COLUMN AND NEVER A TOTAL:
+  // 0-11 on the server, its own `Int?`, and it is not derived from `experienceYears` in either
+  // direction — 2 years 6 months is stored as (2, 6), never as 30 of anything. NULL and 0 are
+  // different answers all the way down; see `wholeNumberOrNull` for the half of that this file owns.
+  "experienceMonths",
   "biography",
   "phone",
   "email",
@@ -350,6 +365,17 @@ export type DesignerProfile = {
   qualification: string | null;
   specialisation: string | null;
   experienceYears: number | null;
+  /**
+   * The months half of the pair, 0-11. Null is "not recorded" and 0 is "an exact number of years";
+   * the two are different answers and nothing in this client may collapse them.
+   *
+   * IT REACHES NO REPORT YET, which is worth knowing before writing help text that promises one.
+   * The backend deliberately left `experienceMonths` out of the stage-3 registry — a new registry
+   * field moves `registry_version()` and owes a re-dump of the bundled Android schema plus a re-cut
+   * APK — so a workshop's report still prints the YEARS alone. The value saves, reads back, and is
+   * shown on both designer screens.
+   */
+  experienceMonths: number | null;
   /** The paragraph that appears as "Designer's profile" in stage 3 of every report. */
   biography: string | null;
   phone: string | null;
@@ -367,8 +393,64 @@ export type DesignerProfile = {
   empanelmentNo: string | null;
   /** ISO-8601, and a STRING rather than a date, matching every other date this API accepts. */
   empanelmentDate: string | null;
+  /**
+   * The id of the related `Location` row, or null. Published BESIDE `location` on purpose, so that
+   * "this designer has given no address point" (null) is distinguishable from "this response did
+   * not load the relation" — which is what a client that read only `location` would have to guess.
+   */
+  locationId: string | null;
+  /**
+   * The district, the village and the map point — the four flat columns above cannot hold any of
+   * them, which is the whole of requirement 29.
+   *
+   * ── BOTH ADDRESSES ARE SERVED, AND A READER MUST DRAW BOTH ─────────────────────────────────────
+   *
+   * The flat `addressLine`/`city`/`state`/`pincode` are still where every live row's address is:
+   * nothing was backfilled, and nothing could be, because `Location.latitude`/`longitude` are NOT
+   * NULL and a row with an address and no coordinate cannot be manufactured without INVENTING the
+   * coordinate — which is the exact failure the two-group split exists to end. So the API returns
+   * the two side by side, verbatim, unmerged: the flat columns are authoritative for the four facts
+   * they can hold, and this relation is authoritative for the district and the point, which nothing
+   * else can hold. A screen that renders only one of the two shows some designers a blank where
+   * their address is.
+   */
+  location: DesignerProfileLocation | null;
   createdAt: string | null;
   updatedAt: string | null;
+};
+
+/**
+ * The `Location` row this profile relates to, as the API serves it back — the same row shape the six
+ * field-record types have carried since the model was introduced, and deliberately not a new one.
+ *
+ * TWO GROUPS, TWO DIFFERENT QUESTIONS, and the whole reason the profile relates to this table rather
+ * than growing four more loose columns. PROVENANCE (`latitude`, `longitude`, `altitude`, `accuracy`,
+ * `capturedAt`, `placeName`, `address`) is where the DEVICE was. STATED (`state`, `district`,
+ * `village`, `pincode`, `subjectLatitude`, `subjectLongitude`) is where the SUBJECT is, said by a
+ * person. Fifteen live artisan records carry Kharagpur coordinates for artisans in Bagru and Kutch
+ * because one was read as the other; see `components/forms/LocationFields`.
+ *
+ * Structurally compatible with that component's `LocationInitialValues`, which is what lets the
+ * profile form hand this straight to it as `initial` — see the mount, and read trap 1 there before
+ * changing how it is passed.
+ */
+export type DesignerProfileLocation = {
+  id: string;
+  /** PROVENANCE. Never the designer's address — see the note above. */
+  latitude: number | null;
+  longitude: number | null;
+  altitude: number | null;
+  accuracy: number | null;
+  capturedAt: string | null;
+  placeName: string | null;
+  address: string | null;
+  /** STATED. The only home a designer's DISTRICT has ever had on this record. */
+  state: string | null;
+  district: string | null;
+  village: string | null;
+  pincode: string | null;
+  subjectLatitude: number | null;
+  subjectLongitude: number | null;
 };
 
 /**
@@ -388,6 +470,7 @@ export type DesignerProfileUpdateBody = {
   qualification: string | null;
   specialisation: string | null;
   experienceYears: number | null;
+  experienceMonths: number | null;
   biography: string | null;
   phone: string | null;
   email: string | null;
@@ -401,6 +484,29 @@ export type DesignerProfileUpdateBody = {
   cvMediaId: string | null;
   empanelmentNo: string | null;
   empanelmentDate: string | null;
+  /**
+   * The stated address and the map point, as one `Location` row for the server to create.
+   *
+   * ── THE ONE OPTIONAL KEY ON A BODY WHOSE WHOLE POINT IS THAT EVERY KEY IS PRESENT ──────────────
+   *
+   * The twenty-two above are all required because this editor renders all twenty-two, and an absent
+   * key means "leave the stored value alone" — so omitting an empty box would make a deleted
+   * department reappear on the next load. `location` is the exact opposite, and for a reason the
+   * server enforces rather than merely prefers:
+   *
+   *  - ABSENT means "keep the address already stored". That is the ordinary save. `locationFromForm`
+   *    returns `undefined` whenever there is no coordinate — which is most designers, most of the
+   *    time — and `JSON.stringify` drops an undefined value, so the key simply is not sent.
+   *  - `null` IS A 422 (`forbid_clearing_location`). An address can be REPLACED and never removed,
+   *    the same rule the six field-record types have. So this key is `LocationPayload | undefined`
+   *    and never `| null`: writing `location: null` here would be a body the server refuses, on a
+   *    form that saves twenty-two other answers in the same PUT.
+   *  - A SAVE THAT SENDS IT WRITES A BRAND NEW `Location` ROW and orphans the previous one
+   *    (`attach_location` in `backend/app/services/records.py` never updates). That is why the whole
+   *    card is re-sent rather than a diff: a form that dropped the stated fields at save would
+   *    replace a stored state and pincode with nothing.
+   */
+  location?: LocationPayload;
 };
 
 /**
@@ -408,7 +514,14 @@ export type DesignerProfileUpdateBody = {
  * null. `FormData` yields strings for everything including the year count, so the encoder — not
  * every call site — is where a string becomes the integer the column wants.
  */
-export type DesignerProfileDraft = Partial<Record<DesignerProfileField, string | number | null | undefined>>;
+export type DesignerProfileDraft = Partial<Record<DesignerProfileField, string | number | null | undefined>> & {
+  /**
+   * The location card's answer, straight out of `locationFromForm(form)` — which is `undefined`
+   * whenever the card holds no coordinate, and that is the value that means "keep what is stored".
+   * Not `| null`: see the key on `DesignerProfileUpdateBody` for why a null here is a 422.
+   */
+  location?: LocationPayload;
+};
 
 /**
  * A text box's contents as the API should read them: the trimmed string, or null when it is empty.
@@ -426,18 +539,42 @@ function blankToNull(value: string | number | null | undefined): string | null {
 }
 
 /**
- * A draft as the full twenty-one-key wire body, with cleared fields carrying an explicit null.
+ * A whole number as the column should read it, or null — the one place "" and 0 are told apart.
  *
- * `experienceYears` is parsed here and NOT clamped here. The column is bounded 0–70 by the server —
- * the same bounds as the registry's `designerExperience` field, which this value is copied into —
- * and a pydantic rejection 422s the WHOLE body, taking the twenty fields the designer got right
- * with it. So the form blocks it natively with `min`/`max` on the input and this function only
- * refuses what is not a number at all; silently clamping 400 to 70 would store a number nobody
- * typed and print it on a cover page as a statement about a person.
+ * ── THIS IS THE FUNCTION THE EXPERIENCE PAIR TURNS ON, AND `Number("")` IS THE TRAP ─────────────
+ *
+ * `Number("")` is 0, not NaN. So the obvious `value ? Number(value) : null` and the equally obvious
+ * `Number(value) || null` are BOTH wrong, in opposite directions: the first turns a real 0 into null
+ * and the second turns "" into 0. Both mistakes are invisible on screen — the dropdown re-opens
+ * showing "0" or showing "Not recorded" and nothing says which the designer chose — and both are
+ * assertions about a person that nobody made. An artisan who took up the craft this year has 0 years
+ * of experience; a designer whose experience was never asked for has none recorded. Those are
+ * different sentences on a report, and the empty option exists to keep them different.
+ *
+ * The blank-first `<option value="">` on each dropdown is the other half: the control's empty answer
+ * is the empty string, which reaches here as "" and leaves as null.
+ *
+ * NOT CLAMPED, ONLY PARSED. The columns are bounded 0-70 (years) and 0-11 (months) by the server —
+ * the years matching the registry's `designerExperience` field this value is copied into — and a
+ * pydantic rejection 422s the WHOLE body, taking the twenty-one fields the designer got right with
+ * it. The form offers only in-range options, so nothing out of range can be picked; silently
+ * clamping 400 to 70 would store a number nobody chose and print it on a cover page as a statement
+ * about a person.
+ */
+function wholeNumberOrNull(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  // The empty answer, kept distinct from 0 — see the paragraph above for what collapsing them costs.
+  if (text === "") return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+/**
+ * A draft as the full twenty-two-key wire body, with cleared fields carrying an explicit null — plus
+ * `location`, the one key that is sent only when the location card has an answer.
  */
 export function fullDesignerProfileBody(draft: DesignerProfileDraft): DesignerProfileUpdateBody {
-  const years = draft.experienceYears;
-  const parsed = years === null || years === undefined || String(years).trim() === "" ? null : Number(years);
   return {
     displayName: blankToNull(draft.displayName),
     localName: blankToNull(draft.localName),
@@ -446,7 +583,8 @@ export function fullDesignerProfileBody(draft: DesignerProfileDraft): DesignerPr
     department: blankToNull(draft.department),
     qualification: blankToNull(draft.qualification),
     specialisation: blankToNull(draft.specialisation),
-    experienceYears: parsed !== null && Number.isFinite(parsed) ? Math.trunc(parsed) : null,
+    experienceYears: wholeNumberOrNull(draft.experienceYears),
+    experienceMonths: wholeNumberOrNull(draft.experienceMonths),
     biography: blankToNull(draft.biography),
     phone: blankToNull(draft.phone),
     email: blankToNull(draft.email),
@@ -465,7 +603,18 @@ export function fullDesignerProfileBody(draft: DesignerProfileDraft): DesignerPr
     // came from (`DateField`, which submits a bare `yyyy-mm-dd` through its hidden input) emits only
     // the date part, and keeping the two identical is what makes a save-with-no-edits a genuine
     // no-op rather than something that looks like a change in an audit trail.
-    empanelmentDate: blankToNull(String(draft.empanelmentDate ?? "").slice(0, 10))
+    empanelmentDate: blankToNull(String(draft.empanelmentDate ?? "").slice(0, 10)),
+    /*
+      SPREAD, SO THAT "NO ANSWER" IS AN ABSENT KEY AND NOT A PRESENT NULL.
+
+      `location: draft.location` would put the key in the object with the value `undefined`, which
+      `JSON.stringify` does drop — so the wire body would be identical today. It is written this way
+      because the two are NOT identical to a reader or to a future caller: anything that inspects
+      this body before it is serialised (a queued outbox entry, a test, a diff of what changed) sees
+      the key and has to know that `undefined` here means "keep the stored address" while `null`
+      means "clear it", which the server refuses outright. An absent key says that by itself.
+    */
+    ...(draft.location ? { location: draft.location } : {})
   };
 }
 
@@ -509,9 +658,18 @@ export function saveDesignerProfile(userId: string, body: DesignerProfileUpdateB
  * `photoMediaId` and `signatureMediaId` count, because a designer who has uploaded a signature and
  * nothing else has still started. The row itself never answers this — it is created empty on the
  * first GET, so "a profile exists" is true for everybody who has ever opened the screen.
+ *
+ * AND THE RELATED `Location` ROW COUNTS TOO, ON EXACTLY THAT REASONING. It is not a member of
+ * `DESIGNER_PROFILE_FIELDS` — it is a relation and must never be added to that list — so the loop
+ * below cannot see it, and without this clause a designer who had answered their state, district and
+ * map point and nothing else would be reported as having "not filled in a designer profile yet". The
+ * two screens that ask this question would then say so over a record that visibly holds an address:
+ * `/designers/[userId]/profile` prints that sentence INSTEAD of the read-only view, so the address
+ * would not merely be unremarked, it would be unreachable.
  */
 export function designerProfileIsEmpty(profile: DesignerProfile | null | undefined): boolean {
   if (!profile) return true;
+  if (profile.location) return false;
   return DESIGNER_PROFILE_FIELDS.every((field) => {
     const value = profile[field];
     return value === null || value === undefined || (typeof value === "string" && !value.trim());

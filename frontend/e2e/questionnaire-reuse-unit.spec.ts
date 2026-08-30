@@ -53,7 +53,17 @@ import { expect, test } from "@playwright/test";
  * spec when one exists for this screen.
  */
 
-const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
+/**
+ * Read a repository file with its line endings normalised.
+ *
+ * `core.autocrlf` is on for the Windows machines this is developed on, so a source file can be CRLF
+ * in the working tree and LF in the repository and on CI. `between()` below is handed a marker that
+ * embeds a literal `\n\n` (`"<PageHeader"` to `"/>\n\n      {error ?"`), and that marker would then
+ * match in one place and not the other — a spec that passes or fails on a checkout setting is worse
+ * than no spec, because the failure looks like the code. See `stage-ref-multiselect-unit.spec.ts` for
+ * the fuller account of this.
+ */
+const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8").replace(/\r\n/g, "\n");
 
 const DIALOG = ["components", "questionnaires", "ReuseDialog.tsx"];
 const REPORT = ["components", "questionnaires", "UploadReport.tsx"];

@@ -96,6 +96,8 @@ import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.designWorkshopHint
+import com.designprototype.workshop.ui.designWorkshopLabel
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -261,12 +263,20 @@ fun DesignReviewScreen(
             options = (workshops ?: emptyList()).map { summary ->
                 SelectOption(
                     value = summary.id,
-                    label = workshopLabel(summary),
-                    // The workshop CODE, because two workshops that share a title and a date render
-                    // as two identical rows and an identical row is a choice a reader cannot make.
-                    // It rides in the hint, which this picker also SEARCHES, so a code sent in a
-                    // message can be typed straight into the filter.
-                    hint = summary.workshopCode?.takeIf { it.isNotBlank() },
+                    // `designWorkshopLabel`, not the title-plus-date this call used to build by
+                    // hand: the shared vocabulary's rule is that the label is the title ALONE (see
+                    // `WorkshopOptions.kt`) precisely so a designer meets one description of a
+                    // workshop across the app, and the date belongs in the hint below instead.
+                    label = designWorkshopLabel(summary),
+                    // The workshop CODE ahead of the shared status/craft/place/date hint — same
+                    // composition `SketchesAndPrototypesScreen`'s sibling picker uses, so the same
+                    // workshop reads the same way in both design-workshop choosers. Still rides in
+                    // the hint, which this picker also SEARCHES, so a code sent in a message can be
+                    // typed straight into the filter.
+                    hint = listOfNotNull(
+                        summary.workshopCode?.takeIf { it.isNotBlank() },
+                        designWorkshopHint(summary),
+                    ).joinToString(" · ").takeIf { it.isNotBlank() },
                 )
             },
             selectedValue = workshopId,
@@ -275,6 +285,25 @@ fun DesignReviewScreen(
                 listFailure != null -> "This list could not be loaded"
                 workshops?.isEmpty() == true -> "No workshops are listed for this account"
                 else -> "Choose one of your design workshops"
+            },
+            /*
+              MIRRORS `placeholder` ABOVE, AND THAT DUPLICATION IS THE FIX. `emptyMessage` is a
+              SEPARATE parameter from `placeholder` — `SearchableSelectField`'s own KDoc on
+              `emptyMessage` names this exact call site as the one that proved the harm of leaving
+              it unset: `SelectTrigger.speech` (`SearchableSelect.kt`) builds the TalkBack
+              announcement from `label` and `emptyMessage` alone and never reads `placeholder` at
+              all, so a screen reader heard only "A workshop you can open yourself. Nothing
+              selected." — never "This list could not be loaded" or the scoped-empty sentence a
+              sighted designer reads a breath away. `null` while still asking, exactly as
+              `placeholder`'s first branch is not a claim either: `emptyMessage` is only ever spoken
+              or drawn once `options.isEmpty()`, so a still-loading list keeps saying nothing rather
+              than announcing a state it has not reached yet.
+            */
+            emptyMessage = when {
+                workshops == null -> null
+                listFailure != null -> "This list could not be loaded"
+                workshops?.isEmpty() == true -> "No workshops are listed for this account"
+                else -> null
             },
             // No "none" row: emptying the picker would leave the screen with no round open and a
             // control implying that is a state worth choosing. The way to a different workshop is
@@ -442,18 +471,11 @@ private const val CHOOSER_PAGE = 100
 /** The id inside a pasted workshop URL. See the paste handler. */
 private val WORKSHOP_URL = Regex("""design-workshops/([^/?#]+)""")
 
-/**
- * Title plus the day it ran, never an id.
- *
- * The fallback title matters more than it looks: everything below the title on a summary row is
- * denormalised from stage 1, so a workshop created this morning legitimately has a title and nulls
- * everywhere else.
- */
-private fun workshopLabel(summary: DesignWorkshopDto): String {
-    val title = summary.title.ifBlank { "Untitled design workshop" }
-    val day = summary.startDate?.take(10)?.takeIf { it.isNotBlank() }
-    return if (day == null) title else "$title · $day"
-}
+// `workshopLabel` used to live here, building "$title · $day" by hand — retired 2026-08-30 in
+// favour of `designWorkshopLabel` (title alone, matching every other picker) plus `designWorkshopHint`
+// (which carries the day, alongside the status word this local copy never had) at the one call site
+// above that used it. See `WorkshopOptions.kt`'s own file header on why a workshop's label must not
+// vary by which picker on the phone is drawing it.
 
 /**
  * The tier refusal — the API's own first line, said before the shell is drawn.

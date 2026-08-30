@@ -326,8 +326,9 @@ def _as_optional_str(raw: str | None) -> str | None:
     return value or None
 
 
-def _as_choice(raw: str | None, default: str, allowed: frozenset[str], name: str,
-               notes: list[str]) -> str:
+def _as_choice(
+    raw: str | None, default: str, allowed: frozenset[str], name: str, notes: list[str]
+) -> str:
     value = (raw or "").strip().lower()
     if not value:
         return default
@@ -352,8 +353,10 @@ def build_settings(env: Mapping[str, str]) -> AiFeatureSettings:
             get("AI_BACKGROUND_REMOVAL_ENABLED"), False, "AI_BACKGROUND_REMOVAL_ENABLED", notes
         ),
         foreground_separation_enabled=_as_bool(
-            get("AI_FOREGROUND_SEPARATION_ENABLED"), False,
-            "AI_FOREGROUND_SEPARATION_ENABLED", notes,
+            get("AI_FOREGROUND_SEPARATION_ENABLED"),
+            False,
+            "AI_FOREGROUND_SEPARATION_ENABLED",
+            notes,
         ),
         vectorisation_enabled=_as_bool(
             get("AI_IMAGE_VECTORISATION_ENABLED"), False, "AI_IMAGE_VECTORISATION_ENABLED", notes
@@ -368,16 +371,24 @@ def build_settings(env: Mapping[str, str]) -> AiFeatureSettings:
         vectorisation_provider=_as_str(get("AI_IMAGE_VECTORISATION_PROVIDER"), "auto").lower(),
         market_research_provider=_as_str(get("AI_MARKET_RESEARCH_PROVIDER"), "auto").lower(),
         max_image_bytes=_as_int(
-            get("AI_FEATURES_MAX_IMAGE_BYTES"), _DEFAULT_MAX_BYTES,
-            "AI_FEATURES_MAX_IMAGE_BYTES", notes, minimum=1024,
+            get("AI_FEATURES_MAX_IMAGE_BYTES"),
+            _DEFAULT_MAX_BYTES,
+            "AI_FEATURES_MAX_IMAGE_BYTES",
+            notes,
+            minimum=1024,
         ),
         max_image_pixels=_as_int(
-            get("AI_FEATURES_MAX_IMAGE_PIXELS"), _DEFAULT_MAX_PIXELS,
-            "AI_FEATURES_MAX_IMAGE_PIXELS", notes, minimum=1024,
+            get("AI_FEATURES_MAX_IMAGE_PIXELS"),
+            _DEFAULT_MAX_PIXELS,
+            "AI_FEATURES_MAX_IMAGE_PIXELS",
+            notes,
+            minimum=1024,
         ),
         timeout_seconds=_as_float(
-            get("AI_FEATURES_TIMEOUT_SECONDS"), _DEFAULT_TIMEOUT_SECONDS,
-            "AI_FEATURES_TIMEOUT_SECONDS", notes,
+            get("AI_FEATURES_TIMEOUT_SECONDS"),
+            _DEFAULT_TIMEOUT_SECONDS,
+            "AI_FEATURES_TIMEOUT_SECONDS",
+            notes,
         ),
         local_model=_as_str(get("AI_FEATURES_LOCAL_MODEL"), "u2net"),
         local_model_dir=_as_optional_str(get("AI_FEATURES_LOCAL_MODEL_DIR")),
@@ -389,9 +400,11 @@ def build_settings(env: Mapping[str, str]) -> AiFeatureSettings:
             get("REMOVE_BG_ENDPOINT"), "https://api.remove.bg/v1.0/removebg"
         ),
         remove_bg_size=_as_choice(
-            get("REMOVE_BG_SIZE"), "auto",
+            get("REMOVE_BG_SIZE"),
+            "auto",
             frozenset({"auto", "preview", "small", "regular", "medium", "hd", "full", "4k"}),
-            "REMOVE_BG_SIZE", notes,
+            "REMOVE_BG_SIZE",
+            notes,
         ),
         vectorizer_api_id=_as_optional_str(get("VECTORIZER_AI_API_ID")),
         vectorizer_api_secret=_as_optional_str(get("VECTORIZER_AI_API_SECRET")),
@@ -399,12 +412,18 @@ def build_settings(env: Mapping[str, str]) -> AiFeatureSettings:
             get("VECTORIZER_AI_ENDPOINT"), "https://vectorizer.ai/api/v1/vectorize"
         ),
         vectorizer_mode=_as_choice(
-            get("VECTORIZER_AI_MODE"), "test",
-            frozenset({"test", "preview", "production"}), "VECTORIZER_AI_MODE", notes,
+            get("VECTORIZER_AI_MODE"),
+            "test",
+            frozenset({"test", "preview", "production"}),
+            "VECTORIZER_AI_MODE",
+            notes,
         ),
         vector_colormode=_as_choice(
-            get("AI_VECTOR_COLORMODE"), "color", frozenset({"color", "binary"}),
-            "AI_VECTOR_COLORMODE", notes,
+            get("AI_VECTOR_COLORMODE"),
+            "color",
+            frozenset({"color", "binary"}),
+            "AI_VECTOR_COLORMODE",
+            notes,
         ),
         vector_filter_speckle=_as_int(
             get("AI_VECTOR_FILTER_SPECKLE"), 4, "AI_VECTOR_FILTER_SPECKLE", notes, minimum=0
@@ -413,16 +432,24 @@ def build_settings(env: Mapping[str, str]) -> AiFeatureSettings:
             get("AI_VECTOR_COLOR_PRECISION"), 6, "AI_VECTOR_COLOR_PRECISION", notes, minimum=1
         ),
         market_research_max_results=_as_int(
-            get("AI_MARKET_RESEARCH_MAX_RESULTS"), _DEFAULT_MARKET_MAX_RESULTS,
-            "AI_MARKET_RESEARCH_MAX_RESULTS", notes, minimum=1,
+            get("AI_MARKET_RESEARCH_MAX_RESULTS"),
+            _DEFAULT_MARKET_MAX_RESULTS,
+            "AI_MARKET_RESEARCH_MAX_RESULTS",
+            notes,
+            minimum=1,
         ),
         market_research_max_queries=_as_int(
-            get("AI_MARKET_RESEARCH_MAX_QUERIES"), _DEFAULT_MARKET_MAX_QUERIES,
-            "AI_MARKET_RESEARCH_MAX_QUERIES", notes, minimum=1,
+            get("AI_MARKET_RESEARCH_MAX_QUERIES"),
+            _DEFAULT_MARKET_MAX_QUERIES,
+            "AI_MARKET_RESEARCH_MAX_QUERIES",
+            notes,
+            minimum=1,
         ),
         market_research_min_interval_seconds=_as_seconds(
-            get("AI_MARKET_RESEARCH_MIN_INTERVAL_SECONDS"), _DEFAULT_MARKET_MIN_INTERVAL,
-            "AI_MARKET_RESEARCH_MIN_INTERVAL_SECONDS", notes,
+            get("AI_MARKET_RESEARCH_MIN_INTERVAL_SECONDS"),
+            _DEFAULT_MARKET_MIN_INTERVAL,
+            "AI_MARKET_RESEARCH_MIN_INTERVAL_SECONDS",
+            notes,
         ),
         market_research_currency=_as_currency(
             get("AI_MARKET_RESEARCH_CURRENCY"), "INR", "AI_MARKET_RESEARCH_CURRENCY", notes

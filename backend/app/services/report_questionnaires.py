@@ -190,8 +190,7 @@ class QuestionnaireSitting:
         when no respondent was named. A heading reading "Entry 3" tells a reader nothing about whose
         answers they are about to read.
         """
-        return (self.respondent_name.strip() or self.title.strip()
-                or f"Sitting {self.entry_id[:8]}")
+        return self.respondent_name.strip() or self.title.strip() or f"Sitting {self.entry_id[:8]}"
 
     @property
     def printed_answers(self) -> tuple[QuestionnaireAnswer, ...]:
@@ -306,14 +305,19 @@ def _sitting_provenance(sitting: QuestionnaireSitting) -> str:
     questions the questionnaire currently contains. "9 of 8 questions answered" in a document
     submitted to a ministry reads as a defect in the app rather than as the truth about the record.
     """
-    source = {"UPLOAD": "recorded on the uploaded spreadsheet",
-              "APP": "recorded in the app"}.get(str(sitting.source).upper(), "")
-    parts = [p for p in (
-        f"{sitting.answered_count} question(s) answered",
-        source,
-        sitting.recorded_at[:10] if sitting.recorded_at else "",
-        f"recorded by {sitting.recorded_by}" if sitting.recorded_by else "",
-    ) if p]
+    source = {"UPLOAD": "recorded on the uploaded spreadsheet", "APP": "recorded in the app"}.get(
+        str(sitting.source).upper(), ""
+    )
+    parts = [
+        p
+        for p in (
+            f"{sitting.answered_count} question(s) answered",
+            source,
+            sitting.recorded_at[:10] if sitting.recorded_at else "",
+            f"recorded by {sitting.recorded_by}" if sitting.recorded_by else "",
+        )
+        if p
+    ]
     return " · ".join(parts)
 
 
@@ -325,15 +329,18 @@ def _questionnaire_provenance(item: QuestionnaireItem) -> str:
     reports of the same workshop that disagree can be told apart by it without opening the database.
     """
     printed = item.printed_sittings
-    parts = [p for p in (
-        f"{len(printed)} sitting(s)",
-        f"{item.question_count} question(s)" if item.question_count else "",
-        f"version {item.version}",
-        f"from {item.source_filename}" if item.source_filename else "",
-        f"questionnaire {item.questionnaire_id}",
-    ) if p]
-    return ("The designer's own questionnaire, attached to this workshop · "
-            + " · ".join(parts))
+    parts = [
+        p
+        for p in (
+            f"{len(printed)} sitting(s)",
+            f"{item.question_count} question(s)" if item.question_count else "",
+            f"version {item.version}",
+            f"from {item.source_filename}" if item.source_filename else "",
+            f"questionnaire {item.questionnaire_id}",
+        )
+        if p
+    ]
+    return "The designer's own questionnaire, attached to this workshop · " + " · ".join(parts)
 
 
 def questionnaire_index_block(items: tuple[QuestionnaireItem, ...]) -> TableBlock:
@@ -377,12 +384,17 @@ def sitting_blocks(sitting: QuestionnaireSitting) -> list[Block]:
         if not rows:
             return
         if current:
-            blocks.append(ParagraphBlock(runs=runs_of(current, bold=True), style=ParaStyle.BODY,
-                                         align=Align.LEFT))
-        blocks.append(TableBlock(
-            columns=(TableColumn("Question", 46.0), TableColumn("Answer", 54.0)),
-            rows=tuple(rows),
-        ))
+            blocks.append(
+                ParagraphBlock(
+                    runs=runs_of(current, bold=True), style=ParaStyle.BODY, align=Align.LEFT
+                )
+            )
+        blocks.append(
+            TableBlock(
+                columns=(TableColumn("Question", 46.0), TableColumn("Answer", 54.0)),
+                rows=tuple(rows),
+            )
+        )
         rows.clear()
 
     for answer in sitting.printed_answers:
@@ -398,13 +410,15 @@ def sitting_blocks(sitting: QuestionnaireSitting) -> list[Block]:
     flush()
 
     if truncated:
-        blocks.append(ParagraphBlock(
-            runs=runs_of(
-                f"[Answers truncated after {MAX_ROWS_PER_SITTING} questions. The full set is held "
-                f"against the questionnaire in the repository.]"
-            ),
-            style=ParaStyle.NOTE,
-        ))
+        blocks.append(
+            ParagraphBlock(
+                runs=runs_of(
+                    f"[Answers truncated after {MAX_ROWS_PER_SITTING} questions. The full set is held "
+                    f"against the questionnaire in the repository.]"
+                ),
+                style=ParaStyle.NOTE,
+            )
+        )
     return blocks
 
 
@@ -483,14 +497,17 @@ def questionnaire_annexure_blocks(
     """
     scratch = DocumentBuilder(meta=ReportMeta(title=""))
     append_questionnaire_annexure(
-        scratch, items, heading=heading, numbered=numbered,
+        scratch,
+        items,
+        heading=heading,
+        numbered=numbered,
         page_break_before=page_break_before,
     )
     return scratch.build().blocks
 
 
 def questionnaire_warnings(
-    items: tuple[QuestionnaireItem, ...] | list[QuestionnaireItem]
+    items: tuple[QuestionnaireItem, ...] | list[QuestionnaireItem],
 ) -> list[str]:
     """What the designer should be told about the questionnaires attached to this workshop.
 

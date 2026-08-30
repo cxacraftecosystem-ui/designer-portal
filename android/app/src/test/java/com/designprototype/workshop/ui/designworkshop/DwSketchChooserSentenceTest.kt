@@ -19,6 +19,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 /**
  * A FAILED LOAD MAY NOT BE WORDED AS AN ANSWER — the silent-emptiness class, on the Sketches &
@@ -228,6 +229,95 @@ class DwSketchChooserSentenceTest {
         assertTrue(
             "a designer whose file was copied but not referenced must be told it survived",
             DW_SKETCH_CHOOSER_FILE_NOT_ATTACHED.contains("is not lost"),
+        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+    // WHERE A SENTENCE MAY SEND SOMEBODY, NOW THAT THIS TAB DERIVES
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+    //
+    // THE DEFECT THESE TWO PIN HAS NOW HAPPENED FOUR TIMES ON THESE TWO SURFACES, which is why it is
+    // pinned as a rule rather than corrected a fifth time. When `DwSketchDerivationSection` put
+    // tracing, straightening and measuring onto the Upload tab, four sentences on the same screen went
+    // on saying those acts were somewhere else. Two were corrected in the pass that mounted the
+    // section; two — `DwChooserHalf.emptyNote` and this screen's own subtitle — were not, and the
+    // subtitle is the first paragraph a designer reads.
+    //
+    // A SENTENCE THAT SENDS SOMEBODY AWAY FROM A CONTROL THEY ARE LOOKING AT IS WORSE THAN NO
+    // SENTENCE: a missing control can be looked for and found, and a capability named as living
+    // elsewhere is one nobody scrolls to. The other client wrote the same rule down for the same tab —
+    // "a sentence pointing at the wrong place is the defect this tab has already paid for once".
+    //
+    // THE VOCABULARY IS READ OFF THE CARDS AND NOT TYPED HERE. Each derivation card's title begins
+    // with the act it performs, so a card renamed moves both tests with it instead of leaving them
+    // pinning a verb nothing on the screen says any more. That is the same discipline
+    // `DW_TRACE_EXPORT_FORMAT_COUNT` applies to a number: derive it, never transcribe it.
+
+    /** "Trace", "Straighten", "Measure" — the three acts, in the cards' own words, folded for search. */
+    private val derivationActs: List<String> =
+        listOf(DW_TRACE_CARD_TITLE, DW_RECTIFY_CARD_TITLE, DW_MEASURE_CARD_TITLE)
+            .map { it.substringBefore(' ').lowercase(Locale.ROOT) }
+
+    /**
+     * Every sentence on this screen whose job is to say where something ELSE lives.
+     *
+     * THE SET IS WRITTEN OUT AND THAT IS THE WEAKNESS OF THIS TEST, said plainly: a fifth such
+     * sentence added later and not added here is exactly the miss that produced the fourth. It is
+     * still worth having — it holds the four that exist, and the block comment above tells the next
+     * reader what to add — but the real guard is that these are named constants at all. A private
+     * getter on a private data class, which is what two of these were, cannot be reached by any JVM
+     * test that could have caught this.
+     */
+    private val whereTheRestOfTheRecordIs = listOf(
+        "the sketches empty note" to DW_SKETCH_CHOOSER_NO_SKETCHES_YET,
+        "the prototypes empty note" to DW_SKETCH_CHOOSER_NO_PROTOTYPES_YET,
+        "the sketches stage note" to DW_SKETCH_CHOOSER_SKETCH_ELSEWHERE,
+        "the prototypes stage note" to DW_SKETCH_CHOOSER_PROTOTYPE_ELSEWHERE,
+    )
+
+    /**
+     * THE RULE ITSELF. These four sentences exist to list what is NOT on this tab, so naming an act
+     * this tab mounts a panel for is not a wording slip — it is the sentence asserting the opposite of
+     * what the screen underneath it does.
+     *
+     * Nothing is asserted about what they DO name. "The name, the caption, the category, typing a
+     * dimension in by hand" is a list a reader must stay free to improve; only the one thing it may
+     * never contain is fixed here.
+     */
+    @Test
+    fun `a sentence about what is elsewhere never names an act this tab performs`() {
+        whereTheRestOfTheRecordIs.forEach { (name, sentence) ->
+            assertTrue("$name says nothing at all", sentence.isNotBlank())
+            derivationActs.forEach { act ->
+                assertFalse(
+                    "$name puts '$act' on the stage form, and this tab mounts a card for it — a " +
+                        "designer who believes that sentence never scrolls to the control",
+                    sentence.contains(act, ignoreCase = true),
+                )
+            }
+        }
+    }
+
+    /**
+     * AND THE CONVERSE, ON THE ONE SENTENCE THAT IS READ INSTEAD OF SCROLLING.
+     *
+     * The subtitle is the whole of what a designer knows about this screen before they touch it, and
+     * the report that started this work was that the derivation surfaces were "completely missing" on
+     * the handset — when in fact all three were built, tested and mounted one tap deeper. A summary
+     * that lists Upload and Review and says nothing about tracing is how a finished feature stays
+     * invisible, so this asserts that all three acts are named, and leaves the wording alone.
+     */
+    @Test
+    fun `the subtitle names every act the Upload tab can perform on a photograph`() {
+        derivationActs.forEach { act ->
+            assertTrue(
+                "the screen's own subtitle never mentions '$act', which this tab does",
+                DW_SKETCH_CHOOSER_SUBTITLE.contains(act, ignoreCase = true),
+            )
+        }
+        assertFalse(
+            "the retired clause put every act on the stage form and must not come back",
+            DW_SKETCH_CHOOSER_SUBTITLE.contains("The work itself lives on"),
         )
     }
 

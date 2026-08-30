@@ -45,7 +45,7 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.cachedQuestionnaireNotice
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
-import com.designprototype.workshop.ui.SelectOption
+import com.designprototype.workshop.ui.designWorkshopLabel
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.RecordProseField
@@ -93,7 +93,7 @@ fun QuestionnaireDetailScreen(
     var loadError by remember(questionnaireId) { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var reload by remember(questionnaireId) { mutableIntStateOf(0) }
-    var workshops by remember { mutableStateOf<List<SelectOption>>(emptyList()) }
+    var workshops by remember { mutableStateOf(AttachableWorkshops()) }
 
     var renaming by remember { mutableStateOf(false) }
     var addingSection by remember { mutableStateOf(false) }
@@ -257,7 +257,7 @@ fun QuestionnaireDetailScreen(
         loading = false
     }
 
-    LaunchedEffect(questionnaireId) { workshops = designWorkshopOptions(repository) }
+    LaunchedEffect(questionnaireId) { workshops = attachableDesignWorkshops(repository) }
 
     /** Run a write, then re-read the form. Every mutation on this screen goes through here. */
     fun mutate(failure: String, block: suspend () -> String?) {
@@ -412,10 +412,11 @@ fun QuestionnaireDetailScreen(
     if (reusing && loaded != null) {
         ReuseQuestionnaireDialog(
             source = loaded,
-            // The SAME list the attach control above uses — `designWorkshopOptions`, which walks
-            // every page rather than the first hundred. The server 404s a workshop it has not shown
-            // this account, so offering one that is merely known to exist would produce a refusal
-            // the designer cannot act on.
+            // The SAME list the attach control above uses — `attachableDesignWorkshops`, which
+            // walks every page rather than the first hundred. The server 404s a workshop it has
+            // not shown this account, so offering one that is merely known to exist would produce
+            // a refusal the designer cannot act on. The whole state travels, not just the rows,
+            // so the dialog can say why the list is short instead of implying there is nothing.
             workshops = workshops,
             busy = reuseBusy,
             onDismiss = { if (!reuseBusy) reusing = false },
@@ -684,7 +685,7 @@ private fun HeaderCard(
     form: CustomQuestionnaireDto,
     mayEdit: Boolean,
     busy: Boolean,
-    workshops: List<SelectOption>,
+    workshops: AttachableWorkshops,
     onRename: () -> Unit,
     onAttach: (String) -> Unit,
     onSetActive: (Boolean) -> Unit,
@@ -725,15 +726,41 @@ private fun HeaderCard(
             HorizontalDivider(color = MaterialTheme.field.hairline)
 
             if (mayEdit) {
+                /*
+                  THE ATTACHED WORKSHOP IS PASSED IN AS THE OFF-PAGE ID, AND THAT IS THE POINT.
+
+                  This is the one attach control that opens over a value that is already stored, and
+                  a stored `designWorkshopId` can very easily be outside whatever this walk managed
+                  to gather: past the 500-row ceiling, or absent because the walk failed on page one
+                  in a courtyard. The trigger draws its label by looking the selected value up in the
+                  options, so without this the screen printed **"Not attached"** over a questionnaire
+                  that IS attached — and the designer's obvious next move, picking a workshop, would
+                  have quietly re-filed somebody's fieldwork.
+
+                  `options(attachedId)` keeps a row for it that says what it is rather than
+                  pretending to be the workshop's name, so detaching stays possible offline and
+                  nothing on screen claims a link that is not there or denies one that is.
+                */
+                val attachOptions = workshops.options(form.designWorkshopId.orEmpty())
                 SearchableSelectField(
                     label = "Attached to a design workshop",
-                    options = workshops,
+                    options = attachOptions,
                     selectedValue = form.designWorkshopId.orEmpty(),
                     placeholder = "Not attached",
                     includeNone = true,
                     enabled = !busy,
+                    // §3.5's sentence for whichever state the walk is in. Never the primitive's
+                    // fallback: only this screen knows whether the list is loading, failed, or
+                    // genuinely empty for this account, and those have three different next moves.
+                    emptyMessage = workshops.notice(),
                     onSelect = onAttach
                 )
+                workshops.capNotice()?.let { EmptyNote(it) }
+                if (attachOptions.isEmpty() && !busy) {
+                    // Empty AND enabled, so the picker's own stand-down line cannot fire — see the
+                    // same guard on the create dialog.
+                    workshops.notice()?.let { EmptyNote(it) }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(onClick = onRename, enabled = !busy, modifier = Modifier.weight(1f)) {
                         Text("Rename")
@@ -747,7 +774,15 @@ private fun HeaderCard(
             } else {
                 Text(
                     form.designWorkshopId?.takeIf { it.isNotBlank() }
-                        ?.let { id -> workshops.firstOrNull { it.value == id }?.label ?: "A design workshop" }
+                        ?.let { id ->
+                            // "A design workshop" rather than a name this device could not fetch —
+                            // and never "not attached", which is what a `firstOrNull` alone would
+                            // read as on a phone whose walk failed. The read-only half of the same
+                            // rule the picker above follows.
+                            workshops.rows.firstOrNull { it.id == id }
+                                ?.let(::designWorkshopLabel)
+                                ?: "A design workshop"
+                        }
                         ?.let { "Attached to $it" }
                         ?: "Not attached to a design workshop",
                     color = MaterialTheme.field.muted,

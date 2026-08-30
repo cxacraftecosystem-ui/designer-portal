@@ -14,6 +14,7 @@ Endpoints come in two families:
 Nothing here DELETEs an assignment. A refusal or a withdrawal of access is history worth keeping, so
 rows move to DENIED/REVOKED and stay put; see :func:`revoke_workshop_assignment`.
 """
+
 from datetime import UTC, datetime
 from typing import Any
 
@@ -129,7 +130,10 @@ async def _assignment_or_404(workshop_id: str, user_id: str) -> Any:
         where={"workshopId_userId": {"workshopId": workshop_id, "userId": user_id}}
     )
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assignment for that user on this workshop")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No assignment for that user on this workshop",
+        )
     return row
 
 
@@ -242,7 +246,11 @@ async def list_workshops(
         if scope:
             where.setdefault("AND", []).append(scope)
     if search:
-        where["OR"] = [{"title": contains(search)}, {"place": contains(search)}, {"description": contains(search)}]
+        where["OR"] = [
+            {"title": contains(search)},
+            {"place": contains(search)},
+            {"description": contains(search)},
+        ]
     if place:
         where["place"] = contains(place)
     if statusFilter:
@@ -432,14 +440,17 @@ async def discard_one_unmapped_record(
 @router.get("/access-levels")
 async def list_access_levels(_: Any = Depends(get_current_user)) -> list[dict[str, str]]:
     """The level ladder with human definitions, so a grant/request UI can say what it is handing out."""
-    return [{"level": level, "description": WORKSHOP_LEVEL_DESCRIPTIONS[level]} for level in WORKSHOP_LEVELS]
+    return [
+        {"level": level, "description": WORKSHOP_LEVEL_DESCRIPTIONS[level]}
+        for level in WORKSHOP_LEVELS
+    ]
 
 
 @router.get("/requestable")
 async def list_requestable_workshops(
     current_user: Any = Depends(get_current_user),
     limit: int = Query(WORKSHOP_REQUEST_MAX, ge=1, le=WORKSHOP_REQUEST_MAX),
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Every workshop the caller could ASK about, with what they already hold on each.
 
     This exists because ``GET /workshops`` was the wrong list to build a request picker from, in a way
@@ -474,11 +485,34 @@ async def list_requestable_workshops(
     Capped at ``WORKSHOP_REQUEST_MAX`` — the same limit ``POST /access-requests`` puts on one call —
     so everything offered here can be selected in one submission. Ordered by when the workshop
     HAPPENED, most recent first, matching ``list_workshops`` so the truncation drops the oldest.
+
+    THE RESPONSE IS AN ENVELOPE, ``{"items": [...], "truncated": bool}``, NOT THE BARE ARRAY THIS
+    ROUTE USED TO ANSWER — this is the one shape change in the whole route and it is deliberate.
+    A bare array carries no way to say "this is every workshop that exists" apart from "this is every
+    workshop up to the cap", so ``WorkshopAccessRequestPanel`` had no number to read and no boolean to
+    branch on, and stayed honestly silent about a cut it had no way to prove was even happening — the
+    one picker in either client that could not state its own ceiling. ``page_payload`` was not the
+    fix: it answers ``page``/``pageSize``/``pages`` for a route that has no notion of a page, only a
+    single capped fetch, and bolting paging vocabulary onto a picker that is not paged would be a
+    second lie in place of the first. ``truncated`` is EXACT rather than guessed, the same trick
+    ``GET /tasks/options`` uses for its three picker ceilings: one row is read past ``limit`` and
+    trimmed back off before the projection runs, so a repository of exactly ``limit`` workshops
+    reports ``False`` honestly and nobody pays for a second COUNT to find out. A caller still decoding
+    this as a bare array breaks on the next response it reads — that follow-up belongs to
+    ``WorkshopAccessRequestPanel.tsx`` and ``components/settings/workshopAccess.tsx``, not to this
+    file.
     """
     uid = get_value(current_user, "id")
+    # ONE ROW PAST THE CAP, TRIMMED — see the envelope paragraph above. ``take=limit`` alone cannot
+    # tell a repository of exactly ``limit`` workshops apart from one with ten thousand more behind
+    # it; both come back as a full page of ``limit`` rows and there is nothing left to compare against.
+    # Reading one extra costs nothing this route does not already pay for the first ``limit`` of, and
+    # it is what turns ``truncated`` from a guess into a fact.
     workshops = await db.workshop.find_many(
-        take=limit, order=[{"startDate": "desc"}, {"date": "desc"}, {"createdAt": "desc"}]
+        take=limit + 1, order=[{"startDate": "desc"}, {"date": "desc"}, {"createdAt": "desc"}]
     )
+    truncated = len(workshops) > limit
+    workshops = workshops[:limit]
     ids = [w.id for w in workshops]
     # One query for every candidate's assignment rows rather than one per workshop: the caller's own
     # row and the curation test both come out of the same set. Deliberately NOT narrowed to
@@ -507,7 +541,7 @@ async def list_requestable_workshops(
                 "restricted": workshop_is_curated(workshop_rows),
             }
         )
-    return public_encode(items)
+    return {"items": public_encode(items), "truncated": truncated}
 
 
 @router.post("/access-requests", status_code=status.HTTP_201_CREATED)
@@ -540,12 +574,15 @@ async def request_workshop_access(
     # Preserve the caller's order but drop blanks/duplicates, so asking twice in one body is not two rows.
     wanted: list[str] = list(dict.fromkeys(wid for wid in payload.workshopIds if wid))
     if not wanted:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one workshop")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one workshop"
+        )
     found = {w.id for w in await db.workshop.find_many(where={"id": {"in": wanted}})}
     missing = [wid for wid in wanted if wid not in found]
     if missing:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Workshop(s) not found: {', '.join(missing)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workshop(s) not found: {', '.join(missing)}",
         )
     # The whole multi-select is decided from ONE read of the caller's existing rows, then written as
     # at most one insert and one update. Asking for a season of twenty workshops previously cost two
@@ -568,7 +605,10 @@ async def request_workshop_access(
         state = enum_str(existing.status)
         if state in {"GRANTED", "PENDING"}:
             outcomes.append(
-                {"workshopId": workshop_id, "outcome": "ALREADY_GRANTED" if state == "GRANTED" else "ALREADY_PENDING"}
+                {
+                    "workshopId": workshop_id,
+                    "outcome": "ALREADY_GRANTED" if state == "GRANTED" else "ALREADY_PENDING",
+                }
             )
             continue
         to_rerequest.append(existing.id)
@@ -688,7 +728,9 @@ async def decide_workshop_access_request(
     decision = _status_or_422(payload.status, ("GRANTED", "DENIED"))
     row = await db.workshopassignment.find_unique(where={"id": request_id})
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Access request not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Access request not found"
+        )
     if enum_str(row.status) != "PENDING":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -709,7 +751,9 @@ async def decide_workshop_access_request(
 
 
 @router.get("/{workshop_id}")
-async def get_workshop(workshop_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def get_workshop(
+    workshop_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     workshop = await require_record(db.workshop, workshop_id)
     await hydrate_relations([workshop], RELATIONS)
     return public_encode(workshop)
@@ -737,7 +781,9 @@ async def update_workshop(
     access = await resolve_workshop_access(current_user, workshop_id)
     # VIEW (or no access at all on a curated workshop) cannot edit. The creator is exempt: an admin
     # curating a roster that leaves the author off must not lock the author out of their own entry.
-    if get_value(workshop, "createdById") != get_value(current_user, "id") and not access.at_least("CONTRIBUTE"):
+    if get_value(workshop, "createdById") != get_value(current_user, "id") and not access.at_least(
+        "CONTRIBUTE"
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=access_denied_detail(access, "CONTRIBUTE")
         )
@@ -787,7 +833,9 @@ async def workshop_submission_check(
 
 
 @router.get("/{workshop_id}/assignments")
-async def list_workshop_assignments(workshop_id: str, _: Any = Depends(require_admin)) -> list[dict[str, Any]]:
+async def list_workshop_assignments(
+    workshop_id: str, _: Any = Depends(require_admin)
+) -> list[dict[str, Any]]:
     """Every assignment row on this workshop — granted, pending, denied and revoked alike.
 
     Still a flat list, because that is the shape both clients already consume. But it is no longer
@@ -910,7 +958,8 @@ async def grant_workshop_assignment(
         where={"workshopId_userId": {"workshopId": workshop_id, "userId": payload.userId}}
     )
     level = _level_or_422(
-        payload.accessLevel, enum_str(existing.accessLevel) if existing is not None else DEFAULT_GRANT_LEVEL
+        payload.accessLevel,
+        enum_str(existing.accessLevel) if existing is not None else DEFAULT_GRANT_LEVEL,
     )
     data: dict[str, Any] = {
         "accessLevel": level,
@@ -931,7 +980,10 @@ async def grant_workshop_assignment(
 
 @router.patch("/{workshop_id}/assignments/{user_id}")
 async def update_workshop_assignment(
-    workshop_id: str, user_id: str, payload: WorkshopAssignmentUpdateIn, current_user: Any = Depends(require_admin)
+    workshop_id: str,
+    user_id: str,
+    payload: WorkshopAssignmentUpdateIn,
+    current_user: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     """Admin changes one assignment: raise/lower its level, and/or set GRANTED, DENIED or REVOKED.
 

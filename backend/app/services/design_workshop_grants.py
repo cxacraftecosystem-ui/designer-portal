@@ -590,9 +590,7 @@ async def provisional_member(workshop_id: str, user_id: str) -> Any | None:
     if not workshop_id or not user_id:
         return None
     return await db.designworkshopprovisionalmember.find_unique(
-        where={
-            "designWorkshopId_userId": {"designWorkshopId": workshop_id, "userId": user_id}
-        }
+        where={"designWorkshopId_userId": {"designWorkshopId": workshop_id, "userId": user_id}}
     )
 
 
@@ -883,9 +881,7 @@ async def list_grants(record_id: str, viewer: Any) -> dict[str, Any]:
             record_id,
         )
     return {
-        "grants": [
-            grant_payload(row, issuer=getattr(row, "issuedBy", None)) for row in rows
-        ],
+        "grants": [grant_payload(row, issuer=getattr(row, "issuedBy", None)) for row in rows],
         "truncated": truncated,
     }
 
@@ -1321,9 +1317,7 @@ async def redeem(
         raise CardRefused()
 
     # ---- 3. the card ---------------------------------------------------------------------------
-    token = await db.recordaccesstoken.find_unique(
-        where={"secretHash": secret_hash(secret)}
-    )
+    token = await db.recordaccesstoken.find_unique(where={"secretHash": secret_hash(secret)})
     if token is None:
         # A FORGED CARD LANDS HERE, and so does a card from another deployment, and so does a typo
         # the check characters happened not to catch. All three get `CARD_REFUSED_DETAIL` and none of
@@ -1386,11 +1380,7 @@ async def redeem(
             "outcome": outcome,
             "reason": str(getattr(prior.reason, "value", prior.reason)),
             "workshopId": token.recordId,
-            "detail": (
-                _FULL_DETAIL
-                if outcome == "FULL"
-                else _PROVISIONAL_DETAIL
-            ),
+            "detail": (_FULL_DETAIL if outcome == "FULL" else _PROVISIONAL_DETAIL),
         }
 
     # READ BEFORE ANYTHING IS WRITTEN, so the log line on the grant path can say whether a card has

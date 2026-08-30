@@ -49,6 +49,36 @@ import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIden
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
 
+/**
+ * The word for “this was never answered”, on both boxes of the experience pair.
+ *
+ * ── THIS STRING IS THE WHOLE OF THE NULL-VERSUS-ZERO GUARANTEE ON THIS FORM ───────────────
+ *
+ * It sits on an `<option value="">` placed FIRST in each list, so an untouched dropdown submits the
+ * empty string, `textValue` reads that back as null, and the payload carries an explicit null the
+ * API's `_CLEARABLE_COLUMNS` honours. Without it the first option would be `0` — `Select`'s
+ * uncontrolled fallback is `options[0].value` — and every artisan edited for an unrelated reason
+ * would come away claiming 0 years and 0 months of experience, with nothing on screen to say so.
+ *
+ * A REAL 0 IS STILL PICKABLE and still means something: an artisan who took up the craft this year.
+ * That is why the two answers need two different values rather than one clever one, and why
+ * `design_workshops.py`, `record_fields.py` and `records.py` all say in their own words that zero is
+ * a real answer here and `or` may never be used to test it.
+ */
+const EXPERIENCE_UNANSWERED = "Not recorded";
+
+/**
+ * The two option ranges. 0..90 mirrors the stage registry's own bounds for
+ * `participant.experienceYears` — a wider list here would offer a number the workshop then refuses
+ * on a row it filled in from this very record — and 0..11 is the months column's CHECK constraint.
+ *
+ * A CLOSED LIST IS WHY NOTHING CLAMPS. The number box these replaced could produce 400 and needed
+ * `min`/`max` to refuse it before a 422 took the rest of the record down with it; a dropdown cannot
+ * offer what is not in the list, and silently clamping would store a number nobody chose.
+ */
+const EXPERIENCE_YEAR_OPTIONS = Array.from({ length: 91 }, (_, index) => index);
+const EXPERIENCE_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => index);
+
 
 // The Pehchan Yes/No dropdown submits these through the Select's mirror input; `submit` parses them
 // back into the boolean the API expects. Keeping them as the option VALUES (with "Yes"/"No" only as
@@ -429,7 +459,10 @@ export function ArtisanForm({
   const dobHintId = `${derivedFieldsId}-dob-hint`;
   const craftStartId = `${derivedFieldsId}-craft-start`;
   const craftStartHintId = `${derivedFieldsId}-craft-start-hint`;
-  const experienceId = `${derivedFieldsId}-experience`;
+  // No `experienceId`: since 2026-08-30 the experience is a PAIR of themed dropdowns, and `Select`
+  // deliberately forwards no `id` to its trigger — so a `<label htmlFor>` would point at nothing.
+  // The pair is named by `FieldBlock`’s `role="group"` and each box by its own `aria-label`; only
+  // the hint below them still needs an id, because `aria-describedby` is bound by one.
   const experienceHintId = `${derivedFieldsId}-experience-hint`;
   const formRef = useRef<HTMLFormElement>(null);
   const [crafts, setCrafts] = useState<Craft[]>([]);
@@ -538,6 +571,17 @@ export function ArtisanForm({
   const initialLocation = initial
     ? ((initial as Artisan & { location?: LocationInitialValues | null }).location ?? null)
     : undefined;
+  /*
+    THE MONTHS HALF OF THE EXPERIENCE PAIR, READ THE SAME WAY AND FOR THE SAME REASON AS THE LOCATION
+    THREE LINES UP: the column and the wire key exist, and `lib/types.Artisan` does not yet name them.
+    That file is owned by another workflow this minute, so the shape is asserted here — narrowly, on
+    one key — rather than by editing a type six other forms share. Delete this cast the moment
+    `experienceMonths?: number | null` lands on `Artisan`; it is a stopgap and nothing turns on it.
+
+    `?? null` and not `|| null`, because a stored 0 is falsy and 0 is a real answer.
+  */
+  const initialExperienceMonths = (initial as Artisan & { experienceMonths?: number | null } | undefined)
+    ?.experienceMonths ?? null;
   /**
    * Aadhaar is what stops one artisan becoming two records, so a NEW artisan must come with one.
    * An artisan documented before that rule has none, and a researcher who opened the record to fix a
@@ -813,12 +857,25 @@ export function ArtisanForm({
         // somebody entered by mistake would silently do nothing — and `craftStartDate` is in the
         // API's `_CLEARABLE_COLUMNS` precisely so that retraction works.
         craftStartDate: textValue(form, "craftStartDate") || null,
-        // THE STATED NUMBER, STILL SENT. It is the second of the three answers the server reads (the
-        // derived value from `craftStartDate` first, this column next, the legacy `extraMetadata`
-        // spellings last), so sending it is what keeps a value that is currently right from being
-        // blanked by a form that has learnt about dates. See the box itself for why it is typeable.
+        /*
+          THE STATED ANSWER, STILL SENT, AND NOW IN TWO PARTS. `experienceYears` is the second of the
+          three answers the server reads (the derived value from `craftStartDate` first, this column
+          next, the legacy `extraMetadata` spellings last), so sending it is what keeps a value that
+          is currently right from being blanked by a form that has learnt about dates.
+          `experienceMonths` has no derived rival and no legacy spelling: it is simply stored.
+
+          `textValue` YIELDS null FOR THE EMPTY OPTION AND THE STRING "0" FOR A CHOSEN ZERO, which is
+          the whole of null-versus-zero on this form. `Number("")` is 0, not NaN, so writing
+          `Number(textValue(...) ?? "")` here — or `Number(form.get(...))` — would turn every
+          unanswered box into a stated 0 and put a claim on the record that nobody made. Both columns
+          are in the API's `_CLEARABLE_COLUMNS`, so the null really does clear rather than being
+          ignored, and a retraction works.
+        */
         experienceYears: textValue(form, "experienceYears")
           ? Number(textValue(form, "experienceYears"))
+          : null,
+        experienceMonths: textValue(form, "experienceMonths")
+          ? Number(textValue(form, "experienceMonths"))
           : null,
         phone: textValue(form, "phone"),
         email: textValue(form, "email"),
@@ -1325,17 +1382,48 @@ export function ArtisanForm({
                 : `${derivedExperience} years of experience, worked out from this — the figure the workshop and the report use.`}
             </p>
           </div>
-          {/* Not `Field`, so the sentence underneath can be an `aria-describedby` paragraph instead
-              of two more clauses folded into the box's accessible name. */}
-          <div className="grid min-w-0 gap-1">
-            <label className="field-label" htmlFor={experienceId}>
-              Experience (years)
-            </label>
+          {/*
+            ── THE EXPERIENCE PAIR: TWO DROPDOWNS ON ONE LINE, UNDER ONE HEADING ──────────────
+
+            `FieldBlock` and not a bare `<label htmlFor>`: `Select` forwards no id to its trigger (it
+            is a `<button>`, and the trigger deliberately stays unaddressable so that the handful of
+            native `<select>`s bound by id cannot be swapped for one without losing the binding), so
+            `htmlFor` would point at nothing at all. `FieldBlock` draws a `role="group"` named by the
+            heading, which is how a composite control gets a name, and it is what makes these two
+            boxes read as ONE answer rather than as two adjacent fields.
+
+            EACH BOX ALSO SAYS WHAT IT MEASURES, because a group name is announced on ENTERING the
+            group: a reader who tabs straight onto the second trigger would otherwise hear "6" and
+            nothing else, and with `FieldBlock`’s ambient label it is worse — both triggers would
+            announce "Experience" with a different number after it, one question and two answers. The
+            visible word is contained in the spoken name, which is what keeps this usable by voice.
+
+            THE HINT STAYS OUTSIDE THE GROUP AND IS POINTED AT BY `aria-describedby`, exactly as it
+            was under the number box: text inside a naming element becomes part of the name, so a
+            two-sentence explanation would be read out every time either box took focus.
+
+            THE HEADING DROPS "(years)" BECAUSE THE HEADING NO LONGER NAMES A UNIT — the boxes do.
+            That is only a change on this screen: the export column headers this value reaches are
+            declared once, server-side, in `record_fields.py` (`“Experience (years)”`, a literal
+            heading in four ministry-facing files) and are deliberately untouched. It also lands the
+            same word the stage registry uses for the participant table it fills, which is
+            “Experience”, so the form and the table that quotes it now agree.
+          */}
+          <FieldBlock
+            label="Experience"
+            hint={
+              <p id={experienceHintId} className="text-xs leading-5 text-ink-muted">
+                {derivedExperience === null
+                  ? "Used when there is no “practising since” date: a stated answer, which does not change as the years pass. Leave a box on “Not recorded” rather than answering 0 — they mean different things."
+                  : `The date above answers the years — ${derivedExperience} years is what the workshop and the report print, and a number chosen here stays on the record and is read only while that date is empty. The months have no date behind them: they are stored as chosen, and the participant table and the exports still print the years alone.`}
+              </p>
+            }
+          >
             {/*
-              ── WHY A TYPED NUMBER SURVIVES ON A FORM WHOSE EXPERIENCE IS NOW DERIVED ──────────
-              The date above outranks this box everywhere the value is read, so the obvious tidy-up
-              is to delete it, or to disable it whenever a date is present. Both would destroy data
-              that is currently right, which is the one thing this change may not do.
+              ── WHY A STATED ANSWER SURVIVES ON A FORM WHOSE EXPERIENCE IS NOW DERIVED ─────────
+              The date above outranks these boxes everywhere the value is read, so the obvious
+              tidy-up is to delete them, or to disable them whenever a date is present. Both would
+              destroy data that is currently right, which is the one thing this change may not do.
 
               An artisan who says "about thirty years" and cannot name a year is the ordinary case
               rather than the exception — `Artisan.experienceYears`' own column comment is an
@@ -1345,34 +1433,65 @@ export function ArtisanForm({
               report, so a form that refused to hold their answer would print a blank in the
               participant table for the oldest and best-documented artisans in the repository.
 
-              DISABLING IT WHILE A DATE IS SET WOULD BE WORSE THAN LEAVING IT ALONE, and not for a
-              style reason: a disabled input is omitted from FormData, `submit` reads the absence as
-              an explicit null, and the API clears the column. The stated number would be gone — so
-              clearing the joining date a week later, on a record whose number nobody re-typed, would
-              leave that artisan with no experience at all. Kept enabled, both answers stand on the
-              row and the precedence decides between them on every read.
+              DISABLING EITHER BOX WHILE A DATE IS SET WOULD BE WORSE THAN LEAVING THEM ALONE, and
+              not for a style reason: a disabled control is omitted from FormData, `submit` reads the
+              absence as an explicit null, and `_CLEARABLE_COLUMNS` makes the API clear the column.
+              The stated answer would be gone — so clearing the joining date a week later, on a
+              record nobody re-answered, would leave that artisan with no experience at all. A
+              disabled `<select>` behaves identically to the disabled `<input>` that warning was
+              written about. Kept enabled, both answers stand on the row and the precedence decides
+              between them on every read.
+
+              AND NEITHER BOX IS PRE-FILLED FROM THE DERIVED YEARS. `derivedExperience` is shown in
+              the sentence below and written into nothing: seeding a box from it would turn a figure
+              the server recomputes on every read into a frozen stated number, which is precisely the
+              distinction `craftStartDate` was added to draw.
             */}
-            <TextInput
-              id={experienceId}
-              name="experienceYears"
-              type="number"
-              inputMode="numeric"
-              /* 0..90 mirrors the stage registry's own bounds for `participant.experienceYears`.
-                 A wider range here would accept a number the workshop then refuses on a row it
-                 filled in from this very record. */
-              min={0}
-              max={90}
-              step={1}
-              defaultValue={initial?.experienceYears ?? ""}
-              onChange={markDirty}
-              aria-describedby={experienceHintId}
-            />
-            <p id={experienceHintId} className="text-xs leading-5 text-ink-muted">
-              {derivedExperience === null
-                ? "Used when there is no “practising since” date: a stated number, which does not change as the years pass."
-                : `The date above answers this — ${derivedExperience} years is what the workshop and the report print. A number here stays on the record and is read only while that date is empty.`}
-            </p>
-          </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="grid min-w-0 gap-1">
+                <span className="text-xs font-medium text-ink-500">Years</span>
+                <Select
+                  name="experienceYears"
+                  aria-label="Experience, in whole years"
+                  aria-describedby={experienceHintId}
+                  /*
+                    `?? ""` AND NOT `|| ""`: a stored 0 is falsy, so `||` would open the box on the
+                    empty option and the next save would write null over a real answer. An artisan
+                    who took up the craft this year HAS 0 years of experience.
+                  */
+                  defaultValue={String(initial?.experienceYears ?? "")}
+                  // A themed dropdown is a <button> and fires no native input event, so the form's
+                  // onInput never sees it and the dirty flag has to be raised by hand.
+                  onChange={markDirty}
+                >
+                  {/* FIRST, and its value is the empty string — see EXPERIENCE_UNANSWERED. */}
+                  <option value="">{EXPERIENCE_UNANSWERED}</option>
+                  {EXPERIENCE_YEAR_OPTIONS.map((years) => (
+                    <option key={years} value={years}>
+                      {years}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="grid min-w-0 gap-1">
+                <span className="text-xs font-medium text-ink-500">Months</span>
+                <Select
+                  name="experienceMonths"
+                  aria-label="Experience, in months"
+                  aria-describedby={experienceHintId}
+                  defaultValue={String(initialExperienceMonths ?? "")}
+                  onChange={markDirty}
+                >
+                  <option value="">{EXPERIENCE_UNANSWERED}</option>
+                  {EXPERIENCE_MONTH_OPTIONS.map((months) => (
+                    <option key={months} value={months}>
+                      {months}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          </FieldBlock>
           {/* FieldBlock, not Field: PhoneField contains a themed dropdown, and `Field` is a
               `<label>` — so the visible word "Phone" bound itself to the dial-code trigger (the
               first labelable descendant) rather than to the number box, and clicking the label

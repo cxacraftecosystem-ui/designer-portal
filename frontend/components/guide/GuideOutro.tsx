@@ -21,11 +21,26 @@ import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 /** The last-thing-before-you-pack-up checklist. Each item is a decision that is expensive to
  *  reverse once you are back from the field.
  *
- *  THE LAST TWO ARE THE WORKSHOP'S, and they are here rather than in a second list because the test
- *  for this list is not which arc an item belongs to — it is whether the item can still be fixed
- *  from a desk. A tag cannot be tied to an object you have left in a courtyard, and a sketch that
- *  was set aside and never written down is gone with the paper it was on. Both fail that test the
- *  same way the six above do. */
+ *  THE LAST THREE ARE THE WORKSHOP'S, and they are here rather than in a second list because the
+ *  test for this list is not which arc an item belongs to — it is whether the item can still be
+ *  fixed from a desk. A tag cannot be tied to an object you have left in a courtyard, and a sketch
+ *  that was set aside and never written down is gone with the paper it was on. Both fail that test
+ *  the same way the six above do.
+ *
+ *  THE PHOTOGRAPH ITEM WAS THE THIRD, ADDED 2026-08-29, AND IT PASSES THAT TEST HARDER THAN ANY
+ *  OTHER ITEM ON THIS LIST. Since the photograph gate shipped, a file can be turned away on the
+ *  handset before it uploads — `components/media/photoGate.ts` checks each one "for focus, for
+ *  resolution, and for being the identical file twice" — and a refusal names its own reason and
+ *  ends "take it again". That is a free instruction while the loom is in front of you and an
+ *  impossible one from a desk, and NOTHING LATER IN THE PROCESS WILL RAISE IT AGAIN: the gate runs
+ *  at attach time, and a gallery that declares how many it wants still saves with fewer, so the
+ *  shortfall surfaces as a completeness figure weeks later rather than as a refusal today.
+ *
+ *  IT DOES NOT PRINT THE NUMBER, and that is the rule rather than brevity. The floor is declared
+ *  per field by the server registry (`min_items`), the gallery's own progress bar reads it and
+ *  prints it, and a count copied into this array would be a second, hand-kept copy of a value this
+ *  page cannot see — the failure `.claude/skills/field-repo-frontend/SKILL.md` states as "never
+ *  print a cap you did not read". "The number it asks for" is true whatever the registry says. */
 const CHECKLIST = [
   "Every artisan you spoke to has a record, with Do's and Don'ts filled in.",
   "Every product you photographed has its dimensions, cost of making and selling price.",
@@ -33,6 +48,7 @@ const CHECKLIST = [
   "Every tool has a material, a maker and a replacement cost.",
   "The questionnaire's completion matrix has no unexplained gaps.",
   "Anything you shot that has no home is uploaded to Miscellaneous Media.",
+  "No photograph was left refused, and every gallery has the number it asks for — a retake costs nothing while you are still standing there.",
   "Every prototype has its tag tied to it, so stages 14, 15 and 16 attach to the right one.",
   "The sketches nobody prototyped are recorded too — set-aside designs only survive if stage 11 has them."
 ];

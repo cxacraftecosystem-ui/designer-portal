@@ -45,7 +45,6 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.visibleQuestionnaires
 import com.designprototype.workshop.ui.SearchableSelectField
-import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.RecordProseField
@@ -498,10 +497,10 @@ private fun CreateQuestionnaireDialog(
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var workshopId by remember { mutableStateOf("") }
-    var workshops by remember { mutableStateOf<List<SelectOption>>(emptyList()) }
+    var workshops by remember { mutableStateOf(AttachableWorkshops()) }
     var busy by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { workshops = designWorkshopOptions(repository) }
+    LaunchedEffect(Unit) { workshops = attachableDesignWorkshops(repository) }
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -530,14 +529,48 @@ private fun CreateQuestionnaireDialog(
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
+                /*
+                  THE ATTACH CONTROL, AND THE SENTENCE IT OWES WHEN IT IS EMPTY.
+
+                  A questionnaire with no workshop on it is perfectly valid — the server accepts a
+                  null `designWorkshopId` and the none row is a real answer, not an unfilled field —
+                  so nothing here blocks the create. What this control must not do is go SILENT: an
+                  empty picker with one "Not attached" row in it and no words under it reads as "you
+                  are on no workshop", which on a handset with no signal is very often the opposite
+                  of the truth. `notice()` is whichever of DROPDOWN_DESIGN §3.5's sentences is
+                  actually the case, and it is the same string the record forms print for the same
+                  state, on both clients.
+
+                  `searchable` is left to the threshold: this list is a WALK across every page, so
+                  the options are the whole answer and a box over them reaches everything they hold.
+                  That is the opposite of `DesignWorkshopField`, whose twenty rows are one truncated
+                  page — same primitive, opposite ruling, and §3.6 is where the two are set out.
+                */
+                val attachOptions = workshops.options()
                 SearchableSelectField(
                     label = "Attach to a design workshop",
-                    options = workshops,
+                    options = attachOptions,
                     selectedValue = workshopId,
                     placeholder = "Not attached",
                     includeNone = true,
+                    enabled = !busy,
+                    emptyMessage = workshops.notice(),
                     onSelect = { workshopId = it }
                 )
+                workshops.capNotice()?.let { cap ->
+                    // R4: the walk stopped short of what the server says this account may open, and
+                    // says so with both numbers rather than leaving the designer to notice that a
+                    // workshop they were expecting is not in the list.
+                    EmptyNote(cap)
+                }
+                // The picker prints the empty sentence on the form itself only when the list is
+                // empty AND the control is disabled — the one state in which neither surface can be
+                // opened to read it. Here that is the `busy` case alone, so this arm covers the
+                // ordinary one and the `!busy` guard is what stops the same fact appearing twice
+                // under one control.
+                if (attachOptions.isEmpty() && !busy) {
+                    workshops.notice()?.let { EmptyNote(it) }
+                }
             }
         },
         confirmButton = {

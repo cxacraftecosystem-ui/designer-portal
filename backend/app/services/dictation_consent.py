@@ -971,7 +971,7 @@ async def stage_attached_workshop_ids(media_id: str) -> list[str]:
         'SELECT DISTINCT e."designWorkshopId" AS id FROM "DwStageEntry" e '
         'WHERE e."deletedAt" IS NULL AND e."entityKey" = ANY($2::text[]) AND EXISTS ('
         '  SELECT 1 FROM jsonb_each(e."data") kv'
-        '  WHERE kv.key = ANY($3::text[]) AND kv.value @> to_jsonb($1::text))',
+        "  WHERE kv.key = ANY($3::text[]) AND kv.value @> to_jsonb($1::text))",
         media_id,
         entity_keys,
         field_keys,
@@ -1191,7 +1191,10 @@ async def cancel_pending_transcriptions(workshop_id: str) -> int:
         # answer picks these recordings up again on the next save of their stage.
         try:
             await db.mediafile.update_many(
-                where={"id": {"in": media_ids}, "transcriptStatus": {"in": ["QUEUED", "PROCESSING"]}},
+                where={
+                    "id": {"in": media_ids},
+                    "transcriptStatus": {"in": ["QUEUED", "PROCESSING"]},
+                },
                 data={
                     "transcriptStatus": "FAILED",
                     "transcriptError": gate_refusal(DictationConsent.REFUSED, MEDIA),

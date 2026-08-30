@@ -86,11 +86,23 @@ export default function DesignWorkshopSection() {
           the room — and the stages <em>are</em> the report, so the document is finished at the moment
           the workshop is.
         </motion.p>
+        {/*
+          "THE TEAM" IS NOW LITERAL AND THE SINGULAR THAT FOLLOWS IT IS STILL CORRECT — the two are
+          not in tension and a future editor should not "fix" either into the other.
+          `designworkshop/WorkshopDesignerPicker.tsx:332` is labelled "Designers this workshop is
+          for", plural, capped by `MAX_NAMED_DESIGNERS`, and its own hint states both halves:
+          "Everybody named here can open this workshop and fill in its stages … One of them, named
+          below, is the one whose designer profile is copied into stage 1 and stage 3 and whose name
+          the report carries." So the workshop is opened FOR a team and the document is submitted
+          UNDER one name. This paragraph previously said only the second half, which read as a
+          product where a workshop belongs to one person.
+        */}
         <motion.p variants={item} className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-          An administrator opens the workshop for a cluster and puts the team on it; the designers do
-          the work inside it. That division is deliberate rather than an oversight: a workshop ends in
-          a document submitted under a named designer&rsquo;s name, and starting one is an
-          administrative act.
+          An administrator opens the workshop for a cluster and names the designers it is for — a
+          fortnight in a cluster is not a solo expedition — and they do the work inside it. That
+          division is deliberate rather than an oversight: a workshop ends in a document submitted
+          under one named designer&rsquo;s name, whose profile is the one copied onto its cover, and
+          starting one is an administrative act.
         </motion.p>
 
         {/* THE ARC. The same four-up grid as the record-types section above, on purpose: this page
@@ -159,6 +171,39 @@ export default function DesignWorkshopSection() {
             // answer without asking.
             "Completeness scored on the device, not only on the server",
             "A readiness list, not a locked submit",
+            // `components/media/MediaRepositoryPicker.tsx`, mounted on the stage media field at
+            // `designworkshop/FieldInput.tsx:4386`. Worded as ATTACH and never as "move" or "file
+            // it here too": that control's own header is emphatic that it does not re-parent
+            // anything — a `MediaFile` has exactly one parent and no join table, and what a stage
+            // field stores is an array of ids in its own JSON, which is the whole reason this is
+            // buildable on a stage and was argued down twice on a record.
+            "Attach a photograph already in the repository",
+            // ── THE SIXTH REFERENCE MODEL ─────────────────────────────────────────────────────
+            // `backend/app/services/design_workshops.py#REFERENCE_MODELS` has six members and this
+            // is the newest: Artisan, ProductDocumentation, ToolDocumentation, Process, Craft and
+            // now QuestionnaireInterview. It sits beside the photograph chip because both are the
+            // same gesture — something already recorded, brought into a stage rather than retyped
+            // into it — and that gesture is the argument this whole page makes.
+            //
+            // ⚠ THE SECOND HALF IS THE WHOLE REASON THIS CHIP IS TWO CLAUSES INSTEAD OF ONE.
+            // `stage_definitions.py` declares `interviewRef` plus ELEVEN `fromref` boxes it fills
+            // in — title, date, place, language, artisans in the sitting, sections answered,
+            // questions answered, last answered on, media on the record, entered on, documented
+            // under. Counted off the file, not remembered: every one is a fact ABOUT the sitting
+            // and not one is an answer GIVEN in it. A chip reading "cite an interview into a stage"
+            // would let a reader assume a submitted ministry document carries what an artisan said
+            // in a room, which is the single most expensive wrong assumption this product could
+            // invite — and the file's own comment is already uneasy that a researcher who types
+            // names into a free-text TITLE defeats the roster redaction downstream of it. Say what
+            // crosses; do not leave a reader to guess the boundary.
+            "An interview sitting cited into a stage — the facts about it, not the answers given in it",
+            // `components/media/photoGate.ts`. REFUSED, not flagged — that file records the
+            // disagreement with `lib/imageQuality.ts` (whose rule is "a finding is advice, never a
+            // refusal") rather than hiding it, and the gate is narrow on purpose: blur below a
+            // measured variance floor, a long edge under the rasteriser's own resolution, and an
+            // exact SHA-256 repeat. "With a reason" is the half that matters; a silent refusal is
+            // indistinguishable from a broken upload.
+            "Shaky and low-resolution photographs refused at the card, with the reason",
             "Printable code cards and prototype tags"
           ].map((chip) => (
             <span

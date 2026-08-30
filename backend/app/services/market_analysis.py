@@ -72,12 +72,49 @@ NARROW_COVERAGE = 0.55
 #: hint for a human to check, never a claim of proof.
 #: Only words of three letters or more can survive `_MIN_TOKEN` anyway, so the one- and two-letter
 #: articles are absent from this list rather than missing from it.
-_STOPWORDS = frozenset({
-    "and", "are", "but", "for", "from", "has", "have", "its", "not", "our", "that", "the",
-    "their", "there", "they", "this", "was", "were", "will", "with", "you", "more", "most",
-    "some", "such", "than", "then", "these", "those", "can", "could", "would", "should",
-    "may", "might", "also", "very", "much", "many",
-})
+_STOPWORDS = frozenset(
+    {
+        "and",
+        "are",
+        "but",
+        "for",
+        "from",
+        "has",
+        "have",
+        "its",
+        "not",
+        "our",
+        "that",
+        "the",
+        "their",
+        "there",
+        "they",
+        "this",
+        "was",
+        "were",
+        "will",
+        "with",
+        "you",
+        "more",
+        "most",
+        "some",
+        "such",
+        "than",
+        "then",
+        "these",
+        "those",
+        "can",
+        "could",
+        "would",
+        "should",
+        "may",
+        "might",
+        "also",
+        "very",
+        "much",
+        "many",
+    }
+)
 
 #: The shortest run of letters kept as a content word. Two-letter fragments are noise in every
 #: script the survey is written in, and the stop list already removes the English ones that matter.
@@ -178,8 +215,8 @@ class PriceObservation:
 
     amount: float
     category: str = ""
-    source: str = "RESPONDENT"     # RESPONDENT | COMPETITOR
-    group: str = ""                # RESPONDENT_GROUP token, for respondent observations
+    source: str = "RESPONDENT"  # RESPONDENT | COMPETITOR
+    group: str = ""  # RESPONDENT_GROUP token, for respondent observations
     label: str = ""
 
 
@@ -250,27 +287,45 @@ class BandVerdict:
     message: str
 
 
-def _band_message(verdict: str, category: str, low: float, high: float, dist: Distribution,
-                  inside: int, below: int, above: int) -> str:
+def _band_message(
+    verdict: str,
+    category: str,
+    low: float,
+    high: float,
+    dist: Distribution,
+    inside: int,
+    below: int,
+    above: int,
+) -> str:
     """One sentence a designer can act on, naming the numbers rather than grading the designer."""
     label = category or "this category"
     if verdict == "SOUND":
-        return (f"The band ₹{low:,.0f}–{high:,.0f} covers {inside} of {dist.count} price "
-                f"observations for {label}; the median observed is ₹{dist.median:,.0f}.")
+        return (
+            f"The band ₹{low:,.0f}–{high:,.0f} covers {inside} of {dist.count} price "
+            f"observations for {label}; the median observed is ₹{dist.median:,.0f}."
+        )
     if verdict == "LOW":
-        return (f"The band ₹{low:,.0f}–{high:,.0f} sits below the evidence for {label}: "
-                f"{above} of {dist.count} observations are above it, and the median observed is "
-                f"₹{dist.median:,.0f}. The prototypes may be priced under what buyers said.")
+        return (
+            f"The band ₹{low:,.0f}–{high:,.0f} sits below the evidence for {label}: "
+            f"{above} of {dist.count} observations are above it, and the median observed is "
+            f"₹{dist.median:,.0f}. The prototypes may be priced under what buyers said."
+        )
     if verdict == "HIGH":
-        return (f"The band ₹{low:,.0f}–{high:,.0f} sits above the evidence for {label}: "
-                f"{below} of {dist.count} observations are below it, and the median observed is "
-                f"₹{dist.median:,.0f}.")
-    return (f"The band ₹{low:,.0f}–{high:,.0f} covers only {inside} of {dist.count} observations "
-            f"for {label} ({below} below, {above} above; median ₹{dist.median:,.0f}). "
-            f"Widening it, or splitting the category, would match what was recorded.")
+        return (
+            f"The band ₹{low:,.0f}–{high:,.0f} sits above the evidence for {label}: "
+            f"{below} of {dist.count} observations are below it, and the median observed is "
+            f"₹{dist.median:,.0f}."
+        )
+    return (
+        f"The band ₹{low:,.0f}–{high:,.0f} covers only {inside} of {dist.count} observations "
+        f"for {label} ({below} below, {above} above; median ₹{dist.median:,.0f}). "
+        f"Widening it, or splitting the category, would match what was recorded."
+    )
 
 
-def judge_band(category: str, low: Any, high: Any, observations: list[PriceObservation]) -> BandVerdict:
+def judge_band(
+    category: str, low: Any, high: Any, observations: list[PriceObservation]
+) -> BandVerdict:
     """Compare one declared band against every price observed in its category.
 
     A reversed band (low > high) is read in the order the designer meant rather than refused: the
@@ -286,14 +341,34 @@ def judge_band(category: str, low: Any, high: Any, observations: list[PriceObser
     dist = describe(values)
 
     if dist is None:
-        return BandVerdict(category, declared_low, declared_high, None, 0, 0, 0, 0.0, "NO_EVIDENCE",
-                           f"No price was recorded in stage 8 for {category or 'this category'}, "
-                           f"so this band cannot be checked against the survey.")
+        return BandVerdict(
+            category,
+            declared_low,
+            declared_high,
+            None,
+            0,
+            0,
+            0,
+            0.0,
+            "NO_EVIDENCE",
+            f"No price was recorded in stage 8 for {category or 'this category'}, "
+            f"so this band cannot be checked against the survey.",
+        )
 
     if declared_low is None or declared_high is None:
-        return BandVerdict(category, declared_low, declared_high, dist, 0, 0, 0, 0.0, "NO_EVIDENCE",
-                           f"{dist.count} price observation(s) exist for "
-                           f"{category or 'this category'}, but the band itself is incomplete.")
+        return BandVerdict(
+            category,
+            declared_low,
+            declared_high,
+            dist,
+            0,
+            0,
+            0,
+            0.0,
+            "NO_EVIDENCE",
+            f"{dist.count} price observation(s) exist for "
+            f"{category or 'this category'}, but the band itself is incomplete.",
+        )
 
     inside = sum(1 for v in values if declared_low <= v <= declared_high)
     below = sum(1 for v in values if v < declared_low)
@@ -302,11 +377,19 @@ def judge_band(category: str, low: Any, high: Any, observations: list[PriceObser
 
     if dist.count < MIN_SAMPLE_FOR_VERDICT:
         return BandVerdict(
-            category, declared_low, declared_high, dist, inside, below, above, coverage,
+            category,
+            declared_low,
+            declared_high,
+            dist,
+            inside,
+            below,
+            above,
+            coverage,
             "UNVERIFIABLE",
             f"Only {dist.count} price observation(s) were recorded for "
             f"{category or 'this category'} — too few to judge the band against. "
-            f"{inside} of them fall inside it.")
+            f"{inside} of them fall inside it.",
+        )
 
     if coverage >= NARROW_COVERAGE:
         verdict = "SOUND"
@@ -317,10 +400,18 @@ def judge_band(category: str, low: Any, high: Any, observations: list[PriceObser
     else:
         verdict = "NARROW"
 
-    return BandVerdict(category, declared_low, declared_high, dist, inside, below, above, coverage,
-                       verdict,
-                       _band_message(verdict, category, declared_low, declared_high, dist,
-                                     inside, below, above))
+    return BandVerdict(
+        category,
+        declared_low,
+        declared_high,
+        dist,
+        inside,
+        below,
+        above,
+        coverage,
+        verdict,
+        _band_message(verdict, category, declared_low, declared_high, dist, inside, below, above),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,8 +427,9 @@ class CompetitorPosition:
     note: str
 
 
-def position_competitors(competitors: list[dict[str, Any]],
-                         observations: list[PriceObservation]) -> list[CompetitorPosition]:
+def position_competitors(
+    competitors: list[dict[str, Any]], observations: list[PriceObservation]
+) -> list[CompetitorPosition]:
     """Place each competitor product in its category's respondent price distribution.
 
     Positioned against what BUYERS said they would pay, not against the other competitors — the
@@ -382,23 +474,42 @@ def position_competitors(competitors: list[dict[str, Any]],
         if not matched:
             sample = pooled
         if len(sample) < MIN_SAMPLE_FOR_QUANTILES:
-            out.append(CompetitorPosition(
-                name, seller, category, price, None, None,
-                f"₹{price:,.0f}. Too few buyer price expectations were recorded in the survey to "
-                f"place this against them."))
+            out.append(
+                CompetitorPosition(
+                    name,
+                    seller,
+                    category,
+                    price,
+                    None,
+                    None,
+                    f"₹{price:,.0f}. Too few buyer price expectations were recorded in the survey to "
+                    f"place this against them.",
+                )
+            )
             continue
 
         at_or_below = sum(1 for v in sample if v <= price)
         percentile = at_or_below / len(sample)
         median = quantile(sample, 0.5)
-        whose = (f"the {len(sample)} buyers asked about {category}" if matched
-                 else f"all {len(sample)} buyers asked")
+        whose = (
+            f"the {len(sample)} buyers asked about {category}"
+            if matched
+            else f"all {len(sample)} buyers asked"
+        )
         comparison = "above" if percentile >= 0.5 else "below"
         share = percentile if percentile >= 0.5 else 1 - percentile
-        out.append(CompetitorPosition(
-            name, seller, category, price, percentile, price - median,
-            f"₹{price:,.0f} is {comparison} what {share * 100:.0f}% of {whose} said they would "
-            f"pay (their median: ₹{median:,.0f})."))
+        out.append(
+            CompetitorPosition(
+                name,
+                seller,
+                category,
+                price,
+                percentile,
+                price - median,
+                f"₹{price:,.0f} is {comparison} what {share * 100:.0f}% of {whose} said they would "
+                f"pay (their median: ₹{median:,.0f}).",
+            )
+        )
     return out
 
 
@@ -423,8 +534,9 @@ class SwotSupport:
 _SUPPORT_OVERLAP = 2
 
 
-def link_swot_evidence(swot: list[dict[str, Any]],
-                       responses: list[dict[str, Any]]) -> list[SwotSupport]:
+def link_swot_evidence(
+    swot: list[dict[str, Any]], responses: list[dict[str, Any]]
+) -> list[SwotSupport]:
     """Match each SWOT point to the survey responses that share its vocabulary.
 
     THIS IS A RETRIEVAL AID, NOT A JUDGEMENT, and the distinction is the reason it can ship without
@@ -438,9 +550,7 @@ def link_swot_evidence(swot: list[dict[str, Any]],
     """
     prepared = []
     for row in responses:
-        text = " ".join(
-            str(row.get(k) or "") for k in ("response", "productsDiscussed", "place")
-        )
+        text = " ".join(str(row.get(k) or "") for k in ("response", "productsDiscussed", "place"))
         if isinstance(row.get("productsDiscussed"), list):
             text += " " + " ".join(str(t) for t in row["productsDiscussed"])
         name = str(row.get("respondentName") or "").strip() or "A respondent"
@@ -460,13 +570,15 @@ def link_swot_evidence(swot: list[dict[str, Any]],
             if shared >= _SUPPORT_OVERLAP:
                 matches.append((shared, name))
         matches.sort(key=lambda m: (-m[0], m[1]))
-        out.append(SwotSupport(
-            kind=kind,
-            point=point,
-            supported_by=tuple(name for _shared, name in matches[:5]),
-            overlap=matches[0][0] if matches else 0,
-            has_own_evidence=own,
-        ))
+        out.append(
+            SwotSupport(
+                kind=kind,
+                point=point,
+                supported_by=tuple(name for _shared, name in matches[:5]),
+                overlap=matches[0][0] if matches else 0,
+                has_own_evidence=own,
+            )
+        )
     return out
 
 
@@ -479,8 +591,9 @@ class TrendCluster:
     co_occurrences: int
 
 
-def cluster_products(responses: list[dict[str, Any]], *, minimum_mentions: int = 2,
-                     limit: int = 8) -> list[TrendCluster]:
+def cluster_products(
+    responses: list[dict[str, Any]], *, minimum_mentions: int = 2, limit: int = 8
+) -> list[TrendCluster]:
     """Group the products respondents discussed by how often they came up in the same conversation.
 
     Co-occurrence rather than a topic model, deliberately. It is explainable to the designer whose
@@ -504,7 +617,7 @@ def cluster_products(responses: list[dict[str, Any]], *, minimum_mentions: int =
     for tags in tag_lists:
         mentions.update(tags)
         for i, a in enumerate(tags):
-            for b in tags[i + 1:]:
+            for b in tags[i + 1 :]:
                 pairs[(a, b)] += 1
 
     # Union-find over the pairs that recur. A pair seen once is two people who happened to say the
@@ -563,9 +676,12 @@ class MarketFindings:
         return [s for s in self.swot if not s.supported]
 
 
-def collect_observations(responses: list[dict[str, Any]],
-                         competitors: list[dict[str, Any]],
-                         *, default_category: str = "") -> list[PriceObservation]:
+def collect_observations(
+    responses: list[dict[str, Any]],
+    competitors: list[dict[str, Any]],
+    *,
+    default_category: str = "",
+) -> list[PriceObservation]:
     """Every price in stages 8, tagged with where it came from.
 
     A respondent's `priceExpectation` carries no category of its own — the survey form asks what
@@ -578,28 +694,37 @@ def collect_observations(responses: list[dict[str, Any]],
         amount = as_number(row.get("priceExpectation"))
         if amount is None:
             continue
-        out.append(PriceObservation(
-            amount=amount,
-            category=default_category,
-            source="RESPONDENT",
-            group=str(row.get("respondentGroup") or ""),
-            label=str(row.get("respondentName") or "").strip() or "A respondent",
-        ))
+        out.append(
+            PriceObservation(
+                amount=amount,
+                category=default_category,
+                source="RESPONDENT",
+                group=str(row.get("respondentGroup") or ""),
+                label=str(row.get("respondentName") or "").strip() or "A respondent",
+            )
+        )
     for row in competitors:
         amount = as_number(row.get("price"))
         if amount is None:
             continue
-        out.append(PriceObservation(
-            amount=amount,
-            category=str(row.get("category") or ""),
-            source="COMPETITOR",
-            label=str(row.get("name") or "").strip() or "A competitor product",
-        ))
+        out.append(
+            PriceObservation(
+                amount=amount,
+                category=str(row.get("category") or ""),
+                source="COMPETITOR",
+                label=str(row.get("name") or "").strip() or "A competitor product",
+            )
+        )
     return out
 
 
-def analyse(*, responses: list[dict[str, Any]], competitors: list[dict[str, Any]],
-            bands: list[dict[str, Any]], swot: list[dict[str, Any]]) -> MarketFindings:
+def analyse(
+    *,
+    responses: list[dict[str, Any]],
+    competitors: list[dict[str, Any]],
+    bands: list[dict[str, Any]],
+    swot: list[dict[str, Any]],
+) -> MarketFindings:
     """The whole of stage 9's Advanced tier, from the rows of stages 8 and 9.
 
     Every argument is a list of the stage entry `data` dicts exactly as they are stored, so a
@@ -623,32 +748,36 @@ def analyse(*, responses: list[dict[str, Any]], competitors: list[dict[str, Any]
             str(row.get("category") or ""),
             row.get("lowPrice"),
             row.get("highPrice"),
-            [o for o in observations
-             if o.category == str(row.get("category") or "") or not o.category],
+            [
+                o
+                for o in observations
+                if o.category == str(row.get("category") or "") or not o.category
+            ],
         )
         for row in bands
     ]
 
-    group_counts = Counter(
-        o.group for o in observations if o.source == "RESPONDENT" and o.group
-    )
+    group_counts = Counter(o.group for o in observations if o.source == "RESPONDENT" and o.group)
 
     cautions: list[str] = []
     if respondent_values and len(respondent_values) < MIN_SAMPLE_FOR_VERDICT:
         cautions.append(
             f"Only {len(respondent_values)} respondent price expectation(s) were recorded. "
-            f"The figures below describe what was collected; they are not a market estimate.")
+            f"The figures below describe what was collected; they are not a market estimate."
+        )
     if group_counts:
         dominant, dominant_count = group_counts.most_common(1)[0]
         total = sum(group_counts.values())
         if total >= MIN_SAMPLE_FOR_QUANTILES and dominant_count / total > 0.8:
             cautions.append(
                 f"{dominant_count} of {total} priced responses come from one respondent group "
-                f"({dominant}). The price figures describe that group rather than the market.")
+                f"({dominant}). The price figures describe that group rather than the market."
+            )
     if competitor_values and not respondent_values:
         cautions.append(
             "Competitor prices were recorded but no buyer price expectations were. Shelf prices "
-            "say what is charged, not what the buyers surveyed said they would pay.")
+            "say what is charged, not what the buyers surveyed said they would pay."
+        )
 
     return MarketFindings(
         observations=len(observations),
@@ -690,9 +819,7 @@ def market_findings_payload(findings: MarketFindings) -> dict[str, Any]:
     return {
         "observations": findings.observations,
         "cautions": list(findings.cautions),
-        "unsupportedSwot": [
-            {"kind": s.kind, "point": s.point} for s in findings.unsupported_swot
-        ],
+        "unsupportedSwot": [{"kind": s.kind, "point": s.point} for s in findings.unsupported_swot],
         "respondentPrices": _distribution_payload(findings.respondent_prices),
         "competitorPrices": _distribution_payload(findings.competitor_prices),
         "byCategory": {

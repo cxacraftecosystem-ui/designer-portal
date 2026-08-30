@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ClipboardCheck, KeyRound, Settings as SettingsIcon, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, ClipboardCheck, KeyRound, Settings as SettingsIcon, UsersRound, type LucideIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
 import { adminChromeVisible, useAdminView } from "@/components/AdminViewProvider";
@@ -73,6 +73,18 @@ const ADMIN_LINKS: AdminLink[] = [
     description: "Rank the transcription providers, and — for the master admin — rotate, test and reveal keys.",
     href: "/settings/api-keys",
     icon: KeyRound,
+    visible: isAdmin
+  },
+  {
+    // NOT "Analytics" — that name is already the cross-workshop content comparison at
+    // /admin/analytics, and this repo's backend goes out of its way to keep the two apart (see
+    // usage.py's module docstring). isAdmin here mirrors the same rank `require_usage_reader`
+    // enforces on the server (Admin and above), so this card and the 403 an under-ranked account
+    // would get from the API agree by construction rather than by two people remembering to.
+    label: "Usage",
+    description: "Which screens are reached, how often, how fast, and how often broken — aggregated across every account.",
+    href: "/settings/usage",
+    icon: Activity,
     visible: isAdmin
   }
 ];

@@ -318,7 +318,9 @@ def label_speakers(fragments: Iterable[Cue]) -> list[Cue]:
             seen.append(cue.speaker)
     if len(seen) < 2:
         return [
-            cue if not cue.speaker else Cue(
+            cue
+            if not cue.speaker
+            else Cue(
                 start=cue.start, end=cue.end, text=cue.text, speaker="", estimated=cue.estimated
             )
             for cue in ordered
@@ -463,9 +465,7 @@ def _split_if_needed(cue: Cue) -> list[Cue]:
         # short of the real end, which is the one boundary a viewer can actually check against the
         # audio.
         end = float(cue.end) if index == len(chunks) - 1 else min(at + share, float(cue.end))
-        out.append(
-            Cue(start=at, end=max(end, at), text=chunk, speaker=cue.speaker, estimated=True)
-        )
+        out.append(Cue(start=at, end=max(end, at), text=chunk, speaker=cue.speaker, estimated=True))
         at = end
     return out
 

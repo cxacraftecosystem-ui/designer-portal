@@ -4,8 +4,26 @@ import Link from "next/link";
 import { motion, type Variants } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 
+import { TIER_COUNT_WORD } from "@/components/hero/AccessLadder";
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 import { STAGE_COUNT_WORD_LOWER } from "@/components/hero/workshopArc";
+
+/**
+ * The tier count, mid-sentence.
+ *
+ * TWO OF THESE ANSWERS TYPED "eight-tier" BY HAND while the badge at the top of the page and the
+ * ladder's own heading interpolated the derived constant — so a ninth role would have moved two of
+ * the four and left this section contradicting the section it is describing, on one page, to one
+ * reader. That is the identical defect `AccessLadder` carries a paragraph about and the identical
+ * one `permissions.ts:220` records costing twenty-two hand-kept copies of the ladder a correction
+ * when INSPECTOR landed. The constant already existed and was already exported for exactly this.
+ *
+ * `.toLowerCase()` rather than a second export, matching what `AccessLadder.tsx:168` does for its
+ * own `aria-label`: the word is capitalised where it opens a heading and lower-cased where it sits
+ * inside a sentence, and one constant with a call site's own casing beats two constants that can
+ * disagree.
+ */
+const TIER_COUNT_WORD_LOWER = TIER_COUNT_WORD.toLowerCase();
 
 /**
  * THE THREE WORKSHOP ANSWERS ARE NEW, and they are here because this list is where a reader goes
@@ -30,7 +48,7 @@ import { STAGE_COUNT_WORD_LOWER } from "@/components/hero/workshopArc";
 const FAQS = [
   {
     q: "Who can sign in?",
-    a: "Only addresses an administrator has admitted. Signing in — by password or with Google — checks your address against the platform allow-list first; if it is not on the list, no account is created and your request goes to the administrators as a pending approval. Everyone already using the repository when the allow-list was introduced was carried onto it, so nothing changed for existing accounts. Once you are admitted you join the eight-tier ladder, and an admin raises you up it (field contributor, researcher, designer, inspector/reviewer, professor, admin) as your role in the project grows."
+    a: `Only addresses an administrator has admitted. Signing in — by password or with Google — checks your address against the platform allow-list first; if it is not on the list, no account is created and your request goes to the administrators as a pending approval. Everyone already using the repository when the allow-list was introduced was carried onto it, so nothing changed for existing accounts. Once you are admitted you join the ${TIER_COUNT_WORD_LOWER}-tier ladder, and an admin raises you up it (field contributor, researcher, designer, inspector/reviewer, professor, admin) as your role in the project grows.`
   },
   {
     q: "I signed in with Google and was told I need approval. Why?",
@@ -71,12 +89,36 @@ const FAQS = [
     // media blobs live in IndexedDB and all the stages render from a cached registry. Leaving the
     // old sentence beside a new section about offline workshops would have made the page contradict
     // itself in two places a reader can reach from the same scroll.
+    /*
+      EXTENDED, and every clause is narrower than the obvious version of itself.
+
+      "EDITS AS WELL AS NEW RECORDS" — `lib/offline.ts` types its queue `"POST" | "PATCH"`, so a
+      correction made with no signal is banked like a create. The trade is stated because that file
+      states it: an offline edit replays the whole record, so a colleague's later change to the same
+      row is overwritten. Naming the cost is the difference between a feature and a surprise.
+
+      "THE QUESTIONNAIRE ROW, NOT ITS QUESTIONS" — `questionnaires/page.tsx:201` banks the create
+      through `saveOrQueue`, and its own comment is emphatic that this is a decision rather than a
+      first instalment: a section and a question are separate creates that need the server-minted id
+      this row does not have yet. "The form exists, named, attached to its workshop" is that comment
+      near enough verbatim. Writing "create a questionnaire offline" flat would promise the tree.
+
+      "OPEN … ANSWERING IS STILL REFUSED" — `lib/questionnaireFormCache.ts` is a READ cache and says
+      so in capitals ("DO NOT ADD A WRITE QUEUE TO IT"). The refusal to save answers offline is
+      deliberate and load-bearing: a question can be retired between opening the screen and pressing
+      Save, so a queued batch would be either refused later — losing a sitting the designer believed
+      was recorded — or re-attached to whatever wording replaced it, which fabricates evidence.
+
+      "REFUSED ENTRIES ARE LISTED WITH THEIR REASONS" — the handset's `OfflineOutboxTray.kt`. Before
+      it, a refusal was a one-shot toast, `syncOutbox` skipped that entry forever, and the banner
+      still said "uploading": a permanent dead end that looked like progress.
+    */
     q: "Does it work offline?",
-    a: "The Android app is offline-first — capture interviews, media, and GPS positions with no signal at all, and everything syncs when you are back online. It also builds a workshop's report on the handset itself, from its own draft. The web portal complements it for review, browsing, and administration, and it keeps a design & prototype workshop's draft in the browser too, so its stages can be filled in, scored and checked for readiness with no connection; generating the report is the one part of the web half that needs the server."
+    a: "The Android app is offline-first — capture interviews, media, and GPS positions with no signal at all, and everything syncs when you are back online. Corrections queue as well as new records, with one trade worth knowing: an offline edit replays the whole record, so a colleague's later change to the same row is overwritten rather than merged. Anything the queue cannot deliver is listed with its own reason and retried one at a time, instead of failing silently behind a banner that still says “uploading”. The handset also builds a workshop's report on itself, from its own draft. The web portal complements it for review, browsing, and administration, and it keeps a design & prototype workshop's draft in the browser too, so its stages can be filled in, scored and checked for readiness with no connection; generating the report is the one part of the web half that needs the server. Creating your own questionnaire works with no signal as far as it honestly can — the form is banked with its name and its workshop and lands the moment there is signal, and its questions are written afterwards. An existing questionnaire opens offline so you can read the questions you are about to ask; recording the answers still needs a connection, deliberately, because a question can be retired between opening the screen and pressing save."
   },
   {
     q: "What about privacy?",
-    a: "Access is governed by the eight-tier role ladder, cross-researcher sharing is opt-in per grant, and every edit carries an audited revision history. Media lives in private cloud storage that only signed-in, authorized users can reach. National identifiers are masked wherever a record leaves its owner: an artisan's Aadhaar number is used to make sure the same person documented at two workshops becomes one record, not two, but it renders as XXXX XXXX 9012 on every shared and exported surface — the data browser, CSV, and the .xlsx report — and only the researcher who recorded that artisan, or a professor and above, can read it in full."
+    a: `Access is governed by the ${TIER_COUNT_WORD_LOWER}-tier role ladder, cross-researcher sharing is opt-in per grant, and every edit carries an audited revision history. Media lives in private cloud storage that only signed-in, authorized users can reach. National identifiers are masked wherever a record leaves its owner: an artisan's Aadhaar number is used to make sure the same person documented at two workshops becomes one record, not two, but it renders as XXXX XXXX 9012 on every shared and exported surface — the data browser, CSV, and the .xlsx report — and only the researcher who recorded that artisan, or a professor and above, can read it in full.`
   }
 ];
 

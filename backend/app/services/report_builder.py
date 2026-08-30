@@ -174,10 +174,10 @@ class ReferencedRecord:
     rather than failing because one of thirty rows was not picked from a list.
     """
 
-    model: str = ""       # the REFERENCE_MODELS key: "Artisan", "ProductDocumentation", …
-    label: str = ""       # what the picker showed: the artisan's or the product's name
-    photo: str = ""       # ONE media id, resolvable through the same MediaResolver as any other
-    place: str = ""       # the free text the record states: "Barpali, Bargarh, Odisha"
+    model: str = ""  # the REFERENCE_MODELS key: "Artisan", "ProductDocumentation", …
+    label: str = ""  # what the picker showed: the artisan's or the product's name
+    photo: str = ""  # ONE media id, resolvable through the same MediaResolver as any other
+    place: str = ""  # the free text the record states: "Barpali, Bargarh, Odisha"
     district: str = ""
     state: str = ""
 
@@ -282,6 +282,7 @@ class WorkshopData:
 # Value formatting
 # --------------------------------------------------------------------------------------
 
+
 def _group_indian(digits: str) -> str:
     """Group a digit string the Indian way: 12,34,567 rather than 1,234,567.
 
@@ -379,7 +380,7 @@ def format_value(spec: FieldSpec, value: Any) -> str:
             return f"{float(value.get('lat', 0)):.5f}, {float(value.get('lon', 0)):.5f}"
         return clean_text(value)
     if t in (FieldType.IMAGE, FieldType.IMAGE_LIST):
-        return ""   # a picture never prints as text; it is placed by ``ReportBuilder._images``
+        return ""  # a picture never prints as text; it is placed by ``ReportBuilder._images``
     if t.is_media:
         # FILE, AUDIO AND VIDEO HAVE NO IMAGE PATH TO BE PLACED BY, and this branch used to claim
         # for all five media types that "it is placed by the image path". ``_images`` is the only
@@ -412,8 +413,7 @@ def format_value(spec: FieldSpec, value: Any) -> str:
     return f"{text} {spec.unit}".strip() if spec.unit and text else text
 
 
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
-           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 def _format_date(iso: str) -> str:
@@ -462,13 +462,13 @@ def _heading_summary(text: str) -> str:
             break
     if len(collapsed) <= _HEADING_CHARS:
         return collapsed
-    cut = collapsed[:_HEADING_CHARS - 1]
+    cut = collapsed[: _HEADING_CHARS - 1]
     spaced = cut.rsplit(" ", 1)[0] if " " in cut else cut
     return f"{spaced.rstrip(' ,;:-')}…"
 
 
 def _submission_line(settings: Mapping[str, Any]) -> str:
-    """"Submitted to X on 4 March 2031" — stage 20's two addressee fields, on the cover.
+    """ "Submitted to X on 4 March 2031" — stage 20's two addressee fields, on the cover.
 
     Both were stored and printed nowhere. A designer filled in "Submitted to" and a submission
     date, and the generated document named neither: the one page of the report whose job is to
@@ -573,8 +573,9 @@ class _Located:
     precise: bool = True
 
 
-def _geocode(text: Any, state_hint: Any = "",
-             district_points: dict[str, tuple[float, float]] | None = None) -> _Located | None:
+def _geocode(
+    text: Any, state_hint: Any = "", district_points: dict[str, tuple[float, float]] | None = None
+) -> _Located | None:
     """Place one typed address, or return None when nothing in it is placeable.
 
     Two sources, in falling order of precision: the curated town/district atlas, then the state
@@ -612,9 +613,13 @@ def _geocode(text: Any, state_hint: Any = "",
             # something.
             precise = found.precision is not Precision.STATE
             if precise:
-                return _Located(found.latitude, found.longitude,
-                                canonical_state(found.state) or found.state, found.label,
-                                precise=precise)
+                return _Located(
+                    found.latitude,
+                    found.longitude,
+                    canonical_state(found.state) or found.state,
+                    found.label,
+                    precise=precise,
+                )
             # A STATE-precision hit is the atlas saying "I recognised only the state", so the
             # district table below gets its turn before we settle for the capital.
 
@@ -649,9 +654,13 @@ def _geocode(text: Any, state_hint: Any = "",
     if joined:
         found = resolve_place(joined).place
         if found is not None:
-            return _Located(found.latitude, found.longitude,
-                            canonical_state(found.state) or found.state, found.label,
-                            precise=False)
+            return _Located(
+                found.latitude,
+                found.longitude,
+                canonical_state(found.state) or found.state,
+                found.label,
+                precise=False,
+            )
 
     # Nothing in the text was a place this build knows, so fall back to the state — which is a
     # coordinate hundreds of kilometres from the village in the worst case, and is therefore
@@ -675,7 +684,7 @@ def _geo_point(value: Any) -> tuple[float, float] | None:
     if not isinstance(value, dict):
         return None
     try:
-        lat, lon = float(value.get("lat")), float(value.get("lon"))   # type: ignore[arg-type]
+        lat, lon = float(value.get("lat")), float(value.get("lon"))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
     if abs(lat) < 0.0001 and abs(lon) < 0.0001:
@@ -695,9 +704,9 @@ class _MapFacts:
 
     points: list[MapPoint] = field(default_factory=list)
     states: set[str] = field(default_factory=set)
-    placed: int = 0        # rows that produced a position
-    total: int = 0         # rows considered
-    approximate: int = 0   # positions that are a state capital standing in for an unknown place
+    placed: int = 0  # rows that produced a position
+    total: int = 0  # rows considered
+    approximate: int = 0  # positions that are a state capital standing in for an unknown place
 
     def merge(self, other: _MapFacts) -> _MapFacts:
         return _MapFacts(
@@ -751,8 +760,18 @@ MIN_CHART_CATEGORIES = 2
 #: Band widths for the price histogram, in rupees, smallest first. A ladder rather than
 #: ``max/6`` so the boundaries are numbers a person would choose: a cost sheet binned at
 #: "₹ 0–1,383" is arithmetically correct and unreadable.
-_PRICE_STEPS: tuple[float, ...] = (100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0,
-                                   10000.0, 25000.0, 50000.0, 100000.0)
+_PRICE_STEPS: tuple[float, ...] = (
+    100.0,
+    250.0,
+    500.0,
+    1000.0,
+    2500.0,
+    5000.0,
+    10000.0,
+    25000.0,
+    50000.0,
+    100000.0,
+)
 
 #: How many bands a price histogram may have. Six is what fits across a text column with the
 #: labels still legible at the body size.
@@ -831,8 +850,10 @@ def _price_bands(values: list[float]) -> list[tuple[str, float]]:
     for value in positive:
         counts[int(value // step)] = counts.get(int(value // step), 0) + 1
     return [
-        (f"{_group_indian(f'{index * step:.0f}')}–{_group_indian(f'{(index + 1) * step - 1:.0f}')}",
-         float(count))
+        (
+            f"{_group_indian(f'{index * step:.0f}')}–{_group_indian(f'{(index + 1) * step - 1:.0f}')}",
+            float(count),
+        )
         for index, count in sorted(counts.items())
     ]
 
@@ -850,10 +871,17 @@ COVER_INFO_ROWS = 10
 # The builder
 # --------------------------------------------------------------------------------------
 
+
 class ReportBuilder:
-    def __init__(self, data: WorkshopData, template: ReportTemplate,
-                 resolve_media: MediaResolver, *, meta: ReportMeta,
-                 theme: ReportTheme | None = None) -> None:
+    def __init__(
+        self,
+        data: WorkshopData,
+        template: ReportTemplate,
+        resolve_media: MediaResolver,
+        *,
+        meta: ReportMeta,
+        theme: ReportTheme | None = None,
+    ) -> None:
         self.data = data
         self.template = template
         self.resolve_media = resolve_media
@@ -869,16 +897,12 @@ class ReportBuilder:
         # at another record of THIS workshop. Built once: a cost sheet table resolves its product
         # ref on every row, and re-walking the collections each time is quadratic in a stage that
         # can carry two hundred lines.
-        self._entities: dict[str, EntitySpec] = {
-            e.key: e for s in stages() for e in s.entities
-        }
+        self._entities: dict[str, EntitySpec] = {e.key: e for s in stages() for e in s.entities}
         # entity key -> the stage that declares it, so a CHILD collection can reach its parent's
         # rows. Its parent is not always in its own stage — stage 14's iterations hang off stage
         # 13's prototypes — and entity keys are globally unique, which ``stage_schema.validate``
         # enforces rather than leaves to convention.
-        self._entity_stage: dict[str, str] = {
-            e.key: s.key for s in stages() for e in s.entities
-        }
+        self._entity_stage: dict[str, str] = {e.key: s.key for s in stages() for e in s.entities}
         self._rows_by_id: dict[str, tuple[EntitySpec | None, dict[str, Any]]] = {}
         for entities in data.collections.values():
             for entity_key, rows in entities.items():
@@ -972,9 +996,11 @@ class ReportBuilder:
                 continue
             lost: list[str] = []
             for entity in spec.entities:
-                rows = ([self.data.singleton(spec.key)]
-                        if entity.cardinality is Cardinality.SINGLETON
-                        else self.data.rows(spec.key, entity.key))
+                rows = (
+                    [self.data.singleton(spec.key)]
+                    if entity.cardinality is Cardinality.SINGLETON
+                    else self.data.rows(spec.key, entity.key)
+                )
                 for field_spec in entity.fields:
                     if self._visible(field_spec) or field_spec.deprecated:
                         continue
@@ -999,8 +1025,11 @@ class ReportBuilder:
         except COMPACT_SUMMARY's final-products section, and ``apply_report_settings`` cannot set
         it — so no existing report gains a warning unless a cap really did bite.
         """
-        return [(spec, self._photographs_over_cap[spec.key])
-                for spec in stages() if self._photographs_over_cap.get(spec.key)]
+        return [
+            (spec, self._photographs_over_cap[spec.key])
+            for spec in stages()
+            if self._photographs_over_cap.get(spec.key)
+        ]
 
     def attachments_named_but_not_carried(self) -> list[tuple[StageSpec, int]]:
         """The files this report NAMES and does not CONTAIN, counted by stage.
@@ -1064,9 +1093,11 @@ class ReportBuilder:
                 continue
             named = 0
             for entity in spec.entities:
-                rows = ([self.data.singleton(spec.key)]
-                        if entity.cardinality is Cardinality.SINGLETON
-                        else self.data.rows(spec.key, entity.key))
+                rows = (
+                    [self.data.singleton(spec.key)]
+                    if entity.cardinality is Cardinality.SINGLETON
+                    else self.data.rows(spec.key, entity.key)
+                )
                 for field_spec in entity.fields:
                     # IMAGE and IMAGE_LIST are excluded because they ARE carried: they are the two
                     # types ``_images`` places. DERIVED from that filter rather than written out as
@@ -1133,8 +1164,9 @@ class ReportBuilder:
         self._label_cache[ref_id] = label
         return label
 
-    def _row_label_text(self, entity: EntitySpec, row: dict[str, Any],
-                        _seen: frozenset[str] = frozenset()) -> str:
+    def _row_label_text(
+        self, entity: EntitySpec, row: dict[str, Any], _seen: frozenset[str] = frozenset()
+    ) -> str:
         """The label field's printed value, following a REF label through to a name."""
         if entity.label_field:
             spec = entity.field(entity.label_field)
@@ -1197,14 +1229,15 @@ class ReportBuilder:
         # `test_no_presentation_silently_drops_a_filled_field` exists to forbid.
         return "" if spec.type is FieldType.TEXT and _looks_like_an_id(text) else text
 
-    def _printable(self, entity: EntitySpec, row: dict[str, Any],
-                   roles: set[ReportRole]) -> list[tuple[FieldSpec, str]]:
+    def _printable(
+        self, entity: EntitySpec, row: dict[str, Any], roles: set[ReportRole]
+    ) -> list[tuple[FieldSpec, str]]:
         out: list[tuple[FieldSpec, str]] = []
         for spec in entity.fields:
             if not self._visible(spec) or spec.report_role not in roles:
                 continue
             if spec.caption_for:
-                continue   # captions are placed with their image, never on their own
+                continue  # captions are placed with their image, never on their own
             text = self._value(spec, row)
             if text:
                 out.append((spec, text))
@@ -1217,8 +1250,11 @@ class ReportBuilder:
 
     # -- media ------------------------------------------------------------------------
 
-    def _image_sources(self, entity: EntitySpec, row: dict[str, Any],
-                       ) -> dict[str, tuple[FieldSpec, str]]:
+    def _image_sources(
+        self,
+        entity: EntitySpec,
+        row: dict[str, Any],
+    ) -> dict[str, tuple[FieldSpec, str]]:
         """Every image id this row can show, mapped to THE FIELD THAT CLAIMED IT and its caption.
 
         TWO SOURCES, in this order: the row's own media fields, then the photograph of any record
@@ -1252,14 +1288,10 @@ class ReportBuilder:
         # so a single pass led a prototype's sub-section with a catalogue photograph of somebody
         # else's product and buried the four progress shots the artisan actually took.
         for spec in entity.fields:
-            if not self._visible(spec) or spec.type not in (FieldType.IMAGE,
-                                                            FieldType.IMAGE_LIST):
+            if not self._visible(spec) or spec.type not in (FieldType.IMAGE, FieldType.IMAGE_LIST):
                 continue
-            caption_spec = next(
-                (f for f in entity.fields if f.caption_for == spec.key), None
-            )
-            caption = format_value(caption_spec, row.get(caption_spec.key)) \
-                if caption_spec else ""
+            caption_spec = next((f for f in entity.fields if f.caption_for == spec.key), None)
+            caption = format_value(caption_spec, row.get(caption_spec.key)) if caption_spec else ""
             for media_id in _media_ids(row.get(spec.key)):
                 wanted.setdefault(media_id, (spec, caption))
 
@@ -1270,12 +1302,14 @@ class ReportBuilder:
             reference = self.data.reference(row.get(spec.key))
             if reference is None or not reference.photo:
                 continue
-            wanted.setdefault(reference.photo,
-                              (spec, self._reference_caption(entity, spec, row, reference)))
+            wanted.setdefault(
+                reference.photo, (spec, self._reference_caption(entity, spec, row, reference))
+            )
         return wanted
 
-    def _images(self, entity: EntitySpec, row: dict[str, Any],
-                *, limit: int = 0) -> list[tuple[ImageRef, str]]:
+    def _images(
+        self, entity: EntitySpec, row: dict[str, Any], *, limit: int = 0
+    ) -> list[tuple[ImageRef, str]]:
         """Every resolvable image on a row, paired with its caption, in the registry's own order.
 
         THE FLAT VIEW, and it is kept for the three callers that want a row's PICTURES rather than
@@ -1315,8 +1349,9 @@ class ReportBuilder:
                 break
         return found
 
-    def _image_groups(self, entity: EntitySpec, row: dict[str, Any],
-                      *, cap: int = 0) -> list[tuple[str, list[tuple[ImageRef, str]]]]:
+    def _image_groups(
+        self, entity: EntitySpec, row: dict[str, Any], *, cap: int = 0
+    ) -> list[tuple[str, list[tuple[ImageRef, str]]]]:
         """A row's pictures as the PLATES they should be drawn as: ``[(grid caption, images)]``.
 
         WHAT THIS ENDS. ``clusterBackground`` declares three galleries — the cluster's
@@ -1436,8 +1471,9 @@ class ReportBuilder:
                 self._photographs_over_cap.get(self._stage_key, 0) + count
             )
 
-    def _reference_caption(self, entity: EntitySpec, spec: FieldSpec, row: dict[str, Any],
-                           reference: ReferencedRecord) -> str:
+    def _reference_caption(
+        self, entity: EntitySpec, spec: FieldSpec, row: dict[str, Any], reference: ReferencedRecord
+    ) -> str:
         """What to print under a photograph borrowed from the record a REF field points at.
 
         THE ROW'S OWN FROZEN NAME FIRST. ``reference.label`` is
@@ -1477,8 +1513,9 @@ class ReportBuilder:
 
     # -- entity renderers -------------------------------------------------------------
 
-    def _render_narrative(self, entity: EntitySpec, row: dict[str, Any], level: int,
-                          *, skip: set[str] | None = None) -> bool:
+    def _render_narrative(
+        self, entity: EntitySpec, row: dict[str, Any], level: int, *, skip: set[str] | None = None
+    ) -> bool:
         """Long-text fields as prose under their own sub-headings; the rest as a grid.
 
         ``skip`` names field keys already printed elsewhere — the columns of the table this
@@ -1496,8 +1533,9 @@ class ReportBuilder:
         skip = skip or set()
 
         def printable(*roles: ReportRole) -> list[tuple[FieldSpec, str]]:
-            return [(s, v) for s, v in self._printable(entity, row, set(roles))
-                    if s.key not in skip]
+            return [
+                (s, v) for s, v in self._printable(entity, row, set(roles)) if s.key not in skip
+            ]
 
         narrative = printable(ReportRole.NARRATIVE)
         pairs = printable(ReportRole.KEY_VALUE, ReportRole.COVER_FIELD, ReportRole.TABLE_COLUMN)
@@ -1507,10 +1545,12 @@ class ReportBuilder:
             # Built as runs rather than handed to ``DocumentBuilder.key_values`` so a RICH_TEXT
             # field in the grid keeps its marks. A key-value cell holds runs and cannot hold a
             # block, which is the same constraint a table cell is under and gets the same answer.
-            self.doc.add(KeyValueBlock(
-                pairs=tuple((s.label, self._cell_runs(s, row, v)) for s, v in pairs),
-                columns=2,
-            ))
+            self.doc.add(
+                KeyValueBlock(
+                    pairs=tuple((s.label, self._cell_runs(s, row, v)) for s, v in pairs),
+                    columns=2,
+                )
+            )
             wrote = True
         for spec, text in narrative:
             if spec.is_rich_text:
@@ -1519,11 +1559,14 @@ class ReportBuilder:
                 # flattening it here would have made the rich-text editor a more expensive
                 # textarea. ``to_report_blocks`` returns the same block types the interpreter
                 # emits by hand, so both writers already know how to print every one of them.
-                blocks = rich_text.to_report_blocks(row.get(spec.key), resolve_media=self.resolve_media)
+                blocks = rich_text.to_report_blocks(
+                    row.get(spec.key), resolve_media=self.resolve_media
+                )
                 if blocks:
                     if len(text) > 160 or len(blocks) > 1:
-                        self.doc.heading(spec.label, min(4, level + 1),
-                                 numbered=self.template.number_headings)
+                        self.doc.heading(
+                            spec.label, min(4, level + 1), numbered=self.template.number_headings
+                        )
                     else:
                         self.doc.para(f"{spec.label}:")
                     for block in blocks:
@@ -1535,15 +1578,15 @@ class ReportBuilder:
                 # rather than skipping is the difference between a gap the reader can see and one
                 # they cannot — which is the entire reason the note exists.
             if spec.type is FieldType.LONG_TEXT and len(text) > 160:
-                self.doc.heading(spec.label, min(4, level + 1),
-                                 numbered=self.template.number_headings)
+                self.doc.heading(
+                    spec.label, min(4, level + 1), numbered=self.template.number_headings
+                )
                 self.doc.para(text)
             else:
                 self.doc.para(f"{spec.label}: {text}")
             wrote = True
         for spec, text in bullets:
-            self.doc.heading(spec.label, min(4, level + 1),
-                                 numbered=self.template.number_headings)
+            self.doc.heading(spec.label, min(4, level + 1), numbered=self.template.number_headings)
             if spec.is_rich_text:
                 # A BULLETS field is a list the designer actually built in the editor: each item is
                 # its own BULLET_ITEM or ORDERED_ITEM block, and ``to_report_blocks`` merges the run
@@ -1554,7 +1597,9 @@ class ReportBuilder:
                 # It also keeps the marks. The split path cannot: it works from ``text``, which is
                 # already flattened by ``format_value``, so a bolded product name inside an item
                 # was lost before this branch existed.
-                blocks = rich_text.to_report_blocks(row.get(spec.key), resolve_media=self.resolve_media)
+                blocks = rich_text.to_report_blocks(
+                    row.get(spec.key), resolve_media=self.resolve_media
+                )
                 if blocks:
                     for block in blocks:
                         self.doc.add(block)
@@ -1623,13 +1668,16 @@ class ReportBuilder:
         so this filter changes no existing table's shape — which is also why it can be added
         without touching anybody's declared ``column_width_pct``.
         """
-        columns = [f for f in entity.fields
-                   if self._visible(f) and f.report_role is ReportRole.TABLE_COLUMN
-                   and not f.type.is_media]
+        columns = [
+            f
+            for f in entity.fields
+            if self._visible(f) and f.report_role is ReportRole.TABLE_COLUMN and not f.type.is_media
+        ]
         return columns[:6]
 
-    def _render_table(self, entity: EntitySpec, rows: list[dict[str, Any]],
-                      section: TemplateSection, level: int) -> bool:
+    def _render_table(
+        self, entity: EntitySpec, rows: list[dict[str, Any]], section: TemplateSection, level: int
+    ) -> bool:
         columns = self._table_columns(entity)
         if not columns:
             # No field was declared a column, so this collection has no tabular shape. Cards
@@ -1645,7 +1693,7 @@ class ReportBuilder:
             weights = [2.0 if c.is_free_text else 1.0 for c in columns]
             total = sum(weights)
             widths = [100.0 * w / total for w in weights]
-            widths[-1] += 100.0 - sum(widths)   # absorb the rounding; the model demands exactly 100
+            widths[-1] += 100.0 - sum(widths)  # absorb the rounding; the model demands exactly 100
 
         table_rows: list[tuple[tuple[Any, ...], ...]] = []
         for row in rows:
@@ -1672,26 +1720,33 @@ class ReportBuilder:
                 spec.key: text
                 for spec, text in self._printable(entity, row, {ReportRole.TABLE_COLUMN})
             }
-            table_rows.append(tuple(
-                # `_value` and not `format_value`: eight of the eleven REF fields the registry
-                # prints are TABLE_COLUMNs, so this is the call site that put raw cuids into the
-                # prototype, cost sheet and follow-up tables. It stays as the fallback so a column
-                # ``_printable`` declines to speak for — an unfilled optional one, or a caption
-                # field it deliberately withholds — renders exactly as it did before.
-                self._cell_runs(spec, row, printable.get(spec.key) or self._value(spec, row))
-                for spec in columns
-            ))
+            table_rows.append(
+                tuple(
+                    # `_value` and not `format_value`: eight of the eleven REF fields the registry
+                    # prints are TABLE_COLUMNs, so this is the call site that put raw cuids into the
+                    # prototype, cost sheet and follow-up tables. It stays as the fallback so a column
+                    # ``_printable`` declines to speak for — an unfilled optional one, or a caption
+                    # field it deliberately withholds — renders exactly as it did before.
+                    self._cell_runs(spec, row, printable.get(spec.key) or self._value(spec, row))
+                    for spec in columns
+                )
+            )
 
-        self.doc.add(TableBlock(
-            columns=tuple(
-                TableColumn(header=spec.label, width_pct=w,
-                            numeric=spec.type.is_numeric,
-                            align=Align.RIGHT if spec.type.is_numeric else Align.LEFT)
-                for spec, w in zip(columns, widths)
-            ),
-            rows=tuple(table_rows),
-            caption=entity.title,
-        ))
+        self.doc.add(
+            TableBlock(
+                columns=tuple(
+                    TableColumn(
+                        header=spec.label,
+                        width_pct=w,
+                        numeric=spec.type.is_numeric,
+                        align=Align.RIGHT if spec.type.is_numeric else Align.LEFT,
+                    )
+                    for spec, w in zip(columns, widths)
+                ),
+                rows=tuple(table_rows),
+                caption=entity.title,
+            )
+        )
 
         # Everything the table could not carry: the columns that overflowed the six-column cap,
         # AND every other role. Restricting this to NARRATIVE and TABLE_COLUMN silently dropped
@@ -1701,35 +1756,56 @@ class ReportBuilder:
         for index, row in enumerate(rows, start=1):
             has_extra = any(
                 s.key not in column_keys
-                for s, _v in self._printable(entity, row, {
-                    ReportRole.NARRATIVE, ReportRole.TABLE_COLUMN,
-                    ReportRole.KEY_VALUE, ReportRole.COVER_FIELD, ReportRole.BULLETS,
-                })
+                for s, _v in self._printable(
+                    entity,
+                    row,
+                    {
+                        ReportRole.NARRATIVE,
+                        ReportRole.TABLE_COLUMN,
+                        ReportRole.KEY_VALUE,
+                        ReportRole.COVER_FIELD,
+                        ReportRole.BULLETS,
+                    },
+                )
             )
-            plates = self._image_groups(entity, row, cap=section.max_photos) \
-                if section.include_photos else []
+            plates = (
+                self._image_groups(entity, row, cap=section.max_photos)
+                if section.include_photos
+                else []
+            )
             if not has_extra and not plates:
                 continue
-            self.doc.heading(self._row_label(entity, row, index), min(4, level + 1),
-                             numbered=self.template.number_headings)
+            self.doc.heading(
+                self._row_label(entity, row, index),
+                min(4, level + 1),
+                numbered=self.template.number_headings,
+            )
             self._place_image_groups(plates, section)
             self._render_narrative(entity, row, level + 1, skip=column_keys)
         return True
 
-    def _render_cards(self, entity: EntitySpec, rows: list[dict[str, Any]],
-                      section: TemplateSection, level: int) -> bool:
+    def _render_cards(
+        self, entity: EntitySpec, rows: list[dict[str, Any]], section: TemplateSection, level: int
+    ) -> bool:
         """One sub-section per record: heading, photographs, then its fields."""
         for index, row in enumerate(rows, start=1):
-            self.doc.heading(self._row_label(entity, row, index), min(4, level + 1),
-                             numbered=self.template.number_headings)
+            self.doc.heading(
+                self._row_label(entity, row, index),
+                min(4, level + 1),
+                numbered=self.template.number_headings,
+            )
             if section.include_photos:
                 self._place_image_groups(
-                    self._image_groups(entity, row, cap=section.max_photos), section)
+                    self._image_groups(entity, row, cap=section.max_photos), section
+                )
             self._render_narrative(entity, row, level + 1)
         return bool(rows)
 
-    def _parent_groups(self, entity: EntitySpec, rows: list[dict[str, Any]],
-                       ) -> list[tuple[str, list[dict[str, Any]]]] | None:
+    def _parent_groups(
+        self,
+        entity: EntitySpec,
+        rows: list[dict[str, Any]],
+    ) -> list[tuple[str, list[dict[str, Any]]]] | None:
         """A child collection split into the parent records its rows belong to, in the parent's
         order — or ``None`` when this entity has no parent at all.
 
@@ -1755,8 +1831,10 @@ class ReportBuilder:
         parent = self._entities.get(entity.parent) if entity.parent else None
         if parent is None:
             return None
-        link = next((f for f in entity.fields
-                     if f.type is FieldType.REF and f.ref_model == parent.name), None)
+        link = next(
+            (f for f in entity.fields if f.type is FieldType.REF and f.ref_model == parent.name),
+            None,
+        )
         if link is None:
             return None
 
@@ -1784,8 +1862,7 @@ class ReportBuilder:
             # the same way, and the two must agree: a total the integrity check calls
             # unattributed cannot appear in the report as some product's material cost.
             entry_id = parent_row.get("_entryId")
-            taken = (buckets.pop(entry_id, None)
-                     if isinstance(entry_id, str) and entry_id else None)
+            taken = buckets.pop(entry_id, None) if isinstance(entry_id, str) and entry_id else None
             if taken:
                 groups.append((self._row_label(parent, parent_row, index), taken))
 
@@ -1806,8 +1883,14 @@ class ReportBuilder:
             groups.append((f"No {link.label.lower()} recorded", orphans))
         return groups
 
-    def _render_rows(self, entity: EntitySpec, rows: list[dict[str, Any]],
-                     section: TemplateSection, presentation: Presentation, level: int) -> bool:
+    def _render_rows(
+        self,
+        entity: EntitySpec,
+        rows: list[dict[str, Any]],
+        section: TemplateSection,
+        presentation: Presentation,
+        level: int,
+    ) -> bool:
         """One run of rows, in the presentation the template asked for.
 
         Split out of :meth:`_render_stage` so a whole collection and one PARENT GROUP of that
@@ -1825,7 +1908,7 @@ class ReportBuilder:
             # photographs has no single field to name a grid after, so it stays one uncaptioned
             # grid and its cap stays what it always was. What it never did was SAY what it dropped.
             every = [img for row in rows for img in self._images(entity, row)]
-            shown = every[:section.max_photos or len(every)]
+            shown = every[: section.max_photos or len(every)]
             self._note_photographs_over_cap(len(every) - len(shown))
             self._place_images(shown, section)
             return True
@@ -1843,21 +1926,23 @@ class ReportBuilder:
         """
         return self._row_label_text(entity, row) or f"{entity.title} {index}"
 
-    def _place_images(self, images: list[tuple[ImageRef, str]],
-                      section: TemplateSection) -> None:
+    def _place_images(self, images: list[tuple[ImageRef, str]], section: TemplateSection) -> None:
         if not images:
             return
         if len(images) == 1:
             ref, caption = images[0]
             self.doc.add(ImageBlock(image=ref, width_pct=62.0, caption=caption))
             return
-        self.doc.add(ImageGridBlock(
-            images=tuple(images),
-            columns=max(1, min(4, section.photo_columns)),
-        ))
+        self.doc.add(
+            ImageGridBlock(
+                images=tuple(images),
+                columns=max(1, min(4, section.photo_columns)),
+            )
+        )
 
-    def _place_image_groups(self, groups: list[tuple[str, list[tuple[ImageRef, str]]]],
-                            section: TemplateSection) -> None:
+    def _place_image_groups(
+        self, groups: list[tuple[str, list[tuple[ImageRef, str]]]], section: TemplateSection
+    ) -> None:
         """One plate per group, each grid named by the gallery field its pictures came from.
 
         :meth:`_place_images` WITH A CAPTION, and deliberately nothing else. The block types, the
@@ -1874,14 +1959,17 @@ class ReportBuilder:
                 # A LONE PICTURE HAS NO GRID CAPTION TO SIT UNDER, so a named plate that a cap cut
                 # down to one photograph puts its name on the picture instead of losing it.
                 ref, image_caption = images[0]
-                self.doc.add(ImageBlock(image=ref, width_pct=62.0,
-                                        caption=image_caption or caption))
+                self.doc.add(
+                    ImageBlock(image=ref, width_pct=62.0, caption=image_caption or caption)
+                )
                 continue
-            self.doc.add(ImageGridBlock(
-                images=tuple(images),
-                columns=max(1, min(4, section.photo_columns)),
-                caption=caption,
-            ))
+            self.doc.add(
+                ImageGridBlock(
+                    images=tuple(images),
+                    columns=max(1, min(4, section.photo_columns)),
+                    caption=caption,
+                )
+            )
 
     # -- the map ------------------------------------------------------------------------
 
@@ -1894,24 +1982,36 @@ class ReportBuilder:
         for every workshop held in a village — which is most of them.
         """
         label = next(
-            (clean_text(setup.get(key)).strip()
-             for key in ("venue", "village", "block", "district")
-             if clean_text(setup.get(key)).strip()),
+            (
+                clean_text(setup.get(key)).strip()
+                for key in ("venue", "village", "block", "district")
+                if clean_text(setup.get(key)).strip()
+            ),
             "",
         )
         fix = _geo_point(setup.get("venueLocation"))
         if fix is not None:
             return _MapFacts(
-                points=[MapPoint(label=label or "Workshop venue", lat=fix[0], lon=fix[1],
-                                 kind=MapPointKind.VENUE)],
-                placed=1, total=1,
+                points=[
+                    MapPoint(
+                        label=label or "Workshop venue",
+                        lat=fix[0],
+                        lon=fix[1],
+                        kind=MapPointKind.VENUE,
+                    )
+                ],
+                placed=1,
+                total=1,
             )
 
         # Everything the record says about where the venue is, in one string, so the atlas's
         # longest-run matching sees the village AND the district AND the state at once.
         address = ", ".join(
-            text for text in (clean_text(setup.get(key)).strip()
-                              for key in ("venue", "village", "block", "district"))
+            text
+            for text in (
+                clean_text(setup.get(key)).strip()
+                for key in ("venue", "village", "block", "district")
+            )
             if text
         )
         if not address:
@@ -1924,10 +2024,18 @@ class ReportBuilder:
         if located is None:
             return _MapFacts(total=1)
         return _MapFacts(
-            points=[MapPoint(label=located.label or label or "Workshop venue",
-                             lat=located.lat, lon=located.lon, kind=MapPointKind.VENUE)],
+            points=[
+                MapPoint(
+                    label=located.label or label or "Workshop venue",
+                    lat=located.lat,
+                    lon=located.lon,
+                    kind=MapPointKind.VENUE,
+                )
+            ],
             states={located.state} if located.state else set(),
-            placed=1, total=1, approximate=0 if located.precise else 1,
+            placed=1,
+            total=1,
+            approximate=0 if located.precise else 1,
         )
 
     def _artisan_points(self, state_hint: Any) -> _MapFacts:
@@ -1984,8 +2092,9 @@ class ReportBuilder:
         entity = self._entity(MAP_ROSTER_STAGE, MAP_ROSTER_ENTITY)
         if entity is None:
             return _MapFacts()
-        ref_keys = [f.key for f in entity.fields
-                    if f.type is FieldType.REF and f.ref_model == "Artisan"]
+        ref_keys = [
+            f.key for f in entity.fields if f.type is FieldType.REF and f.ref_model == "Artisan"
+        ]
 
         from app.services.address import canonical_state
 
@@ -1996,7 +2105,7 @@ class ReportBuilder:
             # The row's whole stated address in one string, joined rather than "first non-empty":
             # a bare village with no district beside it is what the atlas is worst at, and taking
             # only the most specific key would have placed pins WORSE than the live lookup did.
-            stated =[clean_text(row.get(key)).strip() for key in MAP_ROSTER_PLACE_KEYS]
+            stated = [clean_text(row.get(key)).strip() for key in MAP_ROSTER_PLACE_KEYS]
             text = ", ".join(part for part in stated if part)
             # The most specific part the row states, kept beside the joined string for the pin
             # LABEL — see the surveyed-pin branch below, which is the one pin on this map that is
@@ -2023,8 +2132,11 @@ class ReportBuilder:
                 # mapping widened carries ``state`` beside ``village`` and so never gets here; the
                 # row-first branch still owns every row a current save produced.
                 reference = next(
-                    (r for r in (self.data.reference(row.get(key)) for key in ref_keys)
-                     if r is not None),
+                    (
+                        r
+                        for r in (self.data.reference(row.get(key)) for key in ref_keys)
+                        if r is not None
+                    ),
                     None,
                 )
                 if reference is not None:
@@ -2079,9 +2191,12 @@ class ReportBuilder:
                 # returns the name in ``missed`` and the figure prints "Not tinted: …" under
                 # itself. An admission on the picture beats a silent blank on the half of a map a
                 # reader trusts most.
-                located = _Located(lat=fix[0], lon=fix[1],
-                                   state=canonical_state(state) or state,
-                                   label=place_label or "Artisan's home")
+                located = _Located(
+                    lat=fix[0],
+                    lon=fix[1],
+                    state=canonical_state(state) or state,
+                    label=place_label or "Artisan's home",
+                )
             else:
                 if not text:
                     continue
@@ -2133,8 +2248,10 @@ class ReportBuilder:
         # lost their answer; the pin's own label still says Odisha, and the sentence below says
         # once, plainly, why a pin might not sit where they expect it.
         stated_venue = ", ".join(
-            text for text in (clean_text(setup.get(key)).strip()
-                              for key in ("venue", "village", "district"))
+            text
+            for text in (
+                clean_text(setup.get(key)).strip() for key in ("venue", "village", "district")
+            )
             if text
         )
         sentences: list[str] = []
@@ -2163,15 +2280,20 @@ class ReportBuilder:
 
         if section.page_break_before:
             self.doc.add(PageBreakBlock())
-        self.doc.heading(section.heading or "Workshop location and participants' origins", 1,
-                         numbered=self.template.number_headings)
+        self.doc.heading(
+            section.heading or "Workshop location and participants' origins",
+            1,
+            numbered=self.template.number_headings,
+        )
         if section.intro:
             self.doc.para(section.intro, style=ParaStyle.LEAD)
-        self.doc.add(MapBlock(
-            caption=" ".join(sentences),
-            points=tuple(facts.points),
-            highlight=frozenset(h for h in highlight if h),
-        ))
+        self.doc.add(
+            MapBlock(
+                caption=" ".join(sentences),
+                points=tuple(facts.points),
+                highlight=frozenset(h for h in highlight if h),
+            )
+        )
 
     # -- stage --------------------------------------------------------------------------
 
@@ -2198,9 +2320,9 @@ class ReportBuilder:
             wrote |= self._render_narrative(single, singleton_data, 1)
             metrics = self._printable(single, singleton_data, {ReportRole.METRIC})
             if metrics:
-                self.doc.add(MetricRowBlock(
-                    metrics=tuple((s.label, v, s.unit) for s, v in metrics[:4])
-                ))
+                self.doc.add(
+                    MetricRowBlock(metrics=tuple((s.label, v, s.unit) for s, v in metrics[:4]))
+                )
                 wrote = True
             if section.include_photos:
                 plates = self._image_groups(single, singleton_data, cap=section.max_photos)
@@ -2215,15 +2337,15 @@ class ReportBuilder:
             if not rows:
                 if not section.omit_if_empty:
                     self.doc.heading(entity.title, 2, numbered=self.template.number_headings)
-                    self.doc.para(f"No {entity.title.lower()} were recorded.",
-                                  style=ParaStyle.NOTE)
+                    self.doc.para(f"No {entity.title.lower()} were recorded.", style=ParaStyle.NOTE)
                 continue
             if len(spec.collections) > 1:
                 self.doc.heading(entity.title, 2, numbered=self.template.number_headings)
             presentation = section.presentation
             if presentation is Presentation.AUTO:
-                presentation = (Presentation.TABLE if self._table_columns(entity)
-                                else Presentation.CARDS)
+                presentation = (
+                    Presentation.TABLE if self._table_columns(entity) else Presentation.CARDS
+                )
             groups = self._parent_groups(entity, rows)
             if groups is None:
                 wrote |= self._render_rows(entity, rows, section, presentation, 1)
@@ -2308,12 +2430,15 @@ class ReportBuilder:
         beside them, which is how one report came to carry two different figures for one measure.
         """
         counts = (
-            ("Sketches", self._output_count(
-                "SKETCH_DEVELOPMENT", "sketch", "designsCountOverride")),
-            ("Prototypes", self._output_count(
-                "PROTOTYPE_DEVELOPMENT", "prototype", "prototypesCountOverride")),
-            ("Final products", self._output_count(
-                "FINAL_PROTOTYPE_DOCUMENTATION", "finalProduct")),
+            (
+                "Sketches",
+                self._output_count("SKETCH_DEVELOPMENT", "sketch", "designsCountOverride"),
+            ),
+            (
+                "Prototypes",
+                self._output_count("PROTOTYPE_DEVELOPMENT", "prototype", "prototypesCountOverride"),
+            ),
+            ("Final products", self._output_count("FINAL_PROTOTYPE_DOCUMENTATION", "finalProduct")),
         )
         series = [(label, float(n)) for label, n in counts if n]
         if len(series) < MIN_CHART_CATEGORIES:
@@ -2478,8 +2603,14 @@ class ReportBuilder:
         entered it — and on a document that becomes a sanctioned amount, the difference between
         those two readings is the whole point of the sheet.
         """
-        heads = ("materialCost", "labourCost", "packagingCost", "finishingCost",
-                 "transportCost", "overheadCost")
+        heads = (
+            "materialCost",
+            "labourCost",
+            "packagingCost",
+            "finishingCost",
+            "transportCost",
+            "overheadCost",
+        )
         totals = dict.fromkeys(heads, 0.0)
         for row in self.data.rows("COSTING_MARKET_LINKAGE", "costSheet"):
             for key in heads:
@@ -2488,7 +2619,8 @@ class ReportBuilder:
                     totals[key] += amount
         series = [
             (self._label_of("COSTING_MARKET_LINKAGE", "costSheet", key, key), value)
-            for key, value in totals.items() if value > 0
+            for key, value in totals.items()
+            if value > 0
         ]
         if len(series) < MIN_CHART_CATEGORIES:
             return None
@@ -2505,9 +2637,14 @@ class ReportBuilder:
         prices: list[float] = []
         for row in self.data.rows("COSTING_MARKET_LINKAGE", "costSheet"):
             amount = next(
-                (value for value in (_as_number(row.get("expectedPrice")),
-                                     _as_number(row.get("retailPrice")))
-                 if value is not None and value > 0),
+                (
+                    value
+                    for value in (
+                        _as_number(row.get("expectedPrice")),
+                        _as_number(row.get("retailPrice")),
+                    )
+                    if value is not None and value > 0
+                ),
                 None,
             )
             if amount is not None:
@@ -2552,8 +2689,11 @@ class ReportBuilder:
                 tally[token] = tally.get(token, 0) + 1
         # Only intervals that were actually visited. A twelve-month column on a workshop that ran
         # four months ago is not "zero adoption", it is a visit that has not happened yet.
-        series = [(enum_label(interval_spec.enum, token), float(tally.get(token, 0)))
-                  for token in order if token in seen]
+        series = [
+            (enum_label(interval_spec.enum, token), float(tally.get(token, 0)))
+            for token in order
+            if token in seen
+        ]
         if len(series) < MIN_CHART_CATEGORIES or sum(v for _l, v in series) <= 0:
             return None
         return ChartBlock(
@@ -2590,7 +2730,8 @@ class ReportBuilder:
         """Every not-yet-drawn figure this stage's data can honestly support."""
         blocks = [
             self._figure(figure_id)
-            for figure_id, (owner, _method) in FIGURES.items() if owner == stage_key
+            for figure_id, (owner, _method) in FIGURES.items()
+            if owner == stage_key
         ]
         return [block for block in blocks if block is not None]
 
@@ -2608,8 +2749,9 @@ class ReportBuilder:
             return
         if section.page_break_before:
             self.doc.add(PageBreakBlock())
-        self.doc.heading(section.heading or "The workshop in figures", 1,
-                         numbered=self.template.number_headings)
+        self.doc.heading(
+            section.heading or "The workshop in figures", 1, numbered=self.template.number_headings
+        )
         if section.intro:
             self.doc.para(section.intro, style=ParaStyle.LEAD)
         for block in blocks:
@@ -2657,21 +2799,30 @@ class ReportBuilder:
             for line in clean_text(settings.get("letterheadText")).split("\n")
             if line.strip()
         ][:6]
-        self.doc.add(CoverBlock(
-            title=self.doc.meta.title,
-            subtitle=self.doc.meta.subtitle,
-            org_lines=tuple(
-                x for x in ("Government of India • Ministry of Textiles", org, *letterhead) if x
-            ),
-            logo=logo,
-            hero_image=hero,
-            info_rows=tuple(rows[:COVER_INFO_ROWS]),
-            footer_lines=tuple(x for x in (
-                _submission_line(settings),
-                (f"Generated on {_format_date(self.doc.meta.generated_at[:10])}"
-                 if self.doc.meta.generated_at else ""),
-            ) if x),
-        ))
+        self.doc.add(
+            CoverBlock(
+                title=self.doc.meta.title,
+                subtitle=self.doc.meta.subtitle,
+                org_lines=tuple(
+                    x for x in ("Government of India • Ministry of Textiles", org, *letterhead) if x
+                ),
+                logo=logo,
+                hero_image=hero,
+                info_rows=tuple(rows[:COVER_INFO_ROWS]),
+                footer_lines=tuple(
+                    x
+                    for x in (
+                        _submission_line(settings),
+                        (
+                            f"Generated on {_format_date(self.doc.meta.generated_at[:10])}"
+                            if self.doc.meta.generated_at
+                            else ""
+                        ),
+                    )
+                    if x
+                ),
+            )
+        )
 
         # ── the cover fields this template will print NOWHERE, recorded for a warning ──────────
         #
@@ -2754,8 +2905,9 @@ class ReportBuilder:
             return
         if section.page_break_before:
             self.doc.add(PageBreakBlock())
-        self.doc.heading(section.heading or "Certification", 1,
-                         numbered=self.template.number_headings)
+        self.doc.heading(
+            section.heading or "Certification", 1, numbered=self.template.number_headings
+        )
         self.doc.para(
             "Certified that the workshop was conducted and the prototypes documented above were "
             "developed during the period stated on the cover of this report."
@@ -2778,8 +2930,9 @@ class ReportBuilder:
             return
         if section.page_break_before:
             self.doc.add(PageBreakBlock())
-        self.doc.heading(section.heading or "Photographic record", 1,
-                         numbered=self.template.number_headings)
+        self.doc.heading(
+            section.heading or "Photographic record", 1, numbered=self.template.number_headings
+        )
         self.doc.add(ImageGridBlock(images=tuple(gathered), columns=3))
 
     def ref_resolves(self, value: Any) -> bool:
@@ -2815,25 +2968,30 @@ class ReportBuilder:
                 custom_fields=custom_fields,
                 custom_values=custom_values,
             )
-            rows.append((
-                runs_of(f"{spec.number}. {spec.title}"),
-                runs_of(f"{score.required_filled}/{score.required_total}"),
-                runs_of(f"{score.percent}%"),
-                runs_of("Complete" if score.is_complete else ", ".join(score.missing[:3])),
-            ))
+            rows.append(
+                (
+                    runs_of(f"{spec.number}. {spec.title}"),
+                    runs_of(f"{score.required_filled}/{score.required_total}"),
+                    runs_of(f"{score.percent}%"),
+                    runs_of("Complete" if score.is_complete else ", ".join(score.missing[:3])),
+                )
+            )
         if not rows:
             return
-        self.doc.heading(section.heading or "Data completeness", 1,
-                         numbered=self.template.number_headings)
-        self.doc.add(TableBlock(
-            columns=(
-                TableColumn("Stage", 40.0),
-                TableColumn("Required fields", 15.0, numeric=True),
-                TableColumn("Complete", 12.0, numeric=True),
-                TableColumn("Outstanding", 33.0),
-            ),
-            rows=tuple(rows),
-        ))
+        self.doc.heading(
+            section.heading or "Data completeness", 1, numbered=self.template.number_headings
+        )
+        self.doc.add(
+            TableBlock(
+                columns=(
+                    TableColumn("Stage", 40.0),
+                    TableColumn("Required fields", 15.0, numeric=True),
+                    TableColumn("Complete", 12.0, numeric=True),
+                    TableColumn("Outstanding", 33.0),
+                ),
+                rows=tuple(rows),
+            )
+        )
 
     # -- entry point ---------------------------------------------------------------------
 
@@ -2970,8 +3128,11 @@ class ReportBuilder:
             elif section.special is SpecialSection.ACKNOWLEDGEMENT:
                 text = self.data.value("INTRODUCTORY_ADMIN_DOCUMENTATION", "acknowledgement")
                 if clean_text(text).strip():
-                    self.doc.heading(section.heading or "Acknowledgement", 1,
-                                     numbered=self.template.number_headings)
+                    self.doc.heading(
+                        section.heading or "Acknowledgement",
+                        1,
+                        numbered=self.template.number_headings,
+                    )
                     self.doc.para(text)
             elif section.stage_key:
                 spec = self._stages.get(section.stage_key)
@@ -2980,10 +3141,15 @@ class ReportBuilder:
         return self.doc.build()
 
 
-def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResolver, *,
-                 meta: ReportMeta,
-                 theme: ReportTheme | None = None,
-                 template: ReportTemplate | None = None) -> tuple[ReportDocument, list[str]]:
+def build_report(
+    data: WorkshopData,
+    template_id: str,
+    resolve_media: MediaResolver,
+    *,
+    meta: ReportMeta,
+    theme: ReportTheme | None = None,
+    template: ReportTemplate | None = None,
+) -> tuple[ReportDocument, list[str]]:
     """Build the report document for one workshop under one template.
 
     Returns the document and any warnings — a substituted template, a stage whose required fields
@@ -3184,7 +3350,7 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
             f"inside it — {where}"
             + ("…" if len(attachments) > 4 else "")
             + ". A report file cannot carry a document, a recording or a video; send them "
-              "alongside it."
+            "alongside it."
         )
 
     # ── the cover fields that fell off the ten-row cover table ─────────────────────────────────
@@ -3200,7 +3366,8 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
             f"{len(builder.cover_fields_dropped)} cover field(s) did not fit the cover table and "
             f"the {template.name} template prints no workshop-setup section to carry them, so "
             f"they are not in this file: {names}"
-            + ("…" if len(builder.cover_fields_dropped) > 4 else "") + "."
+            + ("…" if len(builder.cover_fields_dropped) > 4 else "")
+            + "."
         )
 
     hidden = sections_hidden_by_tier(

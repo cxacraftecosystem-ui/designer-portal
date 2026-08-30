@@ -6,18 +6,69 @@ import { ClipboardCheck, FolderDown, Languages, Mic } from "lucide-react";
 
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 
+/**
+ * ── STEP 1'S MICROPHONE: THE EXACT WORDING IS LOAD-BEARING ────────────────────────────────────
+ *
+ * "A microphone on every narrative box" is the walkthrough's own sentence
+ * (`components/guide/steps.ts`, in its design-workshop-stages card — cited by content and not by
+ * line, because that file is being extended in a neighbouring lane) and is reused here verbatim
+ * rather than paraphrased, because
+ * the obvious paraphrase — "a microphone on every box" — is FALSE on both clients and deliberately
+ * so: dictation is absent from a name, a code and a number box, since a recogniser returns the
+ * nearest dictionary word and a respondent's name is the string sittings are searched by.
+ *
+ * ⚠ "THE AUDIO NEVER BECOMES A FILE" IS TRUE OF ONE OF THE FOUR DICTATION PATHS IN THIS PRODUCT,
+ * AND THE CLAUSE NAMES THAT ONE. `components/dictation/OnDeviceDictationButton.tsx` — what a
+ * record form mounts in the BROWSER — is unambiguous in its own header: "no `MediaRecorder`, no
+ * `fetch`, no `workshopId` and no code path that can produce a network request: the recording never
+ * becomes a file and never leaves the handset", asserted by `e2e/record-form-dictation-unit.spec.ts`.
+ * That is not a simplification of the others; it is why that control was allowed to exist, since an
+ * artisan record has no workshop whose `dictationConsent` could govern the artisan's recorded voice.
+ *
+ * THE OTHER THREE CAN ALL UPLOAD. The web's design-workshop STAGE button
+ * (`designworkshop/Dictation.tsx`) falls through to `POST /design-workshops/{id}/dictate` where the
+ * browser has no recogniser. Android's is a four-rung ladder (`data/DwDictationLadder.kt`) whose
+ * second rung is that same endpoint, with a daily server allowance behind it
+ * (`DwDictationAllowance.kt`) — so on the handset "on the device" is the FIRST choice rather than
+ * the only one. Saying "in the browser's record forms" is therefore the widest true form of this
+ * sentence; "dictation never uploads anything" would be a promise three of the four paths do not
+ * keep, printed on the page a visitor reads before they can check.
+ *
+ * ── STEP 2'S LANGUAGE: A RECORDED FACT, NOT AN INSTRUCTION TO THE TRANSCRIBER ─────────────────
+ *
+ * The two must not be run together. The transcription chain DETECTS the spoken language — Scribe
+ * auto-detects and Deepgram runs `language=multi`, which is why the hero card refuses to print a
+ * tidy "hi-IN → en" chip. The Language dropdown is a different thing entirely: what the SITTING is
+ * recorded as having been conducted in. It closed a real hole — the web had a free text box against
+ * Android's dropdown, so "Bangla", "Bengali" and "bengali" reached one column that `/data`, the
+ * consolidated questionnaire and every export group by.
+ *
+ * ⚠ TWENTY-THREE PLUS "OTHER", NOT "TWENTY-FOUR LANGUAGES" — this sentence said the latter and the
+ * list's own header refuses it in so many words: "'Other' is last because it is the escape hatch,
+ * not a language." `INTERVIEW_LANGUAGES` has twenty-four ENTRIES; twenty-four LANGUAGES is a
+ * different and false claim, and it is the sort a reader can check by opening the dropdown and
+ * counting to twenty-three before they hit the escape hatch.
+ *
+ * ⚠ AND THEY ARE TWO LISTS, NOT ONE. This said "one list the phone and the browser both read",
+ * which describes a shared module that does not exist: `lib/interviewLanguages.ts` and
+ * `android/…/data/DwInterviewLanguages.kt#DW_INTERVIEW_LANGUAGES` are separate declarations held in
+ * step by a re-check the TS file writes out for the next reader (`grep -n "languageOptions" …
+ * MainActivity.kt`). The parity is real and worth claiming; the mechanism is not, and "one list"
+ * is exactly the sentence that stops somebody grepping for the second copy before they edit the
+ * first — which is how the two spellings this dropdown was built to end would come back.
+ */
 const STEPS = [
   {
     icon: Mic,
     title: "Capture in the field",
     copy:
-      "Record interviews, photograph products and tools, and log GPS positions on the Android app or the web — with or without a signal. Nothing waits for connectivity."
+      "Record interviews, photograph products and tools, and log GPS positions on the Android app or the web — with or without a signal. A microphone on every narrative box, so a long description is spoken rather than thumbed in on a phone in a courtyard; in the browser's record forms the device's own recogniser does the writing, and the audio never becomes a file at all. Nothing waits for connectivity."
   },
   {
     icon: Languages,
     title: "Transcribe & translate automatically",
     copy:
-      "Every recording moves through a three-provider speech-to-text chain with automatic failover, then arrives as clean English text linked to its artisan, craft, and workshop."
+      "Every recording moves through a three-provider speech-to-text chain with automatic failover, then arrives as clean English text linked to its artisan, craft, and workshop. The sitting itself records the language it was conducted in, picked from a fixed list — twenty-three, and an explicit Other — that the phone and the browser hold identically, so one language stops arriving under three spellings."
   },
   {
     icon: ClipboardCheck,

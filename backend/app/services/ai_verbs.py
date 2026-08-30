@@ -268,7 +268,9 @@ def text_of_answer(answer: Mapping[str, Any], *, verb: Verb) -> str:
     status = str(answer.get("status") or "").upper()
     message = str(answer.get("message") or "").strip()
     if status == "UNAVAILABLE" or answer.get("available") is False:
-        raise VerbUnavailable(message or f"{verb.human.capitalize()} is not configured on this server.")
+        raise VerbUnavailable(
+            message or f"{verb.human.capitalize()} is not configured on this server."
+        )
     if status in {"EMPTY", "FAILED"}:
         raise VerbError(message or f"{verb.human.capitalize()} produced nothing.")
     text = str(answer.get("text") or "").strip()

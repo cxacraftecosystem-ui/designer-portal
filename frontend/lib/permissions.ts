@@ -416,6 +416,23 @@ export const ROUTE_GUARDS: RouteGuard[] = [
       "Provider keys and the transcription provider order are managed by admins and the master admin. Reading or replacing a key value is the master admin's alone."
   },
   {
+    // Usage aggregates navigation across every account on the platform — which screens, how often,
+    // how fast, how often broken — so it is admin work for the same reason cross-workshop analytics
+    // is: it is a strictly wider view than any one account's own activity. `require_usage_reader` is
+    // a predicate of its own on the server (`deps.can_read_usage`, Admin and above, deliberately not
+    // Researcher — see that function's docstring for why the research use case does not lower it),
+    // so this rule changes no decision today but keeps the two from silently disagreeing the day
+    // `require_admin` and `require_usage_reader` diverge. No `/usage/me` route is linked from
+    // anywhere below this page — an account's own trail is not exposed as a UI at all yet, so there
+    // is no ordinary-user alternative to send a refused visitor to.
+    path: "/settings/usage",
+    can: isAdmin,
+    gate: "require_usage_reader",
+    title: "Admin access required",
+    message:
+      "Usage is an aggregate view across every account's navigation on the platform, so it is available to admins and the master admin."
+  },
+  {
     // Batch task assignment (POST /tasks/batch, /tasks/batches, /tasks/progress) is admin-only;
     // /tasks itself stays open, because every user can be an assignee.
     path: "/settings/tasks",

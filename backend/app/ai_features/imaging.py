@@ -57,11 +57,11 @@ def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
             continue
         if marker == 0xD9 or marker == 0xDA:
             return None  # end of image / start of scan: no frame header was found
-        segment_length = struct.unpack(">H", data[index + 2:index + 4])[0]
+        segment_length = struct.unpack(">H", data[index + 2 : index + 4])[0]
         if segment_length < 2:
             return None
         if marker in _JPEG_SOF_MARKERS:
-            height, width = struct.unpack(">HH", data[index + 5:index + 9])
+            height, width = struct.unpack(">HH", data[index + 5 : index + 9])
             return int(width), int(height)
         index += 2 + segment_length
     return None

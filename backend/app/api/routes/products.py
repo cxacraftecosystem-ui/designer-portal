@@ -216,19 +216,23 @@ async def list_products(
     if vis:
         and_filters.append(vis)
     if search:
-        and_filters.append({"OR": [
-            {"productName": contains(search)},
-            {"localName": contains(search)},
-            {"craftName": contains(search)},
-            {"artisanName": contains(search)},
-            {"place": contains(search)},
-            # The three narrative columns take rich text from this release on; the identifier-ish
-            # columns above them do not. ``prose_contains`` explains why the two need different
-            # filters and what breaks if they are levelled back to one.
-            prose_contains("rawMaterialsUsed", search),
-            prose_contains("mainToolsUsed", search),
-            prose_contains("remarks", search),
-        ]})
+        and_filters.append(
+            {
+                "OR": [
+                    {"productName": contains(search)},
+                    {"localName": contains(search)},
+                    {"craftName": contains(search)},
+                    {"artisanName": contains(search)},
+                    {"place": contains(search)},
+                    # The three narrative columns take rich text from this release on; the identifier-ish
+                    # columns above them do not. ``prose_contains`` explains why the two need different
+                    # filters and what breaks if they are levelled back to one.
+                    prose_contains("rawMaterialsUsed", search),
+                    prose_contains("mainToolsUsed", search),
+                    prose_contains("remarks", search),
+                ]
+            }
+        )
     if craftId:
         where["craftId"] = craftId
     if artisanId:
@@ -240,10 +244,14 @@ async def list_products(
             # products FK-linked to a duplicate artisan record that shares the same name. The only
             # cost is that two genuinely distinct artisans with an identical name would share a list,
             # which is rare and far preferable to silently dropping a real product.
-            and_filters.append({"OR": [
-                {"artisanId": artisanId},
-                {"artisanName": {"equals": artisanName.strip(), "mode": "insensitive"}},
-            ]})
+            and_filters.append(
+                {
+                    "OR": [
+                        {"artisanId": artisanId},
+                        {"artisanName": {"equals": artisanName.strip(), "mode": "insensitive"}},
+                    ]
+                }
+            )
         else:
             where["artisanId"] = artisanId
     if designWorkshopId:
@@ -333,7 +341,9 @@ async def create_product(
 
 
 @router.get("/{product_id}")
-async def get_product(product_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def get_product(
+    product_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     product = await require_record(db.productdocumentation, product_id)
     await hydrate_relations([product], RELATIONS)
     # The uploader half alone, and for this detail read as much as for the list: the ``media`` this
@@ -375,7 +385,9 @@ async def update_product(
     pin_pending_if_late(data, current_user, check=check, record=product)
     merge_field_provenance(data, current_user, previous=product)
     resubmit_status(product, current_user, data)
-    updated = await db.productdocumentation.update(where={"id": product_id}, data=data, include=INCLUDE)
+    updated = await db.productdocumentation.update(
+        where={"id": product_id}, data=data, include=INCLUDE
+    )
     # The PATCH response carries ``media`` (it is in ``INCLUDE``) and the editor need not be the
     # uploader — an EDIT-tier grantee or a professor routinely saves a product somebody else
     # photographed. Resolved rather than left to the cheap default so a photograph that was openable

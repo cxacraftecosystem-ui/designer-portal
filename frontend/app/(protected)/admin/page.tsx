@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
+  Activity,
   AudioLines,
   BadgeCheck,
   ChartNoAxesCombined,
@@ -227,6 +228,22 @@ export default function AdminHubPage() {
       description: "Rank the transcription providers, and rotate or test the keys they run on.",
       href: "/settings/api-keys",
       icon: KeyRound,
+      visible: isAdmin(user)
+    },
+    {
+      // This hub had a tile for every other admin destination except this one — the seven others
+      // all appeared here, and `/settings/usage` (wired correctly into permissions.ts,
+      // AdminViewProvider and /settings itself the same day this landed) did not, which left an
+      // admin on THIS hub with no way to discover it short of already knowing about /settings.
+      // NOT "Analytics": that name is already `/admin/analytics`, which compares CRAFT OUTCOMES
+      // across workshops, while this page watches PEOPLE — which screens are reached, how often, how
+      // fast, how often broken. `usage.py`'s own module docstring keeps the two names apart for the
+      // same reason. `isAdmin` mirrors `require_usage_reader` (Admin and above) the same way the
+      // other gated tiles on this hub mirror their own routes' server-side checks.
+      label: "Usage",
+      description: "Which screens are reached, how often, how fast, and how often broken — aggregated across every account.",
+      href: "/settings/usage",
+      icon: Activity,
       visible: isAdmin(user)
     },
     {

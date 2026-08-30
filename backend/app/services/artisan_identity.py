@@ -116,7 +116,7 @@ def verhoeff_ok(digits: str) -> bool:
 
 
 def normalize_aadhaar(value: str | None) -> str | None:
-    """"1234 5678 9012" -> "123456789012".
+    """ "1234 5678 9012" -> "123456789012".
 
     ``None``/blank collapses to ``None`` — meaning "no number", which is a legitimate state for an
     artisan recorded before the field was required and for a number being retracted on an edit.

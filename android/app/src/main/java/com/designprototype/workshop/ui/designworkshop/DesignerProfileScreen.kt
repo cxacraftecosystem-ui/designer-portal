@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
@@ -30,7 +29,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -57,13 +55,21 @@ import com.designprototype.workshop.RegisterUnsavedGuard
 import com.designprototype.workshop.data.AddressReferenceDto
 import com.designprototype.workshop.data.DesignerProfileDto
 import com.designprototype.workshop.data.DesignerProfileUpdateBody
+import com.designprototype.workshop.data.LocationRequest
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
-import com.designprototype.workshop.ui.AddressReferenceCache
+import com.designprototype.workshop.data.toLocationRequest
 import com.designprototype.workshop.ui.ArtisanPhoneField
+import com.designprototype.workshop.ui.DESIGNER_LOCATION_SUBJECT
 import com.designprototype.workshop.ui.FieldDateField
+import com.designprototype.workshop.ui.ExperienceFields
 import com.designprototype.workshop.ui.FieldPermissions
+// The address card the six field-record forms use, whole. `DesignerProfile` is the seventh owner of
+// `Location`, so the district and the map point are captured by the control that already knows how
+// — with its coarse-fix guard, its flag-never-rewrite rule and its offline sentences — rather than
+// by a seventh reimplementation of an address.
+import com.designprototype.workshop.ui.LocationFieldsSection
 // The shared record-form prose box: on-device dictation and the rich editor, both opt-in.
 import com.designprototype.workshop.ui.RecordProseField
 import com.designprototype.workshop.ui.SearchableSelectField
@@ -79,6 +85,9 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.artisanPhoneValidationError
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.formatFieldDate
+import com.designprototype.workshop.ui.listIsAnswerable
+import com.designprototype.workshop.ui.addressListNotice
+import com.designprototype.workshop.ui.rememberAddressReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -86,13 +95,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.time.LocalDate
+import java.util.Locale
 import java.util.UUID
 
 /**
  * The signed-in designer's own `DesignerProfile` — every column of it — and the one screen an admin
  * uses to correct somebody else's.
  *
- * WHY THIS SCREEN IS WORTH ITS SIZE. These twenty values are typed once and then copied onto the
+ * WHY THIS SCREEN IS WORTH ITS SIZE. These two dozen values are typed once and then copied onto the
  * cover, the signature block and the "Designer's profile" paragraph of EVERY report the designer
  * generates. A report is a document delivered to a ministry under a named individual's empanelment
  * number; a cover page that reads "Designer:" followed by nothing is not a cosmetic defect, it is a
@@ -160,6 +170,16 @@ internal data class ProfileForm(
      * with it.
      */
     val experienceYears: String = "",
+    /**
+     * The MONTHS half, 0..11, and text for the same reason [experienceYears] is.
+     *
+     * "" IS "NOT STATED" AND IT IS NOT 0. The picker offers a blank row above the numbers and this
+     * is what that row writes; [toBody] turns it into an explicit JSON null, which un-answers the
+     * question on the server. A designer who has never touched the control must not have "and no
+     * odd months" recorded on their behalf, and a designer who deliberately picked 0 must have it
+     * kept — so the two cannot be allowed to collapse into one another anywhere on this path.
+     */
+    val experienceMonths: String = "",
     val biography: String = "",
     val phone: String = "",
     val email: String = "",
@@ -174,6 +194,31 @@ internal data class ProfileForm(
     val cvMediaId: String = "",
     val empanelmentNo: String = "",
     val empanelmentDate: LocalDate? = null,
+    /**
+     * The designer's STATED ADDRESS AND MAP POINT — the `Location` row this profile now relates to.
+     *
+     * ── IT DOES NOT REPLACE THE FOUR FLAT COLUMNS ABOVE, AND BOTH ARE ON SCREEN ────────────────
+     *
+     * `addressLine`, `city`, `state` and `pincode` are still where every live designer's address
+     * actually is: the migration that added the relation backfilled NOTHING, because
+     * `Location.latitude`/`longitude` are NOT NULL and a row cannot be manufactured for an address
+     * that never had a coordinate without inventing one. They are also the four values the report
+     * prefill copies into stage 3. What the `Location` row adds is the DISTRICT and the POINT,
+     * which no flat column can hold. Until the retiring migration moves the values across, a
+     * profile may carry an address in either place — so this screen renders both, and a reader
+     * that showed one of them would show some designers a blank where their address is.
+     *
+     * SEEDED FROM THE STORED ROW ON LOAD, and that is not optional. `attach_location` writes a
+     * BRAND NEW `Location` row out of whatever body it is handed and never patches the stored one,
+     * so a card that opened empty over a profile that HAS a district would PATCH that district away
+     * the moment somebody touched the map — successfully, with nothing on screen to say so. That is
+     * the defect [LocationDto.toLocationRequest] exists to prevent, and why it carries every column.
+     *
+     * NULL MEANS "NO POINT", NEVER "REMOVE THE ADDRESS". A `LocationRequest` cannot exist without a
+     * coordinate, so this stays null for every designer who has not given one; [toBody] then omits
+     * the key and the stored row is left alone. The API refuses an explicit null outright.
+     */
+    val location: LocationRequest? = null,
 )
 
 internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
@@ -185,6 +230,7 @@ internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
     qualification = qualification.orEmpty(),
     specialisation = specialisation.orEmpty(),
     experienceYears = experienceYears?.toString().orEmpty(),
+    experienceMonths = experienceMonths?.toString().orEmpty(),
     biography = biography.orEmpty(),
     phone = phone.orEmpty(),
     email = email.orEmpty(),
@@ -203,6 +249,9 @@ internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
         ?.take(10)
         ?.takeIf { it.isNotBlank() }
         ?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+    // EVERY COLUMN OF THE STORED ROW, through the shared converter. A field this misses is not
+    // rejected on the next save, it is ERASED — see [ProfileForm.location].
+    location = location?.toLocationRequest(),
 )
 
 /**
@@ -341,7 +390,7 @@ internal fun designerEmailRefusal(email: String): String? {
  *
  * IT MATTERS BECAUSE THIS BOX NOW HAS A MICROPHONE. Typing past a column bound is slow and visible;
  * a committed dictation phrase is a state write that arrives all at once, and an over-long value
- * 422s the WHOLE twenty-one-key body — the designer loses twenty correct answers because they spoke
+ * 422s the WHOLE body — the designer loses every other correct answer because they spoke
  * one sentence too many, and the refusal names a box that looks fine on screen.
  */
 private const val ADDRESS_LINE_MAX = 300
@@ -407,13 +456,20 @@ internal val DESIGNER_PROFILE_DICTATED: Set<String> = linkedSetOf(
  * call site. Every value here is a full sentence and the test requires it to be one — an empty
  * string would be a way of satisfying "every column is classified" while classifying nothing.
  *
- * Read with [DESIGNER_PROFILE_DICTATED]: together they are all twenty-one columns of [ProfileForm].
+ * Read with [DESIGNER_PROFILE_DICTATED]: together they are all twenty-three columns of
+ * [ProfileForm].
  */
 internal val DESIGNER_PROFILE_NOT_DICTATED: Map<String, String> = linkedMapOf(
     "experienceYears" to
-        "A two-digit number bounded 0..70 behind a number pad. A recogniser spells digits out in " +
-            "words — \"twelve\" — and this box filters to digits at the keystroke, so a spoken " +
-            "answer is discarded and leaves the box empty with nothing on screen to say why.",
+        "A closed list of whole numbers, 0 to 70, answered by picking rather than by typing. A " +
+            "recogniser spells digits out in words — \"twelve\" — and there is no text box here for " +
+            "the words to land in, so a spoken answer would be discarded with nothing on screen " +
+            "to say why.",
+    "experienceMonths" to
+        "The months half of the same pair, and the same closed list of whole numbers, 0 to 11. " +
+            "Worse than the years box for dictation rather than better: \"six\" and \"sixteen\" " +
+            "differ by one syllable and only one of them is inside the range, so the near-miss is " +
+            "the likely outcome and it is invisible once stored.",
     "phone" to
         "Digits, inside ArtisanPhoneField's own dial-code column and shape rule. Spoken digits are " +
             "the least reliable thing a recogniser returns, and artisanPhoneValidationError would " +
@@ -448,6 +504,11 @@ internal val DESIGNER_PROFILE_NOT_DICTATED: Map<String, String> = linkedMapOf(
     "cvMediaId" to
         "A media slot: a document picker, a preview and a Remove button. There is no text here to " +
             "speak, and the filename comes from the file.",
+    "location" to
+        "Not a box at all — it is the whole address card: two closed dropdowns, a map picker, a " +
+            "GPS reading and its accuracy radius. Its one free-text answer, the village, has a " +
+            "microphone of its own inside that card, which is where the classification for it " +
+            "belongs. A microphone at this level would have nothing to write into.",
 )
 
 /**
@@ -461,7 +522,20 @@ internal val DESIGNER_PROFILE_NOT_DICTATED: Map<String, String> = linkedMapOf(
  */
 private fun dictates(column: String): Boolean = column in DESIGNER_PROFILE_DICTATED
 
-private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpdateBody(
+/**
+ * The wire body, against [stored] — the snapshot the server last confirmed.
+ *
+ * THE PARAMETER EXISTS FOR ONE KEY. Every other column is sent on every save, with an explicit null
+ * for an emptied box, because that is the only way "clear this" can be said (see
+ * [designerProfileUpdateJson]). The location cannot work that way: `attach_location` CREATES a row
+ * rather than updating one, so re-sending an unchanged location would mint a duplicate `Location`
+ * and orphan the stored one on every single save of an unrelated box — a designer correcting a
+ * typo in their department would leave a trail of identical address rows behind them. Sending it
+ * only when it has actually moved is the same rule `locationForBody` applies on the record forms,
+ * and the comparison is the data class's own `equals` rather than a hand-written field-by-field
+ * one, which is what stops it going stale the day a column is added to `LocationRequest`.
+ */
+private fun ProfileForm.toBody(stored: ProfileForm): DesignerProfileUpdateBody = DesignerProfileUpdateBody(
     displayName = displayName,
     localName = localName,
     designation = designation,
@@ -470,6 +544,10 @@ private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpd
     qualification = qualification,
     specialisation = specialisation,
     experienceYears = experienceYears.trim().toIntOrNull(),
+    // `toIntOrNull()` on "" is null, which is the explicit JSON null that un-answers the question.
+    // "0" parses to 0 and is stored as 0. The two reach the server as different bodies because they
+    // are different answers.
+    experienceMonths = experienceMonths.trim().toIntOrNull(),
     biography = biography,
     phone = phone,
     email = email,
@@ -483,6 +561,7 @@ private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpd
     cvMediaId = cvMediaId,
     empanelmentNo = empanelmentNo,
     empanelmentDate = empanelmentDate?.toString(),
+    location = location.takeIf { it != stored.location },
 )
 
 /**
@@ -549,7 +628,28 @@ fun DesignerProfileScreen(
      * year can be forgotten by this bookkeeping.
      */
     var enforceRequired by remember(targetUserId) { mutableStateOf(false) }
-    var reference by remember { mutableStateOf(AddressReferenceDto()) }
+    /*
+     * ONE FETCH FOR THE WHOLE SCREEN, and it is the address card's own.
+     *
+     * This screen used to carry a byte-for-byte copy of `rememberAddressReference`'s effect, from
+     * before the card was mounted here. Two copies meant two requests for one near-constant payload
+     * and — once the fetched-at stamp existed, which is what lets an offline list carry a date — two
+     * places to remember to write it, with nothing to catch the one that was forgotten. The flat
+     * `state` box below and the card share this.
+     */
+    val referenceState = rememberAddressReference(repository)
+    val reference: AddressReferenceDto = referenceState.reference
+    /**
+     * The card is holding a state, district, village or pincode that CANNOT BE SAVED, because there
+     * is no coordinate under it. Raised by the card; see its `onStatedAddressNeedsCoordinate`.
+     *
+     * `Location.latitude`/`longitude` are NOT NULL, so those four answers have nowhere to live until
+     * a point exists — and until then they are parked INSIDE the card, which means this screen's
+     * `form.location` is null and the save would omit the key entirely. Four typed answers would
+     * vanish with a 200 and nothing on screen at the moment it mattered. The card says so in a
+     * notice; this is what lets the SAVE say so too, which is the moment somebody is looking.
+     */
+    var addressNeedsCoordinate by remember(targetUserId) { mutableStateOf(false) }
     /**
      * The durable local copy of a photograph captured or picked in THIS session, keyed by slot.
      *
@@ -594,18 +694,6 @@ fun DesignerProfileScreen(
                 onError(error.apiErrorMessage("Could not load this designer profile."))
             }
         loading = false
-    }
-
-    // The state list, read from the cache first so the dropdown is populated on the first frame of a
-    // phone that has ever been online, then refreshed. A fetch that comes back empty-handed — which
-    // is what a captive-portal HTML page decodes to — is discarded rather than allowed to blank a
-    // list that was working.
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { AddressReferenceCache.read(appContext) }?.let { reference = it }
-        val fresh = runCatching { repository.addressReference() }.getOrNull() ?: return@LaunchedEffect
-        if (fresh.statesAndUnionTerritories.isEmpty() && fresh.states.isEmpty()) return@LaunchedEffect
-        reference = fresh
-        withContext(Dispatchers.IO) { AddressReferenceCache.write(appContext, fresh) }
     }
 
     // Resolve whatever the stored media ids point at, so a profile filled in on the web shows its
@@ -681,8 +769,52 @@ fun DesignerProfileScreen(
         } else {
             null
         }
-        experienceError = yearsFault
-        if (missing.isNotEmpty() || emailFault != null || phoneFault != null || yearsFault != null) {
+        /*
+         * THE MONTHS BOUND IS 0..11 AND THE CEILING IS 11 RATHER THAN 12 ON PURPOSE. Twelve is not a
+         * bigger month, it is a year the box beside this one already holds. The column carries
+         * `CHECK (experienceMonths BETWEEN 0 AND 11)` and the API bounds it identically — but a
+         * CHECK violation reaches this client as a bare 500 naming no field, so the value is judged
+         * here, in the box, where it can be corrected.
+         *
+         * The picker cannot produce anything outside the range. This is for the one value that can:
+         * a number that came off the server and is kept at the front of the list rather than
+         * silently dropped, which is the same rule the state box follows for an unknown state.
+         */
+        val months = form.experienceMonths.trim()
+        val parsedMonths = months.toIntOrNull()
+        val monthsFault = if (months.isNotEmpty() && (parsedMonths == null || parsedMonths !in 0..11)) {
+            "Months of experience must be a whole number between 0 and 11 — twelve months is a " +
+                "year, and the box beside this one holds the years."
+        } else {
+            null
+        }
+        /*
+         * FOUR ANSWERS WITH NOWHERE TO GO, REFUSED HERE RATHER THAN DROPPED SILENTLY.
+         *
+         * A state, a district, a village or a pincode typed into the address card is stored on the
+         * `Location` row, and that row cannot exist without a coordinate — `latitude` and
+         * `longitude` are NOT NULL for all seven owners of that table, and the API's `LocationInput`
+         * makes them required floats with no default. Manufacturing one is the precise failure the
+         * two-group split exists to end: fifteen artisans documented in Rajasthan, Gujarat,
+         * Uttarakhand and Andhra Pradesh carry Kharagpur coordinates because the schema once had
+         * nowhere else to put "where the subject is".
+         *
+         * So the cost is stated instead of hidden, in the words the web card uses in the same
+         * situation. Refusing costs one tap; the alternative is a save that reports success and
+         * keeps none of it.
+         */
+        val addressFault = if (addressNeedsCoordinate) {
+            "The state, district and village are stored with the coordinates, so this profile needs " +
+                "a point before they can be saved. Press 'Use current GPS' under 'Captured " +
+                "coordinates', drop a pin on the map, or type the two numbers — or clear the " +
+                "address fields under '${DESIGNER_LOCATION_SUBJECT.heading}' to save the rest."
+        } else {
+            null
+        }
+        experienceError = yearsFault ?: monthsFault
+        if (missing.isNotEmpty() || emailFault != null || phoneFault != null || yearsFault != null ||
+            monthsFault != null || addressFault != null
+        ) {
             // Latched here and nowhere else: the boxes turn red because a save was actually
             // refused, never because the profile has not been filled in yet.
             enforceRequired = true
@@ -692,13 +824,17 @@ fun DesignerProfileScreen(
                     emailFault,
                     phoneFault,
                     yearsFault,
+                    monthsFault,
+                    addressFault,
                 ).joinToString(" ")
             )
             return
         }
         saving = true
         scope.launch {
-            runCatching { repository.saveDesignerProfile(targetUserId, form.toBody()) }
+            // `saved` is the snapshot the server last confirmed, and it is passed so the location is
+            // sent ONLY when it has actually moved — see [ProfileForm.toBody].
+            runCatching { repository.saveDesignerProfile(targetUserId, form.toBody(saved)) }
                 .onSuccess { stored ->
                     // Re-seeded from the SERVER's answer rather than left as typed, so any
                     // normalisation it applied (a trimmed website, a lower-cased email) is what the
@@ -977,31 +1113,22 @@ fun DesignerProfileScreen(
                     ) {
                         form = form.copy(specialisation = it)
                     }
-                    // NO MICROPHONE HERE, AND THE REASON IS IN [DESIGNER_PROFILE_NOT_DICTATED]:
-                    // a recogniser answers this box with the word "twelve", and the digit filter on
-                    // the next line discards every letter of it — so a spoken answer would leave the
-                    // box empty with nothing on screen to say why. It is also the one box on this
-                    // card that is not a `ProfileText`, because it keeps its own keystroke filter
-                    // and draws its own bound refusal rather than a required one.
-                    OutlinedTextField(
-                        value = form.experienceYears,
-                        onValueChange = {
-                            // Digits only, at the keystroke. The number pad still offers a minus on
-                            // some OEM keyboards, and "-5" would reach a server bound of 0..70 as a
-                            // 422 whose message names a field the designer cannot see.
-                            form = form.copy(experienceYears = it.filter { ch -> ch.isDigit() }.take(2))
-                            experienceError = null
-                        },
-                        label = { Text("Years of experience") },
-                        singleLine = true,
+                    // The shared control, so the artisan form and this one ask the identical
+                    // question in identical words. 70 rather than 90 is the only thing that differs
+                    // here, and it is the ceiling the API and the registry's `designerExperience`
+                    // field both enforce — this value is COPIED into that field when a workshop is
+                    // created, so a profile that accepted 400 would prefill a stage its own
+                    // validator then rejects, and the designer would be told their workshop has an
+                    // error in a box they never typed in.
+                    ExperienceFields(
+                        years = form.experienceYears,
+                        months = form.experienceMonths,
                         enabled = canEdit,
-                        isError = experienceError != null,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
+                        maxYears = 70,
+                        error = experienceError,
+                        onYearsChange = { form = form.copy(experienceYears = it); experienceError = null },
+                        onMonthsChange = { form = form.copy(experienceMonths = it); experienceError = null }
                     )
-                    experienceError?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                    }
                 }
 
                 ProfileSection("Profile paragraph") {
@@ -1080,7 +1207,7 @@ fun DesignerProfileScreen(
                         // have: `RequiredInput` gives every mandatory box a microphone by default,
                         // and this is the exception the reason for which is in
                         // [DESIGNER_PROFILE_NOT_DICTATED] — a dictated address is a value the check
-                        // below reliably refuses, and this form saves twenty-one columns in one PUT.
+                        // below reliably refuses, and this form saves every column in one PUT.
                         dictate = dictates("email"),
                         /*
                           BOTH E-MAIL RULES ARE BEHIND THE LATCH, WHILE THE PHONE'S SHAPE RULE ABOVE
@@ -1110,7 +1237,21 @@ fun DesignerProfileScreen(
                     }
                 }
 
-                ProfileSection("Address") {
+                /*
+                 * RENAMED FROM "Address" ON 2026-08-30, because there are now two of them and an
+                 * unqualified heading over one of two is the reading a person gets wrong. These four
+                 * are the POSTAL address — the columns on `DesignerProfile` itself, the ones the report
+                 * prefill copies into stage 3, and the only place any live designer's address
+                 * currently is. The card below holds the district and the map point, which no column
+                 * here can hold. Both are live until the retiring migration moves the values across.
+                 */
+                ProfileSection("Postal address") {
+                    Text(
+                        "What is printed on your reports. The district and the map point are asked " +
+                            "for separately, below.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 12.sp
+                    )
                     /*
                      * DICTATION HERE IS NO LONGER THE LAST WORD ON THIS SCREEN, AND THE COMMENT
                      * THAT STOOD IN THIS PLACE SAID IT WAS.
@@ -1192,11 +1333,33 @@ fun DesignerProfileScreen(
                     // that already holds a state shows "Select" over it on a phone that has not
                     // fetched the reference yet, which reads as "not answered" and invites the
                     // designer to answer it again, differently.
+                    val stateRows = stateSelectOptions(form.state, reference)
+                    /*
+                     * THE SENTENCE THIS BOX HAS NEVER HAD (DROPDOWN_DESIGN.md A3).
+                     *
+                     * With no reference on the device this control drew an empty menu over the word
+                     * "Select", and a picker that opens on nothing reads as "there are none" — which
+                     * this repository names as its single most repeated bug class. The truthful
+                     * reading on a handset in a workshop with no signal is "this device has not been
+                     * given the list yet", and the two are opposite facts with opposite next moves.
+                     *
+                     * The wording is `addressListNotice`'s, shared with the address card below,
+                     * because both boxes on this one screen are asking about the same list and two
+                     * spellings of one fact is two facts to whoever reads them.
+                     */
+                    val stateNotice = addressListNotice("states", stateRows.size, referenceState)
                     SearchableSelectField(
                         label = "State / union territory",
-                        options = stateSelectOptions(form.state, reference),
+                        options = stateRows,
                         selectedValue = form.state,
-                        enabled = canEdit,
+                        // Stood down when there is nothing to pick, which is also what makes
+                        // `SearchableSelectField` print the sentence beneath the control: a disabled
+                        // trigger cannot be opened, so the menu's own empty arm is out of reach.
+                        enabled = canEdit && listIsAnswerable(stateRows),
+                        emptyMessage = stateNotice,
+                        // Pinned open rather than left to the option count, so the control does not
+                        // change shape with what the network did. See DROPDOWN_DESIGN.md 3.6.
+                        searchable = true,
                         onSelect = { picked ->
                             // Changing the state invalidates a district chosen under the old one.
                             // Kept rather than cleared, deliberately: clearing would silently delete
@@ -1205,6 +1368,11 @@ fun DesignerProfileScreen(
                             form = form.copy(state = picked)
                         }
                     )
+                    stateNotice?.takeIf { listIsAnswerable(stateRows) }?.let { line ->
+                        // Only the CACHED case reaches here: the control is enabled, so the
+                        // primitive draws nothing of its own and the date would otherwise be lost.
+                        Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    }
                     DistrictOrTown(
                         state = form.state,
                         value = form.city,
@@ -1219,6 +1387,106 @@ fun DesignerProfileScreen(
                         dictate = dictates("pincode")
                     ) {
                         form = form.copy(pincode = it.filter { ch -> ch.isDigit() }.take(6))
+                    }
+                }
+
+                /*
+                 * ══════════════════════════════════════════════════════════════════════════════
+                 * THE SECOND ADDRESS, AND WHY THERE ARE TWO ON ONE SCREEN
+                 * ══════════════════════════════════════════════════════════════════════════════
+                 *
+                 * `DesignerProfile` had a flat `addressLine, city, state, pincode` and NO DISTRICT
+                 * and NO COORDINATES, while every other record in this system uses `Location` — which
+                 * splits an address into where the DEVICE was and where the SUBJECT is, on purpose,
+                 * because fifteen live artisan records carry Kharagpur coordinates for artisans in
+                 * Bagru, Kutch and Rudraprayag. The profile is now the seventh owner of that table,
+                 * which is what "like the rest of the record pages" was always meant to mean.
+                 *
+                 * BOTH ARE ON SCREEN BECAUSE BOTH ARE LIVE. The migration backfilled NOTHING:
+                 * `Location.latitude`/`longitude` are NOT NULL, so a row cannot be manufactured for
+                 * an address that never had a coordinate without INVENTING the coordinate, which is
+                 * the exact failure the table's own docstring exists to end. So every existing
+                 * designer's address is still in the four boxes above, those four are still what the
+                 * report prefill copies into stage 3, and this card holds the two facts nothing else
+                 * can — the district and the point. A screen that showed only one of the two would show
+                 * some designers a blank where their address is.
+                 *
+                 * ── THE ONE THING THIS MOUNT MUST NEVER GET WRONG ─────────────────────────────
+                 *
+                 * `isEdit = true`, ALWAYS, WITH NO CONDITION IN FRONT OF IT. A profile is always an
+                 * edit of an existing row — the server upserts it on read, so there is no create path
+                 * anywhere in this feature — and the subject of this address is the person holding the
+                 * phone. Left to capture on its own, a profile opened at a conference, on a train or
+                 * at somebody else's institution would file its owner wherever they happened to be
+                 * sitting, and nothing downstream could tell that from a district they chose. The
+                 * card forwards this to `LocationCaptureCard`, where `true` short-circuits the
+                 * automatic fix outright; its grace period is a heuristic and this is the rule. The
+                 * web spells the same switch `initial !== undefined`, where merely OMITTING the prop
+                 * turns capture on.
+                 */
+                /*
+                 * THE SECTION TITLE IS NOT `DESIGNER_LOCATION_SUBJECT.heading`, AND IT WAS.
+                 *
+                 * `LocationFieldsSection` draws its OWN `GroupHeading(subject.heading, …)` as its
+                 * first row — that is how the card names itself on the six record forms, where
+                 * nothing else is heading it. Passing the same constant to `ProfileSection` printed
+                 * "Where you are based" twice, one line apart, in the same 15sp SemiBold: a heading,
+                 * a paragraph, the identical heading again, another paragraph. A reader meeting that
+                 * has to work out whether they are looking at one section or two, and the honest
+                 * answer — that the second one is the card introducing itself — is not visible from
+                 * the screen.
+                 *
+                 * SO THE SECTION NAMES WHAT IT ADDS AND THE CARD GOES ON NAMING ITSELF. The other
+                 * section on this screen is "Postal address"; this one is the two facts those four
+                 * columns cannot hold, so it says so, and the pair now reads as two different
+                 * questions rather than as one question asked twice. Suppressing the card's heading
+                 * instead would mean a parameter on a composable six other forms call, to fix a
+                 * duplication that exists only here.
+                 */
+                ProfileSection("District and map point") {
+                    Text(
+                        "Your district and your map point are stored the way every other record in " +
+                            "this system stores an address, which is what makes them comparable with " +
+                            "it. The four boxes above are the postal address printed on your " +
+                            "reports; they have not moved and they are still what the report reads.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                    /*
+                     * THE CARD IS FOR SOMEBODY WHO MAY WRITE. A READER GETS THE VALUES INSTEAD.
+                     *
+                     * `LocationFieldsSection` has no `enabled` flag and should not grow one for this
+                     * — it is eight controls, a permission flow and a live GPS stream, and a version of
+                     * it that draws all of that inert would be a screen full of dead buttons in
+                     * front of somebody who only came to read a district. Every other control here
+                     * takes `enabled = canEdit`; this takes the other half of the same rule, which
+                     * is that a read-only viewer must still SEE what is stored. Blocking the write
+                     * is not enough on its own: the save re-derives the permission at the moment of
+                     * the tap and the server refuses as well.
+                     */
+                    if (canEdit) {
+                        LocationFieldsSection(
+                            repository = repository,
+                            value = form.location,
+                            onChange = { next -> form = form.copy(location = next) },
+                            // NOT required. A designer must be able to save their name, phone and
+                            // e-mail without giving a coordinate; `forbid_clearing_location` asks
+                            // nothing of an update either, and a required address on the one screen
+                            // a designer is sent to in order to fill in their details would be a
+                            // wall in front of the work.
+                            required = false,
+                            // READ THE PARAGRAPH ABOVE BEFORE CHANGING THIS.
+                            isEdit = true,
+                            subject = DESIGNER_LOCATION_SUBJECT,
+                            // The screen's own fetch, shared, so the flat state box above and this
+                            // card cannot disagree about what this device has been given.
+                            referenceState = referenceState,
+                            onStatedAddressNeedsCoordinate = { addressNeedsCoordinate = it },
+                            onMessage = onMessage
+                        )
+                    } else {
+                        StoredLocationSummary(form.location)
                     }
                 }
 
@@ -1437,18 +1705,30 @@ fun DesignerProfileScreen(
                     /*
                       THIS SENTENCE BECAME HALF FALSE ON 2026-08-27 AND HAD TO MOVE WITH THE RULE.
                       It read "An empty box CLEARS that value on the server. Nothing here is left
-                      behind when you delete it." — which is still exactly right for seventeen of the
-                      twenty-one boxes and is now wrong for the four marked with an asterisk: the API
-                      refuses a body that asks to blank any of them
-                      (`_mandatory_columns_may_not_be_cleared`), so emptying one does not clear it,
-                      it stops the save. A screen that promises a designer their deletion will be
-                      honoured and then refuses it is worse than one that never promised, and this is
-                      the line they read immediately before pressing Save.
+                      behind when you delete it." — which is still exactly right for most of the
+                      boxes and is wrong for the four marked with an asterisk: the API refuses a body
+                      that asks to blank any of them (`_mandatory_columns_may_not_be_cleared`), so
+                      emptying one does not clear it, it stops the save. A screen that promises a
+                      designer their deletion will be honoured and then refuses it is worse than one
+                      that never promised, and this is the line they read immediately before pressing
+                      Save.
+
+                      A SECOND EXCEPTION ARRIVED WITH THE ADDRESS CARD, and it is a different one.
+                      The location is not a box and it does not clear: `attach_location` CREATES a
+                      `Location` row and never updates one, so "remove my address" has no honest
+                      implementation — it would orphan the stored row and leave the profile with no
+                      district rather than with a corrected one. The API refuses an explicit null
+                      outright (`forbid_clearing_location`). A designer who moves REPLACES it. That
+                      has to be said here rather than discovered, because it is the one place on this
+                      screen where deleting what is on screen does not delete what is stored.
                     */
                     Text(
                         "An empty box CLEARS that value on the server — nothing here is left behind " +
-                            "when you delete it. The four boxes marked * are the exception: they " +
-                            "cannot be emptied, because every report you generate is signed with them.",
+                            "when you delete it. Two exceptions: the four boxes marked * cannot be " +
+                            "emptied, because every report you generate is signed with them; and " +
+                            "your district and map point can be REPLACED but not removed, because " +
+                            "they are stored as a row of their own that a save rewrites rather than " +
+                            "deletes.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -1667,6 +1947,64 @@ private fun ProfileText(
         )
     }
 }
+
+/**
+ * The stored location, in words, for somebody who may not edit it.
+ *
+ * THE TWO GROUPS ARE KEPT APART HERE TOO, and that is the whole reason this is not one line of
+ * comma-separated values. The stated address is a STATEMENT BY A PERSON about where they work; the
+ * coordinates are a reading taken by a device, which is very often a desk in another state. Fifteen
+ * live artisan records exist because those two were once printed as one fact, and an admin reading a
+ * colleague's profile to correct it is exactly the reader who must not be handed them merged.
+ *
+ * "Not recorded" rather than an empty card: a blank where a value would be is indistinguishable from
+ * a value that failed to load, and this screen already refuses that trade for its photographs.
+ */
+@Composable
+private fun StoredLocationSummary(location: LocationRequest?) {
+    if (location == null) {
+        Text(
+            "No district or map point is recorded on this profile. The postal address above is " +
+                "separate and may well be filled in.",
+            color = MaterialTheme.field.muted,
+            fontSize = 12.sp
+        )
+        return
+    }
+    val stated = listOfNotNull(
+        location.village?.takeIf { it.isNotBlank() },
+        location.district?.takeIf { it.isNotBlank() },
+        location.state?.takeIf { it.isNotBlank() },
+        location.pincode?.takeIf { it.isNotBlank() }
+    ).joinToString(", ")
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Stated: " + stated.ifEmpty { "not recorded" },
+            color = MaterialTheme.field.body,
+            fontSize = 12.sp
+        )
+        Text(
+            "Captured at: ${readableCoordinate(location.latitude)}, " +
+                "${readableCoordinate(location.longitude)} — where the device was, not necessarily " +
+                "where the designer works.",
+            color = MaterialTheme.field.muted,
+            fontSize = 12.sp
+        )
+    }
+}
+
+/**
+ * Six decimal places, in a fixed locale.
+ *
+ * THE SAME RULE `LocationFields.trimCoordinate` APPLIES, and written out again here rather than
+ * shared, which is worth a sentence. That function is file-PRIVATE and must stay so: `LocationCapture`
+ * declares its own of the same name in the same package, and widening either makes the pair a
+ * conflicting overload that stops both resolving. Merging the two is a change to two files this lane
+ * does not own, so the rule is restated with its reason instead of quietly forked: [Locale.UK] and
+ * never the device's, because a handset set to a comma-decimal locale renders 22,310000 — not a
+ * number this API parses, and not one a reader can paste into a map.
+ */
+private fun readableCoordinate(value: Double): String = String.format(Locale.UK, "%.6f", value)
 
 /**
  * The refusal under one mandatory box: the app's own "X is required", or nothing.

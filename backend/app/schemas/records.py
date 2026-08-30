@@ -154,6 +154,40 @@ class ArtisanCreate(APIModel):
     # recordable — see the column comment in schema.prisma, which keeps that half of the original
     # argument verbatim.
     experienceYears: int | None = Field(default=None, ge=0, le=90)
+    # ── THE REMAINING MONTHS OF THAT SAME EXPERIENCE — 0..11, A REMAINDER AND NEVER A TOTAL ────
+    #
+    # The requirement is two dropdowns on one line, "5 years" beside "6 months", and the read-back has
+    # to hand the form back exactly what was chosen — which is why this is a second column rather than
+    # an ``experienceTotalMonths`` the two boxes are divided out of. ``Artisan.experienceMonths`` in
+    # schema.prisma carries that argument in full, including why it sits BEHIND ``craftStartDate`` in
+    # the precedence and not in front of it.
+    #
+    # 11 AND NOT 12: twelve months is not a bigger month, it is a year the box above already holds.
+    # There is no registry ceiling to mirror here the way ``experienceYears`` mirrors
+    # ``participant.experienceYears``' 0..90, because the participant table has no months column yet.
+    #
+    # WHAT IS STORED AND WHAT IS NOT YET READ, SAID PLAINLY SO THE PARAGRAPH ABOVE IS NOT MISREAD.
+    # The precedence the schema comment describes — where a row HAS a ``craftStartDate``, both boxes
+    # are derived from that one date — is not implemented on any read path yet: there is no
+    # ``derive_experience_months`` beside ``derive_experience_years`` in services/records, this
+    # column is absent from the ``_f("Experience (years)")`` entry in services/record_fields that
+    # feeds the four export surfaces, and there is no ``participant.experienceMonths`` in the stage
+    # registry. So today the months are ACCEPTED, STORED and RETURNED, and they reach no export and
+    # no report. That is a deliberate boundary and not an oversight — a months export column is a
+    # ministry-facing header and a participant-table column, and both are owner decisions with their
+    # own blast radius — but a reader wiring a client should know the value stops at this API.
+    #
+    # DECLARED HERE AND NOT LEFT TO THE ``CHECK`` CONSTRAINT. The column carries
+    # ``CHECK (experienceMonths BETWEEN 0 AND 11)``, and a CHECK violation surfaces as a driver error
+    # raised from inside the write: a bare 500 naming no field, on a save the researcher cannot
+    # correct. ``ge``/``le`` here is a 422 whose ``loc`` names the box.
+    #
+    # ABSENT, NULL AND 0 STAY THREE DIFFERENT ANSWERS. On create, ``clean_data`` drops a key whose
+    # value is ``None`` — so an unanswered months box writes no column at all and the row keeps NULL,
+    # which is the honest answer for an artisan who said "about thirty years" and nothing about
+    # months. ``0`` is not ``None``, survives that drop and stores 0. On PATCH the same three answers
+    # are kept apart by ``exclude_unset`` plus ``_CLEARABLE_COLUMNS``; see ``ArtisanUpdate``.
+    experienceMonths: int | None = Field(default=None, ge=0, le=11)
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
 
@@ -218,6 +252,15 @@ class ArtisanUpdate(APIModel):
     # entered by mistake has to be retractable from the form that entered it.
     craftStartDate: datetime | None = None
     experienceYears: int | None = Field(default=None, ge=0, le=90)
+    # See ``ArtisanCreate.experienceMonths`` for the bound and for why it is a second column. On this
+    # body the three answers are kept apart by two mechanisms working together, and both are needed:
+    # ``exclude_unset=True`` in the route means an ABSENT key never reaches ``clean_data``, so the
+    # stored value stands; ``"experienceMonths"`` in ``_CLEARABLE_COLUMNS`` means an explicit NULL
+    # survives ``clean_data``'s None-drop and blanks the column, which is how a months figure typed
+    # against the wrong artisan is retracted; and ``0`` is neither, so it stores 0. Without the
+    # clearable entry an explicit null would be silently discarded and the save would report 200
+    # while changing nothing — "a field that cannot be cleared is a 200 that does nothing".
+    experienceMonths: int | None = Field(default=None, ge=0, le=11)
     dos: str | None = None
     donts: str | None = None
     craftId: str | None = None

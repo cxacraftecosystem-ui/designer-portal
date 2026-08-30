@@ -291,9 +291,7 @@ async def spend(user_id: str, day: str, verb: str) -> None:
     """
     try:
         await db.dwaiverbdailyusage.upsert(
-            where={
-                "userId_istDay_verb": {"userId": user_id, "istDay": day, "verb": verb}
-            },
+            where={"userId_istDay_verb": {"userId": user_id, "istDay": day, "verb": verb}},
             data={
                 "create": {"userId": user_id, "istDay": day, "verb": verb, "count": 1},
                 "update": {"count": {"increment": 1}},

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The designer profile editor — all twenty-one columns, one save, one PUT.
+ * The designer profile editor — all twenty-two columns plus the location card, one save, one PUT.
  *
  * WHY THIS FORM SENDS EVERY KEY ON EVERY SAVE. `PUT /designers/{…}/profile` applies its body with
  * `exclude_unset`, so an ABSENT key leaves the stored value alone and a key present and NULL clears
@@ -17,11 +17,31 @@
  * list had no members, and the record could not be saved at all. So the same discipline applies
  * here — the 36 bundled names (`OFFLINE_STATES`, read out of the postal-zone table rather than
  * copied) answer the question with no network, and the served list takes over the moment it lands.
- * The full `LocationFields` card is deliberately NOT reused: it captures a device fix, a subject
- * coordinate, a district and a village against a Location row, and a designer's correspondence
- * address is none of those things — it is four plain columns on `DesignerProfile`. Its two exported
- * validators are reused instead, so a pincode is judged here by exactly the rule that judges one on
- * the artisan form.
+ * Its two exported validators are reused as well, so a pincode is judged here by exactly the rule
+ * that judges one on the artisan form.
+ *
+ * ── AND THE ADDRESS IS NOW IN TWO PLACES AT ONCE, ON PURPOSE, UNTIL ONE OF THEM RETIRES ────────
+ *
+ * THIS PARAGRAPH USED TO ARGUE THE OPPOSITE AND IT IS KEPT HERE, INVERTED, RATHER THAN DELETED. It
+ * said the full `LocationFields` card was “deliberately NOT reused” because “a designer's
+ * correspondence address is none of those things — it is four plain columns on `DesignerProfile`”.
+ * The owner's answer (requirement 29) is that a designer's profile is missing the district and the
+ * map point that every other record page has, and the schema settled it the same way: on 2026-08-29
+ * `DesignerProfile` gained a nullable `locationId` relating it to `Location`, copied from the six
+ * owners that already relate to it. Relating rather than adding four more loose columns is what
+ * brings the district picker, the map pin and the coordinate/state mismatch flagging with it instead
+ * of reimplementing all three here — and a form whose own header argued against the control it
+ * mounts is worse than either version, because it is what stops the next reader looking.
+ *
+ * SO BOTH GROUPS RENDER, AND NEITHER IS FED FROM THE OTHER. The flat `addressLine`/`city`/`state`/
+ * `pincode` columns are still there and still hold every live designer's address — they were
+ * deliberately not dropped and not backfilled, because `Location.latitude`/`longitude` are NOT NULL
+ * and a `Location` row cannot be manufactured for a profile that has an address and no coordinate
+ * without INVENTING the coordinate. Until the retiring migration the schema describes actually
+ * happens, a profile may carry an address in either place, so a screen that drew only one of the two
+ * would show some designers a blank where their address is. See the address group below for the two
+ * traps that live in drawing both at once: the FormData name collision, and why the location card is
+ * NOT seeded from the flat columns.
  *
  * WHY THE PHOTOGRAPH IS A MEDIA ID AND THE UPLOAD HAPPENS BEFORE THE SAVE. The column stores an id
  * that the report resolves through `GET /media/{id}`; a URL would expire. `MediaCaptureField`
@@ -48,6 +68,7 @@ import { IdCard, Trash2 } from "lucide-react";
 
 import { StoredMediaImage } from "@/components/designers/StoredMediaImage";
 import {
+  DESIGNER_EXPERIENCE_BOXES,
   DESIGNER_PROFILE_COPY_NOTICE,
   DESIGNER_PROFILE_GROUPS,
   DESIGNER_PROFILE_HELP,
@@ -64,6 +85,7 @@ import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
 import { PhoneField } from "@/components/forms/PhoneField";
 import {
+  LocationFields,
   OFFLINE_STATES,
   loadAddressReference,
   pincodeValidationError,
@@ -73,7 +95,7 @@ import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { handleFormEnter } from "@/lib/formNav";
-import { useUnsavedChanges } from "@/lib/forms";
+import { locationFromForm, useUnsavedChanges } from "@/lib/forms";
 import { uploadMediaBatch } from "@/lib/media";
 import {
   DESIGNER_PROFILE_MEDIA_RECORD_TYPE,
@@ -102,6 +124,36 @@ const MAX = {
 } as const;
 
 /**
+ * The word for “this was never answered”, on both boxes of the experience pair.
+ *
+ * ── THIS STRING IS THE WHOLE OF THE NULL-VERSUS-ZERO GUARANTEE ON THIS SCREEN ────────────────
+ *
+ * It sits on an `<option value="">` placed FIRST in each list, so an untouched dropdown submits the
+ * empty string and `fullDesignerProfileBody` turns that into an explicit null. Without it the first
+ * option would be `0` — `Select`'s uncontrolled fallback is `options[0].value` — and every designer
+ * who never opened this control would have 0 years and 0 months written onto their profile by the
+ * next save of a completely different field. Nothing on screen would say so: the box would simply
+ * read “0”, which is a claim about a person rather than a blank.
+ *
+ * A REAL 0 IS STILL PICKABLE and still means something — an exact whole number of years — which is
+ * why the two answers need different values rather than one clever one.
+ */
+const EXPERIENCE_UNANSWERED = "Not recorded";
+
+/**
+ * The two option ranges, mirroring the server's bounds exactly: `DesignerProfileUpdate` accepts
+ * `experienceYears` 0–70 (the same range as the registry's `designerExperience`, which this value is
+ * copied into) and `experienceMonths` 0–11.
+ *
+ * OFFERING ONLY WHAT THE COLUMN ACCEPTS IS WHY THE ENCODER DOES NOT CLAMP. A closed list cannot
+ * produce 400, so there is nothing to clamp — and clamping would store a number nobody chose. The
+ * number box these replaced could produce one, which is why it needed `min`/`max` to refuse it
+ * before a 422 took the other twenty-one answers down with it.
+ */
+const EXPERIENCE_YEAR_OPTIONS = Array.from({ length: 71 }, (_, index) => index);
+const EXPERIENCE_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => index);
+
+/**
  * ── DICTATION ON THIS FORM: WHICH BOXES HAVE A MICROPHONE, AND WHY THE REST DO NOT ──────────────
  *
  * The owner's instruction (2026-08-28): "Add the existing microphone/dictation functionality to all
@@ -119,9 +171,10 @@ const MAX = {
  *
  * NOT DICTATED, one line each:
  *
- *  - **Designer's experience** — a native number box bounded 0–70. A recogniser spells digits out
- *    in words ("twelve"), which a number input discards silently, so a spoken answer leaves the box
- *    empty with nothing on screen to say why.
+ *  - **Designer's experience** — two closed dropdowns (years 0–70, months 0–11) since 2026-08-30,
+ *    answered by picking. It was a native number box when this list was written and the reason has
+ *    only got stronger: a recogniser spells digits out in words ("twelve"), which a number input
+ *    discarded silently, and a dropdown has no text field for a phrase to land in at all.
  *  - **Phone** — a number, with the same problem, behind a control that also carries a dial-code
  *    dropdown.
  *  - **Email** — a recogniser writes "at" for `@` and punctuates a domain, so the box would reliably
@@ -286,7 +339,14 @@ export function DesignerProfileForm({
         department: text(form, "department"),
         qualification: text(form, "qualification"),
         specialisation: text(form, "specialisation"),
+        /*
+          BOTH HALVES OF THE PAIR, EACH AS THE RAW STRING THE DROPDOWN SUBMITTED. `text` yields ""
+          for an option whose value is "", and `fullDesignerProfileBody` is the one place "" becomes
+          null and "0" becomes 0 — see `wholeNumberOrNull`. Parsing here as well would be a second
+          opinion about the same string, and the two would eventually disagree about zero.
+        */
         experienceYears: text(form, "experienceYears"),
+        experienceMonths: text(form, "experienceMonths"),
         biography: text(form, "biography"),
         // PhoneField submits the combined "+91 9876543210" through its own zero-size mirror under
         // this name, so it is read from the FormData like any other box.
@@ -301,7 +361,22 @@ export function DesignerProfileForm({
         signatureMediaId: nextSignatureId,
         cvMediaId: nextCvId,
         empanelmentNo: text(form, "empanelmentNo"),
-        empanelmentDate: text(form, "empanelmentDate")
+        empanelmentDate: text(form, "empanelmentDate"),
+        /*
+          THE LOCATION CARD'S ANSWER — AND ITS SILENCE IS ALSO AN ANSWER.
+
+          `locationFromForm` returns `undefined` whenever the card holds no coordinate, which is
+          most designers most of the time, and the encoder then omits the key entirely: the server
+          reads an absent `location` as “keep the address already stored”. It is the SAME function
+          the six field-record forms use, reading the same input names off the same card — there is
+          deliberately no profile-specific encoder, because a second way to send an address is a
+          second way to get it wrong.
+
+          IT READS `state` AND `pincode` OFF THE CARD AND NOT OFF THE FOUR FLAT BOXES ABOVE, which
+          is only true because those two were renamed. See the address group for what a duplicate
+          `name="state"` in this form would have written into the Location row.
+        */
+        location: locationFromForm(form)
       });
 
       const saved = await save(body);
@@ -458,20 +533,79 @@ export function DesignerProfileForm({
           maxLength={MAX.specialisation}
           onDirty={markDirty}
         />
-        <Field label={DESIGNER_PROFILE_LABELS.experienceYears}>
-          <TextInput
-            name="experienceYears"
-            type="number"
-            // Bounded HERE as well as on the server, and that is the whole reason the encoder does
-            // not clamp: the column is validated 0–70 by pydantic and a rejection 422s the WHOLE
-            // body, so 400 years typed into this box would lose the twenty fields the designer got
-            // right. Native validation refuses the submit instead, on the box that is wrong.
-            min={0}
-            max={70}
-            step={1}
-            defaultValue={profile.experienceYears === null ? "" : String(profile.experienceYears)}
-          />
-        </Field>
+        {/*
+          ── THE EXPERIENCE PAIR: TWO DROPDOWNS ON ONE LINE, UNDER ONE HEADING ────────────────
+
+          `FieldBlock` AND NOT `Field`, and it is not a style choice. `Field` is a `<label>`, a
+          themed dropdown's trigger is a `<button>`, and a `<label>` cannot name a button at all —
+          HTML-AAM computes a button's name from its own contents, so the pair would have announced
+          itself as its two values and never as its question. `FieldBlock` is a `<div>` with a
+          `role="group"` named by the heading, which is how a composite control gets named, and it
+          is what makes these two boxes read as ONE answer rather than as two unrelated fields that
+          happen to be adjacent. The same swap the phone control in "Contact" below already carries.
+
+          EACH BOX STILL SAYS WHAT IT MEASURES. The group's name is announced on ENTERING the group,
+          so a reader who tabs straight onto the second trigger would otherwise hear only “6” — and
+          with the wrapper's ambient label it would be worse, two triggers both announcing
+          “Designer's experience” with different numbers after it. `DESIGNER_EXPERIENCE_BOXES` holds
+          both names and the argument.
+
+          `grid-cols-2` WITH NO BREAKPOINT: the requirement is two dropdowns on one line, and a pair
+          that stacks on a phone is two fields again on the one screen most likely to be used
+          standing up. `min-w-0` on each cell is what stops a long option widening the column — the
+          trigger's own label is `min-w-0 truncate` with a `title`, so a narrow box shortens its text
+          instead of pushing the field beside it off the row.
+
+          ONE CELL OF THE GROUP GRID, NOT THE WHOLE ROW. The pair takes the slot the single number
+          box took, which keeps the section's rhythm (qualification and specialisation on one row,
+          experience under them) and matches the artisan form field for field — the same control on
+          the two screens should not be a half-width block on one and a full-width band on the other.
+        */}
+        <FieldBlock label={DESIGNER_EXPERIENCE_BOXES.group}>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="grid min-w-0 gap-1">
+              <span className="text-xs font-medium text-ink-500">{DESIGNER_EXPERIENCE_BOXES.years.label}</span>
+              <Select
+                name="experienceYears"
+                aria-label={DESIGNER_EXPERIENCE_BOXES.years.ariaLabel}
+                /*
+                  `?? ""` AND NOT `|| ""`. A stored 0 is falsy, so `||` would seed the box with the
+                  empty option and the next save would write null over a real answer — the same
+                  zero-is-a-real-value rule the encoder states, arriving by the other door.
+                */
+                defaultValue={String(profile.experienceYears ?? "")}
+                // A themed dropdown is a <button> and fires no native input event, so the form's
+                // onInput never sees it: the dirty flag has to be raised by hand or a changed
+                // answer leaves the page with no unsaved-changes prompt.
+                onChange={markDirty}
+              >
+                {/* FIRST, and its value is the empty string — see EXPERIENCE_UNANSWERED. */}
+                <option value="">{EXPERIENCE_UNANSWERED}</option>
+                {EXPERIENCE_YEAR_OPTIONS.map((years) => (
+                  <option key={years} value={years}>
+                    {years}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="grid min-w-0 gap-1">
+              <span className="text-xs font-medium text-ink-500">{DESIGNER_EXPERIENCE_BOXES.months.label}</span>
+              <Select
+                name="experienceMonths"
+                aria-label={DESIGNER_EXPERIENCE_BOXES.months.ariaLabel}
+                defaultValue={String(profile.experienceMonths ?? "")}
+                onChange={markDirty}
+              >
+                <option value="">{EXPERIENCE_UNANSWERED}</option>
+                {EXPERIENCE_MONTH_OPTIONS.map((months) => (
+                  <option key={months} value={months}>
+                    {months}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        </FieldBlock>
       </>
     ),
     biography: (
@@ -594,8 +728,29 @@ export function DesignerProfileForm({
           onDirty={markDirty}
         />
         <FieldBlock label={DESIGNER_PROFILE_LABELS.state}>
+          {/*
+            ── `name="profileState"`, NOT `name="state"`, AND THE RENAME IS LOAD-BEARING ────────
+
+            THE COLLISION. `LocationFields`, mounted at the foot of this group, renders its OWN
+            `name="state"` and `name="pincode"` — they are columns on the `Location` row. Two
+            controls sharing a name inside one `<form>` is legal HTML and `FormData.get` answers with
+            the FIRST of them in document order, which would be these boxes. So `locationFromForm`,
+            which reads exactly those two names, would have built the Location row out of the
+            CORRESPONDENCE state and the CORRESPONDENCE pincode while taking the district from the
+            card below — a district of Rajasthan filed under West Bengal, which is the "Rajasthan +
+            Kachchh" pair that exists nowhere and that `LocationFields` already records shipping once.
+            Nothing on screen would have said so; both boxes would have looked answered.
+
+            WHY RENAME THESE AND NOT THOSE. The four names `locationFromForm` reads (`state`,
+            `district`, `village`, `pincode`) are shared by six other forms and are the contract that
+            function is written against. These two are read from React state — `submit` sends
+            `state: stateName` and `pincode`, not `text(form, …)` — so the name attribute here feeds
+            nothing but the form's own DOM, and changing it changes no wire key and no column. It is
+            kept rather than dropped so the box still participates in the form like every other
+            control, and so the next reader can see that the two addresses are two things.
+          */}
           <Select
-            name="state"
+            name="profileState"
             value={stateName}
             onChange={(event) => {
               setStateName(event.target.value);
@@ -613,7 +768,11 @@ export function DesignerProfileForm({
         </FieldBlock>
         <Field label={DESIGNER_PROFILE_LABELS.pincode}>
           <TextInput
-            name="pincode"
+            // `profilePincode` for the reason written out on the state dropdown above: the location
+            // card below owns `name="pincode"`, and a duplicate here would hand `locationFromForm`
+            // this box's six digits for the Location row while the card's own pincode — which the
+            // geocoder may have just written, blank included — was never read.
+            name="profilePincode"
             inputMode="numeric"
             // Six, not the column's 12: `pincodeValidationError` — the same function the artisan
             // form is judged by, and the same three sentences `address.py` answers with — demands
@@ -630,6 +789,91 @@ export function DesignerProfileForm({
             {pincodeProblem ?? zoneProblem}
           </p>
         ) : null}
+        <div className="min-w-0 md:col-span-2">
+          {/*
+            ── REQUIREMENT 29: THE DISTRICT, THE VILLAGE AND THE MAP POINT ───────────────────
+
+            The four boxes above are `DesignerProfile`’s own columns and they cannot hold a district
+            or a coordinate. `DesignerProfile.locationId` now relates to `Location` exactly as the six
+            field-record types do, so the card that already asks those questions everywhere else asks
+            them here — with its district picker, its map pin, its geocoder suggestion and its
+            coordinate/state mismatch flag — rather than three of them being reimplemented on this
+            one screen.
+
+            ─── TRAP 1, AND IT IS THE ONE THAT MATTERS: `initial` IS PASSED, ALWAYS ─────────────
+
+            `LocationFields` decides whether it is looking at a NEW record by `initial !== undefined`,
+            and OMITTING THE PROP IS THE ONLY THING THAT TURNS AUTOMATIC GPS CAPTURE ON. A designer
+            profile is always an edit of a row that already exists — the GET upserts it, so there is
+            no create path anywhere in this feature — so this prop must be here on every render.
+
+            WHAT DROPPING IT WOULD DO, said plainly because it would look like a tidy-up: the card
+            would open a `watchPosition` the moment this page loaded and write the desk the designer
+            happened to be sitting at into their profile as their location. An admin in Kharagpur
+            opening a colleague’s profile to correct a phone number would stamp Kharagpur onto a
+            designer in Ahmedabad, and the next save would file it. That is not a hypothetical —
+            fifteen live artisan records carry Kharagpur coordinates for artisans in Bagru, Kutch and
+            Rudraprayag for exactly this reason, and the whole PROVENANCE / STATED ADDRESS split
+            exists to end it.
+
+            `?? null` AND NOT `initial={profile.location}`, which is trap 1 arriving through a type
+            hole instead of through a forgotten prop: `undefined` is the switch, and a profile served
+            by an API build that predates the relation would carry `location === undefined`. `null`
+            is a perfectly good "this is an edit and there is no stored location"; `undefined` is not.
+
+            ─── AND IT IS SEEDED FROM THE RELATION ALONE, NEVER FROM THE FOUR BOXES ABOVE ───────
+
+            Copying `profile.state` / `profile.pincode` in here looks like joining the two halves of
+            one address, and it would lock every existing designer out of their own profile. The card
+            treats ANY stated address as requiring a coordinate (`hasStatedAddress` →
+            `coordinateRequired`, enforced with `setCustomValidity` on both coordinate boxes) because
+            `Location.latitude`/`longitude` are NOT NULL and the row cannot be written without one.
+            Seed it from a flat address and every designer who already has one is refused at Save —
+            including on the four mandatory identity columns — until they grant GPS or drop a pin.
+            The flat boxes keep their own four controls; the two addresses stay separate until the
+            retiring migration the schema describes actually moves one into the other.
+
+            NO `required` OVERRIDE, so the card’s own rules stand: nothing is demanded of a profile
+            that has no location, a stored state or district may not be emptied by a save, and the
+            district stands down from required whenever its list is empty — offline, or before
+            `GET /reference/address` lands. A field may only be mandatory where it is answerable.
+
+            NO `statedPlace`: that prop is the artisan’s free-text place box, read only, so the card
+            can flag a coordinate that disagrees with it. `DesignerProfile` has no such column, and
+            passing `addressLine` would be a different fact wearing its name.
+          */}
+          {/*
+            ── THE SENTENCE THAT STOPS THIS GROUP HAVING TWO “STATE” BOXES AND NO EXPLANATION ──
+
+            IT IS NOT DECORATION, AND WHAT IT PREVENTS IS A BLANK ADDRESS ON A MINISTRY DOCUMENT.
+            From here down the reader meets a SECOND `State` dropdown and a SECOND `PIN code` box —
+            `Location`’s own columns, four controls below `DesignerProfile`’s own four, under one
+            “Address” heading. The card even opens by saying “this is what the map, the exports and
+            the research dataset use”, which is true of it and is NOT true of the report: the report
+            reads the four boxes above, because `PREFILL_MAP` copies `addressLine`/`city`/`state`/
+            `pincode` into stage 3 and there is no pair for anything on this card. So a designer who
+            filled in the more capable-looking half — picked a state here, chose a district, dropped
+            a pin — and left the plain boxes above empty would generate a report with NO ADDRESS ON
+            IT, having answered every address question the screen asked them.
+
+            Nothing on this screen said which was which until this paragraph, and both of the other
+            two surfaces already do say it: the read-only view prints it over its “Location record”
+            block, and the Android profile prints it twice, once over each half. A form that is the
+            only one of the three staying quiet about it is the one that gets it wrong, because it
+            is the only one anybody types into.
+
+            SAID HERE RATHER THAN AS THE GROUP’S `blurb`, deliberately. A blurb is rendered by the
+            read-only view as well, which already carries its own paragraph making this point — two
+            statements of one fact in one panel, free to drift apart. This is the one surface that
+            is missing it, so this is the one surface that gains it.
+          */}
+          <p className="mb-3 text-sm leading-6 text-ink-muted">
+            The four boxes above are the postal address printed on your reports. This card is where the district, the
+            village and the map point live — the two things those four columns cannot hold — and it is stored the way
+            every other record page in this system stores an address. Neither one fills the other in, so fill in both.
+          </p>
+          <LocationFields initial={profile.location ?? null} onDirty={markDirty} subjectLabel="the designer" />
+        </div>
       </>
     ),
     empanelment: (

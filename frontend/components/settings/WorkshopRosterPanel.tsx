@@ -3,6 +3,7 @@
 import { UserPlus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { Field } from "@/components/FormControls";
 import { ResizableTh } from "@/components/ResizableTh";
@@ -15,7 +16,6 @@ import {
   personName,
   sortWorkshopsByOccurrence,
   useWorkshopAccessLevels,
-  workshopLabel,
   type WorkshopAccessLevel,
   type WorkshopAccessRow
 } from "@/components/settings/workshopAccess";
@@ -25,6 +25,15 @@ import { apiFetch, listResource } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { roleLabel } from "@/lib/permissions";
 import type { User, Workshop } from "@/lib/types";
+import {
+  WORKSHOP_OPTION_PAGE_SIZE,
+  deviceLooksOffline,
+  fieldWorkshopOptions,
+  workshopCutSentence,
+  workshopEmptyLabel,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 
 /**
  * One workshop's roster: everybody with a row on it, at what level, in what state.
@@ -44,7 +53,12 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
   const { toast } = useToast();
   const levels = useWorkshopAccessLevels();
 
-  const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  /**
+   * `WorkshopListState`, not a bare array — see the fetch effect below for the failure this closes.
+   * `"loading"` is the correct first render: the effect below has not resolved yet, and the old bare
+   * `Workshop[]` state had no way to say that separately from "answered, and there are none".
+   */
+  const [workshopList, setWorkshopList] = useState<WorkshopListState<Workshop>>({ kind: "loading" });
   const [workshopId, setWorkshopId] = useState("");
   const [roster, setRoster] = useState<WorkshopAccessRow[] | null>(null);
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
@@ -60,13 +74,26 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
   const [grantNote, setGrantNote] = useState("");
 
   useEffect(() => {
-    listResource<Workshop>("/workshops", { pageSize: 100 })
+    /*
+      `WORKSHOP_OPTION_PAGE_SIZE` (`RENDER_CAP`), NOT THE ROUND NUMBER `100` THIS USED TO ASK FOR —
+      the live `Workshop` table has 196 rows, so a picker fetching 100 into a control that draws at
+      most `RENDER_CAP` (80) was already dropping the last third of a full page silently; asking for
+      exactly as many as the control can draw removes that gap instead of moving it.
+
+      AND THE FAILURE IS NO LONGER SWALLOWED. This used to be `.catch(() => setWorkshops([]))`, which
+      turned a failed `GET /workshops` into the same empty array a genuinely workshop-less deployment
+      produces — an admin opening this panel on a bad connection saw a picker with nothing in it and
+      no reason given, on a control whose entire job is finding a workshop to manage. `kind: "failed"`
+      lets `workshopEmptyLabel` below say what actually happened instead of asserting there is
+      nothing to grant access to.
+    */
+    listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE })
       .then((result) => {
         const sorted = sortWorkshopsByOccurrence(result.items);
-        setWorkshops(sorted);
+        setWorkshopList({ kind: "ok", rows: sorted, total: result.total });
         setWorkshopId((current) => current || sorted[0]?.id || "");
       })
-      .catch(() => setWorkshops([]));
+      .catch(() => setWorkshopList({ kind: "failed" }));
     apiFetch<DirectoryUser[]>("/users/directory")
       .then(setDirectory)
       .catch(() => setDirectory([]));
@@ -90,9 +117,26 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
     void loadRoster();
   }, [loadRoster, refreshToken]);
 
-  const workshopOptions = useMemo(
-    () => workshops.map((workshop) => ({ value: workshop.id, label: workshopLabel(workshop) })),
-    [workshops]
+  /**
+   * WHICH LIST THIS IS, for `workshopEmptyLabel` below. `scoped: false` because this request carries
+   * no `accessibleOnly` — an admin managing rosters sees the whole `/workshops` table, so an empty
+   * answer here would genuinely mean "no workshops have been recorded", never "none are open to this
+   * account". `deviceLooksOffline` splits the failure sentence the same way `WorkshopSelect` does.
+   */
+  const voice: WorkshopListVoice = { table: "field", scoped: false, online: !deviceLooksOffline() };
+
+  /**
+   * ROUTED THROUGH THE SHARED BUILDER rather than the hand-rolled `workshopLabel` + `.map()` this
+   * used to be, so this picker's rows match every other workshop picker in the app instead of adding
+   * yet another copy of the label logic `components/settings/workshopAccess.tsx` already carries one
+   * of. `group: true` because the request narrows by nothing at all — an ended workshop is a normal,
+   * still-manageable roster and needs its own heading same as everywhere else this table is offered.
+   * `offPage: "refuse"` because `workshopId` here is picker state with no persisted value behind it —
+   * there is nothing to recover a stored id FROM.
+   */
+  const workshopOptionSet = useMemo(
+    () => fieldWorkshopOptions(workshopList, { group: true, offPage: { mode: "refuse" } }),
+    [workshopList]
   );
 
   // Anybody already GRANTED belongs in the table, where their level is changed — offering them in the
@@ -247,11 +291,23 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
               // a different set of people, and half of them may already be granted here.
               setGrantUserIds([]);
             }}
-            options={workshopOptions}
-            placeholder={workshops.length ? "Select or type to search" : "Loading workshops…"}
+            options={workshopOptionSet.options}
+            placeholder={workshopList.kind === "loading" ? "Loading workshops…" : "Select or type to search"}
+            // The panel's own line when the list holds nothing — a failed read, or (since this
+            // request is unscoped) a repository that genuinely has none — never the bare "No
+            // options" `ComboBox` falls back to otherwise. See `workshopEmptyLabel`'s own header.
+            emptyLabel={workshopEmptyLabel(workshopList, voice)}
             value={workshopId}
           />
         </Field>
+        {/*
+          WHAT THE LIST LEFT OUT. `searchable: false` in the sentence's own terms — `ComboBox`'s box
+          is always on, but it filters only the `WORKSHOP_OPTION_PAGE_SIZE` rows already fetched, not
+          the server, so it does not reach past the cut the way a `serverQuery` box would. See
+          `workshopCutSentence`'s header on why that argument is about REACH and not about whether a
+          box is on screen.
+        */}
+        <CappedListNotice cuts={[workshopCutSentence(workshopOptionSet, { searchable: false })]} />
       </div>
 
       {error ? (

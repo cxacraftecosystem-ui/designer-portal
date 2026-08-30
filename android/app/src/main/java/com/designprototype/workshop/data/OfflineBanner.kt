@@ -162,6 +162,32 @@ data class OutboxFailureRow(
      * `createdId` is null, because a clash means no record of ours was written.
      */
     val savedOnServer: Boolean,
+    /**
+     * WHAT THIS ENTRY POINTS AT AND THE SERVER DOES NOT HAVE, in the words a person uses for it —
+     * "design & prototype workshop", "artisan", "the craft it corrects". Empty on every other row.
+     *
+     * NOUNS AND NOT COLUMN NAMES, because the row's whole value is that the designer can tell which
+     * box on the form to reopen, and `designWorkshopId` names no box. The mapping lives in
+     * `REFERENCE_FIELD_NOUNS` beside the columns rather than in the tray, so a control added later
+     * cannot end up with two names on two screens.
+     *
+     * MORE THAN ONE IS AN HONEST AMBIGUITY, never a guess — `records.require_record` and
+     * `design_workshops.load_workshop_or_404` both answer the byte-identical "Record not found", so
+     * an artisan carrying both a workshop and a design workshop genuinely cannot be narrowed further.
+     * See `PendingEntry.danglingField`.
+     */
+    val danglingNouns: List<String> = emptyList(),
+    /**
+     * The dangling columns this tray can actually offer a picker for — the two workshop links.
+     *
+     * A SUBSET OF [danglingNouns]'s columns AND SOMETIMES A SMALLER ONE, which is the honest shape
+     * rather than an oversight. The record a correction is aimed at cannot be re-picked (it is the
+     * `{id}` in the PATCH path, not a field), and the registers — artisan, craft, product, tool —
+     * have no list on this screen. A row whose only dangling candidate is one of those still gets
+     * its sentence and still keeps its entry; what it does not get is a button that opens an empty
+     * picker, which would be a second dead end wearing the costume of a remedy.
+     */
+    val repickKeys: List<String> = emptyList(),
 )
 
 /**
@@ -190,6 +216,35 @@ fun outboxKindLabel(type: String, isUpdate: Boolean): String {
         else -> type
     }
     return if (isUpdate) "$noun — a correction" else noun
+}
+
+/**
+ * The record type as it appears MID-SENTENCE, which is not what [outboxKindLabel] answers.
+ *
+ * "Artisan — a correction" is a heading; this is the noun in *"it could be the artisan it corrects, or
+ * the design & prototype workshop it is filed under"*. Lower case, no dash, no clause — a sentence
+ * that spliced a heading into itself would read as though the app were quoting its own UI at somebody
+ * standing in a courtyard.
+ *
+ * It exists for exactly one caller: the correction arm of `outboxDanglingSentence`, where the record
+ * this entry is a correction TO is one of the things that may have gone missing (a `require_record`
+ * on the PATCH path runs before any key in the payload is looked at). Telling a designer to re-pick a
+ * workshop for an artisan an admin deleted at the office is the remedy that cannot work, so the
+ * record itself has to be nameable as a suspect.
+ */
+fun outboxRecordNoun(type: String): String = when (type) {
+    "artisan" -> "artisan it corrects"
+    "craft" -> "craft it corrects"
+    "product" -> "product it corrects"
+    "tool" -> "toolkit it corrects"
+    "process" -> "process it corrects"
+    "workshop" -> "workshop it corrects"
+    "questionnaire" -> "interview it corrects"
+    // Every other type reaches this only through a shape that cannot be a correction — a media-only
+    // entry has no payload to hold a reference, an export note and a rating carry their own ids — so
+    // this is a fallback rather than a case, and it says the true thing rather than inventing a noun
+    // for a type nobody has named yet.
+    else -> "record it corrects"
 }
 
 /**
@@ -305,5 +360,13 @@ fun outboxFailureRows(entries: List<PendingEntry>): List<OutboxFailureRow> =
                 // one without it is unreachable. A media-only entry has it set to its `targetId`
                 // before any byte moves, which is also correct here — that record exists.
                 savedOnServer = entry.createdId != null,
+                // TURNED INTO WORDS HERE, in the same pure projection as everything else on this
+                // row, so the tray cannot word the same fact differently from the sentence printed
+                // under it — the two are read together, three lines apart, by somebody deciding
+                // whether to press a red button.
+                danglingNouns = entry.danglingKeys.map { key ->
+                    referenceFieldNoun(key, recordNoun = outboxRecordNoun(entry.type))
+                },
+                repickKeys = entry.danglingKeys.filter { it in WORKSHOP_LINK_KEYS },
             )
         }

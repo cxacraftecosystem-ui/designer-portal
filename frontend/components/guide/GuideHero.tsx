@@ -36,21 +36,32 @@ export function GuideHero({ stepCount, onStart }: { stepCount: number; onStart: 
   });
 
   /*
-   * THE THREE FACTS ARE THE READER'S ORIENTATION, AND THE FIRST ONE HAS TO BE ABOUT GETTING IN.
+   * THE THREE FACTS ARE THE READER'S ORIENTATION, AND THE FIRST ONE IS ABOUT WHO GETS IN.
    *
-   * The walkthrough is reachable before anybody has an account — it is linked off the landing page's
-   * "Take the walkthrough" — so its readers include people who have not signed in yet and people
-   * whose sign-in was just refused. Since the platform allow-list shipped, the second group exists
-   * in numbers it never did before: an address nobody has admitted gets a pending request instead of
-   * an account. Teaching that reader the steps of documentation without first telling them why
-   * the door did not open sends them to look for a fault in the app, or to try again with a
-   * different browser, which is the worst version of the same wait.
+   * ⚠ THIS PARAGRAPH OPENED "The walkthrough is reachable before anybody has an account", AND THAT
+   * IS NOT TRUE OF THIS PAGE. `/guide` lives under `app/(protected)`; `AppShell` does
+   * `router.replace("/login")` and then `if (!user) return null`, so a signed-out reader who follows
+   * the landing page's "Take the walkthrough" is sent to sign in and never reads a word of this
+   * band. Nor can the reader the fact was WRITTEN for: an address nobody has admitted gets a pending
+   * request instead of an account, so that person cannot reach this page either. The band was
+   * addressing an audience that is not in the room — which is the quietest way for help text to be
+   * wrong, because nothing on screen contradicts it and the people who would have noticed cannot see
+   * it. `components/hero/WalkthroughCallout.tsx` already carries the honest version for the public
+   * side ("`/guide` sits inside the app … signing in is the first step"), and that file belongs to
+   * the landing-page lane rather than to this one.
    *
-   * It replaces the review fact rather than joining it because four facts is a list and three is an
-   * orientation — and review is taught properly at step 10, where the reader is doing it.
+   * THE FACT SURVIVED THE CORRECTION AND IS NOW AIMED AT THE READER WHO IS ACTUALLY HERE. Anybody
+   * reading this band is signed in, so how THEY got in is behind them; how a colleague gets in is
+   * not, and it is the question a designer brings back from the field with a researcher standing
+   * beside them. Same fact, addressed to the person who can act on it.
+   *
+   * There are three and not four because four facts is a list and three is an orientation — review
+   * is taught on its own card, where the reader is doing it. (That sentence used to name the card by
+   * NUMBER. Numbering a step in prose is the same defect as printing a step count: `GUIDE_STEPS` has
+   * grown three times since, and the number was wrong before the first of them.)
    */
   const facts = [
-    { icon: ShieldCheck, text: "Access is by invitation — an admin admits your address first" },
+    { icon: ShieldCheck, text: "Access is by invitation — an admin admits each address before it can sign in" },
     { icon: ListOrdered, text: `${stepCount} steps, in the order you do them in the field` },
     { icon: Compass, text: "Every record is scoped to a workshop" }
   ];

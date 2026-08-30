@@ -7,7 +7,7 @@
  * press enter then the first value gets chosen, in multi-select everywhere, also give the option
  * select all."
  *
- * Seven decisions carry this file, and none of them are obvious from the code alone.
+ * Nine decisions carry this file, and none of them are obvious from the code alone.
  *
  * **1. Search is decided by the call site wherever the options are RECORDS, and by the option count
  * otherwise.** `SEARCH_THRESHOLD` is the default and the split is real rather than tuned (see the
@@ -30,12 +30,16 @@
  * the identical problem plus a worse one: these lists live inside dialogs and `overflow-hidden`
  * filter panels, where an absolutely positioned menu is sheared off rather than merely misplaced.
  *
- * **5. There are two index domains and only one of them is legal for the highlight.** `options` is
- * the corpus; `rendered` is what is on screen, and past `RENDER_CAP` they are different lists.
- * `highlight` indexes `rendered`, always. Every place that computes an index says which array it is
- * against, because the two places that did not — type-ahead in both components — moved the highlight
- * onto an unrelated row on the one control where the cap always bites, and that control is a
- * permissions picker whose next keystroke ticks a person.
+ * **5. There are several index domains and only one of them is legal for the highlight.** `options`
+ * is the corpus; `filtered` is the corpus narrowed by the query; `windowed` is `filtered` cut to
+ * `RENDER_CAP` with off-window selections pinned in front; `rendered` is `windowed` with the
+ * `noneLabel` row, if there is one, prepended. `highlight` indexes `rendered`, ALWAYS. Every place
+ * that computes an index says which array it is against, because the two places that did not —
+ * type-ahead in both components — moved the highlight onto an unrelated row on the one control
+ * where the cap always bites, and that control is a permissions picker whose next keystroke ticks a
+ * person. The counts under the panel are the other half of the same discipline: they describe the
+ * CORPUS (`filtered`, `windowed`), never `rendered`, because a "none" row and a pinned row are not
+ * rows of the list the sentence is counting.
  *
  * **6. A keystroke that means "move on" must never change an answer.** Tab out of the filter box
  * commits only a highlight the reader MOVED (arrows, Home, End, hover); typing alone leaves the
@@ -44,12 +48,30 @@
  * **7. In a text box the caret keys belong to the caret.** Home and End move the caret in the filter
  * box and the list everywhere else — see `navigate`'s `textEntry`.
  *
+ * **8. The filter box may belong to the SERVER, and where it does it is the only search.** With
+ * `serverQuery` the panel stops filtering the array it was handed and draws the answer the caller
+ * fetched, because the two cannot both be the box: a local pass over a server's answer drops the
+ * rows the server matched on a column the label does not show. Sixteen controls in this app put a
+ * local box over one server-truncated page and answer "No matches" about records that exist; three
+ * more switched the box off and mounted a second one above the field, losing the panel's diacritic
+ * folding, its hint ranking and its live region to get an honest search. `serverQuery` is the third
+ * answer, and it is the one that keeps both. Everything it changes is listed on the prop.
+ *
+ * **9. A capability that arrives late arrives as an OPTIONAL prop whose absence is the old
+ * behaviour, exactly.** This primitive has about forty live call sites and a breaking change here
+ * breaks the product. `serverQuery`, `noneLabel` and `bulk` are all shaped that way and each says
+ * so in its own comment; every default in this file reproduces what the file did before it existed.
+ *
  * Focus is deliberately NOT trapped. Tab walks the panel's own controls and then leaves for the
  * next field in the form; Escape closes and puts focus back on the trigger. A picker that swallows
  * the keyboard is worse than the native `<select>` it replaces.
  *
- * The pure half of all this — the matcher, the two cap sentences, the grouping and the two
- * constants — lives in `ui/selectFilter.ts` so a spec can call it. That file says why.
+ * The pure half of all this — the matcher, the grouping, the three constants, and every sentence
+ * this control can print — lives in `ui/selectFilter.ts` so a spec can call it. That file says why,
+ * and "every sentence" now means it: the truncation footer, the empty line, the live region and the
+ * multi-select trigger's own selection summary are all chooser functions there rather than ternaries
+ * in the JSX below, because each of them has grown a branch that only exists on a server-searched
+ * control and a branch nobody can execute is a branch nobody has checked.
  */
 
 import { Check, ChevronDown, Search } from "lucide-react";
@@ -61,10 +83,14 @@ import {
   CAP_HINT_WITHOUT_SEARCH,
   CAP_HINT_WITH_SEARCH,
   RENDER_CAP,
+  SEARCHING_LABEL,
   SEARCH_THRESHOLD,
-  capNoticeSentence,
+  emptyListSentence,
   filterOptions,
   groupRows,
+  listAnnouncement,
+  selectionSummarySentence,
+  truncationSentence,
   typeaheadIndex,
   type SelectOption
 } from "@/components/ui/selectFilter";
@@ -78,8 +104,75 @@ import { cn } from "@/lib/utils";
  */
 export type { SelectOption };
 
-/** Selected labels read out in full before the summary switches to a count. */
-const SUMMARY_NAMES = 6;
+/**
+ * THE PANEL'S FILTER BOX, WIRED TO A SERVER `search=` INSTEAD OF TO THE ARRAY IT WAS HANDED.
+ *
+ * Named and exported rather than written inline on both prop types, because about twenty call sites
+ * are about to build one and they must all build the same thing; `SelectOption` is exported from
+ * here for the same reason and this is its companion.
+ *
+ * ── WHAT IT COSTS, WHICH IS NOT NOTHING ──────────────────────────────────────────────────────────
+ * The local pass does three things the server's `contains(...)` → `ILIKE '%term%'` does not: it
+ * folds diacritics and runs of whitespace (`selectFilter.ts::fold`, so "Ahmedabad" finds
+ * "Ahmedābād"), it searches the `hint` as well as the label, and it RANKS — label-prefix above
+ * word-prefix above mid-word above hint. Handing the box to the server loses all three until
+ * Postgres grows `unaccent`. That is a real regression and it is paid deliberately, because a box
+ * that reaches page four with a missing accent is worth more than one that cannot reach page four
+ * at all. It is written down here rather than discovered by a designer who cannot find a workshop
+ * they can see the name of.
+ *
+ * ── WHAT THE CALLER OWNS, BECAUSE THE PANEL CANNOT ───────────────────────────────────────────────
+ * The debounce (300 ms is this app's number) and the generation counter. `lib/api::apiFetch` carries
+ * no AbortSignal, so an out-of-order answer cannot be cancelled and must be DISCARDED BY GENERATION
+ * — the shape `app/(protected)/design-review/page.tsx` already uses. A caller that skips it will
+ * paint the answer to a query the reader has typed past, which looks exactly like a search that
+ * returns the wrong rows.
+ *
+ * The caller also owns the page size, and it must be `RENDER_CAP`. Asking for 100 rows into a panel
+ * that draws 80 is the dead band `selectFilter.ts::RENDER_CAP` exists to kill.
+ *
+ * ── AND IT OWNS THE IDENTITY OF `options`, WHICH IS THE ONLY THING THAT SAYS AN ANSWER LANDED ────
+ * Build the array in a `useMemo` keyed on the fetched list. This branch re-takes its pin snapshot
+ * from an effect keyed on `options` IDENTITY, because a debounced answer arrives several renders
+ * after the keystroke that asked for it and there is no other signal that it did (see that effect,
+ * and `useSelectList` for the defect it is closing). A fresh array built inline in the JSX makes
+ * every render of the PARENT look like a new answer, so the snapshot is re-taken on every keystroke
+ * — which is the per-keystroke behaviour the effect exists to replace. It is not a loop: `setPins`
+ * re-renders this component alone, `options` keeps its reference across that render, and the deps
+ * are unchanged, so the effect does not re-enter. It is also harmless while the page size really is
+ * `RENDER_CAP`, because `useSelectList` returns before it pins anything when the corpus fits the
+ * window. Break either rule and they compound: an unmemoised array over an oversized page re-pins
+ * from the live selection on every tick, and on a multi-select that is exactly the renumbering that
+ * makes the next Enter toggle the neighbour.
+ */
+export type SelectServerQuery = {
+  /** The live term. The panel renders this box; it does not keep a copy. */
+  value: string;
+  /**
+   * A keystroke in the panel's box. The panel NEVER calls this with "" of its own accord — closing
+   * the panel leaves the caller's term exactly as it is, because clearing it would fire a re-fetch
+   * of the unnarrowed list every time a reader dismissed the menu, and would throw away the
+   * narrowing they had just done. Clearing is the caller's decision and the reader's keystroke.
+   */
+  onChange: (term: string) => void;
+  /**
+   * A request is in flight. Drives `SEARCHING_LABEL` in the panel and in the live region, so an
+   * empty list mid-flight reads as "wait" and not as "there are none" — R3, in the one state where
+   * the control genuinely does not yet know.
+   */
+  pending: boolean;
+  /**
+   * The server had more rows matching than it sent — read one past the take, in the manner of
+   * `GET /tasks/options`'s `workshopsTruncated`. Draws `unknownTotalNoticeSentence` under the list.
+   *
+   * OPTIONAL BECAUSE A ROUTE MAY NOT SAY. `apiFetch` casts rather than validates, so a field a
+   * deployment has not shipped yet arrives as `undefined`, and `undefined` must read as "nothing to
+   * say" and never as "not truncated" — the same guard, for the same reason, as `cutOf`'s
+   * `Number.isFinite`. `GET /workshops/requestable` returns a bare array with no total and no flag
+   * and so is honestly silent here until it grows one.
+   */
+  truncated?: boolean;
+};
 
 /**
  * The pin snapshot before a panel has ever been opened.
@@ -189,14 +282,25 @@ function useSelectList(
   options: SelectOption[],
   query: string,
   searchable: boolean,
-  pins: ReadonlySet<string>
+  pins: ReadonlySet<string>,
+  /**
+   * The query has already been answered by the server, so the local pass is SKIPPED.
+   *
+   * Not a nicety and not an optimisation. `options` already IS the answer to `query`, and running
+   * `filterOptions` over it again would drop every row the server matched on a column the label does
+   * not show — `workshopCode` is in `GET /design-workshops`' search and is deliberately not in the
+   * hint (a code an admin reads off a join card is not a fact that tells two workshops apart on a
+   * phone row). The reader would type a code they are holding, the server would find it, and the
+   * panel would hide it and say "No matches". One box, one answer.
+   */
+  serverAnswered: boolean
 ) {
   const filtered = useMemo(
-    () => (searchable ? filterOptions(options, query) : options),
-    [options, query, searchable]
+    () => (searchable && !serverAnswered ? filterOptions(options, query) : options),
+    [options, query, searchable, serverAnswered]
   );
-  const { rendered, pinned } = useMemo(() => {
-    if (filtered.length <= RENDER_CAP) return { rendered: filtered, pinned: 0 };
+  const { windowed, pinned } = useMemo(() => {
+    if (filtered.length <= RENDER_CAP) return { windowed: filtered, pinned: 0 };
     const window = filtered.slice(0, RENDER_CAP);
     // A cap must never hide what the reader already picked. India is the 100-somethingth of 246
     // dial codes, so the plain first-80 window reopened the country picker with no tick anywhere in
@@ -214,24 +318,37 @@ function useSelectList(
     // workshop viewer picker — a permissions control over up to 2000 accounts — that is granting a
     // colleague access to a workshop nobody pointed at.
     //
-    // So the set of pinned values is captured at the two moments the window is legitimately
-    // recomputed — the panel opening, and the query changing — and held still in between. Ticking
-    // and unticking then only ever repaints check marks; it never renumbers a row. The cost is that
-    // a row ticked from deeper in the corpus during this session is not dragged forward until the
-    // panel is reopened, which is the smaller of the two surprises by a wide margin: the tick is
-    // still counted in the trigger's summary and in "N selected".
+    // So the set of pinned values is captured at the moments the window is legitimately recomputed —
+    // the panel opening, the query changing, and, on a `serverQuery` control, the ANSWER changing —
+    // and held still in between. Ticking and unticking then only ever repaints check marks; it never
+    // renumbers a row. The cost is that a row ticked from deeper in the corpus during this session is
+    // not dragged forward until the panel is reopened, which is the smaller of the two surprises by a
+    // wide margin: the tick is still counted in the trigger's summary and in "N selected".
+    //
+    // ── AND WHY THE THIRD MOMENT IS THE ANSWER AND NOT THE KEYSTROKE ─────────────────────────────
+    // With a server query the array is replaced when each debounced answer lands, several renders
+    // after the keystroke that asked for it. Re-snapshotting on the keystroke pins against the array
+    // the reader is about to stop looking at and then leaves the pins stale for the array that
+    // replaces it — the same renumbering-under-a-stationary-highlight defect as above, arriving by a
+    // different door. The panel's own `options`-identity effect is the fix; see `setPins` there.
     const missing = filtered.filter((option) => pins.has(option.value) && !window.includes(option));
     // `pinned` is counted and handed back rather than left implicit, because the footer has to say
-    // something true about a list of two different kinds of row. `rendered.length` is 80 first-rows
+    // something true about a list of two different kinds of row. `windowed.length` is 80 first-rows
     // PLUS however many pinned selections came from deeper in the corpus, so a footer reading
     // "Showing the first 81 of 246" described a set whose 81st member was the 100th match — a small
     // lie, but this repo's rule is that a truncated list must state its truncation ACCURATELY, and
     // an off-by-a-pinned-row notice is the kind of thing a reader checks their own counting against.
     return missing.length
-      ? { rendered: [...missing, ...window], pinned: missing.length }
-      : { rendered: window, pinned: 0 };
+      ? { windowed: [...missing, ...window], pinned: missing.length }
+      : { windowed: window, pinned: 0 };
   }, [filtered, pins]);
-  return { filtered, rendered, pinned, capped: filtered.length - rendered.length };
+  // `windowed`, NOT `rendered`, and the rename is load-bearing rather than tidying. Everything this
+  // hook returns is a fact about the CORPUS, and the array actually drawn may carry one row that is
+  // not in the corpus at all — the `noneLabel` row, which each component prepends after this. Both
+  // components then hold `windowed` and `rendered` side by side, and the counts under the panel read
+  // the first while `highlight` indexes the second. Leaving this called `rendered` is how the "none"
+  // row would end up counted in "Showing the first 81 of 246".
+  return { filtered, windowed, pinned, capped: filtered.length - windowed.length };
 }
 
 /**
@@ -275,6 +392,7 @@ function SearchRow({
   onKeyDown,
   placeholder,
   label,
+  pending,
   trailing
 }: {
   inputRef: (node: HTMLInputElement | null) => void;
@@ -286,6 +404,19 @@ function SearchRow({
   onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
   placeholder: string;
   label: string;
+  /**
+   * A `serverQuery` request is in flight — drawn as a word beside the box.
+   *
+   * IT HAS TO BE VISIBLE HERE AND NOT ONLY IN THE EMPTY ARM, because the interesting case is the one
+   * where the list is NOT empty: the previous answer is still on screen while the new one travels,
+   * and on the rural connections this app is built for that is a second and a half of a panel that
+   * looks settled and is wrong. The empty arm alone would say nothing at all in exactly that window.
+   *
+   * `aria-hidden` because the panel's `role="status"` region already announces it through
+   * `listAnnouncement` — a screen reader that heard both would hear "Searching" twice for one
+   * keystroke, and the live region is the one that also carries the counts.
+   */
+  pending?: boolean;
   trailing?: React.ReactNode;
 }) {
   return (
@@ -311,37 +442,99 @@ function SearchRow({
           className="w-full rounded-sm border border-line-200 bg-card py-1.5 pl-8 pr-2 text-sm text-ink-900 outline-none transition placeholder:text-ink-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-600/15"
         />
       </div>
+      {/*
+        A WORD, NOT A SPINNER. The house rule is that a signal which exists only as motion is a
+        signal a reduced-motion reader never gets, so every pulse has to be paired with a static
+        state anyway — and there is nothing here that a static state does not already say. It also
+        means this row has no `animation-duration` for either of the two reduced-motion switches to
+        have to reach, which is the only kind of animation that cannot be got wrong.
+      */}
+      {pending ? (
+        <span aria-hidden className="shrink-0 whitespace-nowrap text-xs text-ink-500">
+          {SEARCHING_LABEL}
+        </span>
+      ) : null}
       {trailing}
     </div>
   );
 }
 
 /**
- * The "N of M shown" footer. Only drawn when the cap actually bit.
+ * The truncation footer. Only drawn when something was actually cut.
  *
- * The sentence itself is `capNoticeSentence` in `ui/selectFilter` so a spec can read it without a
- * browser; this is the box it sits in. The `hint` is the last clause and it is the caller's, because
- * the panel cannot know how a reader is supposed to reach row 81: with a filter box the answer is
- * "keep typing", and without one it is whatever control the call site put above the picker. Printing
- * "Keep typing to narrow the list" on a panel that has no box is how the viewer picker came to
- * instruct an admin to use a control that is not on screen.
+ * THE BOX, NOT THE SENTENCE. Both sentences and the choice between them live in `ui/selectFilter`
+ * so a spec can read them without a browser — `capNoticeSentence` where the total is known,
+ * `unknownTotalNoticeSentence` where the server reported the cut as a flag, and `truncationSentence`
+ * for the ruling about which of the two wins. This is only where the chosen sentence is painted.
+ *
+ * The last clause of either is the CALLER'S, because the panel cannot know how a reader is supposed
+ * to reach row 81: with a filter box the answer is "keep typing", and without one it is whatever
+ * control the call site put above the picker. Printing "Keep typing to narrow the list" on a panel
+ * that has no box is how the viewer picker came to instruct an admin to use a control that is not on
+ * screen.
  */
-function CapNotice({
-  shown,
-  pinned,
-  total,
-  hint
-}: {
-  shown: number;
-  pinned: number;
-  total: number;
-  hint: string;
-}) {
+function CapNotice({ sentence }: { sentence: string }) {
   return (
     <p className="shrink-0 border-t border-line-200 bg-surface-50 px-3.5 py-2 text-xs leading-4 text-ink-500">
-      {capNoticeSentence({ shown, pinned, total, hint })}
+      {sentence}
     </p>
   );
+}
+
+/**
+ * THE "NONE" ROW — `value: ""`, ungrouped, drawn first — or `null` where the caller did not ask for
+ * one.
+ *
+ * ── WHY THE PRIMITIVE OWNS THIS AND NINE CALL SITES DO NOT ───────────────────────────────────────
+ * `components/forms/WorkshopSelect.tsx` hand-builds `{ value: "", label: NO_WORKSHOP_LABEL }` and
+ * prepends it; `components/forms/DesignWorkshopSelect.tsx` maps its rows and prepends nothing. Four
+ * record forms mount BOTH of those, stacked, one above the other — so on one form the first picker
+ * offers a way back to "no workshop" and the second does not, and **a record filed under the wrong
+ * design workshop cannot be corrected on the web at all.** The server has accepted the clearance the
+ * whole time (`designWorkshopId` is in `services/records.py`'s `CLEARABLE_KEYS`, added with the
+ * column and with the failure spelled out beside it); the row to send it was simply never drawn.
+ * Android's `SearchableSelect.kt` has had `includeNone` since the beginning. Putting it here rather
+ * than in nine callers is what stops the tenth from forgetting again.
+ *
+ * ── THE ROW IS HIDDEN WHILE A QUERY IS ACTIVE; THE TRIGGER'S LABEL IS NOT ───────────────────────
+ * `SearchablePickerSheet` draws its none row under `if (noneLabel != null && !searching)`, and the
+ * web copies that for three reasons. It has to behave the same on both branches of this file, and on
+ * a `serverQuery` control it CAN only ever be unfiltered — the server has never heard of it — so a
+ * row that survives a query on one branch and not the other would make the control change shape with
+ * a prop the reader cannot see. It is not a row of the corpus, so ranking a synthetic row inside
+ * `filterOptions` would put "Not filed under a design workshop" above a workshop actually called
+ * "Notebooks". And a reader who has typed a term is hunting, not un-filing; the way back is one
+ * Backspace away and is never more than a keystroke from where they are.
+ *
+ * WHICH IS WHY THIS FUNCTION DOES NOT SEE THE QUERY. The row and the trigger's fallback label are
+ * two uses of one option and only the first is gated: the trigger describes the FIELD'S ANSWER, and
+ * a field whose answer changed because somebody typed in a filter box would be reporting the state
+ * of the panel instead of the state of the record. Left folded together, opening a picker over a
+ * cleared design-workshop field and typing one letter made the trigger fall back from "Not filed
+ * under a design workshop" to "Select a design workshop" and back again on Backspace. The gate is
+ * applied where the row is built, one line, with the same rule written beside it.
+ *
+ * ── IT IS NOT ON THE MULTI-SELECT, DELIBERATELY ──────────────────────────────────────────────────
+ * A multi-select already says "none" by holding an empty array. A none ROW would be a second
+ * spelling of that state — tickable, tickable alongside three real rows — and this repository's
+ * first rule about list controls is that empty means everything BY ABSENCE, never by a row that can
+ * be in one of two states meaning the same thing. A filter that wants an explicit "everything"
+ * affordance builds its own button that sets `[]`, as `WorkshopScopeSelect` does.
+ *
+ * ── AND IT STANDS DOWN IF THE CALLER ALREADY BUILT ONE ───────────────────────────────────────────
+ * Written for a migration that is about to happen twenty times over. `WorkshopSelect.tsx` prepends
+ * its own `{ value: "", label: NO_WORKSHOP_LABEL }` today and is specified to adopt `noneLabel`
+ * instead; the photo-intake picker prepends `"Leave out — I will attach this one myself"` and is not.
+ * An agent who adds the prop and forgets to delete the hand-built row would otherwise get two
+ * identical rows sharing the React key `""` — a duplicate-key warning, a list that offers the same
+ * answer twice, and a control that cannot say which of the two is selected. Deferring to the
+ * caller's row makes the half-done migration render correctly instead of oddly, and the finished one
+ * render identically either way.
+ */
+function noneOptionFor(noneLabel: string | undefined, options: SelectOption[]): SelectOption | null {
+  if (!noneLabel) return null;
+  if (options.some((option) => option.value === "")) return null;
+  return { value: "", label: noneLabel };
 }
 
 /**
@@ -537,6 +730,52 @@ export type SearchableSelectProps = {
    * jumping focus away from the control you are adjusting is wrong.
    */
   advanceOnSelect?: boolean;
+  /**
+   * THE PANEL'S FILTER BOX DRIVES A SERVER QUERY INSTEAD OF FILTERING THE ARRAY IT WAS HANDED.
+   *
+   * **Absent — the default — is exactly what this control did before the prop existed**: the box
+   * appears at `SEARCH_THRESHOLD` or where `searchable` says so, `filterOptions` narrows the array
+   * locally, and the empty arm is the two-way one. Nothing about an existing call site changes.
+   *
+   * Present changes four things and nothing else:
+   *
+   * 1. `withSearch` is FORCED TRUE, `searchable={false}` included. A server query with no box is a
+   *    box the reader cannot reach, so the two props cannot both be honoured and this one wins.
+   * 2. The local `filterOptions` pass is BYPASSED — see `useSelectList`'s `serverAnswered`.
+   * 3. The empty arm becomes three-way: pending, matched-nothing-ON-THE-SERVER, nothing-here-at-all.
+   *    See `emptyRowText`.
+   * 4. The pin snapshot is re-taken when the ANSWER changes rather than per keystroke — see the
+   *    `options`-identity effect in the body, and `useSelectList` for the defect that governs it.
+   *
+   * The caller owns the debounce, the generation counter and the page size. Everything about the
+   * shape, and the diacritic folding it costs, is on `SelectServerQuery`.
+   */
+  serverQuery?: SelectServerQuery;
+  /**
+   * Draws a first, ungrouped row carrying `value: ""` with this label, and makes the trigger read it
+   * back when `value === ""`.
+   *
+   * **Absent — the default — is exactly today's behaviour**: no such row, and an empty `value` draws
+   * the `placeholder`. Every existing caller keeps the DOM it has.
+   *
+   * This is how a record is UN-FILED. Pass the sentence that says what "" means on this particular
+   * field — they are not interchangeable, and DROPDOWN_DESIGN §2.7 collapses the nine strings this
+   * app currently uses down to four with genuinely different meanings ("Not filed under a design
+   * workshop", "Not linked to a workshop", "Don't attach it yet", "Do not link a workshop — type the
+   * details below"). Do NOT pass "All workshops" or any other everything-means-everything string: a
+   * control that FILTERS a screen says "everything" by absence and not by a row, and a none row
+   * there would give one state two spellings.
+   *
+   * Why the trigger reads the label back rather than keeping the placeholder: the row draws its
+   * check mark when `value === ""`, so a trigger still saying "Select a design workshop" would have
+   * the control disagreeing with itself about its own answer in the same glance. It keeps the muted
+   * `ink-500` rung, because "deliberately not filed" and "not yet answered" must still be
+   * distinguishable down a form of ten fields.
+   *
+   * The row is hidden while a filter term is active, is exempt from the render cap, and is not
+   * counted in any sentence under the list — `noneOptionFor` says why for each.
+   */
+  noneLabel?: string;
 };
 
 export function SearchableSelect({
@@ -551,10 +790,17 @@ export function SearchableSelect({
   describedBy,
   searchable,
   capHint,
-  advanceOnSelect = true
+  advanceOnSelect = true,
+  serverQuery,
+  noneLabel
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  /**
+   * The filter term WHEN THIS CONTROL OWNS IT, which is every control that does not pass
+   * `serverQuery`. With one, the term is the caller's state and this stays unread — a second copy
+   * would be a second answer to "what is in the box".
+   */
+  const [ownQuery, setOwnQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   /**
    * Has the reader MOVED the highlight, as against it merely defaulting to row 0?
@@ -575,8 +821,69 @@ export function SearchableSelect({
   const typeahead = useTypeahead();
   const fieldLabelId = useFieldLabelId();
 
-  const withSearch = searchable ?? options.length >= SEARCH_THRESHOLD;
-  const { filtered, rendered, pinned, capped } = useSelectList(options, query, withSearch, pins);
+  /**
+   * A boolean rather than `serverQuery` itself wherever a hook dependency is wanted.
+   *
+   * The prop is an object literal at every call site, so its identity changes on every render of the
+   * caller. Put in a dependency array it would re-run the effect below on every keystroke of an
+   * unrelated field — which, for the effect that re-takes the pin snapshot, is precisely the
+   * per-keystroke behaviour the snapshot exists to prevent.
+   */
+  const serverDriven = serverQuery != null;
+  /** The box, whoever owns it. Every read of the term in this component goes through here. */
+  const query = serverQuery ? serverQuery.value : ownQuery;
+
+  /**
+   * Write the term, wherever it lives.
+   *
+   * Note what is NOT here: a `""` write on close. With `serverQuery` the term belongs to the caller
+   * and clearing it would fire a fetch of the unnarrowed list every time a reader dismissed the
+   * menu, throwing away the narrowing they had just done. `close` clears `ownQuery` only, which is
+   * inert on that branch, so a server-backed panel reopens showing what the reader last typed —
+   * which is also what the three controls that mount their own `SearchInput` above the field already
+   * do today.
+   */
+  function writeQuery(next: string) {
+    if (serverQuery) serverQuery.onChange(next);
+    else setOwnQuery(next);
+  }
+
+  /**
+   * `serverQuery` FORCES the box on, ahead of both `searchable` and the count.
+   *
+   * A server query with no box to type into is a fetch the reader cannot reach, and there is no
+   * sensible reading of a call site that asks for both. Stated here rather than left to the `??`
+   * chain, because "the panel decided" is the answer this file exists to stop giving.
+   */
+  const withSearch = serverDriven || (searchable ?? options.length >= SEARCH_THRESHOLD);
+  const { filtered, windowed, pinned, capped } = useSelectList(
+    options,
+    query,
+    withSearch,
+    pins,
+    serverDriven
+  );
+
+  /**
+   * The "none" option, if this caller asked for one — used twice, and gated in only one of them.
+   *
+   * `noneRow` is the option AS A ROW, withdrawn while a filter term is active because it is not a row
+   * of the corpus and a reader who is typing is hunting rather than un-filing. `noneOption` is the
+   * same object as the TRIGGER'S FALLBACK LABEL, which is never withdrawn: the trigger describes the
+   * field's answer, and an answer that changed because somebody typed into a filter box would be
+   * reporting the state of the panel instead of the state of the record. See `noneOptionFor`.
+   *
+   * The row is PREPENDED after the cap and before the highlight, and both halves matter. After the
+   * cap, so an un-file row can never be the row a truncation drops and so it is not counted in the
+   * sentence that describes the corpus. Before the highlight, so it is index 0 of the array
+   * `highlight` indexes and every existing index rule applies to it unchanged.
+   */
+  const noneOption = useMemo(() => noneOptionFor(noneLabel, options), [noneLabel, options]);
+  const noneRow = noneOption && !query.trim() ? noneOption : null;
+  const rendered = useMemo(
+    () => (noneRow ? [noneRow, ...windowed] : windowed),
+    [noneRow, windowed]
+  );
 
   // Derived, not stored — the stored index is only ever a hint. See the file header.
   const safeHighlight =
@@ -586,11 +893,37 @@ export function SearchableSelect({
   const activeId = safeHighlight >= 0 ? `${baseId}-opt-${safeHighlight}` : undefined;
   useScrollHighlightIntoView(open, safeHighlight, baseId);
 
-  const selected = options.find((option) => option.value === value);
+  /**
+   * The row the trigger reads back — the caller's, or the "none" row when the value is cleared.
+   *
+   * `options` never carries the none row, so without the fallback a `noneLabel` control with an
+   * empty value would tick "Not filed under a design workshop" inside the panel while the trigger
+   * outside it still read "Select a design workshop". A control that disagrees with itself about its
+   * own answer in one glance is worse than one that cannot express the answer at all.
+   *
+   * ── AND THE ONE THING THIS DELIBERATELY DOES NOT DO ─────────────────────────────────────────────
+   * A `value` that matches NO option — a stored id the current page does not contain — still reads
+   * as the placeholder, and this primitive will not invent a row for it. Recovering an off-page
+   * value is a decision only the call site can make: `WorkshopSelect` fetches the record's own
+   * workshop by id and merges it back in under its own heading *"because hiding the row would
+   * convert a read-only fact into a wrong write"*, while `AdoptLocalDraftDialog` refuses to, because
+   * the write it authorises is one-way and unrepeatable. A default here would silently pick one of
+   * those for twenty call sites; DROPDOWN_DESIGN §2.9 makes it a REQUIRED prop on the option
+   * builders for exactly that reason, and it is not a prop of this file. The primitive would also
+   * pick wrong for a reason that has nothing to do with the ruling: options arrive over the network,
+   * so for the second and a half before they land EVERY value is unmatched, and a panel that
+   * announced it would spend that time telling readers their record had lost its workshop.
+   */
+  const selected =
+    options.find((option) => option.value === value) ??
+    (noneOption && value === "" ? noneOption : undefined);
+  /** Kept apart from `selected` so the trigger can hold the muted rung — see `noneLabel`. */
+  const showingNone = selected != null && selected === noneOption;
 
   const close = useCallback(() => {
     setOpen(false);
-    setQuery("");
+    // `ownQuery` only. A caller's `serverQuery.value` is theirs; see `writeQuery`.
+    setOwnQuery("");
   }, []);
 
   /** Close, then hand the keyboard on. `advanceOnSelect` decides whether "on" means the next field. */
@@ -615,10 +948,17 @@ export function SearchableSelect({
   }
 
   function openPanel(seed = "") {
-    setQuery(seed);
+    // A PLAIN OPEN MUST NOT DISTURB A SERVER TERM. Clearing `ownQuery` on open is right — it is this
+    // panel's own box and `close` cleared it anyway — but writing "" into a caller's `serverQuery`
+    // would re-fetch the unnarrowed list every time a reader glanced at the menu. A SEEDED open is
+    // different and is written on both branches: a printable key on a closed trigger means "start
+    // looking for this", which is what the native <select>, the ARIA combobox pattern and every
+    // other branch of this file already do with the first letter.
+    if (seed || !serverDriven) writeQuery(seed);
     setOpen(true);
-    // The window's pinned rows are recomputed HERE and at every query change, and nowhere else —
-    // see `useSelectList` on why a live selection set renumbers rows under a stationary highlight.
+    // The window's pinned rows are recomputed HERE, at every query change, and — on a `serverQuery`
+    // control — when the answer lands. Nowhere else. See `useSelectList` on why a live selection set
+    // renumbers rows under a stationary highlight.
     setPins(value ? new Set([value]) : EMPTY_PINS);
     if (seed) {
       // A seeded open cannot look up the current value's row: `rendered` in this render was still
@@ -656,20 +996,50 @@ export function SearchableSelect({
       openPanel(char);
       return;
     }
-    setQuery((current) => current + char);
+    writeQuery(query + char);
     setHighlight(0);
     setHighlightTouched(false);
-    setPins(value ? new Set([value]) : EMPTY_PINS);
+    if (!serverDriven) setPins(value ? new Set([value]) : EMPTY_PINS);
     document.getElementById(`${baseId}-search`)?.focus();
   }
 
-  /** Typing in the box always re-aims Enter at the top match. */
+  /**
+   * Typing in the box always re-aims Enter at the top match.
+   *
+   * The pin snapshot is re-taken here on a LOCAL box, where the keystroke and the new array are the
+   * same render. On a `serverQuery` box it deliberately is not: the array does not change until the
+   * debounced answer lands several renders later, so pinning here would pin against the list the
+   * reader is about to stop looking at and then leave the pins stale for the one that replaces it.
+   * The `options`-identity effect below is where that branch re-snapshots instead.
+   */
   function onQueryChange(next: string) {
-    setQuery(next);
+    writeQuery(next);
     setHighlight(0);
     setHighlightTouched(false);
-    setPins(value ? new Set([value]) : EMPTY_PINS);
+    if (!serverDriven) setPins(value ? new Set([value]) : EMPTY_PINS);
   }
+
+  /**
+   * THE THIRD MOMENT A PIN SNAPSHOT IS TAKEN, and the only one that is an effect.
+   *
+   * A server-searched panel replaces `options` when each debounced answer lands. `useSelectList`
+   * computes the window from `filtered` and `pins` together, so an answer arriving against a
+   * snapshot taken for the PREVIOUS answer pins values that are no longer in the list and misses the
+   * ones that are — and every row past the window renumbers under a highlight that kept its old
+   * index. That is the defect `useSelectList` describes at length, reached by a different door: on
+   * the design-workshop viewer picker, a permissions control, the row a reader is looking at and the
+   * row the next Enter takes stop being the same row.
+   *
+   * Keyed on `options` IDENTITY, which is the only signal that an answer landed — the length can be
+   * unchanged, the rows can be unchanged, and it is still a different answer to a different term.
+   * `serverDriven` is a boolean and not the prop itself for the reason given where it is declared.
+   * `value` is safe in the dependency list on a single-select because picking one closes the panel;
+   * the multi-select cannot do the same and says why.
+   */
+  useEffect(() => {
+    if (!serverDriven) return;
+    setPins(value ? new Set([value]) : EMPTY_PINS);
+  }, [serverDriven, options, value]);
 
   /**
    * Tab forward off the last control in the panel: leave, and commit ONLY a choice the reader made.
@@ -787,6 +1157,13 @@ export function SearchableSelect({
       // a permissions control over up to 2000 accounts — a letter highlighted an unrelated row and
       // the Space that followed ticked that person. Everything else in this file is scrupulous about
       // the index domain (see `openPanel`); this line was not.
+      //
+      // A `noneLabel` ROW IS IN THE FIRST LOOKUP AND DELIBERATELY NOT IN THE SECOND, and the split
+      // falls out of the same rule. Open, the keystroke moves a highlight the reader can see and
+      // then confirm, so the un-file row is a legitimate destination like any other. Closed, it
+      // WRITES — and "n" quietly clearing a record's design workshop is a destructive edit from one
+      // keystroke aimed at finding something. `options` never carries the row, so the closed branch
+      // cannot reach it; that is the behaviour and not an oversight.
       const typed = typeahead(event.key);
       if (open) {
         const at = typeaheadIndex(rendered, typed);
@@ -806,9 +1183,34 @@ export function SearchableSelect({
   const inputRef = useFilterBoxFocus(triggerRef);
   const groups = useMemo(() => groupRows(rendered), [rendered]);
 
-  const announcement = withSearch && query.trim()
-    ? `${filtered.length} of ${options.length} options match ${query.trim()}`
-    : `${options.length} options`;
+  /**
+   * `term` is blanked where there is no filter box, which is how "this control is not searching" is
+   * expressed to `listAnnouncement` without a fifth flag. The non-server arms are byte-for-byte what
+   * this control has always announced.
+   */
+  const announcement = listAnnouncement({
+    total: options.length,
+    matched: filtered.length,
+    term: withSearch ? query : "",
+    server: serverDriven,
+    pending: serverQuery?.pending ?? false,
+    truncated: serverQuery?.truncated ?? false
+  });
+
+  /**
+   * Both counts are the CORPUS's — `windowed`, never `rendered` — so a "none" row is not folded into
+   * "the first 81 of 246". See the file header's fifth decision.
+   */
+  const capAdvice = capHint ?? (withSearch ? CAP_HINT_WITH_SEARCH : CAP_HINT_WITHOUT_SEARCH);
+  const capSentence = truncationSentence({
+    shown: windowed.length - pinned,
+    pinned,
+    total: filtered.length,
+    capped,
+    term: query,
+    hint: capAdvice,
+    serverTruncated: serverQuery?.truncated ?? false
+  });
 
   return (
     // `min-w-0` is load-bearing, not tidying. A grid or flex item defaults to `min-width: auto`,
@@ -890,7 +1292,17 @@ export function SearchableSelect({
           read. High contrast mode did re-point the rung, but a preference nobody has found yet is
           not a substitute for the default meeting AA.
         */}
-        <span className={cn("min-w-0 truncate", !selected && "text-ink-500")} title={selected?.label}>
+        {/*
+          `showingNone` keeps the muted rung, which is the same argument one rung along. The trigger
+          reads the "none" row's label back so the control does not contradict the tick inside its own
+          panel, but "deliberately not filed under a design workshop" and "a design workshop is
+          filled in" must still be distinguishable at a glance down a form of ten fields — and the
+          only thing carrying that difference on a collapsed control is the weight of the text.
+        */}
+        <span
+          className={cn("min-w-0 truncate", (!selected || showingNone) && "text-ink-500")}
+          title={selected?.label}
+        >
           {selected ? selected.label : placeholder}
         </span>
         <ChevronDown
@@ -920,8 +1332,24 @@ export function SearchableSelect({
               query={query}
               onQueryChange={onQueryChange}
               onKeyDown={onFilterKeyDown}
-              placeholder="Type to filter"
-              label={ariaLabel ? `Filter ${ariaLabel}` : "Filter options"}
+              /*
+                THE BOX IS NAMED FOR WHAT IT ACTUALLY REACHES. A local box filters the rows it was
+                handed; a `serverQuery` box searches the whole list. Calling the second one "Filter"
+                understates it to precisely the readers who most need to know — somebody navigating
+                by the control's accessible name has no panel in front of them to infer it from, and
+                "Filter workshops" reads as a promise that only the drawn rows are in play.
+              */
+              placeholder={serverDriven ? "Type to search" : "Type to filter"}
+              label={
+                serverDriven
+                  ? ariaLabel
+                    ? `Search ${ariaLabel}`
+                    : "Search options"
+                  : ariaLabel
+                    ? `Filter ${ariaLabel}`
+                    : "Filter options"
+              }
+              pending={serverQuery?.pending}
             />
           ) : null}
           <ul
@@ -930,9 +1358,6 @@ export function SearchableSelect({
             aria-label={ariaLabel ?? "Options"}
             className="min-h-0 max-h-72 shrink overflow-y-auto overscroll-contain py-1"
           >
-            {rendered.length === 0 ? (
-              <li className="px-3.5 py-2 text-sm text-ink-500">{query.trim() ? "No matches" : emptyLabel}</li>
-            ) : null}
             {/*
               GROUPED WHEN A CALLER GROUPED, FLAT OTHERWISE, and the row indices are the same either
               way — see `groupRows`. The wrapper is a `role="group"` with the heading's text as its
@@ -984,15 +1409,32 @@ export function SearchableSelect({
                 </li>
               );
             })}
+            {/*
+              THE EMPTY LINE IS ASKED OF THE CORPUS AND DRAWN LAST, and both are changes a `noneLabel`
+              control needs.
+
+              Asked of `windowed` rather than `rendered`, because a panel whose only row is the "none"
+              row is still a panel with nothing to pick: reading `rendered` would suppress the one
+              sentence that says whether the list is empty, still loading, or failed to load — which
+              is the "absence read as non-existence" bug arriving through the fix for a different one.
+
+              Drawn after the rows rather than before them, because the "none" row is the only
+              actionable thing in an empty list and the sentence is the explanation of what is missing
+              beneath it. For every control that passes no `noneLabel` this is the same DOM it has
+              always rendered: an empty corpus means `groups` contributes nothing at all.
+            */}
+            {windowed.length === 0 ? (
+              <li className="px-3.5 py-2 text-sm text-ink-500">
+                {emptyListSentence({
+                  emptyLabel,
+                  term: query,
+                  server: serverDriven,
+                  pending: serverQuery?.pending ?? false
+                })}
+              </li>
+            ) : null}
           </ul>
-          {capped > 0 ? (
-            <CapNotice
-              shown={rendered.length - pinned}
-              pinned={pinned}
-              total={filtered.length}
-              hint={capHint ?? (withSearch ? CAP_HINT_WITH_SEARCH : CAP_HINT_WITHOUT_SEARCH)}
-            />
-          ) : null}
+          {capSentence ? <CapNotice sentence={capSentence} /> : null}
           <p className="sr-only" role="status" aria-live="polite">
             {announcement}
           </p>
@@ -1042,6 +1484,41 @@ export type SearchableMultiSelectProps = {
    */
   confirmOnSelect?: boolean;
   confirmLabel?: string;
+  /**
+   * Draw the "Select all N" / "Clear all N" button. **`true` by default, which is what this control
+   * has always done** — no existing caller changes.
+   *
+   * ── PASS `false` ON EVERY FILTER, AND THE REASON IS NOT TASTE ────────────────────────────────────
+   * Wired to a filter, that button manufactures the one state this repository forbids: all ticked
+   * and nothing ticked, both meaning "everything". A filter with two spellings for one state has no
+   * way to tell a default from a deliberate choice, and the query it builds differs between them —
+   * `WorkshopScopeSelect` returns `undefined` for "no scope" precisely so that the absent case is
+   * absent on the wire rather than an enumeration of every row the page happened to have loaded.
+   * Which is the other half of it: "all" over a server-truncated page is not all. On a control whose
+   * options are the first eighty of one hundred and ninety-six workshops, "Select all 80" writes a
+   * filter for eighty named workshops and silently excludes the other hundred and sixteen, and the
+   * screen then reports counts that are wrong in a direction nobody can see.
+   *
+   * A filter that wants an explicit everything-affordance builds its own button that sets `[]`, the
+   * way `WorkshopScopeSelect`'s "All records" does. That one is honest because absence is what it
+   * writes.
+   *
+   * Leave it `true` on a control that ANSWERS A FIELD over a list that is whole — four crafts is four
+   * clicks otherwise, which is what the button was added for.
+   */
+  bulk?: boolean;
+  /**
+   * The panel's filter box drives a server query — the same prop, the same contract and the same
+   * four consequences as the single-select's. See `SearchableSelectProps.serverQuery`.
+   *
+   * One extra consequence is the multi's alone: with `serverQuery.truncated` set, the bulk button
+   * stops saying "all" and says "the N shown", because the rows it can act on are one page of an
+   * answer the server has told us is incomplete. See `bulkLabel`.
+   *
+   * There is deliberately no `noneLabel` companion here — a multi-select says "none" by holding an
+   * empty array, and a second spelling of that state is the thing `bulk` above exists to prevent.
+   */
+  serverQuery?: SelectServerQuery;
 };
 
 export function SearchableMultiSelect({
@@ -1057,10 +1534,13 @@ export function SearchableMultiSelect({
   searchable,
   capHint,
   confirmOnSelect = true,
-  confirmLabel = "Confirm"
+  confirmLabel = "Confirm",
+  bulk = true,
+  serverQuery
 }: SearchableMultiSelectProps) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  /** This control's own term, unread when `serverQuery` owns it — see the single-select's. */
+  const [ownQuery, setOwnQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   /** The selections pinned above the render cap, frozen between opens — see `useSelectList`. */
   const [pins, setPins] = useState<ReadonlySet<string>>(EMPTY_PINS);
@@ -1073,9 +1553,34 @@ export function SearchableMultiSelect({
   const typeahead = useTypeahead();
   const fieldLabelId = useFieldLabelId();
 
-  const withSearch = searchable ?? options.length >= SEARCH_THRESHOLD;
+  /** A boolean, not the prop, wherever a dependency is wanted — see the single-select's. */
+  const serverDriven = serverQuery != null;
+  /** The box, whoever owns it. */
+  const query = serverQuery ? serverQuery.value : ownQuery;
+
+  /** Write the term wherever it lives. Never "" of the panel's own accord — see the single-select. */
+  function writeQuery(next: string) {
+    if (serverQuery) serverQuery.onChange(next);
+    else setOwnQuery(next);
+  }
+
+  /** `serverQuery` forces the box on, ahead of `searchable` and the count — see the single-select. */
+  const withSearch = serverDriven || (searchable ?? options.length >= SEARCH_THRESHOLD);
   const chosen = useMemo(() => new Set(values), [values]);
-  const { filtered, rendered, pinned, capped } = useSelectList(options, query, withSearch, pins);
+  /**
+   * `rendered` and `windowed` are the same array here, because a multi-select draws no "none" row —
+   * see `bulk` on why it must not. The alias is kept so every index rule, every comment and every
+   * assertion below reads identically in both components; a reader comparing the two should not have
+   * to hold in their head that one of them calls the highlight's array something else.
+   */
+  const { filtered, windowed, pinned, capped } = useSelectList(
+    options,
+    query,
+    withSearch,
+    pins,
+    serverDriven
+  );
+  const rendered = windowed;
 
   const safeHighlight =
     highlight >= 0 && highlight < rendered.length && !rendered[highlight].disabled
@@ -1086,7 +1591,8 @@ export function SearchableMultiSelect({
 
   const close = useCallback(() => {
     setOpen(false);
-    setQuery("");
+    // `ownQuery` only; a caller's `serverQuery.value` is theirs. See the single-select's `close`.
+    setOwnQuery("");
   }, []);
 
   const closeAndMoveOn = useCallback(
@@ -1116,36 +1622,56 @@ export function SearchableMultiSelect({
    * the current filter completely alone — clearing 6 matches never quietly drops a 7th pick that
    * the query happens to hide. The cap on rendered rows is NOT applied here: the label promises
    * every match, so every match is what it takes.
+   *
+   * RENAMED FROM `bulk`, WHICH IS NOW THE PROP THAT DECIDES WHETHER ANY OF THIS IS DRAWN. The rows
+   * are still computed when the button is off — three array passes over a list already in memory —
+   * because gating a `useMemo` behind a second condition buys nothing and hides which of the two
+   * names means what.
    */
-  const bulk = useMemo(() => filtered.filter((option) => !option.disabled), [filtered]);
-  const allChosen = bulk.length > 0 && bulk.every((option) => chosen.has(option.value));
+  const bulkRows = useMemo(() => filtered.filter((option) => !option.disabled), [filtered]);
+  const allChosen = bulkRows.length > 0 && bulkRows.every((option) => chosen.has(option.value));
   const filtering = withSearch && query.trim().length > 0;
-  const bulkLabel = allChosen
-    ? filtering
-      ? `Clear ${bulk.length} matching`
-      : `Clear all ${bulk.length}`
-    : filtering
-      ? `Select ${bulk.length} matching`
-      : `Select all ${bulk.length}`;
+  /**
+   * "ALL" IS A CLAIM, AND OVER A TRUNCATED SERVER ANSWER IT IS A FALSE ONE.
+   *
+   * With `serverQuery.truncated` the rows this button can reach are one page of an answer the server
+   * has already said is incomplete, so both the "all N" and the "N matching" wordings promise the
+   * corpus and deliver a page. On a permissions control that is an admin told they granted every
+   * matching colleague when they granted the first eighty. "The N shown" is the only phrasing that is
+   * exactly true of what the click does, and it is deliberately awkward enough to be noticed.
+   */
+  const bulkLabel = serverQuery?.truncated
+    ? allChosen
+      ? `Clear the ${bulkRows.length} shown`
+      : `Select the ${bulkRows.length} shown`
+    : allChosen
+      ? filtering
+        ? `Clear ${bulkRows.length} matching`
+        : `Clear all ${bulkRows.length}`
+      : filtering
+        ? `Select ${bulkRows.length} matching`
+        : `Select all ${bulkRows.length}`;
 
   function applyBulk() {
     if (allChosen) {
-      const drop = new Set(bulk.map((option) => option.value));
+      const drop = new Set(bulkRows.map((option) => option.value));
       onChange(values.filter((v) => !drop.has(v)));
       return;
     }
     // Appended rather than rebuilt, so the order the reader picked things in survives.
     const have = new Set(values);
-    onChange([...values, ...bulk.map((option) => option.value).filter((v) => !have.has(v))]);
+    onChange([...values, ...bulkRows.map((option) => option.value).filter((v) => !have.has(v))]);
   }
 
   function openPanel(seed = "") {
-    setQuery(seed);
+    // A plain open leaves a caller's server term alone; a seeded one writes on both branches. See
+    // the single-select's `openPanel` for the fetch this guard prevents.
+    if (seed || !serverDriven) writeQuery(seed);
     setOpen(true);
-    // The window's pinned rows are recomputed HERE and at every query change, and nowhere else. On
-    // a multi-select that is not a nicety: read live, the pin set changes with every tick, so
-    // unticking a pinned row shortened `rendered` under a highlight that kept its old index and the
-    // next Enter toggled the neighbour. See `useSelectList`.
+    // The window's pinned rows are recomputed HERE, at every query change, and — with `serverQuery`
+    // — when the answer lands. Nowhere else. On a multi-select that is not a nicety: read live, the
+    // pin set changes with every tick, so unticking a pinned row shortened `rendered` under a
+    // highlight that kept its old index and the next Enter toggled the neighbour. See `useSelectList`.
     setPins(new Set(values));
     // Row 0 on a seeded open: `rendered` here still describes the unfiltered list, so an index
     // taken from it would point into a list that is about to be replaced. See the single-select.
@@ -1158,17 +1684,51 @@ export function SearchableMultiSelect({
       openPanel(char);
       return;
     }
-    setQuery((current) => current + char);
+    writeQuery(query + char);
     setHighlight(0);
-    setPins(new Set(values));
+    if (!serverDriven) setPins(new Set(values));
     document.getElementById(`${baseId}-search`)?.focus();
   }
 
   function onQueryChange(next: string) {
-    setQuery(next);
+    writeQuery(next);
     setHighlight(0);
-    setPins(new Set(values));
+    // Not on the server branch: the array does not change until the answer lands, so a snapshot
+    // taken here would be against the list the reader is about to stop looking at. See the
+    // single-select's `onQueryChange` and the effect below.
+    if (!serverDriven) setPins(new Set(values));
   }
+
+  /**
+   * The live selection, readable from the effect below WITHOUT that effect depending on it.
+   *
+   * This ref is the whole reason the multi-select cannot copy the single-select's dependency list.
+   * There, re-pinning when `value` changes is harmless because choosing closes the panel. Here,
+   * `values` changes on every tick — so `[serverDriven, options, values]` would re-take the snapshot
+   * from the live selection on every checkbox, which is not an approximation of the defect
+   * `useSelectList` describes but literally it: unticking a pinned row drops it from `missing`, every
+   * row beneath shifts up one, `highlight` keeps its number, and the next Enter toggles the
+   * neighbour. On the design-workshop viewer picker that is a colleague granted access to a workshop
+   * nobody pointed at. The snapshot has to be taken from whatever is selected AT THE MOMENT THE
+   * ANSWER LANDS and then held still, which is exactly what a ref read inside an `options`-keyed
+   * effect does.
+   *
+   * Written in its own effect rather than during render: effects run in declaration order on one
+   * commit, so by the time the pin effect below reads it, it holds this render's selection.
+   */
+  const selectionRef = useRef(values);
+  useEffect(() => {
+    selectionRef.current = values;
+  }, [values]);
+
+  /**
+   * The third moment a pin snapshot is taken — see the single-select's copy of this effect for why
+   * `options` identity is the only honest signal that a server answer arrived.
+   */
+  useEffect(() => {
+    if (!serverDriven) return;
+    setPins(new Set(selectionRef.current));
+  }, [serverDriven, options]);
 
   const onTabForward = useCallback(() => closeAndMoveOn(true), [closeAndMoveOn]);
   const onTabBackward = useCallback(() => closeAndMoveOn(false), [closeAndMoveOn]);
@@ -1253,19 +1813,48 @@ export function SearchableMultiSelect({
   const inputRef = useFilterBoxFocus(triggerRef);
   const groups = useMemo(() => groupRows(rendered), [rendered]);
 
+  /**
+   * The names this control can actually put to its selection — which is not always all of them.
+   *
+   * A pick can only be named out of the array in hand, and with `serverQuery` that array is one
+   * answer to one term. `selectionSummarySentence` is where the consequence is handled and is the
+   * only thing that reads this: the COUNT it prints comes from `values`, never from this list, so a
+   * name the current page cannot supply costs a name and never a number. See that function.
+   */
   const chosenLabels = useMemo(
     () => options.filter((option) => chosen.has(option.value)).map((option) => option.label),
     [options, chosen]
   );
   /** The selected set as prose, so a screen reader gets the names and not just "3 selected". */
-  const selectionSummary = chosenLabels.length
-    ? chosenLabels.length <= SUMMARY_NAMES
-      ? `${chosenLabels.length} selected: ${chosenLabels.join(", ")}`
-      : `${chosenLabels.length} selected, including ${chosenLabels.slice(0, SUMMARY_NAMES).join(", ")}`
-    : "Nothing selected";
-  const announcement = `${
-    filtering ? `${filtered.length} of ${options.length} options match ${query.trim()}` : `${options.length} options`
-  }. ${selectionSummary}.`;
+  const selectionSummary = selectionSummarySentence({
+    selected: values.length,
+    names: chosenLabels
+  });
+  /**
+   * The list half comes from `listAnnouncement` so the two components cannot word one state two
+   * ways; the selection summary is this control's alone and is appended after it. The non-server
+   * arms are byte-for-byte what this control has always announced.
+   */
+  const announcement = `${listAnnouncement({
+    total: options.length,
+    matched: filtered.length,
+    term: withSearch ? query : "",
+    server: serverDriven,
+    pending: serverQuery?.pending ?? false,
+    truncated: serverQuery?.truncated ?? false
+  })}. ${selectionSummary}.`;
+
+  /** Both counts are the corpus's — see the single-select's copy. */
+  const capAdvice = capHint ?? (withSearch ? CAP_HINT_WITH_SEARCH : CAP_HINT_WITHOUT_SEARCH);
+  const capSentence = truncationSentence({
+    shown: windowed.length - pinned,
+    pinned,
+    total: filtered.length,
+    capped,
+    term: query,
+    hint: capAdvice,
+    serverTruncated: serverQuery?.truncated ?? false
+  });
 
   /**
    * Reached with the mouse, and by Tab — it is the next control after the filter box, so a keyboard
@@ -1274,8 +1863,14 @@ export function SearchableMultiSelect({
    * just typed", and quietly redefining it to "tick 74 rows" is exactly the kind of surprise this
    * control is supposed to avoid.
    */
+  /**
+   * `bulk === false` removes the button entirely rather than disabling it, because a disabled
+   * control is still a control a reader has to read and dismiss, and on a filter there is nothing
+   * for it to become enabled by. The absence state on those screens is expressed by the caller's own
+   * "All records" button, which writes `[]`.
+   */
   const bulkButton =
-    bulk.length > 0 ? (
+    bulk && bulkRows.length > 0 ? (
       <button
         type="button"
         onClick={applyBulk}
@@ -1349,8 +1944,18 @@ export function SearchableMultiSelect({
               query={query}
               onQueryChange={onQueryChange}
               onKeyDown={onFilterKeyDown}
-              placeholder="Type to filter"
-              label={ariaLabel ? `Filter ${ariaLabel}` : "Filter options"}
+              /* Named for what it reaches, exactly as on the single-select — see the note there. */
+              placeholder={serverDriven ? "Type to search" : "Type to filter"}
+              label={
+                serverDriven
+                  ? ariaLabel
+                    ? `Search ${ariaLabel}`
+                    : "Search options"
+                  : ariaLabel
+                    ? `Filter ${ariaLabel}`
+                    : "Filter options"
+              }
+              pending={serverQuery?.pending}
               trailing={bulkButton}
             />
           ) : bulkButton ? (
@@ -1365,9 +1970,6 @@ export function SearchableMultiSelect({
             aria-label={ariaLabel ?? "Options"}
             className="min-h-0 max-h-72 shrink overflow-y-auto overscroll-contain py-1"
           >
-            {rendered.length === 0 ? (
-              <li className="px-3.5 py-2 text-sm text-ink-500">{query.trim() ? "No matches" : emptyLabel}</li>
-            ) : null}
             {/* Grouped or flat, with the row indices unchanged either way — see the single-select. */}
             {groups.map((bucket) => {
               const rows = bucket.rows.map(({ option, index }) => {
@@ -1414,15 +2016,19 @@ export function SearchableMultiSelect({
                 </li>
               );
             })}
+            {/* Same three-way sentence, in the same place, as the single-select — see the note there. */}
+            {windowed.length === 0 ? (
+              <li className="px-3.5 py-2 text-sm text-ink-500">
+                {emptyListSentence({
+                  emptyLabel,
+                  term: query,
+                  server: serverDriven,
+                  pending: serverQuery?.pending ?? false
+                })}
+              </li>
+            ) : null}
           </ul>
-          {capped > 0 ? (
-            <CapNotice
-              shown={rendered.length - pinned}
-              pinned={pinned}
-              total={filtered.length}
-              hint={capHint ?? (withSearch ? CAP_HINT_WITH_SEARCH : CAP_HINT_WITHOUT_SEARCH)}
-            />
-          ) : null}
+          {capSentence ? <CapNotice sentence={capSentence} /> : null}
           {confirmOnSelect && values.length > 0 ? (
             <div className="shrink-0 border-t border-line-200 bg-card p-2">
               <button

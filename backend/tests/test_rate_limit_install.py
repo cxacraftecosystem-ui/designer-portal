@@ -86,10 +86,13 @@ def test_the_limiter_is_mounted_inside_cors_and_outside_the_error_handler(
     """The whole stack, in outermost-first order, asserted as a sequence rather than a membership.
 
     Reading it: gzip has to be outermost (it must see the finished body and own ``content-length``),
-    the security headers next so they land on preflights too, then CORS, then the limiter, then the
+    the security headers next so they land on preflights too, then CORS, then the usage recorder
+    (inside CORS so nothing it does can land between a response and its access-control header, and
+    outside the router because `scope["route"]` does not exist until the router has matched — see
+    the class docstring and the registration comment in ``app/main.py``), then the limiter, then the
     error handler, then the router. Asserting the entire list rather than only the limiter's
-    neighbours is deliberate — it is the version of this test that fails when somebody adds a sixth
-    middleware in the wrong place, instead of silently continuing to pass.
+    neighbours is deliberate — it is the version of this test that fails when somebody adds a
+    seventh middleware in the wrong place, instead of silently continuing to pass.
     """
     stack = [mw.cls.__name__ for mw in limited_app.user_middleware]
 
@@ -97,6 +100,7 @@ def test_the_limiter_is_mounted_inside_cors_and_outside_the_error_handler(
         "SelectiveGZipMiddleware",
         "SecurityHeadersMiddleware",
         "CORSMiddleware",
+        "UsageEventMiddleware",
         "RateLimitMiddleware",
         "UnhandledErrorMiddleware",
     ]
@@ -117,6 +121,7 @@ def test_a_fresh_clone_has_no_rate_limit_middleware_at_all(unlimited_app: FastAP
         "SelectiveGZipMiddleware",
         "SecurityHeadersMiddleware",
         "CORSMiddleware",
+        "UsageEventMiddleware",
         "UnhandledErrorMiddleware",
     ]
 

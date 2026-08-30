@@ -245,7 +245,10 @@ async def _census() -> tuple[dict, str]:
         now = time.monotonic()
         if _state.counts is not None and _state.age(now) < _CACHE_TTL_SECONDS:
             return _body(_state.counts, _state.counted_at_wall, stale=False), _FRESH_CACHE_CONTROL
-        if _state.last_failure_at is not None and now - _state.last_failure_at < _RETRY_BACKOFF_SECONDS:
+        if (
+            _state.last_failure_at is not None
+            and now - _state.last_failure_at < _RETRY_BACKOFF_SECONDS
+        ):
             return _stale_or_unavailable(now)
         try:
             counts = await _count_everything()

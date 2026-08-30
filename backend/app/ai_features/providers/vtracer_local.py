@@ -72,7 +72,9 @@ class VtracerLocalProvider(VectorisationProvider):
                 remediation="Check the installed vtracer version against the pinned extra.",
             )
 
-        notes = [f"{settings.vector_colormode} mode, speckle filter {settings.vector_filter_speckle}"]
+        notes = [
+            f"{settings.vector_colormode} mode, speckle filter {settings.vector_filter_speckle}"
+        ]
         if len(svg) > 1_000_000:
             # A megabyte of paths per product photograph adds up across 925 media rows, and it is
             # a browser problem long before it is a storage one.

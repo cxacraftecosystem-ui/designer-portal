@@ -145,7 +145,10 @@ def _transcription_in_cooldown(now: datetime | None = None) -> bool:
     The pause is enforced by ``runAfter``; this stays as the cheap in-process shortcut that keeps the
     drain from even asking for transcription work it knows is parked.
     """
-    return _rate_limit_cooldown_until is not None and (now or datetime.now(UTC)) < _rate_limit_cooldown_until
+    return (
+        _rate_limit_cooldown_until is not None
+        and (now or datetime.now(UTC)) < _rate_limit_cooldown_until
+    )
 
 
 def _enter_rate_limit_cooldown(retry_after: float | None) -> datetime:
@@ -164,7 +167,9 @@ def _enter_rate_limit_cooldown(retry_after: float | None) -> datetime:
     if retry_after and retry_after > 0:
         delay = max(retry_after, RATE_LIMIT_BASE_SECONDS)
     else:
-        delay = min(RATE_LIMIT_BASE_SECONDS * (2 ** (_consecutive_rate_limits - 1)), RATE_LIMIT_MAX_SECONDS)
+        delay = min(
+            RATE_LIMIT_BASE_SECONDS * (2 ** (_consecutive_rate_limits - 1)), RATE_LIMIT_MAX_SECONDS
+        )
     _rate_limit_cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
     return _rate_limit_cooldown_until
 
@@ -403,9 +408,8 @@ async def process_next_media_jobs(
     # rate-limit cooldown is in effect. Lighter MEASUREMENT jobs always run.
     app_settings = await load_app_settings()
     allow_transcription = (
-        (within_processing_window(app_settings) or _server_is_idle())
-        and not _transcription_in_cooldown(now)
-    )
+        within_processing_window(app_settings) or _server_is_idle()
+    ) and not _transcription_in_cooldown(now)
     if not allow_transcription:
         where["jobType"] = {"not": TRANSCRIPTION}
     jobs = await db.mediaprocessingjob.find_many(
@@ -632,8 +636,14 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
         # run that left a copy of every recording on disk would fill the box within a day.
         discard_temp(source_path)
     mode = transcription_mode(await load_app_settings())
-    if result.get("status") == "COMPLETED" and mode in {"REFINED", "REFINED_TRANSLATED"} and result.get("text"):
-        refined = await refine_transcript_text(result.get("text"), mode == "REFINED_TRANSLATED", settings)
+    if (
+        result.get("status") == "COMPLETED"
+        and mode in {"REFINED", "REFINED_TRANSLATED"}
+        and result.get("text")
+    ):
+        refined = await refine_transcript_text(
+            result.get("text"), mode == "REFINED_TRANSLATED", settings
+        )
         if refined.get("status") == "COMPLETED" and refined.get("refined"):
             result = {
                 **result,
@@ -740,7 +750,9 @@ async def _lock_job(job_id: str, worker_id: str) -> Any | None:
     )
     if claimed != 1:
         return None
-    return await db.mediaprocessingjob.find_unique(where={"id": job_id}, include={"mediaFile": True})
+    return await db.mediaprocessingjob.find_unique(
+        where={"id": job_id}, include={"mediaFile": True}
+    )
 
 
 async def _process_job(job: Any, settings: Settings) -> None:
@@ -834,7 +846,11 @@ async def _process_job(job: Any, settings: Settings) -> None:
         # The refined text is stored as the transcript (raw stays in transcriptSummary) and still lands
         # COMPLETED — i.e. awaiting human approval through the existing transcript-approval flow.
         mode = transcription_mode(await load_app_settings())
-        if result.get("status") == "COMPLETED" and mode in {"REFINED", "REFINED_TRANSLATED"} and result.get("text"):
+        if (
+            result.get("status") == "COMPLETED"
+            and mode in {"REFINED", "REFINED_TRANSLATED"}
+            and result.get("text")
+        ):
             # THE SECOND HOP IS OPTIONAL AND MUST NEVER COST THE FIRST ONE. The provider has already
             # been paid and the raw transcript is sitting in ``result`` at this line; letting an
             # exception out of the refine call sent the whole run to ``_handle_job_failure``, which
@@ -902,9 +918,7 @@ async def _apply_transcription_result(job: Any, result: dict[str, Any]) -> None:
             data={"transcriptStatus": QUEUED, "transcriptError": message},
         )
         raise RateLimited(result.get("retryAfter"))
-    await db.mediafile.update(
-        where={"id": job.mediaFileId}, data=_transcript_write(result, status)
-    )
+    await db.mediafile.update(where={"id": job.mediaFileId}, data=_transcript_write(result, status))
     if status in {COMPLETED, "EMPTY"}:
         await _complete_job(job.id, result)
     elif status == UNAVAILABLE:

@@ -304,6 +304,19 @@ ARTISAN_NOT_CARRIED = {
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping — the researcher who typed the record",
     "designWorkshopId": _FILING_SCOPE,
+    # Added 2026-08-29 with the column (requirement 14: Experience becomes Years + Months on both
+    # Artisan and DesignerProfile). NOT carried, and for a reason specific to this column rather
+    # than the generic "no destination exists yet": `record_fields.py`'s "Experience (years)" cell
+    # — the one place an artisan's experience actually reaches a document — is built entirely from
+    # WHOLE YEARS, by three sources in order (derive_experience_years(craftStartDate), the stated
+    # experienceYears column, then the legacy metadata figure); none of the three has ever carried
+    # a sub-year remainder, and `craftStartDate`'s derivation in particular computes elapsed years
+    # from a join date to TODAY, which has no months component to receive. Carrying this column
+    # would mean inventing a second "Experience (years, months)" cell nothing has asked for, purely
+    # because the source table grew a column — exactly the "considered vs. merely not noticed"
+    # distinction this ledger exists to keep visible. If a workshop stage or report ever needs the
+    # finer figure, that is a new field with its own decision, not a silent default for this one.
+    "experienceMonths": "no carry target — record_fields.py's Experience cell is whole-years only",
 }
 
 # ONE LEDGER ROW, THREE REFERENCING MODELS, AND THE TARGETS ARE NAMED IN FULL FOR A REASON. `Location`
@@ -720,6 +733,17 @@ RELATION_LEDGER = {
         "tools": "back-reference",
         "media": "back-reference",
         "questionnaireInterviews": "a different feature",
+        # NOT INCLUDED, and correctly so: `prefill_from_profile` (services/designers.py) is the only
+        # reader of `DesignerProfile` on a workshop's path, and it resolves its row with
+        # `find_unique(..., include={"user": True})` — no `location` — then walks `PREFILL_MAP` by
+        # `getattr(profile, column, None)`, a scalar-only read that cannot see a relation regardless
+        # of what the query loaded. A designer's stated address is who they are TODAY, read fresh
+        # every time their own profile page is opened; a workshop's stage entries are copies taken
+        # once, at creation, of facts about THAT workshop (see prefill_from_profile's own docstring
+        # on why a report must not re-derive from a profile that can move institutions later). Those
+        # are two different questions, and this relation answering the first is exactly why it must
+        # not also answer the second.
+        "designerProfiles": "NOT carried — see prefill_from_profile; a profile's location is never included",
     },
     "ProductDocumentation": {
         "artisan": (

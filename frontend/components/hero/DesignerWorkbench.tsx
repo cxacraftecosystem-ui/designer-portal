@@ -103,6 +103,15 @@ const SURFACES = [
       "Name and local-script name, designation, institution, department, qualification, specialisation, years",
       "Phone, email, website and address; empanelment number and date; photograph and signature",
       "A CV, rendered on the page where it is a PDF rather than merely listed",
+      // `components/designers/profileCopy.ts:87-91` — DESIGNER_PROFILE_REQUIRED_FIELDS, exactly
+      // four: displayName, qualification, phone, email. The card previously implied none of the
+      // twenty-one was required, which the in-app guide had already been corrected away from
+      // (its designer-profile card, `components/guide/steps.ts`), so the public page and the
+      // walkthrough disagreed in the
+      // direction that costs most: this one is read BEFORE signing up. The second sentence is that
+      // file's own argument, near enough verbatim — marking every box required would stop a
+      // designer without an empanelment number yet from saving their biography at all.
+      "Four are required — name, qualification, phone and email, the values a document is submitted under and the ways of reaching you about it. The other seventeen wait until you have them",
       "All twenty-one are values a new workshop's stages start pre-filled with — and stay editable inside it, because a report records who ran a workshop at the time"
     ]
   },
@@ -113,8 +122,25 @@ const SURFACES = [
       "A sketch usually enters an archive as a photograph of a sheet of paper on a courtyard table, at whatever angle somebody happened to be standing.",
     points: [
       "The sheet squared to the page and thresholded into a printable plate — plane geometry on the device, no model and no server",
-      "Line art traced to vector in a worker, on the same device, uploading nothing",
+      // The handset half is `android/settings.gradle.kts` plus the four vendored `core-*` modules:
+      // the tracer is now the upstream Kotlin engine compiled into the APK, which replaced a
+      // JavaScript bundle behind a WebView gate that made the tracer simply ABSENT on older
+      // handsets. "A browser it may not have" is that gate stated as the reader experiences it.
+      "Line art traced to vector in a worker, on the same device, uploading nothing — and on the handset by a native engine rather than inside a browser it may not have",
       "The photograph is never overwritten: the plate is a second artifact that cites the first",
+      // `components/sketches/upload/traceExport.ts` — EXPORT_FORMATS, five ids, and its own header
+      // states "EXPORT_FORMATS is the whole list". The handset writes the same five:
+      // `DwTraceKotlinExporter.kt` routes SVG and PNG to the platform and hands the other three to
+      // the vendored `PdfWriter` / `EpsWriter` / `DxfWriter`. THE PARENTHESES ARE THE POINT — a
+      // designer does not know what a DXF is for, and the format list is only useful if it names
+      // the machine at the other end. Both hints are shortened from that file's own.
+      "The trace saved five ways on either client — SVG and PNG to attach, PDF to send on, DXF for a cutting machine, EPS for a print shop",
+      // `components/sketches/upload/MeasureFromPhotoCard.tsx#CARD_TITLE`, quoted rather than
+      // described. Cited by SYMBOL and not by line: that file is being rewritten in a neighbouring
+      // lane as this is written, and CARD_TITLE has already moved once. Its header records that the same words are hardcoded in four places
+      // across the two clients on purpose ("the words are the shared thing, not the symbol"), so a
+      // paraphrase here would be the fifth spelling of a name three surfaces agree on.
+      "“Measure a dimension from a photograph”, for the piece that has gone home while the questions have not — the panel Android had, now on the web too",
       "Prototypes carry their own drawings and photographs, and a 3D model file where there is one"
     ]
   },
@@ -139,6 +165,13 @@ const SURFACES = [
       "A printed card admits a colleague to that workshop: read and stage writes, never delete and never handing out further access",
       "Single-use by default; only an administrator can print one that lets a whole group in",
       "A card already spent turns nobody away: the ask is filed for an admin to decide, so their work is not orphaned while they wait",
+      // `app/(protected)/scan/page.tsx` — `PageHeader title="Scan a code"`, and the same three
+      // words are a dashboard tile on both clients, held together by
+      // `e2e/dashboard-tile-parity-unit.spec.ts` and `DashboardTileParityTest`. Worth a public
+      // sentence because the fix was to a PATH rather than to a feature: the scanner existed and
+      // took three deliberate steps down a menu row named after reading a list to reach. "One tap
+      // from the screen the app opens on" is that page's own phrase.
+      "“Scan a code” is its own destination on both clients — a card, a prototype tag or a screenshot of one, one tap from the screen the app opens on",
       "Sixty opaque characters, not a URL: no name, no village, no craft, and never an Aadhaar number"
     ]
   }

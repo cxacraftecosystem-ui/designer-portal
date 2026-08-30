@@ -30,13 +30,14 @@ import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
-import { ComboBox, Dropdown } from "@/components/ui/Dropdown";
+import { ComboBox, Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { apiFetch, listResource } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
 import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
+import { WORKSHOP_OPTION_PAGE_SIZE, fieldWorkshopOptions } from "@/lib/workshopOptions";
 import type {
   Artisan,
   Craft,
@@ -104,7 +105,13 @@ function sortRecent<T extends { createdAt?: string }>(items: T[]) {
  * between a list that is short and a list that lies; it is not the whole fix, and the follow-up is
  * recorded with the audit.
  */
-type EntryOptions = { options: Array<{ value: string; label: string }>; cut: ListCut | null };
+/**
+ * `DropdownOption` and not `{ value, label }`, because one of the eight branches now builds its rows
+ * in a shared module that gives them a `hint` and a `group` as well — see the workshop branch. The
+ * other seven pass the same two keys they always did; the type simply stops throwing the extra ones
+ * away at the door.
+ */
+type EntryOptions = { options: DropdownOption[]; cut: ListCut | null };
 
 async function loadEntryOptions(type: string): Promise<EntryOptions> {
   const params = { pageSize: LIST_PAGE_CEILING };
@@ -117,9 +124,33 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "workshop": {
-      const page = await listResource<Workshop>("/workshops", params);
+      /*
+        THE ONE BRANCH THAT NO LONGER BUILDS ITS OWN ROWS, and the reason is that this dropdown is
+        not the only workshop picker a designer meets. It shipped `title` alone, sorted by
+        `createdAt`, while the record forms drew `title · date` sorted by occurrence and the funnel
+        drew a third shape — so the same workshop read three ways on three screens, and the one
+        sorted by creation put a workshop entered last week from a backlog import above the one that
+        actually ran yesterday. `fieldWorkshopOptions` is that decision made once: the title in
+        `label`, the place and the day in `hint` (searched as well as drawn), the occurrence sort,
+        and "Ended" on a workshop whose window has closed — which on THIS screen is worth having,
+        because attaching a photograph to a workshop that ended eight months ago is ordinary and
+        attaching it to the wrong one of two similarly named visits is not.
+
+        `group: true` for that marking; `offPage: "refuse"` because this is an upload form with no
+        stored value to recover — nothing is being edited, so there is no row that is already true
+        of a record.
+
+        Its own page size, and not the shared `params`: one number governs the fetch and the render
+        for a workshop picker, so the cut this reports is the cut the panel actually draws. The other
+        seven branches keep `LIST_PAGE_CEILING` — they are other tables, with their own pass ahead of
+        them, and quietly narrowing them here would move seven cuts nobody had asked about.
+      */
+      const page = await listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE });
       return {
-        options: sortRecent(page.items).map((x) => ({ value: x.id, label: x.title?.trim() || "Untitled workshop" })),
+        options: fieldWorkshopOptions(
+          { kind: "ok", rows: page.items, total: page.total },
+          { group: true, offPage: { mode: "refuse" } }
+        ).options,
         cut: listCut(page, "workshops")
       };
     }
@@ -288,10 +319,24 @@ function MediaPageBody() {
   */
   const designWorkshop = useDesignWorkshopSelection(null);
   const [linkedEntryId, setLinkedEntryId] = useState("");
-  const [entryOptions, setEntryOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [entryOptions, setEntryOptions] = useState<DropdownOption[]>([]);
   /** How much of the chosen record type the entry dropdown holds — see `loadEntryOptions`. */
   const [entryCut, setEntryCut] = useState<ListCut | null>(null);
   const [loadingEntries, setLoadingEntries] = useState(false);
+  /**
+   * THE READ FOR THIS TYPE DID NOT ANSWER — which is not the same fact as "there are none of them".
+   *
+   * The catch below already raised the banner at the top of the page, and this control went on
+   * reading "No entries for this type" underneath it: a claim about the repository produced by a
+   * request that never arrived, and on the workshop branch a claim about which workshops exist.
+   * Two sentences on one screen, one of them false, and the false one is the one at the control —
+   * which is where a reader looks and which is why the house rule puts the sentence on the control
+   * it is about. A banner three inches up does not repair a picker that is still lying.
+   *
+   * Cleared when the type changes and when an answer lands, so it only ever describes the read this
+   * dropdown is currently showing the result of.
+   */
+  const [entriesFailed, setEntriesFailed] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<BatchProgress | null>(null);
@@ -353,6 +398,7 @@ function MediaPageBody() {
     setLinkedEntryId("");
     setEntryOptions([]);
     setEntryCut(null);
+    setEntriesFailed(false);
     if (!linkedType) return;
     let cancelled = false;
     setLoadingEntries(true);
@@ -363,7 +409,11 @@ function MediaPageBody() {
         setEntryCut(loaded.cut);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : `Unable to load ${LINK_TYPE_LABEL.get(linkedType) ?? linkedType} entries`);
+        if (cancelled) return;
+        // Both, and neither instead of the other: the banner says the page hit a problem, and the
+        // flag stops the picker below claiming the record type is empty on the strength of it.
+        setEntriesFailed(true);
+        setError(err instanceof Error ? err.message : `Unable to load ${LINK_TYPE_LABEL.get(linkedType) ?? linkedType} entries`);
       })
       .finally(() => {
         if (!cancelled) setLoadingEntries(false);
@@ -541,14 +591,22 @@ function MediaPageBody() {
               placeholder={
                 loadingEntries
                   ? "Loading…"
-                  : entryOptions.length === 0
-                    ? "No entries for this type"
-                    : entryCut
-                      // Naming the number in the placeholder is not decoration: it is the first
-                      // thing read by somebody about to type a name into this box, and it is what
-                      // stops an empty result being taken as proof the record does not exist.
-                      ? `Select one of these ${entryOptions.length}`
-                      : "Select an entry"
+                  : entriesFailed
+                    ? // WHICH KIND OF EMPTY THIS IS. "No entries for this type" is a claim about the
+                      // repository and its next move is to go and create the record; this one is a
+                      // claim about a request and its next move is to try again. Collapsing them is
+                      // how a timeout came to tell somebody a workshop they had just been added to
+                      // did not exist — and a file uploaded attached to nothing has to be repaired
+                      // through the relink route afterwards.
+                      "This list could not be loaded — nothing you have chosen is lost"
+                    : entryOptions.length === 0
+                      ? "No entries for this type"
+                      : entryCut
+                        // Naming the number in the placeholder is not decoration: it is the first
+                        // thing read by somebody about to type a name into this box, and it is what
+                        // stops an empty result being taken as proof the record does not exist.
+                        ? `Select one of these ${entryOptions.length}`
+                        : "Select an entry"
               }
               name="linkedRecordId"
             />

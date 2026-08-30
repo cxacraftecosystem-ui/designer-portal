@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +60,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -105,6 +107,14 @@ import java.util.TimeZone
  * Word for word the same two groups, the same field names and very nearly the same sentences as
  * frontend/components/forms/LocationFields.tsx. A researcher who uses the phone in the workshop and
  * the laptop afterwards should not have to work out that they are the same two questions.
+ *
+ * AND THE SUBJECT IS NOW A PARAMETER, because `Location` grew a seventh owner. `DesignerProfile`
+ * relates to the same table, so a designer's own district and map point are stored the same way an
+ * artisan's are — which is what "like the rest of the record pages" was always meant to mean, and
+ * which brings this card, its district picker, its coarse-fix guard and its flag-never-rewrite rule
+ * with it instead of a seventh reimplementation of an address. Only the WORDING moves: see
+ * [LocationSubject], and the note on [LocationFieldsSection]'s `isEdit` for the one thing a profile
+ * must never be allowed to do.
  * ---------------------------------------------------------------------------
  */
 
@@ -254,6 +264,35 @@ private fun LocationRequest.withStatedPlace(place: StatedPlace): LocationRequest
  */
 private const val REFERENCE_CACHE_FILE = "address-reference.json"
 
+/**
+ * WHEN THE CACHED LISTS LAST CAME OFF A SERVER — kept in a file of its own, beside the payload.
+ *
+ * WHY IT HAD TO EXIST AT ALL (DROPDOWN_DESIGN.md 3.2, item B3). Every other cache in this app
+ * records and SHOWS a `fetchedAt`; this one recorded only the payload and its `version`, so the
+ * address card had no way to print the one sentence that lets a researcher judge an offline list:
+ * "36 states on this device, last refreshed 14 Aug 2026". `DwReferenceStore` states the argument
+ * this rests on, and it is the whole reason a date beats an expiry - "A list last refreshed an hour
+ * ago that does not contain Ram Kumar means Ram Kumar has no artisan record and one should be
+ * created; the same list refreshed nine days ago means nothing of the kind." Nothing here ever
+ * deletes on the strength of it. It is SHOWN, never used to decide whether the cache may be used.
+ *
+ * WHY A SECOND FILE RATHER THAN A FIELD ON THE PAYLOAD. [AddressReferenceDto] is the SERVER's
+ * object, decoded straight off the wire; a stamp folded into it would be a client-invented key
+ * inside a document the server owns, and wrapping the payload in an envelope would make every
+ * `address-reference.json` already sitting in `filesDir` fail to decode - blanking the state list of
+ * exactly the phone this cache exists for, on the release that was meant to be improving it. A
+ * missing stamp beside a present payload is therefore a REAL and expected state (every phone that
+ * has ever run an earlier build is in it), and the card must be able to say nothing rather than
+ * guess a date.
+ *
+ * WRITTEN ON EVERY SUCCESSFUL FETCH, INCLUDING ONE THAT CHANGED NOTHING. "Last refreshed" means the
+ * last time the server confirmed the list, not the last time it differed - and the two are far apart
+ * here, because the payload is a near-constant that may go a year without moving. That is also why
+ * this is not the payload file's own `lastModified()`: that timestamp answers "when did this list
+ * last CHANGE", which would tell a researcher their perfectly current list was eleven months stale.
+ */
+private const val REFERENCE_CACHE_STAMP_FILE = "address-reference-fetched-at.txt"
+
 private val referenceJson = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
@@ -276,29 +315,214 @@ internal object AddressReferenceCache {
         file.writeText(encoded)
         true
     }.getOrDefault(false)
+
+    /**
+     * The ISO-8601 instant of the last successful fetch, or null when this device has none.
+     *
+     * NULL IS A REAL ANSWER AND NOT AN ERROR: every phone that cached a list under a build older
+     * than this one has a payload and no stamp. The caller then prints no date rather than inventing
+     * one - see [cachedListLine], which refuses to be used without a real one.
+     */
+    fun readFetchedAt(context: Context): String? = runCatching {
+        val file = File(context.filesDir, REFERENCE_CACHE_STAMP_FILE)
+        if (!file.exists()) return null
+        file.readText().trim().takeIf { it.isNotEmpty() }
+    }.getOrNull()
+
+    /**
+     * Record that the server answered, just now, on the DEVICE clock.
+     *
+     * The device clock, exactly as `DwReferenceStore` uses it, and for the reason written there:
+     * this is shown to the person holding the phone so they can judge the list against their own
+     * sense of how long ago they last had signal. A handset whose clock is wrong shows a wrong date,
+     * which is a far smaller harm than showing none - and nothing in this file ever decides anything
+     * on it.
+     *
+     * Swallows its own failure. A stamp that could not be written costs the sentence its date; it
+     * must never cost the researcher the list.
+     */
+    fun stamp(context: Context, at: String = Instant.now().toString()) {
+        runCatching { File(context.filesDir, REFERENCE_CACHE_STAMP_FILE).writeText(at) }
+    }
 }
 
 /**
- * The state and district lists: the cached copy first, then whatever the server has to add.
+ * The address reference AS THIS DEVICE ACTUALLY HAS IT - the lists, plus the four facts a picker
+ * needs in order to say which of DROPDOWN_DESIGN.md 3.5's states it is in.
+ *
+ * A silently empty dropdown reads as "there are none", which this repository names as its single
+ * most repeated bug class, and the state list is where that was first paid for: offline the list was
+ * empty, a REQUIRED closed list had no members, validation refused the submit and "the interview and
+ * its photographs die with the tab". The remedy has two halves and neither works alone - R2, a field
+ * may only be mandatory where it is answerable; and R3, the control must SAY which case it is in.
+ * Both halves need more than the payload, which is why this type exists and why
+ * [rememberAddressReference] no longer returns a bare [AddressReferenceDto].
+ */
+@Immutable
+data class AddressReferenceState(
+    val reference: AddressReferenceDto = AddressReferenceDto(),
+    /** The stamp from [AddressReferenceCache.readFetchedAt]; null on a device that never fetched. */
+    val fetchedAt: String? = null,
+    /** A request is genuinely in flight. The ONE state in which "Loading..." is a true sentence. */
+    val loading: Boolean = true,
+    /**
+     * This session's own fetch answered with lists. Only then is the list neither stale nor absent,
+     * and only then has the card nothing at all to report.
+     */
+    val servedThisSession: Boolean = false,
+    /**
+     * The last failure was an ANSWERED refusal rather than a phone that could not reach the server.
+     *
+     * The classification is the outbox's own - `WorkshopRepository.isTransient` - and deliberately
+     * not a network probe: a second idea of what "offline" means is how one screen comes to call a
+     * dead tunnel a server fault while the queue behind it calls the same throwable worth retrying.
+     */
+    val online: Boolean = false
+)
+
+/**
+ * The state and district lists: the cached copy first, then whatever the server has to add — and the
+ * record of WHICH of those two a caller is looking at, so that a picker can say which.
  *
  * The cache is read BEFORE the request goes out, so the dropdowns are populated on the first frame
  * on a phone that has ever been online, and a failed fetch changes nothing on screen. A fetch that
  * comes back empty-handed — which is what a 401 mid-refresh or a captive-portal HTML page decodes
  * to — is discarded rather than allowed to blank a list that was working.
+ *
+ * ONE IMPLEMENTATION, AND IT IS HOISTABLE. The designer-profile screen carried a byte-for-byte copy of
+ * the effect below, which meant two fetches on any screen showing both an address card and a state
+ * box, and — once the stamp existed — two places to remember to write it. A caller that already
+ * holds one of these passes it into [LocationFieldsSection] rather than letting the default fire a
+ * second request.
+ *
+ * WHAT IT REPORTS BEYOND THE LISTS, and why each is reported rather than guessed at the call site:
+ *
+ *  - [AddressReferenceState.loading] is true only while a request is genuinely in flight. It is what
+ *    stops "Loading the state list..." being printed for ever on a phone that has never been online,
+ *    which is DROPDOWN_DESIGN.md 3.2's B2: on a fresh install that is a PERMANENT state rather than
+ *    a transient one, and telling somebody to wait for something that will never arrive is worse
+ *    than saying nothing at all.
+ *  - [AddressReferenceState.servedThisSession] separates "these are today's lists" from "these came
+ *    off the disk", which is the difference between saying nothing and printing a date.
+ *  - [AddressReferenceState.online] is the OUTBOX'S classification of the failure, never a probe.
  */
 @Composable
-private fun rememberAddressReference(repository: WorkshopRepository): AddressReferenceDto {
+fun rememberAddressReference(repository: WorkshopRepository): AddressReferenceState {
     val context = LocalContext.current
-    var reference by remember { mutableStateOf(AddressReferenceDto()) }
+    var state by remember { mutableStateOf(AddressReferenceState()) }
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { AddressReferenceCache.read(context) }
-            ?.let { reference = it }
-        val fresh = runCatching { repository.addressReference() }.getOrNull() ?: return@LaunchedEffect
-        if (fresh.statesAndUnionTerritories.isEmpty() && fresh.states.isEmpty()) return@LaunchedEffect
-        reference = fresh
-        withContext(Dispatchers.IO) { AddressReferenceCache.write(context, fresh) }
+        // The cache first, and the stamp with it: a phone with no signal must reach its first frame
+        // with the lists AND with the date that lets its holder judge them.
+        val cached = withContext(Dispatchers.IO) { AddressReferenceCache.read(context) }
+        val stamp = withContext(Dispatchers.IO) { AddressReferenceCache.readFetchedAt(context) }
+        if (cached != null) state = state.copy(reference = cached, fetchedAt = stamp)
+        val fresh = runCatching { repository.addressReference() }
+        val payload = fresh.getOrNull()
+        if (payload == null) {
+            /*
+             * ANSWERED-AND-REFUSED versus COULD-NOT-BE-REACHED, told apart by the OUTBOX'S rule and
+             * not by a second one of this card's own. The two get different sentences and different
+             * next moves — "connect once and the list is kept on the device from then on" against
+             * "this is not showing what exists" — and a second idea of what "offline" means is how one
+             * screen comes to call a dead tunnel a server fault while the queue behind it calls the
+             * same throwable worth retrying.
+             */
+            val cause = fresh.exceptionOrNull()
+            state = state.copy(
+                loading = false,
+                online = cause != null && !repository.isTransient(cause)
+            )
+            return@LaunchedEffect
+        }
+        if (payload.statesAndUnionTerritories.isEmpty() && payload.states.isEmpty()) {
+            // A 200 carrying nothing is not an answer this card acts on — see the paragraph above.
+            // It is also not a failure, so whatever was cached still stands and only the spinner
+            // stops. Deliberately NOT stamped: nothing was confirmed.
+            state = state.copy(loading = false)
+            return@LaunchedEffect
+        }
+        val now = Instant.now().toString()
+        state = AddressReferenceState(
+            reference = payload,
+            fetchedAt = now,
+            loading = false,
+            servedThisSession = true,
+            online = true
+        )
+        withContext(Dispatchers.IO) {
+            AddressReferenceCache.write(context, payload)
+            // Stamped even when the payload was byte-identical: this records that the server
+            // ANSWERED, and these lists are near-constants that can go a year without moving.
+            AddressReferenceCache.stamp(context, now)
+        }
     }
-    return reference
+    return state
+}
+
+/**
+ * The trailing " *" this app spells "required" with, applied only where the answer is available.
+ *
+ * R2a — NEVER LABEL A FIELD REQUIRED WHILE ITS LIST IS EMPTY. The asterisks on this card were
+ * LITERAL TEXT ("State / union territory *"), so on a handset that had never been online they marked
+ * two closed lists with no members as things that had to be answered. The web has had the computed
+ * form since it was written — both its flags end in `&& options.length > 0` — and states why it is
+ * written out even where the bundled list means it can never fire: "the invariant is what matters
+ * — this card never demands an answer it is not offering — and a later change that narrowed or
+ * dropped the bundled list would otherwise reintroduce a lost interview in silence."
+ *
+ * The mark itself is `FieldRenderer.fieldLabel`'s, so one mark means one thing on every screen.
+ */
+private fun requiredLabel(label: String, required: Boolean): String =
+    if (required) "$label *" else label
+
+/**
+ * The DROPDOWN_DESIGN.md 3.5 sentence for one of the two address lists, or null when the control has
+ * nothing to report.
+ *
+ * INTERNAL, because a THIRD picker prints it. The designer profile keeps its own flat `state` box
+ * beside this card until the retiring migration moves the four columns across, and two spellings of
+ * "this device has not been given the state list" on one screen is two facts to whoever reads them.
+ *
+ * ONE FUNCTION FOR BOTH PICKERS AND FOR BOTH OF `SearchableSelectField`'s SLOTS, which is what stops
+ * the eye and the screen reader being told different things: that control draws `emptyMessage`
+ * inside whichever surface opens, speaks it as part of the trigger's accessibility name, and prints
+ * it on the form itself when the field has been stood down.
+ *
+ * The strings come from `WorkshopOptions.kt` and are not re-worded here. 3.5 fixes them and says
+ * both clients print them byte for byte; a second wording of one fact is a second fact as far as a
+ * reader is concerned. The noun is this caller's plural — "states", "districts".
+ *
+ * @param rows how many options the picker is actually offering.
+ * @param state what this device knows, from [rememberAddressReference].
+ */
+internal fun addressListNotice(noun: String, rows: Int, state: AddressReferenceState): String? = when {
+    /*
+     * THE LIST ARRIVED THIS SESSION. There is nothing to report and nothing to apologise for, and
+     * this is the only branch that may say nothing.
+     *
+     * Deliberately NOT [BUNDLED_LIST_HAS_NO_SENTENCE], although the answer is the same null. That
+     * constant names a vocabulary compiled into the APK, which is always answerable; ANDROID HAS NO
+     * BUNDLED STATE LIST — the web derives one from POSTAL_ZONES and this client has only the disk
+     * cache below it. Borrowing the name would put a claim in the code that a reader would carry
+     * into their next decision about offline behaviour on this screen.
+     */
+    rows > 0 && state.servedThisSession -> null
+    /*
+     * CACHED, AND ONLY WHERE A REAL DATE CAN BE PRINTED. `cachedListLine`'s own note refuses the
+     * sentence without one, and it is right to: the date IS the sentence. A list described as "last
+     * refreshed" with no date is the one form of this that stops a researcher judging it. Every
+     * phone that cached a payload under a build older than the stamp file is in exactly that state,
+     * and it says nothing rather than guessing.
+     */
+    rows > 0 -> state.fetchedAt
+        ?.let { readableStamp(it) }
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { cachedListLine(rows, noun, it) }
+    // Nothing to offer. WHICH of the three empty states this is decides both the sentence and
+    // whether the field stands down, so it may not be collapsed into one "no options" branch.
+    state.loading -> loadingListLine(noun)
+    state.online -> couldNotListLine(noun)
+    else -> offlineListLine(noun)
 }
 
 /** The states the dropdown offers, with a stored value kept at the front until the list arrives. */
@@ -567,6 +791,20 @@ private suspend fun suggestPlaceFor(
 // Presentation helpers
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * A coordinate as six decimal places, in a fixed locale.
+ *
+ * [Locale.UK] and not the device's: a handset set to a comma-decimal locale would render 22,310000
+ * — which is not a number this API parses, and which a reader copying it into a map would get
+ * wrong.
+ *
+ * PRIVATE, AND IT HAS TO STAY PRIVATE. `LocationCapture.kt` declares a file-private function of the
+ * same name and signature in this same package; widening either one to `internal` makes the pair a
+ * CONFLICTING OVERLOAD rather than a shadowed name, and every call site in the other file stops
+ * resolving. A screen outside this file that needs the same six decimal places formats them itself
+ * against this rule — or the two declarations are merged first, in one commit, which is a change to
+ * both files.
+ */
 private fun trimCoordinate(value: Double): String = String.format(Locale.UK, "%.6f", value)
 
 private fun radiusLabel(metres: Double): String =
@@ -646,6 +884,72 @@ private fun GroupNotice(warn: Boolean, text: String) {
 // ---------------------------------------------------------------------------------------------
 
 /**
+ * WHO THE STATED ADDRESS IS ABOUT, in the words this card puts on screen.
+ *
+ * The card was written for one subject and said so in twenty-odd literal strings — "Artisan
+ * location", "Use it as the artisan's location?", "Pin the artisan's location on the map". Every one
+ * of those is correct on the six field-record forms and wrong on the seventh owner of `Location`,
+ * the designer's own profile, where the subject IS the person filling the form in.
+ *
+ * A TYPE RATHER THAN FOUR LOOSE `String` PARAMETERS, because the four have to agree. A caller that
+ * passed a heading and forgot the possessive would produce a card headed "Designer location" that
+ * then asked whether to use a point as "the artisan's" — and on a screen whose whole purpose is to
+ * stop one person's place being recorded as another's, that is not a typo, it is the bug. There are
+ * exactly two of these and both are declared below; a third would need the same four answers.
+ *
+ * NOTHING HERE CHANGES WHAT IS STORED. The columns, the metadata mirror and the two-group split are
+ * identical for every subject — this is the wording, and only the wording.
+ */
+@Immutable
+data class LocationSubject(
+    /** The group heading. Title case, because it is a heading. */
+    val heading: String,
+    /** What sits under the heading, explaining what this group is for on THIS form. */
+    val subtitle: String,
+    /** Mid-sentence, with its article: "the artisan", "the designer". */
+    val label: String,
+    /** Mid-sentence possessive: "the artisan's", "the designer's". */
+    val possessive: String,
+    /** The subject's own pin, as a label: "Artisan pin", "Designer pin". */
+    val pinLabel: String
+)
+
+/** The six field-record forms. The default, so no existing call site changes a word. */
+val ARTISAN_LOCATION_SUBJECT: LocationSubject = LocationSubject(
+    heading = "Artisan location",
+    subtitle = "Where the artisan actually works — what the map, the exports and the dataset use. " +
+        "Pinning the artisan's place on the map fills in the state, district and pincode, and says " +
+        "so, so you can put it back. A GPS fix fills in only what is still blank, because the " +
+        "device is very often at a desk in another state from the artisan.",
+    label = "the artisan",
+    possessive = "the artisan's",
+    pinLabel = "Artisan pin"
+)
+
+/**
+ * The designer's own profile — the seventh owner of `Location`, and the one whose subject is the
+ * person holding the phone.
+ *
+ * THE SUBTITLE SAYS THE OPPOSITE THING FROM THE ARTISAN'S, and that is the point of having two. On a
+ * record form the warning is that the device is probably NOT where the artisan is. On a profile the
+ * device is very likely exactly where the designer is — and the danger is the other one: a fix taken
+ * because a form opened would record whichever desk, hotel or airport the profile happened to be
+ * edited from as the place the designer is based. So nothing is captured unless it is asked for, the
+ * card is always mounted as an edit (see [LocationFieldsSection]'s `isEdit`), and the subtitle says
+ * out loud that this is where the designer WORKS rather than where they are standing.
+ */
+val DESIGNER_LOCATION_SUBJECT: LocationSubject = LocationSubject(
+    heading = "Where you are based",
+    subtitle = "The district and the map point for your own practice — where you WORK, not where " +
+        "this phone happens to be while you fill the form in. Nothing is captured automatically " +
+        "here: a profile is edited at a desk, on a train, or at somebody else's institution, and a " +
+        "fix taken because a screen opened would file you wherever you happened to be sitting.",
+    label = "the designer",
+    possessive = "the designer's",
+    pinLabel = "Designer pin"
+)
+
+/**
  * Why a NEW record cannot be saved without a coordinate, a state and a district — and why an
  * existing one still can.
  *
@@ -700,8 +1004,67 @@ fun LocationFieldsSection(
     onChange: (LocationRequest?) -> Unit,
     modifier: Modifier = Modifier,
     required: Boolean = true,
+    /**
+     * THIS IS AN EDIT OF AN EXISTING RECORD, so nothing captures a fix on its own.
+     *
+     * ── THE TRAP, WHICH HAS ALREADY SHIPPED AS A BUG ON BOTH CLIENTS ─────────────────────────
+     *
+     * The automatic capture is what put fifteen artisans documented in Rajasthan, Gujarat,
+     * Uttarakhand and Andhra Pradesh at 22.31 N, 87.31 E — a desk in Kharagpur. It is forwarded
+     * to [LocationCaptureCard], where `true` short-circuits the fix outright; the card also waits
+     * out [EDIT_FETCH_GRACE_MS] for a record to arrive, but that is a HEURISTIC and this is the
+     * rule. Its web twin spells the same switch `isEditForm = initial !== undefined`, where
+     * OMITTING `initial` is the only thing that turns capture on and passing `initial={null}`
+     * still counts as an edit.
+     *
+     * ANY FORM WHOSE RECORD ALREADY EXISTS MUST PASS `true`, and the designer profile is the
+     * sharpest case: it is ALWAYS an edit of one's own row — the server upserts the row on read,
+     * so there is no create path anywhere in that feature — and the subject of the address is the
+     * person holding the phone. Left to the grace period, a profile opened on a train would offer
+     * to file its owner in whichever district the train was passing through, and nothing
+     * downstream could tell that from a district they chose.
+     */
     isEdit: Boolean = false,
     showRequirementError: Boolean = false,
+    /**
+     * Who the stated address is ABOUT, in the words this card prints. See [LocationSubject].
+     *
+     * The default is the artisan, so the six record forms read exactly as they always have.
+     */
+    subject: LocationSubject = ARTISAN_LOCATION_SUBJECT,
+    /**
+     * The state and district lists, when the HOST already has them.
+     *
+     * The default fetches its own, which is right for every form that shows this card and nothing
+     * else. The designer profile shows this card BESIDE its own flat state box — the two addresses
+     * live side by side until the retiring migration — and two copies of this would mean two
+     * requests for one near-constant payload and two chances to write the fetched-at stamp
+     * differently.
+     */
+    referenceState: AddressReferenceState = rememberAddressReference(repository),
+    /**
+     * Raised while this card is holding a STATED ADDRESS THAT CANNOT BE SAVED, because there is no
+     * coordinate under it.
+     *
+     * ── WHY THE HOST HAS TO KNOW, AND WHY THIS CARD CANNOT ANSWER IT ALONE ────────────────────
+     *
+     * `Location.latitude`/`longitude` are NOT NULL for all seven owners of that table, and
+     * `LocationInput.latitude`/`longitude` are required floats with no default, so a state, a
+     * district, a village and a pincode have nowhere to live until a point exists. Before there is
+     * one they are parked in [StatedPlace], INSIDE this composable, and `onChange` is never called
+     * — so a host that only watches its `LocationRequest?` sees null and sends no address at all.
+     * Four typed answers then disappear at save time with a 200 and nothing on screen.
+     *
+     * The notice below already says so. This is the other half: a form that can REFUSE the save
+     * says it at the moment the person presses the button, which is the only moment they are
+     * looking. The web card does the identical thing through `setCustomValidity` on both
+     * coordinate boxes, with the sentence "The state and district are stored with the coordinates,
+     * so this record needs one before they can be saved."
+     *
+     * IT IS NOT A SECOND NULL CHECK. `value == null` alone would fire on an untouched card; this
+     * fires only when something has actually been typed into the stated group.
+     */
+    onStatedAddressNeedsCoordinate: (Boolean) -> Unit = {},
     /**
      * The village, when the FORM owns it rather than this card.
      *
@@ -719,7 +1082,7 @@ fun LocationFieldsSection(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val reference = rememberAddressReference(repository)
+    val reference = referenceState.reference
     var parked by remember { mutableStateOf(StatedPlace()) }
     var expanded by remember { mutableStateOf(false) }
     var pincodeProblemShown by remember { mutableStateOf(false) }
@@ -801,7 +1164,84 @@ fun LocationFieldsSection(
     val showPincodeProblem = pincodeProblem != null &&
         (pincodeProblemShown || place.pincode.length == PINCODE_LENGTH)
     val districts = districtOptions(place.state, place.district, reference)
-    val districtsKnown = reference.districts?.byState?.isNotEmpty() == true
+
+    val stateRows = remember(place.state, reference) {
+        stateOptions(place.state, reference).asSelectOptions()
+    }
+    val districtRows = remember(districts) { districts.asSelectOptions() }
+
+    /*
+     * R2 — A FIELD MAY ONLY BE MANDATORY WHERE IT IS ANSWERABLE, computed rather than typed.
+     *
+     * Two clauses, and both of them are load-bearing:
+     *
+     *   `required && !isEdit` is exactly what [artisanLocationRequirementError] enforces, and the
+     *   mark has to match the rule. The asterisks here were literal text, so an EDIT — which the
+     *   server deliberately does not ask for a state or a district, because the records written
+     *   before those columns existed have neither — wore two marks nothing would ever enforce.
+     *
+     *   `listIsAnswerable(...)` is the half the OFFLINE_STATES incident was paid for: a required
+     *   closed list with no members meant validation refused the submit, the save was never
+     *   reached, and "the interview and its photographs die with the tab". It is written out even
+     *   though the state list is normally there, because the invariant is what matters — this card
+     *   never demands an answer it is not offering.
+     */
+    val stateRequired = required && !isEdit && listIsAnswerable(stateRows)
+    val districtRequired = required && !isEdit && listIsAnswerable(districtRows)
+
+    /*
+     * R3 — THE CONTROL MUST SAY WHICH CASE IT IS IN. A picker that opens on nothing reads as
+     * "there are none", and on a handset in a workshop with no signal the truthful reading is
+     * almost always "this device has not been given the list yet". Those are opposite facts with
+     * opposite next moves and until now they looked identical here.
+     */
+    val stateNotice = addressListNotice("states", stateRows.size, referenceState)
+    val districtNotice = when {
+        // NOT AN EMPTY-LIST CLAIM AT ALL. With no state chosen there is no list to be empty; the
+        // placeholder below says what to do and this must not talk over it with a sentence about
+        // a district register that was never consulted.
+        place.state.isBlank() -> null
+        districtRows.isNotEmpty() -> addressListNotice("districts", districtRows.size, referenceState)
+        /*
+         * THE REFERENCE ARRIVED AND CARRIES NO DISTRICTS FOR THIS STATE. That is a different fact
+         * from "this phone has not been given the list", and it needs a different sentence: 795
+         * districts genuinely cannot be bundled into an APK, and a deployment whose reference
+         * payload stops at the state level is a real and supported configuration rather than a
+         * fault. The operational half is only true where a create is actually being refused, so it
+         * is said only there — on an edit, and on the designer's own profile, the record saves
+         * perfectly well without a district and promising otherwise would send somebody hunting
+         * for a signal they do not need.
+         */
+        reference.statesAndUnionTerritories.isNotEmpty() || reference.states.isNotEmpty() ->
+            "The district list on this phone has nothing for ${place.state}. That is not a claim " +
+                "that it has no districts — the reference this phone last received does not carry " +
+                "them. Connect once and it is kept on the device for good, after which this " +
+                "dropdown works with no signal." +
+                // GATED ON "THIS IS A CREATE", NOT ON [districtRequired] — which is false right
+                // here, because it ends in `listIsAnswerable` and this branch is the one where the
+                // list is empty. Written the other way the sentence could never appear on the one
+                // form it is about.
+                if (required && !isEdit) {
+                    " Until then a NEW record cannot be started, because the API asks every new " +
+                        "record for a district; an existing one can still be corrected and saved."
+                } else {
+                    ""
+                }
+        // Nothing has arrived at all. Loading, offline or refused — whichever it is, 3.5 has the
+        // sentence and it is the same one the state box above is printing.
+        else -> addressListNotice("districts", districtRows.size, referenceState)
+    }
+
+    /*
+     * FOUR ANSWERS THAT CANNOT BE SAVED YET, REPORTED TO THE FORM — see
+     * [onStatedAddressNeedsCoordinate]. Raised from an effect rather than read during composition,
+     * so a host that turns this into form state cannot loop.
+     */
+    val statedAddressNeedsCoordinate = value == null && !place.isEmpty
+    val reportNeedsCoordinate = rememberUpdatedState(onStatedAddressNeedsCoordinate)
+    LaunchedEffect(statedAddressNeedsCoordinate) {
+        reportNeedsCoordinate.value(statedAddressNeedsCoordinate)
+    }
 
     /** Write one edited artisan answer back, wherever the answers currently live. */
     fun setPlace(next: StatedPlace) {
@@ -1127,15 +1567,8 @@ fun LocationFieldsSection(
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
-        // ----- Group one: the artisan's location -----
-        GroupHeading(
-            title = "Artisan location",
-            subtitle = "Where the artisan actually works — what the map, the exports and the " +
-                "dataset use. Pinning the artisan's place on the map fills in the state, district " +
-                "and pincode, and says so, so you can put it back. A GPS fix fills in only what is " +
-                "still blank, because the device is very often at a desk in another state from the " +
-                "artisan."
-        )
+        // ----- Group one: the subject's stated location -----
+        GroupHeading(title = subject.heading, subtitle = subject.subtitle)
 
         /*
          * WHAT WAS JUST WRITTEN, AND HOW TO UNDO IT.
@@ -1204,7 +1637,7 @@ fun LocationFieldsSection(
                     "This device is at ${trimCoordinate(pendingPoint.first)}, " +
                         "${trimCoordinate(pendingPoint.second)}" +
                         (value?.accuracy?.let { " (${radiusLabel(it)})" } ?: "") +
-                        ", and the map calls that $named. Use it as the artisan's location?",
+                        ", and the map calls that $named. Use it as ${subject.possessive} location?",
                     color = MaterialTheme.field.body,
                     fontSize = 12.sp
                 )
@@ -1266,22 +1699,44 @@ fun LocationFieldsSection(
                     "${radiusLabel(coarse)}, which is its network estimate of where it is rather " +
                     "than a satellite reading, and a circle that wide covers more than one district. " +
                     "The coordinates have been kept with their radius, so nothing is lost. Choose the " +
-                    "state and district below, or pin the artisan's place on the map — a pin has no " +
-                    "radius to be wrong about."
+                    "state and district below, or pin ${subject.possessive} place on the map — a pin " +
+                    "has no radius to be wrong about."
             )
         }
 
         SearchableSelectField(
-            label = "State / union territory *",
-            options = remember(place.state, reference) {
-                stateOptions(place.state, reference).asSelectOptions()
-            },
+            // COMPUTED, NEVER TYPED — see [requiredLabel]. This label carried a literal " *" and so
+            // marked an empty closed list as something that had to be answered.
+            label = requiredLabel("State / union territory", stateRequired),
+            options = stateRows,
             selectedValue = place.state,
-            placeholder = if (reference.statesAndUnionTerritories.isEmpty() && reference.states.isEmpty()) {
-                "Loading the state list…"
-            } else {
-                "Select state"
-            },
+            /*
+             * STOOD DOWN WHEN THERE IS NOTHING TO PICK, which is what turns [stateNotice] into a
+             * sentence ON THE FORM: `SearchableSelectField` prints its `emptyMessage` beneath a
+             * disabled, empty control precisely because a disabled trigger cannot be opened to
+             * find out why. An enabled trigger over an empty list opens a popup with nothing in
+             * it, which is the wordless version of "there are none".
+             */
+            enabled = listIsAnswerable(stateRows),
+            /*
+             * "Loading the state list…" IS FALSE FOR EVER ON A PHONE THAT HAS NEVER BEEN ONLINE,
+             * and that is DROPDOWN_DESIGN.md 3.2's B2. It was shown whenever both served lists were
+             * empty, which on a fresh install is a permanent state rather than a transient one:
+             * nothing is loading, nothing will load, and the sentence reads as something to wait
+             * through. The honest sentence for each of the three empty states is in [stateNotice];
+             * this now says only what a placeholder can truthfully say.
+             */
+            placeholder = "Select state",
+            emptyMessage = stateNotice,
+            /*
+             * PINNED OPEN RATHER THAN LEFT TO THE COUNT (3.6). Thirty-six states is over
+             * SEARCH_THRESHOLD so this normally makes no difference at all — but a list that
+             * shrinks offline would otherwise lose its filter box, its "N options" live region and
+             * its empty sentence in one step, and a reader cannot learn a control that changes
+             * shape with what the network did. The web forces the same flag on both address
+             * fields for the same reason.
+             */
+            searchable = true,
             onSelect = { next ->
                 // A district only exists inside its own state, so changing the state discards a
                 // district that is now in the wrong one rather than leaving a pairing the server
@@ -1290,29 +1745,32 @@ fun LocationFieldsSection(
                 setPlace(place.copy(state = next, district = if (keepDistrict) place.district else ""))
             }
         )
+        stateNotice?.takeIf { listIsAnswerable(stateRows) }?.let { line ->
+            // Drawn here only for the CACHED case, where the control is enabled and the primitive
+            // therefore prints nothing of its own. The empty cases are already on screen, once,
+            // under the stood-down control — saying them twice would be two facts to a reader.
+            Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        }
 
         SearchableSelectField(
-            label = "District *",
-            options = remember(districts) { districts.asSelectOptions() },
+            label = requiredLabel("District", districtRequired),
+            options = districtRows,
             selectedValue = place.district,
-            enabled = place.state.isNotBlank() && districts.isNotEmpty(),
+            enabled = place.state.isNotBlank() && listIsAnswerable(districtRows),
             placeholder = when {
                 place.state.isBlank() -> "Choose a state first"
-                districts.isEmpty() -> "District list not on this phone yet"
                 else -> "Select district"
             },
+            emptyMessage = districtNotice,
+            // 3.6's second reason, and the one the district field IS: Goa has 2 districts, Sikkim 6
+            // and Uttar Pradesh 75, so left to the count this control is an anchored menu under one
+            // answer and a bottom sheet under the next. A reader cannot learn a control that
+            // changes shape with the answer above it.
+            searchable = true,
             onSelect = { setPlace(place.copy(district = it)) }
         )
-        if (place.state.isNotBlank() && districts.isEmpty() && !districtsKnown) {
-            Text(
-                "This phone has not received the district list yet — the server it last reached " +
-                    "does not serve one. Connect once and it is cached for good, after which this " +
-                    "dropdown works with no signal. Until then a NEW record cannot be started, " +
-                    "because the API asks every new record for a district; an existing one can " +
-                    "still be corrected and saved.",
-                color = MaterialTheme.field.muted,
-                fontSize = 12.sp
-            )
+        districtNotice?.takeIf { place.state.isNotBlank() && listIsAnswerable(districtRows) }?.let { line ->
+            Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
 
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1367,8 +1825,8 @@ fun LocationFieldsSection(
             )
         }
 
-        // The artisan's own pin. Optional, and deliberately a separate coordinate from the one the
-        // GPS writes: a statement about the artisan that shared the captured-at row would be
+        // The subject's own pin. Optional, and deliberately a separate coordinate from the one the
+        // GPS writes: a statement about the subject that shared the captured-at row would be
         // overwritten by the next fix.
         if (place.pinLat.isNotBlank() && place.pinLng.isNotBlank()) {
             Row(
@@ -1377,7 +1835,7 @@ fun LocationFieldsSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Artisan pin: ${place.pinLat}, ${place.pinLng}",
+                    "${subject.pinLabel}: ${place.pinLat}, ${place.pinLng}",
                     color = MaterialTheme.field.body,
                     fontSize = 12.sp,
                     modifier = Modifier.weight(1f)
@@ -1396,17 +1854,19 @@ fun LocationFieldsSection(
         ) {
             Text(
                 if (place.pinLat.isBlank()) {
-                    "Pin the artisan's location on the map (optional)"
+                    "Pin ${subject.possessive} location on the map (optional)"
                 } else {
-                    "Move the artisan's pin"
+                    "Move ${subject.possessive} pin"
                 }
             )
         }
 
-        if (value == null && !place.isEmpty) {
+        if (statedAddressNeedsCoordinate) {
             // The API keeps this half of the address on the location row, which cannot exist
             // without a coordinate — so say it here rather than letting four answers vanish at save
-            // time.
+            // time. A host that can refuse the save is told as well, through
+            // [onStatedAddressNeedsCoordinate]; a notice above the fold is not read at the moment
+            // somebody presses Save.
             GroupNotice(
                 warn = true,
                 text = "Add a captured location below — a GPS fix, a map pin or typed coordinates. " +
@@ -1432,18 +1892,19 @@ fun LocationFieldsSection(
             GroupNotice(
                 warn = true,
                 text = "The coordinates saved on this record are in $coordinateState, but its " +
-                    "artisan location says ${place.state}. That is normal if the record was written " +
+                    "stated location says ${place.state}. That is normal if the record was written " +
                     "up away from the workshop — the coordinates say where the device was, not " +
-                    "where the artisan is. Nothing has been changed. Correct whichever of the two " +
-                    "is wrong."
+                    "where ${subject.label} is. Nothing has been changed. Correct whichever of the " +
+                    "two is wrong."
             )
         } else if (coordinateState.isNotBlank() && place.state.isBlank()) {
             GroupNotice(
                 warn = true,
-                text = "This record has coordinates in $coordinateState and no artisan location. " +
+                text = "This record has coordinates in $coordinateState and no stated location. " +
                     "Until this form existed the coordinates were the only location a record had, " +
                     "and they say where the device was — often a desk a long way from the workshop. " +
-                    "Please say where the artisan is above. Nothing has been changed or guessed."
+                    "Please say where ${subject.label} is above. Nothing has been changed or " +
+                    "guessed."
             )
         }
 
@@ -1467,8 +1928,8 @@ fun LocationFieldsSection(
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 .semantics(mergeDescendants = true) {
-                    contentDescription = "Captured at. $summary. Provenance only, not the " +
-                        "artisan's location."
+                    contentDescription = "Captured at. $summary. Provenance only, not " +
+                        "${subject.possessive} location."
                     stateDescription = if (expanded) "Expanded" else "Collapsed"
                     heading()
                 },
@@ -1503,7 +1964,8 @@ fun LocationFieldsSection(
         AnimatedVisibility(visible = expanded) {
             Text(
                 "Where this device was when the record was written, and how sure it is. " +
-                    "Provenance — it is not the artisan's location and nothing reads it as one. " +
+                    "Provenance — it is not ${subject.possessive} location and nothing reads it " +
+                    "as one. " +
                     "Filled in automatically; correct it only if the device got it wrong." +
                     when {
                         value == null -> ""
@@ -1580,7 +2042,7 @@ fun LocationFieldsSection(
              */
             onPick = { lat, lng ->
                 setPlace(place.copy(pinLat = trimCoordinate(lat), pinLng = trimCoordinate(lng)))
-                onMessage("Artisan pin set: ${trimCoordinate(lat)}, ${trimCoordinate(lng)}")
+                onMessage("${subject.pinLabel} set: ${trimCoordinate(lat)}, ${trimCoordinate(lng)}")
                 showArtisanMap = false
                 lookupPlace(lat, lng, accuracy = null, intent = PlaceIntent.Explicit)
             }

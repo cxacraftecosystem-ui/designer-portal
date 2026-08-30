@@ -385,9 +385,7 @@ def _encode_rows(
     return encoded
 
 
-async def _stream_rows(
-    dataset: Dataset, where: dict[str, Any]
-) -> AsyncIterator[list[Any]]:
+async def _stream_rows(dataset: Dataset, where: dict[str, Any]) -> AsyncIterator[list[Any]]:
     """Every matching row, in batches, by KEYSET — never OFFSET.
 
     ``skip``/``take`` re-walks and discards the rows it skips, so page N costs O(N x pageSize) and a
@@ -404,7 +402,9 @@ async def _stream_rows(
     while True:
         page_where = where
         if last_id is not None:
-            page_where = {"AND": [where, {"id": {"gt": last_id}}]} if where else {"id": {"gt": last_id}}
+            page_where = (
+                {"AND": [where, {"id": {"gt": last_id}}]} if where else {"id": {"gt": last_id}}
+            )
         rows = await dataset.model.find_many(
             where=page_where,
             include=dataset.include,
@@ -585,7 +585,11 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
         "tokenType": "bearer",
         "scope": DATASET_READ_SCOPE,
         "expiresInMinutes": minutes,
-        "account": {"id": user.id, "email": user.email, "role": str(getattr(user.role, "value", user.role))},
+        "account": {
+            "id": user.id,
+            "email": user.email,
+            "role": str(getattr(user.role, "value", user.role)),
+        },
         "usage": "Send as: Authorization: Bearer <accessToken>",
     }
 
@@ -620,9 +624,7 @@ async def dataset_catalogue(
         )
         for name in names
     }
-    counts = await gather_reads(
-        *(DATASETS[name].model.count(where=wheres[name]) for name in names)
-    )
+    counts = await gather_reads(*(DATASETS[name].model.count(where=wheres[name]) for name in names))
 
     # Echo the caller's filters back onto every generated URL, so following a link from this
     # response cannot silently widen the scope the plan was counted under.
@@ -758,8 +760,7 @@ async def stream_dataset_ndjson(
                 _encode_rows, rows, unmasked_viewer=viewer, presign=sign
             )
             chunk = "".join(
-                json.dumps(payload, ensure_ascii=False, default=str) + "\n"
-                for payload in encoded
+                json.dumps(payload, ensure_ascii=False, default=str) + "\n" for payload in encoded
             )
             yield chunk.encode("utf-8")
 
@@ -876,7 +877,5 @@ async def read_dataset_page(
             where=where, include=dataset.include, skip=skip, take=page_size, order={"id": "asc"}
         ),
     )
-    items = _encode_rows(
-        rows, unmasked_viewer=viewer, presign=presign and dataset.name == "media"
-    )
+    items = _encode_rows(rows, unmasked_viewer=viewer, presign=presign and dataset.name == "media")
     return page_payload(items, total, clean_page, page_size)

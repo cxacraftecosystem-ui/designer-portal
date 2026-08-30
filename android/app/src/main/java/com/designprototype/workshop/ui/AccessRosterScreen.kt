@@ -24,11 +24,9 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -42,7 +40,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -86,21 +83,40 @@ import kotlinx.coroutines.launch
  * of entries they already decided. An admin who believes Refuse is temporary will use it as "not
  * now" and never see that person again, so the confirmation says the opposite in words.
  *
- * ── THE SERVER PAGES AND THE SERVER SEARCHES ─────────────────────────────────────────────────────
+ * ── THE SERVER PAGES, THE SERVER SEARCHES, AND NOW THE SERVER FILTERS AND ORDERS ─────────────────
  *
- * Unlike [com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen], which walks its
- * whole table and filters on the device, this screen asks the server for one page at a time and
- * sends the search term with it. The difference is what the two tables ARE: a roster is a few
- * hundred empanelments an admin controls, while this holds every address ever admitted OR REFUSED,
- * including every stranger who has ever tried a password against the front door — it grows without
+ * This screen has asked the server for one page at a time and sent the search term with it since it
+ * was written, because of what the table IS: it holds every address ever admitted OR REFUSED,
+ * including every stranger who has ever tried a password against the front door, so it grows without
  * bound and in a direction nobody controls. Walking it on a handset to find three pending rows would
  * download the history of the front door over mobile data.
  *
- * The consequence is stated rather than hidden: every count on screen is the SERVER's `total`, and
- * the page indicator says which page of how many is being read. `docs/OPEN_FINDINGS.md` records four
- * closed defects in the viewer picker and three were the same shape — one page fetched, filtered
- * locally, with nothing saying the answer was a prefix, so eligible people were invisible and looked
- * exactly like people who had never existed.
+ * Requirement 30 puts the REST of the narrowing on the same footing. The standing chips, the tier
+ * ladder, the date range and the order are all query parameters — `ui/RosterFilters.kt` builds them,
+ * and there is no predicate over a fetched page anywhere in this file. That is not tidiness: a
+ * client-side box over a server-truncated page answers "no matches" about records that exist, and
+ * `docs/OPEN_FINDINGS.md` records four closed defects in the viewer picker of which three were that
+ * exact shape — one page fetched, filtered locally, with nothing saying the answer was a prefix, so
+ * eligible people were invisible and looked exactly like people who had never existed.
+ *
+ * [com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen] used to be the counterexample
+ * — it walked its whole table and filtered on the device — and stopped being one in the same change
+ * as this. Both screens now share one filter grammar and one set of sentences, so an admin moving
+ * between them is not learning two products.
+ *
+ * Every count on screen is the SERVER's `total`, and the page indicator says which page of how many
+ * is being read.
+ *
+ * ── AND WHEN THE SERVER IS OLDER THAN THIS BUILD ─────────────────────────────────────────────────
+ *
+ * A handset updates over the air and may be ahead of the API. FastAPI DROPS an undeclared query
+ * parameter in silence — it does not refuse it and it does not log it — so against a deployment that
+ * predates §4.1 a filtered request is answered with the whole unfiltered list and a 200, while the
+ * controls on screen say otherwise. That is the same lie a silently empty picker tells, in the other
+ * direction, and it is detected here rather than hoped away: `roleMatchTruncated` is specified to
+ * ride every answer from both roster routes, so its ABSENCE is the signal, and
+ * `rosterFilterGrammarNotice` turns it into a sentence naming which controls did not reach the
+ * server.
  *
  * ── NOTHING HERE DELETES ─────────────────────────────────────────────────────────────────────────
  *
@@ -124,6 +140,7 @@ private const val ACCESS_QUEUE_PAGE_SIZE = 5
 /** How long after the last keystroke the search is sent. Long enough that typing costs one request. */
 private const val ACCESS_SEARCH_DEBOUNCE_MS = 400L
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AccessRosterScreen(
     repository: WorkshopRepository,
@@ -155,9 +172,36 @@ fun AccessRosterScreen(
     var pages by remember { mutableIntStateOf(0) }
     var page by remember { mutableIntStateOf(1) }
     var search by remember { mutableStateOf("") }
-    /** What was actually SENT. Separate from [search] so the debounce cannot re-fire on every frame. */
-    var applied by remember { mutableStateOf("") }
-    var statusFilter by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * Everything the SERVER is asked to narrow and order by.
+     *
+     * `filters.search` is the APPLIED term — what actually went into the last request — while [search]
+     * is the box. Keeping them apart is what makes "nobody matches X" safe to print: it can never name
+     * a term the server has not been asked about. [emptyRosterFilters] is rule (ii) as a value, so the
+     * screen opens on every standing, every tier and no date bound.
+     */
+    var filters by remember { mutableStateOf(emptyRosterFilters(RosterKind.ACCESS)) }
+    var filterSheet by remember { mutableStateOf(false) }
+
+    /**
+     * What the last ANSWER said about itself — three facts the rows cannot carry.
+     *
+     * [readFailure] is the server's own words for a read that did not come back, kept so the list area
+     * can say the list could not be loaded instead of drawing an empty roster, which on this screen is
+     * the most alarming possible lie: "nobody may sign in" over a request that simply timed out.
+     *
+     * [roleMatchTruncated] and [grammarUnderstood] are both read off `roleMatchTruncated` on the
+     * envelope and they are different questions — see `RosterPageDto`. `true`/`false` is the tier
+     * filter's completeness; PRESENT-versus-ABSENT is whether this deployment understands §4.1's
+     * grammar at all, because FastAPI drops an undeclared query parameter in silence and the screen
+     * would otherwise show an unnarrowed list under controls that say otherwise.
+     */
+    var readFailure by remember { mutableStateOf<String?>(null) }
+    var roleMatchTruncated by remember { mutableStateOf<Boolean?>(null) }
+    var grammarUnderstood by remember { mutableStateOf<Boolean?>(null) }
+    /** The §4.1-only keys the last request actually carried, for the sentence that names them. */
+    var grammarKeysSent by remember { mutableStateOf<List<String>>(emptyList()) }
 
     var loading by remember { mutableStateOf(canManage) }
     var busy by remember { mutableStateOf(false) }
@@ -167,12 +211,12 @@ fun AccessRosterScreen(
     var deciding by remember { mutableStateOf<Pair<AccessRosterDto, String>?>(null) }
     var suspending by remember { mutableStateOf<AccessRosterDto?>(null) }
 
-    // The search box, debounced. Keyed on the raw text and NOT on `applied`, so a keystroke restarts
-    // the timer rather than queueing a second request behind the first.
+    // The search box, debounced. Keyed on the raw text and NOT on the applied term, so a keystroke
+    // restarts the timer rather than queueing a second request behind the first.
     LaunchedEffect(search) {
-        if (search == applied) return@LaunchedEffect
+        if (search == filters.search) return@LaunchedEffect
         delay(ACCESS_SEARCH_DEBOUNCE_MS)
-        applied = search
+        filters = filters.copy(search = search)
         page = 1
     }
 
@@ -212,22 +256,43 @@ fun AccessRosterScreen(
         }
     }
 
-    LaunchedEffect(reload, canManage, page, applied, statusFilter) {
+    LaunchedEffect(reload, canManage, page, filters) {
         if (!canManage) {
             loading = false
             return@LaunchedEffect
         }
         loading = true
+        // BUILT HERE, INSIDE THE EFFECT, AND NEVER REMEMBERED. `rosterQueryParams` resolves the date
+        // presets to concrete instants at the moment it is called, against this device's clock, so
+        // hoisting it into a `remember` would freeze "the last 30 days" at whatever it meant when the
+        // screen opened — and an admin who leaves the app running overnight would keep asking about
+        // yesterday. Every filter goes into ONE request rather than being applied in passes: a second
+        // pass is a second request, and two requests over one list is how a screen ends up showing the
+        // intersection of two different moments.
+        val query = rosterQueryParams(RosterKind.ACCESS, filters)
         try {
             val served = repository.accessRoster(
                 page = page,
                 pageSize = ACCESS_PAGE_SIZE,
-                status = statusFilter,
-                search = applied,
+                status = query.status,
+                search = query.search,
+                roles = query.roles,
+                dateField = query.dateField,
+                dateFrom = query.dateFrom,
+                dateTo = query.dateTo,
+                sort = query.sort,
+                dir = query.dir,
             )
             rows = served.items
             total = served.total
             pages = served.pages
+            readFailure = null
+            roleMatchTruncated = served.roleMatchTruncated
+            // PRESENT-VERSUS-ABSENT, NOT TRUE-VERSUS-FALSE. See the state's own note and
+            // `RosterPageDto`: this key is the only observable difference between a deployment that
+            // has §4.1's filter grammar and one that silently drops every parameter of it.
+            grammarUnderstood = served.roleMatchTruncated != null
+            grammarKeysSent = query.newGrammarKeys
             // The same step-back as the queue above, for the same reason: suspending the last row of
             // the last page must not leave the admin on an empty page below a total that says
             // otherwise.
@@ -235,7 +300,21 @@ fun AccessRosterScreen(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            onError(error.apiErrorMessage("Could not load the list of who may sign in."))
+            val said = error.apiErrorMessage("Could not load the list of who may sign in.")
+            onError(said)
+            // RECORDED ON THE FAILURE PATH TOO, because a refusal is one of the two ways a server that
+            // predates §4.1 answers: it DROPS a parameter it does not declare, and it 422s a value it
+            // cannot parse — `?status=PENDING,SUSPENDED` against a route that still takes one status
+            // is the second. `rosterFilterRefusalHint` names that below rather than leaving the admin
+            // reading a refusal about four values they can see they ticked two of.
+            grammarKeysSent = query.newGrammarKeys
+            // KEPT, so the list area can say what happened. A toast is gone in four seconds and the
+            // rows below it are not: without this the screen draws an empty allow-list under a
+            // heading that says who may sign in, and an admin reading that re-adds addresses that
+            // are already on it. The ROWS ARE LEFT STANDING when there are any — see the stale note
+            // below — because replacing a list an admin can still read with "nobody may sign in" is
+            // indistinguishable from an emptied institution.
+            readFailure = said
         }
         loading = false
     }
@@ -320,7 +399,7 @@ fun AccessRosterScreen(
         )
 
         when {
-            !queueLoaded -> LoadingRow("Loading the approval queue…")
+            !queueLoaded -> RosterLoadingRow("Loading the approval queue…")
             queue.isEmpty() -> Text(
                 "Nobody is waiting. When somebody who is not on this list proves their identity at " +
                     "the sign-in screen, they appear here — with their address, when they asked and " +
@@ -339,7 +418,7 @@ fun AccessRosterScreen(
             }
         }
         if (queuePages > 1) {
-            PageBar(
+            RosterPageBar(
                 page = queuePage,
                 pages = queuePages,
                 total = queueTotal,
@@ -356,7 +435,16 @@ fun AccessRosterScreen(
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
-                label = { Text("Search email, name or note") },
+                // THE COLUMNS ARE NAMED, and that is §4.8 rather than verbosity: this box reaches an
+                // admin's private NOTE as well as the address and the name, and which three columns a
+                // search covers is the one thing a reader cannot guess.
+                //
+                // The sentence is the field's SUPPORTING TEXT rather than its label — see
+                // `RosterLabels.SEARCH` for why. It is visible and it is announced, which is the
+                // property that matters: nothing here is spoken that is not on screen, and nothing on
+                // screen goes unspoken.
+                label = { Text(RosterLabels.SEARCH) },
+                supportingText = { Text(RosterLabels.ACCESS_SEARCH) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
@@ -371,22 +459,82 @@ fun AccessRosterScreen(
         // from somebody who cannot sign in, and the row that explains why is the REFUSED or
         // SUSPENDED one — exactly what a tidier default would hide. They would then re-add the
         // address, collect the 409, and still not be able to see what is refusing their colleague.
-        AccessStatusFilter(selected = statusFilter, onSelect = { statusFilter = it; page = 1 })
+        //
+        // MULTI NOW, AND STILL ON THE SCREEN RATHER THAN IN THE SHEET. This is the one filter an
+        // admin toggles constantly, and burying it one tap down would cost the screen its shape. The
+        // "Everyone" chip stays a chip like the others so the widest view is somewhere they can get
+        // BACK to — a filter you can enter and not leave is how a screen ends up looking empty for
+        // reasons nothing on it explains.
+        AccessStatusChips(
+            selected = filters.status,
+            onSelect = { picked -> filters = filters.copy(status = picked); page = 1 },
+        )
+
+        // The rest of §4.1's grammar, one tap down, plus the order. Both chips reset the pager: a
+        // filter or a sort change re-orders the whole list, so the rows at OFFSET 30 are not the rows
+        // that were there a moment ago and staying on page 3 lands the admin somewhere arbitrary.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            RosterFilterButton(RosterKind.ACCESS, filters) { filterSheet = true }
+            RosterSortButton(RosterKind.ACCESS, filters) { filterSheet = true }
+        }
+
+        // ── What this answer cannot say for itself ───────────────────────────────────────────────
+        // Both of these change what an empty or short list MEANS, and neither is visible in the rows.
+        rosterFilterGrammarNotice(grammarUnderstood, grammarKeysSent)?.let { RosterNotice(it) }
+        accessRoleCutNotice(roleMatchTruncated)?.let { RosterNotice(it) }
+        // A REFRESH FAILED WHILE ROWS WERE ALREADY ON SCREEN. The rows are deliberately left standing
+        // — replacing a list an admin can still read with "nobody may sign in" is indistinguishable
+        // from an emptied institution — so this says what they are: an older answer.
+        if (readFailure != null && rows.isNotEmpty()) {
+            RosterNotice(
+                "These rows are the last answer that arrived. The most recent refresh failed, so a " +
+                    "decision made since then — by you or by another administrator — may not be " +
+                    "shown here yet."
+            )
+        }
 
         when {
-            loading -> LoadingRow("Loading…")
-            rows.isEmpty() -> Text(
-                // NEVER "narrow your search" over a search nobody typed. That advice, printed over
-                // an empty result, is the closed viewer-picker defect arriving on a new screen.
-                if (applied.isNotBlank() || statusFilter != null) {
-                    "No entry matches that search or filter. Clear both to see everyone this " +
-                        "application has ever admitted, refused or suspended."
-                } else {
-                    "Nobody has been admitted or turned away yet. The master admin can always sign " +
-                        "in regardless of this list, which is what makes it safe to start empty."
-                },
-                color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+            loading -> RosterLoadingRow("Loading…")
+
+            // THE READ FAILED AND THERE IS NOTHING ON SCREEN. Tested BEFORE the empty arms, because
+            // this is the state the repository is worst at everywhere: an empty allow-list drawn from
+            // a network error is a claim about an institution's access control, and an admin who
+            // believes it re-adds addresses that are already on the list.
+            readFailure != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RosterEmptyState(
+                    title = ACCESS_LIST_UNREADABLE_TITLE,
+                    body = ACCESS_LIST_UNREADABLE_BODY,
+                )
+                // The server's own words are already in the error channel; this says what most likely
+                // produced them when the request carried grammar this deployment may not have.
+                rosterFilterRefusalHint(grammarUnderstood, grammarKeysSent)?.let { RosterNotice(it) }
+            }
+
+            // ROWS EXIST AND NONE OF THEM ARE HERE — the pager is past the end. It looks like
+            // emptiness and is not, and it happens for the instant between deciding the last request
+            // on the last page and the step-back guard re-reading.
+            rows.isEmpty() && total > 0 -> RosterEmptyState(
+                title = ACCESS_PAST_END_TITLE,
+                body = "None of the $total entries could be listed on this page — this is not an " +
+                    "empty allow-list. Step back a page.",
+            )
+
+            // NEVER "narrow your search" over a search nobody typed. That advice, printed over an
+            // empty result, is the closed viewer-picker defect arriving on a new screen. The
+            // predicate is the same one that decides whether "Clear every filter" is on screen, so
+            // this sentence can never tell a reader to clear filters while the button is absent.
+            rows.isEmpty() && hasActiveRosterFilters(RosterKind.ACCESS, filters) -> RosterEmptyState(
+                title = ACCESS_NO_MATCH_TITLE,
+                body = ACCESS_NO_MATCH_BODY,
+            )
+
+            rows.isEmpty() -> RosterEmptyState(
+                title = ACCESS_NOBODY_YET_TITLE,
+                body = ACCESS_NOBODY_YET_BODY,
             )
 
             else -> rows.forEach { row ->
@@ -401,11 +549,59 @@ fun AccessRosterScreen(
             }
         }
         if (pages > 1) {
-            PageBar(page = page, pages = pages, total = total, noun = "in all", busy = busy, onPage = { page = it })
+            RosterPageBar(
+                page = page,
+                pages = pages,
+                total = total,
+                noun = RosterKind.ACCESS.noun,
+                busy = busy,
+                onPage = { page = it },
+            )
         } else if (rows.isNotEmpty()) {
-            Text("$total in all", color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(
+                "$total ${RosterKind.ACCESS.noun} in all",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp
+            )
         }
         Spacer(Modifier.height(8.dp))
+    }
+
+    if (filterSheet) {
+        RosterFilterSheet(
+            kind = RosterKind.ACCESS,
+            filters = filters,
+            onChange = { next ->
+                // THE BOX FOLLOWS THE APPLIED TERM, AND THIS LINE IS THE WHOLE OF "Clear every filter"
+                // MEANING WHAT IT SAYS.
+                //
+                // [search] is the keystroke and `filters.search` is what the last request carried;
+                // they are held apart on purpose (see the state's own note) so that "nobody matches
+                // X" can never name a term the server was not asked about. The sheet's clear-all sets
+                // the APPLIED term to blank, and without this the two halves are left disagreeing in
+                // the other direction — the BOX naming a term the server was not asked about, which
+                // is the same lie read from the other end. An admin who searches for a colleague,
+                // finds nothing, and presses "Clear every filter" to check would get page 1 of the
+                // whole allow-list with that address still sitting in the box, and every sentence
+                // around it — the empty arms, the "Clear every filter" button that has just
+                // disappeared because `hasActiveRosterFilters` is now false — quietly describing a
+                // different screen from the one they are looking at.
+                //
+                // AND IT UNDOES THE SHARPER HALF: the debounce below is keyed on [search], so a
+                // clear-all pressed within 400 ms of the last keystroke left a coroutine in flight
+                // that finished its delay and put the term BACK, four hundred milliseconds after the
+                // button said it had gone. Writing [search] here re-keys that effect, which cancels
+                // it; the guard on its first line then sees the two already agree and returns
+                // without spending a request.
+                search = next.search
+                filters = next
+                // THE SHEET CANNOT DO THIS ITSELF and says so: the page number is the screen's state
+                // and is deliberately not part of `RosterFilters`, because a filter value carrying a
+                // page could be restored onto the wrong page of a list it had just re-filtered.
+                page = 1
+            },
+            onDismiss = { filterSheet = false },
+        )
     }
 
     if (adding) {
@@ -713,71 +909,59 @@ private fun AccessChip(label: String, background: Color, foreground: Color) {
     )
 }
 
-@Composable
-private fun LoadingRow(label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        CircularProgressIndicator(modifier = Modifier.size(18.dp))
-        Text(label, color = MaterialTheme.field.muted, fontSize = 13.sp)
-    }
-}
+// --------------------------------------------------------------------------------------
+// The four things an empty list can mean — §3.5, said for a list screen rather than a form field
+// --------------------------------------------------------------------------------------
+//
+// FOUR STATES AND FOUR PAIRS OF SENTENCES, and the whole point is that they are not one sentence.
+// "Nobody has been admitted yet" is a claim about an institution's access control; printed over a
+// read that failed it is a lie drawn from a network error, and an admin who believes it re-adds
+// addresses that are already on the list and collects a 409 they cannot explain. The two clients
+// share these words: the web's are in `admin/access/rosterQuery.ts`, byte for byte.
 
 /**
- * Which page of how many, and how many rows there are in all.
+ * THE READ FAILED AND NOTHING IS ON SCREEN. §3.5's *could-not-be-listed*, for a list.
  *
- * THE SERVER'S NUMBERS, NOT THE SCREEN'S. A list that says "12" when the table holds 300 is the
- * defect this repository has already closed four times in one picker: the rows an admin cannot see
- * look exactly like people who were never there.
+ * Both halves of the body are load-bearing: **this is not showing what exists**, and **nothing has
+ * been changed**. The picker version of this sentence reassures a researcher that their record can
+ * still be saved; nothing is being saved here, so this one reassures an admin about the thing they
+ * would actually fear — that the allow-list itself has been emptied.
  */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun PageBar(page: Int, pages: Int, total: Int, noun: String, busy: Boolean, onPage: (Int) -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        OutlinedButton(onClick = { onPage(page - 1) }, enabled = !busy && page > 1) { Text("Previous") }
-        Text(
-            "Page $page of $pages · $total $noun",
-            color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
-            modifier = Modifier.weight(1f)
-        )
-        OutlinedButton(onClick = { onPage(page + 1) }, enabled = !busy && page < pages) { Text("Next") }
-    }
-}
+private const val ACCESS_LIST_UNREADABLE_TITLE = "The list could not be loaded"
+
+private const val ACCESS_LIST_UNREADABLE_BODY =
+    "This is not showing what exists, and it is not a claim that nobody may sign in — the request " +
+        "for the allow-list did not come back. Nobody's access has been changed by the failure."
 
 /**
- * The status filter, as chips.
+ * THE FILTERS EXCLUDED EVERYONE. Not the same fact as an empty list, and the difference is the whole
+ * of §3.5.
  *
- * "Everyone" is the default and is a chip like the others rather than the absence of one, so the
- * widest view is somewhere an admin can get BACK to. A filter you can enter and not leave is how a
- * screen ends up looking empty for reasons nothing on it explains.
+ * The body names what clearing gets back IN FULL, refused and suspended rows included, because this
+ * screen's widest default is the reason it is usable at all.
  */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun AccessStatusFilter(selected: String?, onSelect: (String?) -> Unit) {
-    val options = listOf(
-        null to "Everyone",
-        AccessStatus.ACTIVE to "May sign in",
-        AccessStatus.PENDING to "Waiting",
-        AccessStatus.REJECTED to "Refused",
-        AccessStatus.SUSPENDED to "Suspended",
-    )
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        options.forEach { (value, label) ->
-            FilterChip(
-                selected = selected == value,
-                onClick = { onSelect(value) },
-                label = { Text(label) }
-            )
-        }
-    }
-}
+private const val ACCESS_NO_MATCH_TITLE = "Nobody matches these filters"
+
+private const val ACCESS_NO_MATCH_BODY =
+    "Clear them to see everyone this application has ever admitted, refused or suspended — the " +
+        "refused and suspended entries included, which are the ones that explain why somebody " +
+        "cannot sign in. The filters are applied on the server, over the whole list and not only " +
+        "the rows this page had loaded."
+
+/**
+ * THE LIST IS GENUINELY EMPTY, ANSWERED AND NONE. §3.5's *genuinely-empty, unscoped*.
+ *
+ * The one sentence on this screen that may make a claim about the repository, because it is the only
+ * one reached from a request that SUCCEEDED, with no filter narrowing it and no term in the box.
+ */
+private const val ACCESS_NOBODY_YET_TITLE = "Nobody is on the list yet"
+
+private const val ACCESS_NOBODY_YET_BODY =
+    "Add the first address above — the master admin can always sign in regardless of this list, " +
+        "which is what makes it safe to start empty."
+
+/** THE PAGER IS PAST THE END. Rows exist, none of them are here; it looks like emptiness and is not. */
+private const val ACCESS_PAST_END_TITLE = "Nothing on this page"
 
 // --------------------------------------------------------------------------------------
 // Add / edit

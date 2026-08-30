@@ -3,8 +3,6 @@ package com.designprototype.workshop.ui.designworkshop
 import com.designprototype.workshop.data.DesignerDirectoryEntryDto
 import com.designprototype.workshop.data.DesignerRosterDto
 import com.designprototype.workshop.data.PageResponse
-import com.designprototype.workshop.data.PagedListing
-import com.designprototype.workshop.data.walkPagedListing
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -13,10 +11,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
-import kotlin.coroutines.startCoroutine
 
 /**
  * The designer roster must arrive, and a row must be able to name the account behind it.
@@ -138,65 +132,24 @@ class DesignerRosterWireTest {
         assertNull(page.items[0].fullName)
     }
 
-    // ── The whole roster, not the newest fifty ───────────────────────────────────────────────────
-
-    @Test
-    fun `the roster is walked past the server's default page`() {
-        // The server's default page is 50 rows of a table an institution adds to for years, and the
-        // row an admin is looking for is the OLD one — the designer empanelled two seasons ago who
-        // is standing in front of them saying they cannot sign in. `createdAt desc` puts that row
-        // last, which is exactly where a single-page read cannot reach.
-        val listing = drive(server(total = 240))
-
-        assertEquals(240, listing.items.size)
-        assertFalse("a fully-read roster must not claim to be a prefix", listing.truncated)
-        assertNotNull(
-            "the oldest row — where a long-standing empanelment sorts — must be present",
-            listing.items.firstOrNull { it.id == "r-239" }
-        )
-    }
-
-    @Test
-    fun `an institution under the ceiling still costs exactly one request`() {
-        var calls = 0
-        val listing = drive { page, size -> calls++; server(total = 30)(page, size) }
-
-        assertEquals(1, calls)
-        assertEquals(30, listing.items.size)
-        assertFalse(listing.truncated)
-    }
-
-    @Test
-    fun `a roster past the walk's ceiling admits it is a prefix`() {
-        // The screen renders that admission. A roster that quietly stops is indistinguishable from
-        // an institution that never empanelled the person being searched for — and the search box on
-        // that screen filters only what arrived, so "no match" would mean two different things with
-        // nothing on screen to tell them apart.
-        val listing = drive(server(total = 4000))
-
-        assertTrue(listing.truncated)
-        assertEquals(4000, listing.total)
-        assertTrue("the rows that did arrive are kept and shown", listing.items.isNotEmpty())
-    }
-
-    @Test
-    fun `a truncated walk keeps the newest rows and loses the oldest`() {
-        // WHICH END IS MISSING, pinned — because the screen's warning names it in words and an admin
-        // acts on that sentence. The server orders `createdAt desc` and the walk always reads from
-        // page 1, so what survives a short read is the head of that order: the most recent
-        // empanelments. The rows that fall off the end are the OLDEST, which is precisely the row
-        // this screen is opened for. If either the walk's direction or the server's `order` ever
-        // changes, this fails here rather than leaving a notice pointing at the wrong end of a list.
-        val listing = drive(server(total = 4000))
-
-        assertEquals(500, listing.items.size)
-        assertEquals("the first row the server served is kept", "r-0", listing.items.first().id)
-        assertEquals("the walk stops at its ceiling, not before", "r-499", listing.items.last().id)
-        assertNull(
-            "the tail of the server's order is what is lost, and that tail is the oldest empanelments",
-            listing.items.firstOrNull { it.id == "r-3999" }
-        )
-    }
+    // ── ONE PAGE, NOT A WALK — the five tests that stood here are deleted with the walk ─────────
+    //
+    // What was here asserted that `designerRoster()` gathered every page up to a 500-row ceiling,
+    // that a short read kept the newest rows and lost the oldest, and that the screen said so. All of
+    // that was TRUE and all of it described a design that DROPDOWN_DESIGN §4.6 rules out: the walk's
+    // ceiling stood against a roster of about 1,300, so the device-side search box over its result
+    // answered "no match" about designers who exist, and the end it dropped was the oldest
+    // empanelments — the row this screen is opened for.
+    //
+    // The tests went with the walk rather than after it. A suite that still asserted "the roster is
+    // walked past the server's default page" would be a green test describing behaviour nobody could
+    // find in the code, which is worse than no test: the next reader trusts it.
+    //
+    // What replaces them lives in `ui/RosterFilterWireTest.kt` — one page, every filter on the wire,
+    // and a source sweep asserting that the walk, the device-side sort and the device-side filter are
+    // all gone. The envelope those pages arrive in is `RosterPageDto`, and its own decode tests are
+    // there too, including the three-state read of `roleMatchTruncated` that lets this client tell a
+    // server that filters from one that silently does not.
 
     // ── The email -> account join ────────────────────────────────────────────────────────────────
 
@@ -251,49 +204,4 @@ class DesignerRosterWireTest {
         assertEquals(500, DESIGNER_DIRECTORY_CAP)
     }
 
-    // ── Fixtures ─────────────────────────────────────────────────────────────────────────────────
-
-    /** `total` rows, ids "r-0"…, served in pages exactly as the API pages them. */
-    private fun server(
-        total: Int,
-        pageSize: Int = 100
-    ): (Int, Int) -> PageResponse<DesignerRosterDto> = { page, _ ->
-        val from = (page - 1) * pageSize
-        val slice = (from until minOf(from + pageSize, total)).map {
-            DesignerRosterDto(id = "r-$it", email = "designer$it@example.org")
-        }
-        PageResponse(
-            items = slice,
-            total = total,
-            page = page,
-            pageSize = pageSize,
-            pages = (total + pageSize - 1) / pageSize
-        )
-    }
-
-    /**
-     * Runs the walk to completion on this thread.
-     *
-     * `kotlin.coroutines.startCoroutine` from the stdlib rather than `runBlocking`, so this test adds
-     * no `kotlinx-coroutines-test` dependency to `app/build.gradle.kts` — a shared build file other
-     * agents are working in. Every fetch below is synchronous, so the walk never actually suspends.
-     */
-    private fun drive(
-        fetch: (Int, Int) -> PageResponse<DesignerRosterDto>
-    ): PagedListing<DesignerRosterDto> {
-        var outcome: Result<PagedListing<DesignerRosterDto>>? = null
-        val block: suspend () -> PagedListing<DesignerRosterDto> = {
-            walkPagedListing(idOf = { it.id }) { page, pageSize -> fetch(page, pageSize) }
-        }
-        block.startCoroutine(
-            object : Continuation<PagedListing<DesignerRosterDto>> {
-                override val context: CoroutineContext = EmptyCoroutineContext
-                override fun resumeWith(result: Result<PagedListing<DesignerRosterDto>>) {
-                    outcome = result
-                }
-            }
-        )
-        return checkNotNull(outcome) { "the walk suspended; every fetch in this test is synchronous" }
-            .getOrThrow()
-    }
 }

@@ -436,7 +436,9 @@ def _and(where: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     return {"AND": [where, extra]}
 
 
-async def _visible_only(delegate: Any, records: list[Any], scope_where: dict[str, Any]) -> list[Any]:
+async def _visible_only(
+    delegate: Any, records: list[Any], scope_where: dict[str, Any]
+) -> list[Any]:
     """Filter an already-loaded (relation-include-derived) list down to the rows the caller may see.
 
     Runs NO query at all when the scope is unrestricted; otherwise one id-set query decides the
@@ -874,9 +876,7 @@ async def _list_level(path: str, scope: Scope) -> Level:
     if not segs:
         # The root is the taxonomy chooser. The hierarchy taxonomy is listed first and is
         # what the client opens by default.
-        return [
-            _folder(t["name"], t["path"], "taxonomy") for t in TAXONOMIES
-        ], None
+        return [_folder(t["name"], t["path"], "taxonomy") for t in TAXONOMIES], None
 
     head = segs[0]
 
@@ -1069,7 +1069,9 @@ async def _list_workshops_level(segs: list[str], parent: str, scope: Scope) -> L
             artisans = await _workshop_craft_artisans(wid, cid, scope)
             used = set()
             entries = [
-                _folder(_uniq(_seg(a.name, "Artisan"), used), f"{parent}/artisans/{a.id}", "artisan")
+                _folder(
+                    _uniq(_seg(a.name, "Artisan"), used), f"{parent}/artisans/{a.id}", "artisan"
+                )
                 for a in artisans
             ]
             details = _text(parent, "details.txt", _info_text(info))
@@ -1197,9 +1199,7 @@ async def _list_artisan_level(segs: list[str], parent: str, scope: Scope) -> Lev
                 for t in tools
             ], None
         if len(segs) == 6:
-            tool = await _require(
-                db.tooldocumentation, segs[5], "Tool", scope_where=scope.records
-            )
+            tool = await _require(db.tooldocumentation, segs[5], "Tool", scope_where=scope.records)
             info = _tool_info(tool)
             entries = []
             details = _text(parent, "details.txt", _info_text(info))
@@ -1207,9 +1207,7 @@ async def _list_artisan_level(segs: list[str], parent: str, scope: Scope) -> Lev
                 entries.append(details)
             media = await _media(_record_media_where("toolId", tool.id, ["tool"]), scope)
             entries.extend(
-                _media_entries(
-                    parent, media, record_type="Tool", record_name=tool.toolkitName
-                )
+                _media_entries(parent, media, record_type="Tool", record_name=tool.toolkitName)
             )
             return entries, info
 
@@ -1304,9 +1302,7 @@ async def _list_products_level(
     pid = segs[5]
 
     if len(segs) == 6:
-        product = await _require(
-            db.productdocumentation, pid, "Product", scope_where=scope.records
-        )
+        product = await _require(db.productdocumentation, pid, "Product", scope_where=scope.records)
         info = _product_info(product)
         entries = []
         details = _text(parent, "details.txt", _info_text(info))
@@ -1314,9 +1310,7 @@ async def _list_products_level(
             entries.append(details)
         media = await _media(_record_media_where("productId", pid, ["product"]), scope)
         entries.extend(
-            _media_entries(
-                parent, media, record_type="Product", record_name=product.productName
-            )
+            _media_entries(parent, media, record_type="Product", record_name=product.productName)
         )
         if await db.process.count(where=_and({"productId": pid}, scope.records)) > 0:
             entries.append(_folder("Processes", f"{parent}/processes"))
@@ -1491,9 +1485,7 @@ _UPLOADER_BRANCHES: dict[str, str] = {
 }
 
 
-async def _uploader_records(
-    branch: str, wid: str, uid: str, scope: Scope
-) -> tuple[str, list[Any]]:
+async def _uploader_records(branch: str, wid: str, uid: str, scope: Scope) -> tuple[str, list[Any]]:
     """(record kind, records) this user created of one type within one workshop."""
     if branch == "artisans":
         return "artisan", await db.artisan.find_many(
@@ -1667,9 +1659,7 @@ async def _list_uploader_level(segs: list[str], parent: str, scope: Scope) -> Le
 async def _workshop_for_artisan(artisan: Any, scope: Scope) -> Any | None:
     """The workshop whose folder holds this artisan, by the same three routes the tree uses."""
     if artisan.workshopId:
-        found = await db.workshop.find_first(
-            where=_and({"id": artisan.workshopId}, scope.records)
-        )
+        found = await db.workshop.find_first(where=_and({"id": artisan.workshopId}, scope.records))
         if found:
             return found
     link = await db.workshopartisan.find_first(
@@ -1762,9 +1752,7 @@ async def _locate_path(record_type: str, record_id: str, scope: Scope) -> str | 
         # folders" on a questionnaire recording returned a 500. Nothing caught it because the media
         # branch below tries the interview owner FIRST, so no other owner was ever reached, and my
         # own smoke test only ever asked for an artisan.
-        link = await db.questionnaireinterviewartisan.find_first(
-            where={"interviewId": record_id}
-        )
+        link = await db.questionnaireinterviewartisan.find_first(where={"interviewId": record_id})
         if link is None:
             return None
         base = await _artisan_path(link.artisanId, scope)
@@ -1796,7 +1784,9 @@ async def _locate_path(record_type: str, record_id: str, scope: Scope) -> str | 
 
 @router.get("/locate")
 async def data_locate(
-    type: str = Query(..., description="workshop | craft | artisan | product | tool | process | interview | media"),
+    type: str = Query(
+        ..., description="workshop | craft | artisan | product | tool | process | interview | media"
+    ),
     id: str = Query(..., min_length=1),
     current_user: Any = Depends(require_dataset_downloader),
 ) -> dict[str, str | None]:
@@ -2774,9 +2764,7 @@ def _record_sheet(
     )
 
 
-def _process_step_sheet(
-    processes: list[Any], media_index: dict[str, list[Any]]
-) -> dict[str, Any]:
+def _process_step_sheet(processes: list[Any], media_index: dict[str, list[Any]]) -> dict[str, Any]:
     """Steps get their own sheet rather than being interleaved as half-empty rows in the
     Processes sheet, so both stay rectangular and sortable."""
     columns = [

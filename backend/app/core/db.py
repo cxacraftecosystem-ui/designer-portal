@@ -206,7 +206,10 @@ async def connect_db() -> None:
                 raise
             logger.warning(
                 "Database connect failed (attempt %s/%s): %s — retrying in %.0fs",
-                attempt, attempts, exc, delay,
+                attempt,
+                attempts,
+                exc,
+                delay,
             )
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30.0)

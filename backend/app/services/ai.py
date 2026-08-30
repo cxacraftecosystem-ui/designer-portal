@@ -155,9 +155,7 @@ def _source_size(content: bytes | None, source_path: str | None) -> int:
 
 
 @contextmanager
-def _upload_body(
-    content: bytes | None, source_path: str | None
-) -> Iterator[Any]:
+def _upload_body(content: bytes | None, source_path: str | None) -> Iterator[Any]:
     """The audio in whatever form ``requests`` should be handed it, with the handle closed after.
 
     **BE PRECISE ABOUT WHAT THIS BUYS, BECAUSE THE OBVIOUS CLAIM IS WRONG.**
@@ -459,7 +457,9 @@ _ELEVENLABS_LEGACY_MODEL = "scribe_v1"
 
 def _elevenlabs_model(settings: Settings) -> str:
     configured = (settings.elevenlabs_stt_model or "").strip()
-    return configured if configured and configured != _ELEVENLABS_LEGACY_MODEL else _ELEVENLABS_MODEL
+    return (
+        configured if configured and configured != _ELEVENLABS_LEGACY_MODEL else _ELEVENLABS_MODEL
+    )
 
 
 def _elevenlabs_fields(settings: Settings, *, conservative: bool) -> list[tuple[str, str]]:
@@ -888,14 +888,18 @@ def _transcribe_sync(
             code = response.status_code if response is not None else None
             if code in _DEFER_STATUSES:
                 rate_limited = rate_limited or _rate_limited_result(provider, response, code)
-                logger.warning("%s transcription throttled (HTTP %s); trying next provider", provider, code)
+                logger.warning(
+                    "%s transcription throttled (HTTP %s); trying next provider", provider, code
+                )
             elif code in _AUTH_STATUSES:
                 key_name = _PROVIDER_KEYS.get(provider, "the provider key")
                 errors.append(
                     f"{provider}: API key rejected (HTTP {code}); set a working {key_name} in Settings"
                 )
                 logger.error(
-                    "%s rejected the configured API key (HTTP %s); trying next provider", provider, code
+                    "%s rejected the configured API key (HTTP %s); trying next provider",
+                    provider,
+                    code,
                 )
             else:
                 errors.append(f"{provider}: {_fault(exc)}")
@@ -1035,7 +1039,11 @@ async def transcribe_audio_bytes(
             retry_after = None
             if response is not None:
                 try:
-                    retry_after = float(response.headers.get("Retry-After")) if response.headers.get("Retry-After") else None
+                    retry_after = (
+                        float(response.headers.get("Retry-After"))
+                        if response.headers.get("Retry-After")
+                        else None
+                    )
                 except (TypeError, ValueError):
                     retry_after = None
             return {
@@ -1125,8 +1133,7 @@ def _refine_sync(text: str, translate_to_english: bool, settings: Settings) -> d
         "labels from automatic speaker separation: keep those turn boundaries and rename each speaker "
         "to its role, rather than re-splitting the text yourself. Separate clearly distinct topics or "
         "sections with a Markdown horizontal rule on its own line (`---`). Keep it faithful to the "
-        "source." + translate_clause
-        + "\n\nRaw transcript:\n\n" + clipped
+        "source." + translate_clause + "\n\nRaw transcript:\n\n" + clipped
     )
     refined = _post_openai_chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -1289,7 +1296,9 @@ def _post_openai_chat_keyed(
     return str(payload["choices"][0]["message"]["content"]).strip()
 
 
-def _post_gemini_chat(system: str, user: str, *, api_key: str, model: str, temperature: float) -> str:
+def _post_gemini_chat(
+    system: str, user: str, *, api_key: str, model: str, temperature: float
+) -> str:
     """One text completion from Gemini, with ONE key rather than the deployment's rotation pool.
 
     NO KEY ROTATION HERE, deliberately, and it is the difference between this and every other Gemini
@@ -1744,7 +1753,7 @@ _CAPTION_PROMPT = (
     "Do not guess at a person's identity, age, caste, religion or relationship to anybody else. Where "
     "a person is visible, describe what they are doing and nothing about who they are.\n"
     "If the photograph is too unclear to describe, say exactly that in one sentence.\n"
-    "Return JSON only: {\"caption\": \"…\", \"confidence\": 0.0 to 1.0, \"notes\": \"…\"}."
+    'Return JSON only: {"caption": "…", "confidence": 0.0 to 1.0, "notes": "…"}.'
 )
 
 
@@ -1942,7 +1951,9 @@ async def caption_image_bytes(
             )
         except anthropic_verbs.AnthropicUnavailable:
             logger.error("Captioning could not run: the anthropic package is not installed")
-            return _verb_unavailable("Describing a photograph", "the anthropic package on this server")
+            return _verb_unavailable(
+                "Describing a photograph", "the anthropic package on this server"
+            )
         except Exception as exc:  # noqa: BLE001 - a personal key's failure is still a sentence
             logger.error("Captioning failed on a designer's own key: %s", redact_secrets(str(exc)))
             return _verb_failed("Describing a photograph", exc)
@@ -1950,9 +1961,7 @@ async def caption_image_bytes(
     if not managed_secrets.gemini_key_pool():
         return _verb_unavailable("Describing a photograph", "GEMINI_API_KEY")
     try:
-        return await asyncio.to_thread(
-            _post_gemini_caption, content, mime_type, settings, language
-        )
+        return await asyncio.to_thread(_post_gemini_caption, content, mime_type, settings, language)
     except requests.RequestException as exc:
         logger.error("Captioning failed: %s", redact_secrets(str(exc)))
         return _verb_failed("Describing a photograph", exc)
@@ -2065,12 +2074,14 @@ def _elevenlabs_cues(payload: dict[str, Any]) -> list[dict[str, Any]]:
             untimed += 1
             continue
         speaker = word.get("speaker_id")
-        out.append({
-            "start": float(start),
-            "end": float(end),
-            "text": text,
-            "speaker": str(speaker) if speaker is not None else "",
-        })
+        out.append(
+            {
+                "start": float(start),
+                "end": float(end),
+                "text": text,
+                "speaker": str(speaker) if speaker is not None else "",
+            }
+        )
     if untimed:
         logger.warning(
             "elevenlabs: %d of %d spoken words carried no timings and are absent from the subtitle; "
@@ -2095,12 +2106,14 @@ def _deepgram_words(alternative: dict[str, Any]) -> list[dict[str, Any]]:
         start, end = word.get("start"), word.get("end")
         if text and start is not None and end is not None:
             speaker = word.get("speaker")
-            out.append({
-                "start": float(start),
-                "end": float(end),
-                "text": text,
-                "speaker": str(speaker) if speaker is not None else "",
-            })
+            out.append(
+                {
+                    "start": float(start),
+                    "end": float(end),
+                    "text": text,
+                    "speaker": str(speaker) if speaker is not None else "",
+                }
+            )
     return out
 
 
@@ -2164,8 +2177,9 @@ def _words_cover(words: list[dict[str, Any]], text: str) -> bool:
     # sentence has to be found in. Identical for any response whose word array is already in time
     # order — which is every one seen here — and it stops a shuffled array being read as a shortfall
     # and thrown away, since a shuffled array loses no speech at all once it is sorted.
-    ordered = sorted(words, key=lambda word: (float(word.get("start") or 0.0),
-                                              float(word.get("end") or 0.0)))
+    ordered = sorted(
+        words, key=lambda word: (float(word.get("start") or 0.0), float(word.get("end") or 0.0))
+    )
     spelled = _spoken_characters(" ".join(str(word.get("text") or "") for word in ordered))
     return _spoken_characters(text) in spelled
 
@@ -2446,7 +2460,12 @@ def _extract_json(text: str) -> dict[str, Any]:
         return {"rawText": text}
 
 
-_DIMENSION_ALIASES = {"length": "length", "breadth": "breadth", "width": "breadth", "height": "height"}
+_DIMENSION_ALIASES = {
+    "length": "length",
+    "breadth": "breadth",
+    "width": "breadth",
+    "height": "height",
+}
 
 #: The dimensions this endpoint will ask about, after aliasing. Exported for the route, which refuses
 #: anything else with a sentence.
@@ -2512,7 +2531,9 @@ def _measurement_prompt(dimension: str | None) -> str:
     )
 
 
-def _post_gemini_measurement(content: bytes, mime_type: str, settings: Settings, dimension: str | None = None) -> dict[str, Any]:
+def _post_gemini_measurement(
+    content: bytes, mime_type: str, settings: Settings, dimension: str | None = None
+) -> dict[str, Any]:
     # Managed override first, env pool second — see managed_secrets.gemini_key_pool, which reproduces
     # Settings.gemini_api_keys exactly when nothing is stored (single key, then the rotation list).
     keys = managed_secrets.gemini_key_pool()

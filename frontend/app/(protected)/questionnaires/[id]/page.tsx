@@ -26,7 +26,7 @@
  * the answer link, and no edit controls, rather than a padlock.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ClipboardList, CopyPlus, Download, FileSpreadsheet, Lock, Plus, Share2, Upload } from "lucide-react";
@@ -41,6 +41,8 @@ import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { PageHeader } from "@/components/PageHeader";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
+import { cappedListNotice, cutOf } from "@/components/data/cappedList";
+import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
@@ -53,6 +55,17 @@ import { formatDateTime } from "@/lib/format";
 import { canEditOwnOrAdmin, isAdmin } from "@/lib/permissions";
 import { cachedQuestionnaireNotice, loadQuestionnaireWithCache } from "@/lib/questionnaireFormCache";
 import {
+  designWorkshopOptions,
+  deviceLooksOffline,
+  NO_DESIGN_WORKSHOP,
+  WORKSHOP_OPTION_PAGE_SIZE,
+  workshopEmptyLabel,
+  workshopListNotice,
+  workshopListStandsDown,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
+import {
   answeredCount,
   createQuestion,
   createSection,
@@ -63,6 +76,14 @@ import {
   type QForm,
   type QFormUploadReport
 } from "@/lib/questionnaireForms";
+
+/**
+ * "The read has not answered, or it failed", as ONE stable array.
+ *
+ * `useRecordOffPage` has `rows` in its dependency list, so a fresh `[]` per render would re-run its
+ * effect on every keystroke elsewhere on this page.
+ */
+const NO_WORKSHOP_ROWS: readonly DwSummary[] = [];
 
 export default function QuestionnaireDetailPage() {
   const params = useParams<{ id: string }>();
@@ -75,7 +96,17 @@ export default function QuestionnaireDetailPage() {
   const [form, setForm] = useState<QForm | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [workshops, setWorkshops] = useState<DwSummary[]>([]);
+  /**
+   * What the design-workshop read answered — three states, and `[]` was never one of them.
+   *
+   * It was `useState<DwSummary[]>([])` behind a `.catch(() => undefined)`, so a timeout drew exactly
+   * like an account with no workshops: a picker offering only "Not attached to a workshop", on the
+   * page whose whole job at that moment is to say which workshop this questionnaire belongs to.
+   */
+  const [workshopList, setWorkshopList] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
+  /** Was the device reachable when that read FAILED? Captured in the catch — see
+   *  `components/forms/DesignWorkshopSelect.tsx` for why it is not read at render time. */
+  const [workshopsOnline, setWorkshopsOnline] = useState(true);
   const [busy, setBusy] = useState(false);
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [sectionFormOpen, setSectionFormOpen] = useState(false);
@@ -158,15 +189,79 @@ export default function QuestionnaireDetailPage() {
 
   useEffect(() => {
     let cancelled = false;
-    listDesignWorkshops({ pageSize: 100 })
+    // NEVER 100 INTO A CONTROL THAT DRAWS 80 — one number governs the fetch and the render, so two
+    // truncation sentences with two different totals cannot both be true at once.
+    listDesignWorkshops({ pageSize: WORKSHOP_OPTION_PAGE_SIZE })
       .then((result) => {
-        if (!cancelled) setWorkshops(result.items ?? []);
+        if (!cancelled) setWorkshopList({ kind: "ok", rows: result.items ?? [], total: result.total });
       })
-      .catch(() => undefined);
+      // Still no banner — the read is a convenience and a failed convenience must not read as the
+      // page being broken — but no longer SILENT: the failure is recorded and the sentence goes on
+      // the control it is about.
+      .catch(() => {
+        if (cancelled) return;
+        setWorkshopsOnline(!deviceLooksOffline());
+        setWorkshopList({ kind: "failed" });
+      });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * THIS QUESTIONNAIRE'S OWN WORKSHOP, FETCHED BY ID WHEN THE PAGE DOES NOT HOLD IT.
+   *
+   * The list is at most eighty rows ordered `createdAt desc`. A questionnaire attached last season
+   * points at a workshop nowhere near them, and this picker used to draw its trigger on a value with
+   * no matching option — which `SearchableSelect` renders as the placeholder, so the field read
+   * "Not attached to a workshop" over a questionnaire that WAS attached, on the one control that
+   * writes that attachment. One press of anything else and the link is gone.
+   *
+   * Called before the page's `if (!form)` return, because a hook may not be conditional; an empty id
+   * is a no-op inside the hook.
+   */
+  const workshopRows = workshopList.kind === "ok" ? workshopList.rows : NO_WORKSHOP_ROWS;
+  const storedWorkshop = useRecordOffPage<DwSummary>(
+    "/design-workshops",
+    form?.designWorkshopId ?? "",
+    workshopRows
+  );
+
+  /**
+   * The rows, and `offPage: "recover"` — the opposite answer from the list page's create form, and
+   * the reason the parameter is required rather than defaulted.
+   *
+   * This control describes a read that is ALREADY TRUE: the questionnaire is attached to that
+   * workshop, the fact is printed on this page, and withholding the row does not withhold anything —
+   * it turns a read-only fact into a wrong write, because a picker that cannot draw its own current
+   * value invites somebody to "fix" it by choosing another. The create form on `/questionnaires`
+   * passes `"refuse"` because a questionnaire that does not exist yet has nothing to recover.
+   */
+  const workshopSet = useMemo(
+    () =>
+      designWorkshopOptions(workshopList, {
+        group: true,
+        offPage: { mode: "recover", row: storedWorkshop }
+      }),
+    [workshopList, storedWorkshop]
+  );
+  /** SCOPED — `list_design_workshops` narrows by `visible_to_clause`, so an empty answer is about
+   *  this account's grants and its next move is an administrator, not a new workshop. */
+  const workshopVoice = useMemo<WorkshopListVoice>(
+    () => ({ table: "design", scoped: true, online: workshopsOnline }),
+    [workshopsOnline]
+  );
+  /** ONE SLOT, TWO SENTENCES THAT CANNOT BOTH APPLY — which of the four empty states this is, or the
+   *  numbered cut. Handed down to the reuse dialog so the two controls cannot word one read twice. */
+  const workshopNotice =
+    workshopListNotice(workshopList, workshopVoice) ||
+    cappedListNotice(
+      workshopList.kind === "ok"
+        ? cutOf(workshopList.rows.length, workshopList.total ?? 0, "design workshops")
+        : null
+    );
+  /** The rows themselves, for the reuse dialog, which takes an answer rather than a read. */
+  const workshops = workshopRows;
 
   // Mirrors `_require_owner` on every mutating route: the owner, or an admin. Not a rank test —
   // a second designer of equal standing may answer this form and may not reword it.
@@ -535,17 +630,40 @@ export default function QuestionnaireDetailPage() {
             />
             {/* FieldBlock, not Field: `Field` is a <label>, and a <label> around a themed dropdown
                 forwards a stray click into the menu and slams it shut after one pick. */}
-            <FieldBlock label="Design workshop">
+            <FieldBlock
+              label="Design workshop"
+              hint={
+                /* WHICH OF THE FOUR EMPTY STATES, or the numbered cut. This control had neither, at
+                   either level, while being the one place the attachment is written. `aria-live`
+                   because the trigger is not somewhere a reader can land while it is disabled. */
+                workshopNotice ? (
+                  <p className="mt-1 text-xs leading-5 text-ink-500" aria-live="polite">
+                    {workshopNotice}
+                  </p>
+                ) : null
+              }
+            >
               <Dropdown
                 value={form.designWorkshopId ?? ""}
                 onChange={attachWorkshop}
-                options={[
-                  { value: "", label: "Not attached to a workshop" },
-                  ...workshops.map((workshop) => ({ value: workshop.id, label: workshop.title }))
-                ]}
+                options={workshopSet.options}
+                /* THE UN-FILE ROW IS THE PRIMITIVE'S, and its label is the shared constant. Here it
+                   is not decoration: picking it is what DETACHES a questionnaire, `attachWorkshop`
+                   sends the explicit null the route puts back by hand after `clean_data` drops it,
+                   and the hand-built row it replaces was one of nine strings for four meanings. */
+                noneLabel={NO_DESIGN_WORKSHOP}
+                emptyLabel={workshopEmptyLabel(workshopList, workshopVoice)}
                 ariaLabel="Attach to a design workshop"
                 searchable
-                disabled={busy}
+                /* R2/R3, with one addition this control needs: a FAILED read that recovered the
+                   questionnaire's own workshop is NOT an empty control — it holds that row and, with
+                   the un-file row beside it, a way back out — so `workshopListStandsDown` reads the
+                   OPTIONS rather than the state. Never disabled while the read is in flight:
+                   `workshopEmptyLabel` answers "Searching…" in the panel, and a disabled trigger
+                   cannot be opened to read it. */
+                disabled={
+                  busy || (workshopList.kind !== "loading" && workshopListStandsDown(workshopSet))
+                }
                 // This dropdown SAVES on select rather than filling in a form field, so focus must
                 // not jump to the next control the way it does in a top-to-bottom record form.
                 advanceOnSelect={false}
@@ -825,7 +943,22 @@ export default function QuestionnaireDetailPage() {
         // `visible_to_clause` to workshops this account created or holds a viewer grant on. The same
         // list the "Design workshop" dropdown above is built from, so the two cannot disagree about
         // where this account may put a questionnaire.
-        workshops={workshops.map((workshop) => ({ id: workshop.id, title: workshop.title }))}
+        /* NARROWED, NOT HANDED WHOLE: `ReuseTarget` is the nine fields the picker reads, so the
+           dialog stays clear of `DwSummary`'s thirty and of the API layer behind them — and the nine
+           are what the shared builder needs to draw a title with its craft, its cluster and the day
+           it ran, in place of the bare title that made two workshops in one craft indistinguishable. */
+        workshops={workshops.map((workshop) => ({
+          id: workshop.id,
+          title: workshop.title,
+          status: workshop.status,
+          craftName: workshop.craftName,
+          clusterName: workshop.clusterName,
+          state: workshop.state,
+          startDate: workshop.startDate,
+          createdAt: workshop.createdAt,
+          deletedAt: workshop.deletedAt
+        }))}
+        workshopsNotice={workshopNotice}
         onClose={() => setReuseOpen(false)}
         onReused={(result) => {
           setReuseOpen(false);

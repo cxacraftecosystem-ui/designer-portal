@@ -13,6 +13,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -184,7 +187,238 @@ data class PendingEntry(
      * refusal that waits for a person — rather than into a claim this build invented for it.
      */
     val conflict: Boolean = false,
+    /**
+     * WHY A CLOSED-LIST FIELD ON THIS ENTRY IS EMPTY — keyed by the wire name of the column.
+     *
+     * ── THE TWO ABSENCES THIS QUEUE COULD NOT TELL APART, AND WHAT IT COST ────────────────────
+     *
+     * A record queued with no workshop against it has always been ONE thing on disk: a `null`, or a
+     * key that was never written. But it is two completely different acts by the person who made it:
+     *
+     *   * THEY CHOSE NOTHING. The picker offered four workshops, the designer opened it, and picked
+     *     the "None" row because this artisan genuinely belongs to no design workshop.
+     *     [UNFILED_BY_CHOICE]. That is a decision, and the server has to be TOLD it: on a correction
+     *     the column already holds a value, and "unfile" is only expressible as an explicit
+     *     `{"designWorkshopId": null}` — `services/records.CLEARABLE_KEYS` exists for precisely this
+     *     and says what happens without it, "the save would return 200, the form would show it
+     *     unfiled, and the old link would survive in the database".
+     *
+     *   * THERE WAS NOTHING TO CHOOSE. The device was in a courtyard with no signal, the access list
+     *     is never cached (`WorkshopRepository.kt:3918-3923` — "a picker is the one control that
+     *     must not offer what it cannot honour"), so the picker was EMPTY. [UNFILED_NO_OPTIONS]. The
+     *     designer made no decision at all, and reading their empty box as one is how a correction
+     *     composed on the bus home silently strips a link nobody was ever shown. So this absence
+     *     sends NOTHING for the column and the stored value stands.
+     *
+     * That is R1 — *empty means everything BY ABSENCE, never by an all-ticked state* — with its sign
+     * flipped for a form field: absence means "no change" UNLESS it was chosen. Collapsing the two
+     * gives the column two spellings for one state and no way to tell a default from a decision,
+     * which is the failure R1 is written against.
+     *
+     * ── AND IT IS NOT THE SAME FAILURE AS A DANGLING ID ───────────────────────────────────────
+     *
+     * See [danglingField]. An empty picker is fixed BEFORE the save, by offering something answerable
+     * or standing the field down; a dangling id is fixed AFTER the drain, on the record already on
+     * the device, by re-picking. R7: they must never be collapsed into one message.
+     *
+     * DEFAULTED TO EMPTY, and that is the whole compatibility story: an entry queued by any earlier
+     * build carries no map, `clearedLinkKeys` is therefore empty, and the replay omits every link
+     * column exactly as it does today. An old queued correction cannot be made to clear a workshop
+     * link this build has no evidence anybody asked to clear.
+     */
+    val unfiled: Map<String, String> = emptyMap(),
+    /**
+     * THIS RECORD POINTS AT AN ID THE SERVER DOES NOT HAVE — a fifth outcome beside the four above,
+     * and the one this queue had no word for. Null on every other failure.
+     *
+     * ── WHY IT IS NOT ONE MORE KIND-3 REFUSAL ─────────────────────────────────────────────────
+     *
+     * A 404 — or the 422 an existence check produces — is not transient
+     * ([WorkshopRepository.isTransient]), not a 409 (`isConflictRefusal`) and not `extra_forbidden`
+     * ([ApiRefusal.schemaSkew]). So it fell to kind 3, REFUSED-ON-A-PERSON, and was parked for ever
+     * behind two buttons: *Try again*, which fetches the identical 404, and *Throw away*, which
+     * destroys the last copy of the record and its photographs. `frontend/lib/offline.ts` has the
+     * words for that shape, written about the 409 it was added to close: *"a Try again button that
+     * could only ever fetch the identical answer — a dead end wearing the costume of a remedy."*
+     * The 409 got its own arm and a route out. A dangling foreign key did not — and neither the tray
+     * nor `outboxFailureRows` said WHICH field's id was missing, which is the one fact that makes the
+     * remedy obvious.
+     *
+     * The remedy exists and is small, because nothing is lost: the record is still on this phone with
+     * its payload intact, and exactly one field in it is wrong. `WorkshopRepository.repickOutboxEntry`
+     * rewrites that one key and unparks the entry.
+     *
+     * ── WHAT IS ACTUALLY STORED, AND WHY IT CAN NAME MORE THAN ONE ────────────────────────────
+     *
+     * The wire name of the column, e.g. `designWorkshopId` — or, when the server's answer does not
+     * name a field and the payload carries several ids that could be at fault, EVERY candidate,
+     * comma-separated, in [REFERENCE_FIELD_NOUNS] order. Read it back with [danglingKeys].
+     *
+     * Naming all of them is the honest answer and picking one would not be. A 404 body from
+     * `records.require_record` is the string "Record not found" and a 404 from
+     * `design_workshops.load_workshop_or_404` is the same string BY DESIGN — *"a 403 would confirm
+     * that the id exists to precisely the caller being turned away"* — so on an artisan carrying both
+     * a `workshopId` and a `designWorkshopId` there is nothing in the answer that separates them.
+     * `DwResumedCreate.Ambiguous` refuses the identical coin toss for the identical reason: choosing
+     * by plausibility would put fieldwork in the wrong place under a sentence claiming certainty.
+     *
+     * DEFAULTED TO NULL, so an entry queued by an earlier build decodes into the behaviour it was
+     * queued under — an ordinary refusal that waits for a person — rather than into a claim about a
+     * missing reference that this build invented on its behalf. The same rule, for the same reason,
+     * as [conflict] and [skewRun].
+     */
+    val danglingField: String? = null,
+) {
+    /**
+     * The link columns this entry's author DELIBERATELY emptied, and which a replay must therefore
+     * send as an explicit `null`. See [unfiled].
+     *
+     * Empty for every entry from every earlier build, which is what makes widening the class safe:
+     * no evidence, no clearance, and the replay behaves exactly as it did before this field existed.
+     */
+    val clearedLinkKeys: Set<String>
+        get() = unfiled.filterValues { it == UNFILED_BY_CHOICE }.keys
+
+    /** The columns that were empty because the picker had nothing in it. See [unfiled]. */
+    val emptyPickerKeys: Set<String>
+        get() = unfiled.filterValues { it == UNFILED_NO_OPTIONS }.keys
+
+    /** [danglingField] read back as the list it is. Empty when nothing is dangling. */
+    val danglingKeys: List<String>
+        get() = danglingField?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+}
+
+/**
+ * The designer opened the picker and chose the "none" row. A DECISION, and the wire has to carry it.
+ *
+ * Stored as a plain string rather than an enum for the reason [PendingMedia.purpose] is one: this
+ * value is written into a JSON file that a LATER build may write and an EARLIER build may read (an
+ * APK downgrade is an ordinary event in this fleet — see `WorkshopDraftDowngradeTest`), and an enum
+ * name kotlinx cannot resolve throws, which `OfflineOutbox.read` can only treat as a damaged queue.
+ * A string it does not recognise is simply not one of the two it acts on, and the entry replays as
+ * an old one would. See `designWorkshopPrefillNote` for the same rule stated about a served value:
+ * *"an unknown value must never be dressed as one of the two known ones"*.
+ */
+const val UNFILED_BY_CHOICE = "chosen"
+
+/** The picker was empty when this was filled in, so nothing could be chosen. See [PendingEntry.unfiled]. */
+const val UNFILED_NO_OPTIONS = "noOptions"
+
+/**
+ * EVERY FOREIGN KEY A QUEUED RECORD CAN POINT AT, and the noun each one is called by on screen.
+ *
+ * The keys are `services/records.CLEARABLE_KEYS` minus the two identity numbers, which are values
+ * rather than references and can never 404. The nouns are what the forms already call these
+ * controls, because the sentence a designer reads has to name the box they are about to reopen —
+ * "a design & prototype workshop", not "designWorkshopId".
+ *
+ * ORDER IS LOAD-BEARING and that is why this is a `linkedMapOf`. When more than one candidate
+ * survives, [outboxDanglingSentence] lists them in this order, so two entries refused the same way
+ * never word the same ambiguity two different ways.
+ */
+internal val REFERENCE_FIELD_NOUNS: Map<String, String> = linkedMapOf(
+    "designWorkshopId" to "design & prototype workshop",
+    "workshopId" to "workshop",
+    "artisanId" to "artisan",
+    "craftId" to "craft",
+    "productId" to "product",
+    "toolId" to "toolkit",
+    "processId" to "process",
+    "questionnaireInterviewId" to "interview",
+    "locationId" to "place",
 )
+
+/**
+ * The two columns that file a record under a workshop, and the only two a picker on a record form
+ * can leave empty.
+ *
+ * Both, together, always — §2.7 of the dropdown design says so in as many words: *"a sentinel on the
+ * wire for BOTH COLUMNS AT ONCE"*. `WorkshopPickerState.value()` and
+ * `DesignWorkshopPickerState.value()` have the identical shape and the identical consequence, so a
+ * fix that reached one of them would leave a designer clearing one box successfully and the other
+ * box silently, on the same form, one line apart.
+ */
+internal val WORKSHOP_LINK_KEYS: Set<String> = setOf("designWorkshopId", "workshopId")
+
+/**
+ * WHICH OF THE TWO ABSENCES A WORKSHOP BOX IS IN — the rule that decides it, in ONE place, for both
+ * pickers and both columns.
+ *
+ * ── WHY IT IS NOT SPELLED AT THE CALL SITES ───────────────────────────────────────────────────
+ *
+ * Because it is four lines of reasoning about a value that DESTROYS A LINK when it is wrong in one
+ * direction and merely stays quiet when it is wrong in the other, and the two call sites sit on two
+ * screens in two files: `WorkshopPickerState` in `MainActivity.kt`, `DesignWorkshopPickerState` in
+ * `ui/DesignWorkshopPicker.kt`. [WORKSHOP_LINK_KEYS] above already names what a rule that reaches
+ * one of them and not the other costs — *"a designer clearing one box successfully and the other box
+ * silently, on the same form, one line apart"* — and a rule COPIED into both files is that same
+ * defect with a delay on it, waiting for whichever of the two is edited next.
+ *
+ * ── THE THREE INPUTS, AND WHY THE BASELINE IS THE ONE THAT DECIDES ────────────────────────────
+ *
+ * [selectedId] is what the box holds now. [baselineId] is what it held when the form was BUILT — the
+ * stored id on an edit, the prefill on a create — and it is never moved by a tap: both states keep it
+ * `private set` and write it only in `applyDefault`. [hadOptions] is whether the list behind the box
+ * had anything in it at all.
+ *
+ * A blank box over a non-blank baseline is therefore the one combination a person alone can produce:
+ * they opened a picker that was showing a workshop and chose the "None" row. That is
+ * [UNFILED_BY_CHOICE] whatever the list looks like at this moment — and it HAS to be read that way,
+ * because at this moment the list can be empty. A record filed under a workshop this device cannot
+ * list still draws its off-page row (`offPageWorkshopRow`), so the control stays enabled and the
+ * "None" row stays reachable with `workshops` empty. Deciding this by "is the list empty" would read
+ * a deliberate clearance as "there was nothing to choose", omit the key, and leave the designer
+ * looking at an emptied form, a 200, and the old link still in the database — precisely the defect
+ * `WorkshopRepository.patchBodyWithClearances` was written to end, reintroduced one layer above it.
+ *
+ * ── AND WHY THE OTHER TWO ARMS ARE WRONG IN THE HARMLESS DIRECTION ────────────────────────────
+ *
+ * With a blank baseline the column is already empty on the server, so either answer is a no-op on the
+ * data and the only thing the choice changes is which SENTENCE the drain prints
+ * ([outboxSentUnfiledMessage]). [hadOptions] is the honest split: a designer who was shown four
+ * workshops and picked none needs no sentence at all, and a designer who was shown an EMPTY picker in
+ * a courtyard has to be told the record went up filed under nothing — otherwise that absence is
+ * discovered weeks later as a record missing from a workshop's lists, by which time nobody can tell
+ * it from a record deliberately filed under nothing. That is R7's collapse arriving by the back door,
+ * and one sentence at the drain is the whole of the remedy.
+ *
+ * Null when the box holds something: there is no absence to explain and nothing for the wire to say.
+ */
+internal fun unfiledLinkReason(selectedId: String, baselineId: String, hadOptions: Boolean): String? =
+    when {
+        // Something is chosen. Nothing to report, and the id itself is what goes on the wire.
+        selectedId.isNotBlank() -> null
+        // The box HELD a workshop when this form was built and does not now. Only a tap does that.
+        baselineId.isNotBlank() -> UNFILED_BY_CHOICE
+        // Never held one, but the list was there to pick from. A decision, and it needs no sentence.
+        hadOptions -> UNFILED_BY_CHOICE
+        // Never held one and there was nothing to hold. The drain says so when the record lands.
+        else -> UNFILED_NO_OPTIONS
+    }
+
+/**
+ * [PendingEntry.unfiled] for one record form, from the two pickers it mounts.
+ *
+ * THE KEYS ARE NAMED HERE AND NOWHERE ELSE, and that is the whole reason this two-line function
+ * exists rather than a `mapOf` at each save handler. A mistyped column — `designWorkshopID`,
+ * `design_workshop_id` — is not an error anywhere: [PendingEntry.clearedLinkKeys] would carry it,
+ * `patchBodyWithClearances` would ask the request class whether it declares that name, the answer
+ * would be no, and the key would be silently skipped. The designer's clearance would then vanish
+ * between two files with no failure anywhere on the path, which is the same "exit zero is not
+ * evidence" shape as the defect this sentinel was added to close.
+ *
+ * A form that mounts only one of the two pickers passes null for the other, and null is not a
+ * clearance: the column is absent from the map, absent from [PendingEntry.clearedLinkKeys], and
+ * absent from the replayed body, so the stored value stands. A form cannot un-file a link it never
+ * put a control in front of anybody for.
+ */
+internal fun workshopUnfiledReasons(
+    designWorkshop: String? = null,
+    workshop: String? = null,
+): Map<String, String> = buildMap {
+    designWorkshop?.let { put("designWorkshopId", it) }
+    workshop?.let { put("workshopId", it) }
+}
 
 /** One captured media item to stage for an offline entry (input form for staging). */
 data class OfflineMediaSpec(
@@ -354,6 +588,236 @@ fun outboxConflictSentence(said: String, files: Int, isCorrection: Boolean): Str
     }
 }
 
+/** Reader for a queued payload — lenient, because it was written by a build that is not this one. */
+private val payloadReader = Json { ignoreUnknownKeys = true; isLenient = true }
+
+/**
+ * WHICH OF THIS ENTRY'S IDS COULD BE THE ONE THE SERVER DOES NOT HAVE.
+ *
+ * ── IT READS THE PAYLOAD BECAUSE THE ANSWER DOES NOT NAME A FIELD ─────────────────────────────
+ *
+ * `records.require_record` raises `404 {"detail":"Record not found"}` and
+ * `design_workshops.load_workshop_or_404` raises the byte-identical string on purpose, so that a
+ * caller who may not see a workshop cannot tell it apart from one that does not exist. Excellent for
+ * the repository and useless to the designer holding the phone: the sentence they get names no box.
+ *
+ * So the candidates come from what this entry actually SENT. A key present in the payload with a
+ * non-blank id is something the server could have failed to find; a key that is absent, null or
+ * blank cannot be, and is never offered as a suspect.
+ *
+ * [named] is the server's own answer when it gave one — pydantic puts the field in `loc` on a 422,
+ * e.g. `["body","designWorkshopId"]` — and it WINS OUTRIGHT over the payload scan. Knowing beats
+ * inferring, and that ordering is the whole reason this takes the argument rather than always
+ * guessing from the body.
+ *
+ * @param isCorrection this entry updates a record that already exists ([PendingEntry.targetId]). The
+ *   record ITSELF is then a candidate — `require_record(db.artisan, artisan_id)` runs before any
+ *   payload key is looked at, so an artisan an admin deleted at the office answers the same 404 as a
+ *   workshop that never existed. Naming only the payload's keys there would send a designer to
+ *   re-pick a workshop for a record that is gone, which is a remedy that cannot work.
+ * @param namedOnly ONLY a field the server itself named may count. Pass true for a 422, and that is
+ *   not a nicety: a 422 is FastAPI's answer for a value it will not accept, so a name that is three
+ *   hundred characters long, an Aadhaar that fails its checksum and a date in the wrong format all
+ *   arrive with the same status as a reference a validator could not resolve. Scanning the payload
+ *   for ids on one of those would print *"this record points at an artisan that is not on the
+ *   server"* over a refusal about a name — a sentence that is confidently wrong, offering a remedy
+ *   that cannot work, on a row whose real reason the designer can act on in ten seconds. A 404 has
+ *   no such ambiguity: on every route this outbox replays it means one of the ids in this request
+ *   could not be found.
+ * @return the candidate keys in [REFERENCE_FIELD_NOUNS] order, plus [TARGET_RECORD_KEY] first when
+ *   [isCorrection]. Empty when nothing in this entry can dangle, which is the caller's signal that
+ *   the refusal is about something else and must stay an ordinary one.
+ */
+internal fun danglingReferenceCandidates(
+    payload: String,
+    named: List<String> = emptyList(),
+    isCorrection: Boolean = false,
+    namedOnly: Boolean = false,
+): List<String> {
+    // The server named it. One certainty beats nine possibilities, and it is the only branch that can
+    // reach a key the payload scan would have missed — a reference nested inside a list of steps, say.
+    val certain = named.filter { it in REFERENCE_FIELD_NOUNS }
+    if (certain.isNotEmpty()) return REFERENCE_FIELD_NOUNS.keys.filter { it in certain }
+    if (namedOnly) return emptyList()
+    val sent = runCatching { payloadReader.parseToJsonElement(payload) as? JsonObject }.getOrNull()
+    val present = REFERENCE_FIELD_NOUNS.keys.filter { key ->
+        val value = (sent?.get(key) as? JsonPrimitive)?.contentOrNull
+        !value.isNullOrBlank()
+    }
+    if (!isCorrection) return present
+    return listOf(TARGET_RECORD_KEY) + present
+}
+
+/**
+ * The record a CORRECTION is aimed at, as a candidate beside the payload's own keys.
+ *
+ * Not a column and never sent on the wire — it is the `{id}` in the PATCH path — which is why it is
+ * spelled with a character no JSON key from this API can contain. A designer reading the sentence
+ * does not care about that distinction; they care that "the artisan you corrected" is one of the
+ * things that might have gone, and it is the one whose remedy is not a re-pick.
+ */
+internal const val TARGET_RECORD_KEY = "@target"
+
+/** The noun for one candidate key, for the sentence a person reads. */
+internal fun referenceFieldNoun(key: String, recordNoun: String): String =
+    if (key == TARGET_RECORD_KEY) recordNoun else REFERENCE_FIELD_NOUNS[key] ?: "record"
+
+/** "a workshop", "a workshop or an artisan", "a workshop, an artisan or a craft". */
+private fun anyOneOf(nouns: List<String>): String {
+    val withArticles = nouns.map { noun ->
+        // Written out rather than computed from the first letter: "an interview" and "a workshop" are
+        // both regular, and the day somebody adds "hour" this is a line to change rather than a bug.
+        if (noun.first().lowercaseChar() in "aeiou") "an $noun" else "a $noun"
+    }
+    return when (withArticles.size) {
+        0 -> "something"
+        1 -> withArticles.single()
+        else -> withArticles.dropLast(1).joinToString(", ") + " or " + withArticles.last()
+    }
+}
+
+/**
+ * WHAT A DESIGNER READS WHEN A QUEUED RECORD POINTS AT AN ID THE SERVER DOES NOT HAVE.
+ *
+ * ── AND WHY IT MAY NEVER BE THE EMPTY-PICKER SENTENCE ─────────────────────────────────────────
+ *
+ * R7, and the design document is explicit that the two must not share words: *"an empty dropdown is
+ * fixed BEFORE the save, by offering something answerable or standing the field down; a dangling id
+ * is fixed AFTER the drain, on the record already on the device, by re-picking."* The empty-picker
+ * sentences (§3.5 — "This device has not received the {noun} list yet…") are said on a form, about a
+ * record that is about to save perfectly well. This one is said in the tray, about a record that IS
+ * saved, locally, and needs one field changed. Reusing either for the other tells the designer to do
+ * the one thing that cannot help.
+ *
+ * ── THE CLAUSES, AND WHY EACH IS HERE ─────────────────────────────────────────────────────────
+ *
+ *  1. WHICH FIELD. The spine is the design document's own sentence, byte for byte for the ordinary
+ *     one-candidate case: *"This record points at a {field} that is not on the server. Nothing is
+ *     lost — open it, choose one that is, and it will send."* Without the field name the row is the
+ *     server's "Record not found", which a designer reads as an accusation about their record.
+ *  2. NOTHING IS LOST, AND HOW MUCH IS STILL HERE. Same count, same reason, as
+ *     [outboxConflictSentence]: it is the number the person is really deciding about when they look
+ *     at the Throw away button next to it.
+ *  3. THE SERVER'S OWN WORDS, VERBATIM. "Record not found" adds little here, and it is printed
+ *     anyway, because the rule this tray keeps is that the API's sentence is never summarised —
+ *     `isConflictRefusal` spends a paragraph on why a client must read the status and print the body
+ *     rather than branch on its prose, and a route that starts saying something more useful must not
+ *     have to wait for a client release to be heard.
+ *  4. THAT A BARE RETRY CANNOT WORK. Without it the designer walks up the hill for a signal and does
+ *     it again tomorrow; `outboxDeviceBanner` spends a paragraph on that walk.
+ *
+ * PURE, and pinned by `OutboxDanglingReferenceTest`, for [outboxConflictSentence]'s reason: it is
+ * read by somebody standing in a courtyard, so a JVM test is the only place it can be checked.
+ *
+ * @param said the server's own `detail`, already unwrapped by `apiRefusal`.
+ * @param nouns what might be missing, already turned into nouns a person uses — see
+ *   [referenceFieldNoun]. More than one is an honest ambiguity, never a guess; see
+ *   [PendingEntry.danglingField].
+ * @param files staged captures still on this device with the entry. 0 omits the clause rather than
+ *   printing "0 files", which reads as an accusation that something went missing.
+ */
+fun outboxDanglingSentence(
+    said: String,
+    nouns: List<String>,
+    files: Int,
+    isCorrection: Boolean,
+): String {
+    val subject = if (isCorrection) "This correction" else "This record"
+    val head = if (nouns.size == 1) {
+        "$subject points at ${anyOneOf(nouns)} that is not on the server."
+    } else {
+        // NOT A GUESS DRESSED AS A FACT. The server's 404 names no field and the payload carries
+        // several ids, so the sentence carries several — the same refusal `DwResumedCreate.Ambiguous`
+        // makes about picking a workshop by plausibility.
+        "$subject points at something that is not on the server. It is ${anyOneOf(nouns)} — the " +
+            "server's answer does not say which."
+    }
+    val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
+    val isAre = if (files > 0) "are" else "is"
+    val server = endStopped(said).let { if (it.isEmpty()) "" else " The server said: $it" }
+    return "$head Nothing is lost — open it, choose one that is, and it will send.$server " +
+        "Nothing has been sent and nothing has been deleted: this entry$carrying $isAre still on " +
+        "this phone. Sending it again unchanged will get the same answer, because what is missing " +
+        "is missing on the server."
+}
+
+/**
+ * WHAT A DESIGNER IS TOLD WHEN A RECORD GOES UP FILED UNDER NOTHING BECAUSE THE LIST WAS EMPTY.
+ *
+ * The third of the three outcomes, and the only one that ends in success — which is exactly why it
+ * needs saying. The entry leaves the queue, the banner's count drops, and every visible sign says
+ * the record arrived intact. It did arrive; it arrived UNFILED, because the picker had nothing in it
+ * at the moment it was filled in, and the designer standing in a cluster with no bars never saw a
+ * choice to make. Say nothing here and the record is discovered missing from a workshop's lists
+ * weeks later, by which time nobody can reconstruct which of the two absences it was.
+ *
+ * IT IS NOT THE DANGLING SENTENCE AND IT IS NOT THE EMPTY-PICKER SENTENCE. Nothing is refused, so
+ * there is no remedy to offer and no button to press; the record simply needs filing, on the record's
+ * own screen, whenever the designer next has a connection.
+ *
+ * @param nouns the controls that were empty, already in a person's words.
+ */
+fun outboxSentUnfiledMessage(label: String, nouns: List<String>): String {
+    // NO ARTICLES, because "no" already carries the determiner: "there was no design & prototype
+    // workshop to choose from" is the sentence, and "there was no A design & prototype workshop" is
+    // the kind of seam that tells a reader the words were assembled by a machine and can be skimmed.
+    val list = when (nouns.size) {
+        0 -> "workshop"
+        1 -> nouns.single()
+        else -> nouns.dropLast(1).joinToString(", ") + " or " + nouns.last()
+    }
+    return "“$label” was sent, and it is filed under nothing: there was no $list to choose from on " +
+        "this device when it was saved. That was never a claim that none exist. Open the record and " +
+        "file it now that this phone has a connection."
+}
+
+/**
+ * ONE CHOICE IN THE TRAY'S RE-PICK DIALOG.
+ *
+ * A projection and not a DTO, for [OutboxFailureRow]'s reason: the dialog is drawn over a queue
+ * screen and has no business holding a workshop's whole record to draw two lines of it.
+ */
+data class RepickOption(val id: String, val label: String, val hint: String? = null)
+
+/**
+ * The answer to "what may this entry be re-pointed at", with the one fact that decides what an empty
+ * list MEANS.
+ *
+ * [listed] IS THE WHOLE VALUE OF THIS TYPE. `emptyList()` on its own is three different facts —
+ * still asking, the read failed, the scope holds none — and the one a reader assumes is the one that
+ * says *there are none*, which on this screen would tell a designer their only route out is closed.
+ * See `repickEmptyLine`, and DROPDOWN_DESIGN §3.5, which spends a table on the same distinction for
+ * the pickers on the forms.
+ */
+data class RepickChoices(val options: List<RepickOption>, val listed: Boolean)
+
+/**
+ * WHAT THE RE-PICK DIALOG SAYS WHEN IT HAS NOTHING TO OFFER.
+ *
+ * Two facts, two sentences, and they are NOT §3.5's — deliberately, and this is the fourth place
+ * this document has had to say so. §3.5's sentences are said on a FORM, about a record that has not
+ * been saved yet, and they end by promising that "this record can be saved without it". Here the
+ * record IS saved, on this phone, and it is stuck: the promise would be true and useless, and the
+ * standing fact the designer needs is the opposite one — the entry is not lost while this dialog
+ * cannot help, and it will still be here when the list can be read.
+ *
+ * THE READ FAILED is separated from THE SCOPE IS EMPTY for the reason those two are separated
+ * everywhere else in this repository: their next moves are a connection and an administrator, and a
+ * designer sent to the wrong one of those loses a day. `"No workshops are open to this account"` said
+ * after a timeout is the single most repeated bug class in this repo, arriving on the one screen
+ * whose whole job is to be a way out.
+ *
+ * PURE, and pinned by `OutboxDanglingReferenceTest`.
+ */
+fun repickEmptyLine(noun: String, listed: Boolean): String = if (!listed) {
+    "The $noun list could not be read just now, so this is not showing what exists. Nothing has been " +
+        "lost — the record and anything saved with it stay on this phone, and this will work when the " +
+        "list can be read."
+} else {
+    "No $noun is open to this account, so there is nothing to point this at. An administrator can " +
+        "give you access to one. Until then the record stays here — nothing is deleted."
+}
+
 /**
  * WHAT A PERSON IS ASKED BEFORE ANYTHING IN THIS APP DELETES UNSENT FIELDWORK.
  *
@@ -395,6 +859,19 @@ fun outboxDiscardConfirmation(
     files: Int,
     isConflict: Boolean,
     savedOnServer: Boolean = false,
+    /**
+     * This entry points at an id the server does not have ([PendingEntry.danglingField]).
+     *
+     * THE ONE ROW IN THIS TRAY WITH A REMEDY THAT WORKS, so it is the one row where an unqualified
+     * "this cannot be undone" is most expensive: everything else here is waiting on a permission, a
+     * newer build, or a comparison only a person can make, and this is waiting on one tap. A designer
+     * who reads a dead end and believes it deletes a day's fieldwork that was one dropdown away from
+     * sending. So the arm names the other button before the red one.
+     *
+     * MUTUALLY EXCLUSIVE WITH [isConflict] by construction — one is a 409 and the other a 404/422 —
+     * and with [savedOnServer], which is checked first for the reason given above it.
+     */
+    isDangling: Boolean = false,
 ): String {
     val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
     val opening = "“$label”$carrying will be deleted from this device. This cannot be undone"
@@ -412,6 +889,11 @@ fun outboxDiscardConfirmation(
             "out: it stays in the register, so entering it again would leave two of it.$orphaned"
     }
     val head = "$opening, and nothing about it has reached the server."
+    if (isDangling) {
+        return "$head Only one thing about it is wrong — the workshop or record it points at is not " +
+            "there — and Re-pick it fixes that without losing anything. Deleting is for a record you " +
+            "no longer want at all."
+    }
     if (!isConflict) return head
     return "$head The record it clashes with is not touched — it stays exactly where it is, on the " +
         "server. What goes is this phone's copy: anything in it that the other record does not " +
@@ -602,6 +1084,12 @@ object OfflineOutbox {
      *   [skewRun]'s reason and one more: an entry that clashed on one pass and was refused for a bad
      *   field on the next must stop being described as a clash, or the tray goes on telling the
      *   designer to open a record that has nothing to do with what is now standing in the way.
+     * @param danglingField pass the column — or the comma-separated candidates — when the refusal is
+     *   a 404/422 saying this record points at an id the server does not have. See
+     *   [PendingEntry.danglingField]. Written on EVERY call for the two reasons above and one that is
+     *   sharper here: this is the only refusal in the queue with a THIRD button under it, and an
+     *   entry that dangled on one pass and was refused for a bad field on the next would otherwise
+     *   keep offering a Re-pick that now edits the wrong field of a record nothing is wrong with.
      */
     suspend fun markFailure(
         context: Context,
@@ -609,6 +1097,7 @@ object OfflineOutbox {
         reason: String,
         skewRun: String? = null,
         conflict: Boolean = false,
+        danglingField: String? = null,
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
@@ -622,6 +1111,7 @@ object OfflineOutbox {
                                 failedAt = Instant.now().toString(),
                                 skewRun = skewRun,
                                 conflict = conflict,
+                                danglingField = danglingField,
                             )
                         } else {
                             it
@@ -629,6 +1119,75 @@ object OfflineOutbox {
                     }
                 )
             }
+        }
+    }
+
+    /**
+     * REWRITE ONE REFERENCE ON A QUEUED RECORD, because the id it points at is not on the server.
+     *
+     * ── THE REMEDY THAT DID NOT EXIST, AND THE ONE THAT DID ───────────────────────────────────
+     *
+     * A dangling foreign key left exactly two doors: *Try again*, which fetches the identical 404,
+     * and *Throw away*, which destroys the last copy of the record and its photographs. The record
+     * is intact — payload, staged captures and all — and precisely one key in it is wrong. This
+     * changes that key and nothing else.
+     *
+     * NOTHING ELSE IS TOUCHED, and that is the whole safety argument. The payload is re-serialised
+     * from the object it parsed to, so every other answer the designer typed is byte-identical;
+     * [PendingEntry.media] is not looked at; [PendingEntry.createdId] is not looked at, because this
+     * path is only ever reached for an entry whose create leg refused, which by construction leaves
+     * it null. A caller that reached here with a created id would be asking to change a field on a
+     * record that is already on the server, and this is not the door for that.
+     *
+     * THE FAILURE IS CLEARED, exactly as [clearFailure] clears it: the designer has said "try it as
+     * it stands now", and a stale refusal would leave the entry parked describing an id it no longer
+     * carries. [PendingEntry.unfiled] is updated with it — choosing nothing HERE is as deliberate a
+     * choice as choosing nothing on the form was, and it has to reach the wire as an explicit null
+     * rather than as an omitted key, or the re-pick reports success and files the record nowhere.
+     *
+     * @param value the new id, or null/blank for "file it under nothing".
+     * @return true when an entry with that id was found and rewritten.
+     */
+    suspend fun repick(
+        context: Context,
+        entryId: String,
+        field: String,
+        value: String?,
+    ): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = read(context)
+            val entry = current.firstOrNull { it.id == entryId } ?: return@withLock false
+            val body = runCatching { payloadReader.parseToJsonElement(entry.payloadJson) as? JsonObject }
+                .getOrNull() ?: return@withLock false
+            val chosen = value?.trim()?.takeIf { it.isNotEmpty() }
+            val rewritten = body.toMutableMap().apply {
+                if (chosen == null) remove(field) else put(field, JsonPrimitive(chosen))
+            }
+            val unfiled = entry.unfiled.toMutableMap().apply {
+                if (chosen == null) put(field, UNFILED_BY_CHOICE) else remove(field)
+            }
+            write(
+                context,
+                current.map {
+                    if (it.id == entryId) {
+                        it.copy(
+                            payloadJson = Json.encodeToString(
+                                JsonObject.serializer(),
+                                JsonObject(rewritten),
+                            ),
+                            unfiled = unfiled,
+                            failure = null,
+                            failedAt = null,
+                            skewRun = null,
+                            conflict = false,
+                            danglingField = null,
+                        )
+                    } else {
+                        it
+                    }
+                }
+            )
+            true
         }
     }
 
@@ -673,7 +1232,18 @@ object OfflineOutbox {
                 context,
                 current.map {
                     if (it.id == entryId) {
-                        it.copy(failure = null, failedAt = null, skewRun = null, conflict = false)
+                        // [PendingEntry.danglingField] goes with the rest, for the reason the whole
+                        // block above gives: a person tapping Try again has said "try it as it stands
+                        // now", and a stale marker would leave the tray offering a Re-pick for a
+                        // workshop the server has stopped objecting to — or, worse, for the wrong
+                        // field, once the next answer names a different one.
+                        it.copy(
+                            failure = null,
+                            failedAt = null,
+                            skewRun = null,
+                            conflict = false,
+                            danglingField = null,
+                        )
                     } else {
                         it
                     }
@@ -691,7 +1261,15 @@ object OfflineOutbox {
             if (refused == 0) return@withLock 0
             write(
                 context,
-                current.map { it.copy(failure = null, failedAt = null, skewRun = null, conflict = false) }
+                current.map {
+                    it.copy(
+                        failure = null,
+                        failedAt = null,
+                        skewRun = null,
+                        conflict = false,
+                        danglingField = null,
+                    )
+                }
             )
             refused
         }

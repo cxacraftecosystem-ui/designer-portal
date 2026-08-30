@@ -238,13 +238,17 @@ async def test_the_trash_is_ordered_by_when_each_row_went(stub):
     opened in March and deleted this morning sorts to the bottom of a ``createdAt`` ordering, under
     rows nobody is looking for and possibly on a page they never reach.
     """
+    # Both orders are wrapped in `with_id_tiebreak` since the list route moved onto it (DROPDOWN_DESIGN
+    # W-B1): `LIMIT/OFFSET` over a non-total order misses or repeats rows across a paged walk whenever
+    # two rows share the sort key — see that function's own docstring — so `id desc` rides beside
+    # whatever this test asserts about ordering BY DELETION, not instead of it.
     fake = stub([_row("w1", deleted_at=DELETED_AT)])
     await _list(_user("ADMIN"), deletedOnly=True)
-    assert fake.designworkshop.finds[0]["order"] == {"deletedAt": "desc"}
+    assert fake.designworkshop.finds[0]["order"] == [{"deletedAt": "desc"}, {"id": "desc"}]
 
     fake = stub([_row("w1")])
     await _list(_user("ADMIN"))
-    assert fake.designworkshop.finds[0]["order"] == {"createdAt": "desc"}
+    assert fake.designworkshop.finds[0]["order"] == [{"createdAt": "desc"}, {"id": "desc"}]
 
 
 async def test_the_other_filters_still_compose_with_the_trash(stub):

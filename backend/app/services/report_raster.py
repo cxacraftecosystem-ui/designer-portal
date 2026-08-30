@@ -190,8 +190,8 @@ GLYPH_ADVANCE = 6
 
 _GLYPHS: dict[str, tuple[int, ...]] = {}
 for _index in range(95):
-    _hex = _FONT_ASCII[_index * 10:(_index + 1) * 10]
-    _GLYPHS[chr(32 + _index)] = tuple(int(_hex[i:i + 2], 16) for i in range(0, 10, 2))
+    _hex = _FONT_ASCII[_index * 10 : (_index + 1) * 10]
+    _GLYPHS[chr(32 + _index)] = tuple(int(_hex[i : i + 2], 16) for i in range(0, 10, 2))
 
 # The rupee sign, drawn by hand: two horizontal strokes and the descending leg. Every cost chart in
 # this report is money, and a currency symbol replaced by nothing turns "₹ 4,200" into "4,200" on a
@@ -203,9 +203,16 @@ _GLYPHS["•"] = (0x00, 0x1C, 0x1C, 0x1C, 0x00)
 # five-by-seven cell. Substituting is strictly better than dropping: "Artisan's" reads, "Artisans"
 # does not, and an en dash silently removed turns "3–6 months" into "36 months".
 _SUBSTITUTES = {
-    "‘": "'", "’": "'", "“": '"', "”": '"',
-    "–": "-", "—": "-", "−": "-", " ": " ",
-    "×": "x", "…": "...",
+    "‘": "'",
+    "’": "'",
+    "“": '"',
+    "”": '"',
+    "–": "-",
+    "—": "-",
+    "−": "-",
+    " ": " ",
+    "×": "x",
+    "…": "...",
 }
 
 
@@ -254,6 +261,7 @@ def ellipsise(text: str, max_width: int, scale: int = 1) -> str:
 # The canvas
 # --------------------------------------------------------------------------------------
 
+
 class Raster:
     """An RGB image being drawn into, and the PNG it becomes."""
 
@@ -272,7 +280,7 @@ class Raster:
             return
         if alpha >= 1.0:
             offset = (y * self.width + x) * 3
-            self.pixels[offset:offset + 3] = bytes(rgb)
+            self.pixels[offset : offset + 3] = bytes(rgb)
             return
         offset = (y * self.width + x) * 3
         buf = self.pixels
@@ -308,14 +316,16 @@ class Raster:
         if last > first + 1:
             if alpha >= 1.0:
                 start = (y * self.width + first + 1) * 3
-                self.pixels[start:start + (last - first - 1) * 3] = \
-                    bytes(rgb) * (last - first - 1)
+                self.pixels[start : start + (last - first - 1) * 3] = bytes(rgb) * (
+                    last - first - 1
+                )
             else:
                 for x in range(first + 1, last):
                     self.blend(x, y, rgb, alpha)
 
-    def rect(self, x: float, y: float, width: float, height: float, rgb: RGB,
-             alpha: float = 1.0) -> None:
+    def rect(
+        self, x: float, y: float, width: float, height: float, rgb: RGB, alpha: float = 1.0
+    ) -> None:
         top = max(0, int(y))
         bottom = min(self.height, int(y + height + 0.999))
         for row in range(top, bottom):
@@ -328,8 +338,9 @@ class Raster:
 
     # -- polygons -----------------------------------------------------------------------
 
-    def fill_polygons(self, rings: list[list[tuple[float, float]]], rgb: RGB,
-                      alpha: float = 1.0) -> None:
+    def fill_polygons(
+        self, rings: list[list[tuple[float, float]]], rgb: RGB, alpha: float = 1.0
+    ) -> None:
         """Even-odd scanline fill of any number of closed rings, in ONE pass.
 
         All rings are filled together rather than one at a time, and that is what makes a hole a
@@ -349,7 +360,7 @@ class Raster:
                 x0, y0 = ring[index]
                 x1, y1 = ring[(index + 1) % count]
                 if y0 == y1:
-                    continue   # a horizontal edge crosses no scanline centre
+                    continue  # a horizontal edge crosses no scanline centre
                 if y0 > y1:
                     x0, y0, x1, y1 = x1, y1, x0, y0
                 first = max(int(y0 + 0.5), 0)
@@ -371,7 +382,7 @@ class Raster:
             for edge in active:
                 top, bottom, x_top, slope = edge
                 if bottom <= centre:
-                    continue           # finished above this scanline; drop it
+                    continue  # finished above this scanline; drop it
                 still.append(edge)
                 if top <= centre:
                     crossings.append(x_top + (centre - top) * slope)
@@ -384,8 +395,13 @@ class Raster:
 
     # -- strokes ------------------------------------------------------------------------
 
-    def stroke_polyline(self, points: list[tuple[float, float]], rgb: RGB,
-                        thickness: float = 1.0, alpha: float = 1.0) -> None:
+    def stroke_polyline(
+        self,
+        points: list[tuple[float, float]],
+        rgb: RGB,
+        thickness: float = 1.0,
+        alpha: float = 1.0,
+    ) -> None:
         """Draw an OPEN polyline of the given thickness.
 
         Each segment becomes a quadrilateral fed through the polygon filler, which is what gives
@@ -404,7 +420,8 @@ class Raster:
             nx, ny = -dy / length * half, dx / length * half
             self.fill_polygons(
                 [[(x0 + nx, y0 + ny), (x1 + nx, y1 + ny), (x1 - nx, y1 - ny), (x0 - nx, y0 - ny)]],
-                rgb, alpha,
+                rgb,
+                alpha,
             )
         # A butt-ended segment leaves a notch at every bend, and at a bend sharper than a right
         # angle the notch is a visible hole in the border. A square at each interior vertex is the
@@ -426,9 +443,17 @@ class Raster:
             half = (radius * radius - dy * dy) ** 0.5
             self.span(row, cx - half, cx + half, rgb, alpha)
 
-    def ring(self, cx: float, cy: float, outer: float, inner: float, rgb: RGB,
-             start: float = 0.0, sweep: float = 6.283185307179586,
-             alpha: float = 1.0) -> None:
+    def ring(
+        self,
+        cx: float,
+        cy: float,
+        outer: float,
+        inner: float,
+        rgb: RGB,
+        start: float = 0.0,
+        sweep: float = 6.283185307179586,
+        alpha: float = 1.0,
+    ) -> None:
         """An annular sector — the primitive both the pie and the donut are made of.
 
         ``inner`` of zero gives a pie slice. Drawn by testing each pixel's radius and angle rather
@@ -456,8 +481,10 @@ class Raster:
                     # Outside the sweep, and further outside than the half pixel the two straight
                     # radial edges are feathered by — without the feather a thin slice comes out
                     # with a hard staircase along its own boundary.
-                    if (angle > sweep
-                            and min(angle - sweep, 6.283185307179586 - angle) * distance > 0.5):
+                    if (
+                        angle > sweep
+                        and min(angle - sweep, 6.283185307179586 - angle) * distance > 0.5
+                    ):
                         continue
                 # Coverage from the two curved edges only; good enough at this radius and much
                 # cheaper than supersampling a disc.
@@ -482,8 +509,13 @@ class Raster:
                         continue
                     for row_index in range(GLYPH_H):
                         if bits & (1 << row_index):
-                            self.rect(cursor + column_index * scale, y + row_index * scale,
-                                      scale, scale, rgb)
+                            self.rect(
+                                cursor + column_index * scale,
+                                y + row_index * scale,
+                                scale,
+                                scale,
+                                rgb,
+                            )
             cursor += GLYPH_ADVANCE * scale
         return cursor - x - scale
 
@@ -495,8 +527,7 @@ class Raster:
 
     # -- flood fill ---------------------------------------------------------------------
 
-    def flood_fill(self, x: int, y: int, target: RGB, replacement: RGB,
-                   limit: int) -> int:
+    def flood_fill(self, x: int, y: int, target: RGB, replacement: RGB, limit: int) -> int:
         """Replace the connected run of ``target`` pixels reaching ``(x, y)``, or nothing at all.
 
         NOTHING IS WRITTEN UNTIL THE WHOLE REGION IS KNOWN, and the region is abandoned when it
@@ -522,7 +553,7 @@ class Raster:
         while stack:
             index = stack.pop()
             offset = index * 3
-            if buf[offset:offset + 3] != target_bytes:
+            if buf[offset : offset + 3] != target_bytes:
                 continue
             found.append(index)
             if len(found) > limit:
@@ -544,7 +575,7 @@ class Raster:
         replacement_bytes = bytes(replacement)
         for index in found:
             offset = index * 3
-            buf[offset:offset + 3] = replacement_bytes
+            buf[offset : offset + 3] = replacement_bytes
         return len(found)
 
     def count_colour(self, rgb: RGB) -> int:
@@ -591,13 +622,16 @@ def encode_png(width: int, height: int, rgb_rows: bytes) -> bytes:
     raw = bytearray()
     stride = width * 3
     for row in range(height):
-        raw.append(0)                     # filter type: None
-        raw += rgb_rows[row * stride:(row + 1) * stride]
+        raw.append(0)  # filter type: None
+        raw += rgb_rows[row * stride : (row + 1) * stride]
 
     def chunk(tag: bytes, data: bytes) -> bytes:
         payload = tag + data
-        return (struct.pack(">I", len(data)) + payload
-                + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF))
+        return (
+            struct.pack(">I", len(data))
+            + payload
+            + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
+        )
 
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -610,6 +644,7 @@ def encode_png(width: int, height: int, rgb_rows: bytes) -> bytes:
 # --------------------------------------------------------------------------------------
 # Colour helpers
 # --------------------------------------------------------------------------------------
+
 
 def rgb_of(hex_colour: str, fallback: RGB = (0, 0, 0)) -> RGB:
     """``"1F3864"`` -> ``(31, 56, 100)``. A theme colour that is not six hex digits degrades."""

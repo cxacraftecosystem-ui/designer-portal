@@ -119,6 +119,7 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  ChevronUp,
   Crop,
   Download,
   Image as ImageIcon,
@@ -208,7 +209,16 @@ import {
 } from "./traceStages";
 import type { SvgInput } from "./geometryToSvg";
 // TYPE-ONLY, so the panel that composes this one can own the contract without a runtime cycle.
-import type { AttachAnswer } from "./UploadTabPanel";
+//
+// AND TYPE-ONLY IS LOAD-BEARING FOR A SECOND REASON THIS FILE CANNOT SEE. `e2e/sketch-trace-panel.spec.ts`
+// compiles this module on its own and serves it through a hand-built CommonJS registry, whose
+// `__require` THROWS on any specifier it was not given ("The harness has no module named …"). A
+// `import type` is erased by the transpiler and costs that registry nothing; a value import of a
+// module the spec does not list fails AT MOUNT, and all twenty-seven cases in that file then fail
+// with the harness's own message rather than with anything about this panel. So: nothing new is
+// imported here at runtime, and where this file and its sibling cards need the same shape, they
+// carry it rather than share it. See the note above `trigger` for what that costs and why it is paid.
+import type { AttachAnswer, ChosenPhotograph } from "./UploadTabPanel";
 import {
   loadTracePresets,
   loadTraceRuntime,
@@ -260,6 +270,82 @@ export interface SketchTraceFieldProps {
    * reopening and attaching the same photograph as PNG, must not hand the host the same bytes twice.
    */
   onAttachSource?: (file: File) => AttachAnswer;
+  /**
+   * The photograph the HOST chose, when the host owns the picker instead of this panel.
+   *
+   * ── THREE STATES, AND `undefined` IS NOT `null` ────────────────────────────────────────────────
+   *
+   *   * ABSENT (`undefined`) — this panel owns its picker, exactly as it always has. That is the
+   *     record-form mount (`components/designworkshop/FieldInput.tsx`), where the photograph belongs
+   *     to that form's own image field, and it is the bare mount every case in
+   *     `e2e/sketch-trace-panel.spec.ts` uses. Nothing about that path changed.
+   *   * `null` — the host owns the picker and nothing has been chosen yet. This panel then draws NO
+   *     picker of its own and says where the one picker is, rather than offering a second.
+   *   * a {@link ChosenPhotograph} — the host owns the picker and this is what it chose, already
+   *     decoded (or still decoding, or refused; see that type).
+   *
+   * WHY THE ABSENCE IS THE SWITCH RATHER THAN A `hasOwnPicker` FLAG. A boolean and a value can
+   * disagree, and the disagreement here is silent and expensive in both directions: a flag saying
+   * "the host owns it" with no value gives a designer no picker at all, and a flag saying "you own
+   * it" beside a value gives them two pickers for one photograph — which is the duplication the
+   * whole change exists to end. One prop cannot contradict itself.
+   *
+   * ── WHY THE PANEL IS TOLD AND DOES NOT ASK ─────────────────────────────────────────────────────
+   *
+   * The two guards this panel keeps around a pick were both written for shipped bugs and neither
+   * survives being moved: `pickRef` (a decode that resolves out of order traces photograph A and
+   * files the drawing under B's name) and `sourceFiledRef` (the same bytes offered to the host
+   * twice). So the pick is adopted THROUGH the same door a local pick goes through — see
+   * `adoptPhotograph` — and every reset a fresh photograph owes the panel happens in one place
+   * whichever side chose it. What the host takes over is the FILE DIALOG and the decode, not the
+   * bookkeeping.
+   */
+  photograph?: ChosenPhotograph | null;
+  /**
+   * Whether the host says {@link photograph} is ALREADY on the record this panel would file it to.
+   *
+   * ── THE HALF OF `sourceFiledRef` THAT ONLY THE HOST CAN KNOW ───────────────────────────────────
+   *
+   * `sourceFiledRef` remembers a FILE and nothing else — "these bytes have been offered to the host
+   * once, do not offer them again" — and that was a complete answer while this panel's photograph
+   * could not outlive the thing it was filed to. It can now. The shared card at the top of the
+   * section keeps its photograph across a change of the ROW PICKER above it, and "filed" is a claim
+   * about one row: the same picture is on the record for the sketch it was attached to and is on no
+   * record at all for the next one down.
+   *
+   * So without this prop the sequence was: file the photograph onto Sketch 1, move the picker to
+   * Sketch 2, press "Attach the photograph only" again — and `fileSourceOnce` answered `"already"`
+   * from a ref that had never heard of rows, printed "was already filed", called no host and wrote
+   * NOTHING to Sketch 2. A designer was told their photograph was safe on a row that did not have
+   * it, by a panel sitting directly under a card correctly saying it had not been filed here yet.
+   * `UploadTabHost` had the pairing right all along (`sketchPhotoFiled` keeps the row beside the id,
+   * and its own note says why); this panel simply was not told the answer.
+   *
+   * ── WHY IT DOES NOT REPLACE THE REF, WHICH IS THE OBVIOUS SIMPLIFICATION ───────────────────────
+   *
+   * Because the fact arrives too late to be the guard on its own. `UploadTabHost.attach` clears the
+   * tab's `busy` as soon as the bytes are on the device and then syncs and reloads with the tab live
+   * — its own note says why — so "Attach the photograph only" is pressable again during phase two,
+   * before the host has resolved and while this prop is still `false` because the host has recorded
+   * nothing yet. A press guarded by this prop alone would re-file in that window. The ref catches it,
+   * because the ref is set BEFORE the await; this prop is the half that expires when the ROW moves
+   * rather than when the photograph does. `fileSourceOnce` reads all three and says which is which.
+   *
+   * ── AND WHY IT IS READ AT THE PRESS RATHER THAN LATCHED IN AN EFFECT ───────────────────────────
+   *
+   * An effect keyed on this prop was the first shape of the fix and it left a real window open: the
+   * designer who moves the row picker DURING phase two changes nothing this prop reports (it was
+   * false before the move and is false after it, because the host records the row it captured before
+   * the await), so no effect runs, no ref is cleared, and the next press answers `"already"` over
+   * the new row. Read at the moment of the press there is no edge to miss — the question is only
+   * ever "is it on the row I am about to write to, now".
+   *
+   * ABSENT ON A HOST THAT OWNS ITS OWN PICKER, where the question is meaningless — a record form's
+   * stage field files into the field it is mounted in and has no row picker to move. `undefined` is
+   * therefore NOT `false`: it means the question is not answered here, and the guard falls back to
+   * the ref alone, exactly as it behaved before this prop existed.
+   */
+  photographFiled?: boolean;
 }
 
 type Phase =
@@ -335,8 +421,36 @@ const COMPARE_MODES: readonly { readonly id: CompareMode; readonly label: string
  */
 const COMPARE_MAX_ZOOM = 6;
 
-export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSource }: SketchTraceFieldProps) {
+/**
+ * This card's name, in the ONE spelling every surface uses.
+ *
+ * A constant rather than the literal typed in four places — the collapsed trigger, the open heading,
+ * the foot control and the close button's own sentence — because those four are the same claim and a
+ * card whose heading and whose collapse control disagree about its name is a card a reader cannot
+ * match up. Sentence case, deliberately: the title-cased form appears nowhere in this repository, on
+ * either client, and "restoring" one that was never there is a documented failure of its own
+ * (`SketchTabs.tsx`). `e2e/sketch-trace-panel.spec.ts` addresses this panel by these exact words
+ * twenty-seven times, so a rename here is a rename in that file too, and that file is not this
+ * change's to edit.
+ */
+const CARD_TITLE = "Trace a sketch into line art";
+
+export function SketchTraceField({
+  targetLabel,
+  disabled,
+  onAttach,
+  onAttachSource,
+  photograph,
+  photographFiled
+}: SketchTraceFieldProps) {
   const panelId = useId();
+  /**
+   * Whether the photograph is chosen somewhere else on the screen.
+   *
+   * READ OFF THE PROP'S PRESENCE, ONCE, so every consumer below asks the same question the same way
+   * — the prop's own documentation explains why the absence rather than a flag is the switch.
+   */
+  const fedFromOutside = photograph !== undefined;
   /*
     DERIVED FROM THE ONE `useId`, exactly as `${panelId}-style-hint` and its siblings below are. Two
     `useId()` calls would be two independent ids for one component, which is how a `for`/`id` pair and
@@ -560,14 +674,50 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    */
   const pickRef = useRef(0);
   /**
+   * Which of the HOST's photographs this panel has already taken up, by {@link ChosenPhotograph.id}.
+   *
+   * THE IDENTITY IS THE `id` AND NOT THE RECORD, because the record is rebuilt the moment the decode
+   * settles — same photograph, second object, pixels filled in. An effect keyed on the record alone
+   * would re-run then, and a re-run that took the pick up again would throw away the drawing, the
+   * frame and the "saved" sentence for a photograph that never changed. Zero is the no-photograph
+   * id, which is why the host's counter starts at one.
+   */
+  const adoptedRef = useRef(0);
+  /**
    * The photograph already handed to `onAttachSource`, if any.
    *
    * `setOpen(false)` deliberately keeps `file` and `pixels` so reopening does not make the designer
    * re-pick, which means attach-as-SVG then reopen-and-attach-as-PNG would offer the host the same
    * photograph twice. Whether that duplicates a media id or replaces one is the host's business; not
    * offering it twice is this side's.
+   *
+   * IT REMEMBERS A FILE AND NOT A DESTINATION, WHICH IS WHY IT IS NO LONGER READ ON ITS OWN.
+   * `adoptPhotograph` clears it for a new photograph, and that was the whole of the answer while a
+   * photograph could not outlive the thing it was filed to. On the UPLOAD tab it can: the shared card
+   * holds its pick across a change of the ROW PICKER, and this ref alone would then refuse to offer
+   * the host a photograph the new row genuinely does not have — answering `"already"` over a row with
+   * nothing on it. `fileSourceOnce` therefore reads it beside the host's own answer
+   * ({@link SketchTraceFieldProps.photographFiled}) and beside {@link sourceInFlightRef}; the three
+   * together are the guard, and the note on that function says which of them covers what.
    */
   const sourceFiledRef = useRef<File | null>(null);
+  /**
+   * True from just before `onAttachSource` is called until it has answered.
+   *
+   * ── THE WINDOW THE HOST'S OWN ANSWER CANNOT COVER, BECAUSE IT HAS NOT ARRIVED YET ──────────────
+   *
+   * `UploadTabHost.attach` drops the tab's `busy` as soon as the bytes are on the device and then
+   * syncs and reloads with the tab live — its own note says why — so "Attach the photograph only" is
+   * pressable again for the whole of that second phase, seconds of it on a courtyard hotspot. During
+   * it {@link SketchTraceFieldProps.photographFiled} is still `false`, because the host has not
+   * resolved and so has not recorded anything: an offer guarded by that prop alone would hand the
+   * same photograph over a second time, which is the exact duplicate `sourceFiledRef` exists to
+   * prevent. This ref is what says "an offer is outstanding" in the gap between the two.
+   *
+   * A REF AND NOT STATE, for the reason `fullRunRef` gives: it is written and read inside one async
+   * function, where a piece of state would be the value from the render that scheduled it.
+   */
+  const sourceInFlightRef = useRef(false);
   /**
    * True while a full-resolution run — an attach or either download — is in flight, for the debounce
    * effect to read synchronously.
@@ -759,9 +909,37 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * under B's name, and writes "Traced on the device from B.jpg" into a file traced from A. Nothing on
    * screen would distinguish the two. Same shape as `abortRef` on the trace side.
    */
-  const chooseFile = useCallback(async (chosen: File) => {
+  /**
+   * Take up a photograph — from this panel's own picker or from the host's — and clear everything the
+   * previous one left behind.
+   *
+   * ── ONE DOOR, BECAUSE THE RESETS ARE THE HALF THAT GETS FORGOTTEN ──────────────────────────────
+   *
+   * Every line below is a sentence or a piece of geometry that belongs to the OLD photograph, and a
+   * second entry point that set `file` without them would leave the panel showing one photograph's
+   * answer over another photograph's picture. That is a shipped-bug shape in this file twice over —
+   * see `setSaved` and `setEdited` below — so when the picker moved out of this panel it was routed
+   * back through here rather than given its own path in. It returns the pick token so the only
+   * caller that can lose a race (the local one, which then awaits a decode) can hold on to it.
+   *
+   * `null` PUTS THE PHOTOGRAPH AWAY, which is the host's "Put this photograph away" control. It runs
+   * exactly the same resets, because a panel emptied by one route and by the other must be in the
+   * same state — an empty card still showing the last drawing is the worst of the three.
+   */
+  const adoptPhotograph = useCallback((chosen: File | null) => {
     pickRef.current += 1;
-    const pick = pickRef.current;
+    /*
+      THE TRACE THAT IS STILL RUNNING BELONGS TO THE OLD PHOTOGRAPH, and until this line nothing
+      stopped it. Every `setResult`, `setProblem` and `setProgress` below it was cleared here and then
+      written again, seconds later, by a promise that had been in flight since before the pick — so
+      the panel showed the OLD sheet's drawing on the canvas, the old sheet's path and node counts in
+      the `<dl>`, and `buildComparisonPlates` stacked the old drawing over the NEW photograph, aligned
+      by nothing. The window is not narrow: nothing re-arms a trace until the host's decode of the new
+      photograph lands, and the abort that used to close this arrived only at the START of the next
+      run, which is later still. `stopTrace` has always spelt it exactly this way; a pick is the same
+      instruction said with a file dialog rather than with a button.
+    */
+    abortRef.current?.abort();
     setProblem(null);
     setDone(null);
     // "sheet-line-art.svg was saved to this device" IS ABOUT THE OLD SHEET. It sits under the download
@@ -781,15 +959,60 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     setEdited(null);
     // A new photograph is a new thing to file, whatever was filed for the old one.
     sourceFiledRef.current = null;
-    const outcome = await decodeToPixels(chosen);
-    if (pick !== pickRef.current || goneRef.current) return;
-    if (!isDecoded(outcome)) {
-      setPixels(null);
-      setProblem(outcome.reason);
-      return;
-    }
-    setPixels(outcome);
+    return pickRef.current;
   }, []);
+
+  const chooseFile = useCallback(
+    async (chosen: File) => {
+      const pick = adoptPhotograph(chosen);
+      const outcome = await decodeToPixels(chosen);
+      if (pick !== pickRef.current || goneRef.current) return;
+      if (!isDecoded(outcome)) {
+        setPixels(null);
+        setProblem(outcome.reason);
+        return;
+      }
+      setPixels(outcome);
+    },
+    [adoptPhotograph]
+  );
+
+  /**
+   * Take up whatever the host chose, and take it up ONCE.
+   *
+   * ── WHY THE DECODE IS NOT REPEATED HERE ────────────────────────────────────────────────────────
+   *
+   * The host already ran it. `decodeToPixels` resizes and calls `getImageData`, which is hundreds of
+   * milliseconds for a 4096px photograph on a handset, and the measuring card beside this one needs
+   * the same `File` turned into a displayable URL — so one owner does both derivations once and
+   * hands each panel the one it can use. Decoding again here would be the same expensive work twice
+   * for one photograph, which is the shape of the complaint this whole change answers.
+   *
+   * THE GUARD IS AN `id`, NOT THE RECORD. `photograph` is a new object every time the decode settles,
+   * so an effect that took the pick up on every change would wipe the drawing the instant the pixels
+   * it was traced from arrived. `adoptedRef` is what makes "the same photograph, told twice" a
+   * no-op — and setting `pixels` outside that guard is what lets the second telling deliver them.
+   */
+  useEffect(() => {
+    if (!fedFromOutside) return;
+    const id = photograph?.id ?? 0;
+    if (adoptedRef.current !== id) {
+      adoptedRef.current = id;
+      adoptPhotograph(photograph?.file ?? null);
+    }
+    // A REFUSED DECODE LEAVES THIS NULL DELIBERATELY, and this panel says nothing about it: the host
+    // prints `decodeToPixels`'s own sentence beside the picker the designer used, which is where a
+    // refusal belongs and is the same rule the attach callbacks follow (`AttachAnswer`). A second
+    // sentence here would be this panel inventing words for a failure it did not observe.
+    //
+    // AND A PHOTOGRAPH ADOPTED WHILE THIS PANEL IS CLOSED IS PREVIEWED ANYWAY, which is a real
+    // change and a wanted one. `pixels` feeds the debounce effect below, and that effect needs only
+    // a loaded `runtime` — so once the panel has been opened ONCE, choosing a photograph up in the
+    // shared card starts the preview trace while this card is still collapsed, and opening it shows
+    // a finished drawing rather than a spinner. Nothing runs before the first open, because the
+    // engine is not fetched until then.
+    if (photograph?.pixels) setPixels(photograph.pixels);
+  }, [adoptPhotograph, fedFromOutside, photograph]);
 
   /* ──────────────────────────────────────────────────────────────────────────
    * Tracing
@@ -836,6 +1059,15 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   const runTrace = useCallback(
     async (preview: boolean): Promise<SerializedTraceResult | null> => {
       if (runtime === null || traceSource === null || params === null) return null;
+      /*
+        THE SAME TOKEN THE DECODE CARRIES, ON THE OTHER LONG AWAIT. `adoptPhotograph` aborts this run
+        when the photograph is replaced, and an abort is the fast path — but abort is a request, not a
+        guarantee: a worker that has already posted its answer resolves anyway, and the two racing
+        inside one tick is precisely the case a signal cannot decide. The token can. Read here and
+        compared past every await below, it is what makes "this answer is about a photograph that is
+        no longer on screen" a thing this function can KNOW rather than hope, and it costs one integer.
+      */
+      const pick = pickRef.current;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -867,6 +1099,15 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
             setProgressAt(fractionAt(weightsRef.current, p.stageId, p.fraction));
           }
         });
+        /*
+          NOTHING OF THIS ANSWER IS PUBLISHED UNDER A PHOTOGRAPH IT WAS NOT TRACED FROM. Returning
+          rather than storing is deliberate and is what the two full-run callers read: the drawing is
+          real, it simply describes a sheet the designer has replaced, and `result` is the one piece
+          of state on this panel that a stale write makes actively misleading rather than merely old
+          — the canvas paints it, the `<dl>` counts it, the comparator stacks it over whatever
+          photograph is on screen now, and "Add the line art" stays live over the pair.
+        */
+        if (pick !== pickRef.current || goneRef.current) return null;
         setResult(answer);
         // THE BAR LEARNS FROM THE RUN THAT JUST FINISHED. `stages` is empty for a preview, and
         // `progressWeights` answers UNWEIGHTED for that rather than dividing by zero — so a panel that
@@ -883,6 +1124,15 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
           setPhase({ status: "unavailable", reason: (error as Error).message });
           return null;
         }
+        /*
+          AFTER `isUnavailable` AND BEFORE `setProblem`, WHICH IS THE ONLY ORDER THAT IS RIGHT. "This
+          device cannot trace at all" is a fact about the device and stands whichever photograph
+          provoked it — losing it because the designer picked again would leave the panel offering
+          controls that cannot work. "That photograph could not be traced" is a fact about ONE
+          photograph, and printed after a different one has been taken up it is a red box accusing a
+          sheet that was never tried.
+        */
+        if (pick !== pickRef.current || goneRef.current) return null;
         setProblem(
           error instanceof Error && error.message
             ? error.message
@@ -1350,12 +1600,32 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
 
   async function attachTrace() {
     if (svgInput === null || file === null || runtime === null || params === null) return;
+    /*
+      THE PHOTOGRAPH THIS PRESS IS ABOUT, TAKEN BEFORE THE LONG RUN. `file`, `svgInput` and `params`
+      are closed over from the render that drew the button, so everything below this line describes
+      one sheet no matter what happens on screen while the full-resolution trace runs — and the shared
+      picker above this panel is NOT disabled while it runs, because the host's `busy` is only raised
+      once `attach` is called, which is after. Without the guard below, replacing the photograph
+      mid-run filed the OLD sheet's line art and the old sheet's photograph, minutes later, into
+      whichever row was selected by then, and left a green tick naming a file the panel no longer held.
+    */
+    const pick = pickRef.current;
     beginFullRun("attach");
     try {
       // FULL RESOLUTION, ONCE, ON THE BUTTON — never on a drag. Everything on screen until now was a
       // preview at a smaller working edge, and `SerializedTraceResult.workingWidth` is how the panel
       // knows: attaching the preview would file a drawing coarser than the one being approved.
       const latest = await runTrace(false);
+      /*
+        SILENTLY, AND BEFORE THE "did not finish" SENTENCE BELOW, WHICH WOULD OTHERWISE BE THE WRONG
+        ANSWER TWICE OVER: the trace did not fail, it was abandoned — by this designer, deliberately,
+        by choosing another photograph — and `adoptPhotograph` has already emptied the panel of
+        everything the sentence could refer to. A red box arriving on the NEW photograph's card about
+        the OLD one is the exact failure the reset was written to end, arriving from the far side of
+        an await. `runTrace`'s own catch states the rule for the same reason: a superseded run is the
+        ordinary consequence of moving on, not a failure to report.
+      */
+      if (pick !== pickRef.current || goneRef.current) return;
       if (latest === null) {
         setProblem("The trace did not finish, so there is nothing to attach yet.");
         return;
@@ -1366,6 +1636,28 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         format === "svg"
           ? exportSvgFile(input, file.name, note)
           : await exportPngFile(input, file.name);
+      /*
+        THE SAME TOKEN AGAIN, BECAUSE THE GUARD ABOVE IS ONE AWAIT TOO EARLY TO COVER THIS.
+
+        `exportPngFile` paints the full-resolution geometry into a canvas and then awaits
+        `canvasToBlob` — a real PNG encode at `PNG_MAX_EDGE_PX`, seconds on a handset for a dense
+        sheet — and the shared picker above this panel is live for every one of them: this panel's
+        own `running` greys out this panel's own buttons and nothing else, and the host raises `busy`
+        only once `onAttach` is called, which is below. So "Attach as PNG", then replace the
+        photograph while it encodes, and without this line the OLD sheet's plate went to `onAttach`
+        and the OLD sheet's photograph to `fileSourceOnce` — under the new photograph, into whichever
+        row was selected by then. That is the failure this function's opening note describes, arriving
+        one await further along than the guard written for it.
+
+        HERE RATHER THAN AFTER `isExported`, so a refusal sentence goes with it. "This browser would
+        not give the page a drawing surface" printed over a sheet that was never tried is the same red
+        box accusing the wrong photograph that `runTrace`'s catch guards against.
+
+        NOTHING HAS BEEN WRITTEN YET AT THIS LINE, which is what makes returning the honest answer:
+        the export is in memory, no host has been called, and `adoptPhotograph` has already emptied
+        the panel of everything a sentence could refer to.
+      */
+      if (pick !== pickRef.current || goneRef.current) return;
       if (!isExported(outcome)) {
         setProblem(outcome.reason);
         return;
@@ -1385,6 +1677,28 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         return, so a refused trace does not silently leave the source attached on its own.
       */
       if ((await onAttach(outcome.file)) === false) return;
+      /*
+        ── AND ONCE MORE, FOR THE WINDOW THE HOST'S OWN `busy` DELIBERATELY LEAVES OPEN ────────────
+
+        `onAttach` is `UploadTabHost.attach`, which is TWO phases and raises `busy` for only the
+        first: it clears the flag the moment the bytes are on the device and then awaits
+        `syncDesignWorkshopDrafts()` and `reload()` with the tab live again — on purpose, and its own
+        note says why ("Holding the whole tab for the duration would look like the feature had hung").
+        That second phase is the slow one on a courtyard hotspot, and the shared picker is pressable
+        throughout it. So this is reachable on the DEFAULT format, with no PNG encode involved at all.
+
+        WHAT IS PREVENTED HERE IS NOT THE LINE ART — that is filed, the host has said so in its own
+        two-phase notice, and there is no taking it back. It is the two things that would follow:
+        `fileSourceOnce` writing the OLD photograph into the single IMAGE field the designer has just
+        replaced on screen — and `sourceFiledRef` cannot stop it, because `adoptPhotograph` reset that
+        ref for the new photograph, so the duplicate-source guard is disarmed at exactly the wrong
+        moment — and a green tick naming two files the panel no longer holds, over a photograph
+        neither of them came from.
+
+        SILENTLY, UNDER `AttachAnswer`'S OWN RULE: the host has already told them. A sentence here
+        could only describe a sheet that is no longer on the screen.
+      */
+      if (pick !== pickRef.current || goneRef.current) return;
       const source = await fileSourceOnce(file);
       setDone(
         `${outcome.file.name} was added to “${targetLabel}”.` +
@@ -1450,10 +1764,20 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    */
   async function downloadDerived(what: ExportFormatId) {
     if (svgInput === null || file === null || runtime === null || params === null) return;
+    // The same token, for the same reason, on the other button that pays for a full-resolution run.
+    const pick = pickRef.current;
     beginFullRun(`download-${what}`);
     setSaved(null);
     try {
       const latest = await runTrace(false);
+      /*
+        AND THE SAME SILENCE. `saveBlobToDisk` below would put a file named after the replaced
+        photograph into the downloads folder without the panel showing that photograph anywhere, and
+        `setSaved` would then re-write the very sentence `adoptPhotograph` clears — "was saved to this
+        device", under a file name that is now nobody's, which is the defect recorded there in as many
+        words. Better nothing than a file the designer cannot connect to anything on screen.
+      */
+      if (pick !== pickRef.current || goneRef.current) return;
       if (latest === null) {
         setProblem("The trace did not finish, so there is nothing to download yet.");
         return;
@@ -1473,6 +1797,23 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
             : await exportVectorFile(what, input, file.name, provenanceFor(latest, file.name), {
                 suffix: TRACE_SUFFIX
               });
+      /*
+        THE SAME TOKEN AGAIN, AND ON THIS BUTTON THE WINDOW IS THE WIDEST ON THE PANEL. Three of the
+        five formats reach the network here: `exportVectorFile` dynamic-imports its writer chunk, and
+        `WRITER_UNAVAILABLE` exists precisely because that fetch fails on a courtyard hotspot — so it
+        can be seconds, and the PNG branch pays for a full-resolution encode instead. The shared
+        picker is enabled for all of it: this panel's `running` disables this panel's own buttons and
+        the host never learns a download is happening at all.
+
+        WITHOUT THIS, the note above is describing a defect it does not close. `saveBlobToDisk` puts a
+        file named after the REPLACED photograph into the downloads folder with that photograph
+        nowhere on screen, and `setSaved` then re-writes the exact sentence `adoptPhotograph` clears —
+        "was saved to this device", under a file name that is now nobody's, which is the failure
+        recorded there in as many words. The refusal branch is inside the guard for the same reason it
+        is in `attachTrace`: a red box about a sheet the designer has moved on from accuses the wrong
+        photograph.
+      */
+      if (pick !== pickRef.current || goneRef.current) return;
       if (!isExported(outcome)) {
         setProblem(outcome.reason);
         return;
@@ -1504,23 +1845,88 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * reopen the panel, switch the format and attach again without re-picking anything. Every one of
    * those attaches used to call `onAttachSource`, which offered the host the same photograph a second
    * time; whether that duplicates a media id or replaces one is the host's business, and not offering
-   * it twice is this side's. The ref is reset in `chooseFile`, because a new photograph is a new thing
-   * to file.
+   * it twice is this side's. The ref is reset in `adoptPhotograph` — the one door both pickers come
+   * in by — because a new photograph is a new thing to file.
    *
-   * Returns which of the three things happened, so the sentence the designer reads is the true one.
+   * ── AND A ROW THE PHOTOGRAPH IS NOT ON IS ALSO A NEW THING TO FILE ─────────────────────────────
+   *
+   * `"already"` is a claim about the RECORD, and `sourceFiledRef` remembers only a file. That was a
+   * complete answer while this panel owned the picker, because a photograph could not then outlive
+   * the thing it was filed to. On the UPLOAD tab it can: the shared card at the top of the section
+   * keeps its pick when the designer moves the ROW PICKER above it, and "filed" is true of the sketch
+   * the photograph was attached to and false of the next one down. So the sequence — file onto
+   * Sketch 1, move the picker to Sketch 2, press "Attach the photograph only" again — matched the ref,
+   * returned `"already"`, called no host and wrote NOTHING, while the panel printed "was already
+   * filed" and the card directly above it correctly said the photograph was not filed here yet. The
+   * designer was told their photograph was safe on a row that did not have it.
+   *
+   * ── THE GUARD IS THEREFORE THREE FACTS, AND EACH ONE COVERS WHAT THE OTHERS CANNOT ─────────────
+   *
+   *   * `sourceFiledRef` — these bytes have been offered at least once. Set BEFORE the await, which
+   *     is what makes it the only one of the three that exists early enough to stop a second press.
+   *   * `sourceInFlightRef` — that offer has not been answered yet. `attach` drops the tab's `busy`
+   *     after phase one and resolves after phase two, so the button is live in between and the host
+   *     has recorded nothing it could report; without this the press in that window re-files.
+   *   * `photographFiled` — the host still says this photograph is on the row this panel would write
+   *     to. This is the one that expires when the ROW moves rather than when the photograph does.
+   *
+   * A HOST THAT OWNS ITS OWN PICKER PASSES NO ANSWER, and `photographFiled === undefined` therefore
+   * leaves the rule exactly as it was — a record form's stage field files into the field it is
+   * mounted in and has no row picker to move.
+   *
+   * Returns which of the four things happened, so the sentence the designer reads is the true one.
    */
   async function fileSourceOnce(chosen: File): Promise<"filed" | "already" | "not-wanted" | "refused"> {
     if (!onAttachSource) return "not-wanted";
-    if (sourceFiledRef.current === chosen) return "already";
-    // MARKED BEFORE THE CALL, and left marked even on a refusal. The ref exists so one chosen
-    // photograph is offered to the host AT MOST ONCE; a refused offer is still an offer, and
-    // re-offering it on the next press would be the duplicate this ref was written to stop. The
-    // designer's route back is to pick the photograph again, which resets the ref in `chooseFile`.
+    /*
+      READ AT THE MOMENT OF THE PRESS, NOT AT THE MOMENT OF THE OFFER, which is why this is a plain
+      read of the prop rather than something remembered when the mark was made. The question is
+      "is it on the row I am about to write to, NOW" — and the row the designer is looking at is the
+      one that moved. `undefined` means the host does not answer this question at all, which is not
+      the same as answering "no": treating it as "no" would disarm the duplicate guard on the record
+      form, where nothing else covers it.
+    */
+    const stillOnTheRecord = photographFiled !== false;
+    if (sourceFiledRef.current === chosen && (sourceInFlightRef.current || stillOnTheRecord)) {
+      return "already";
+    }
+    /*
+      MARKED BEFORE THE CALL, because the press this has to stop is the one that arrives while the
+      call is still running — see `sourceInFlightRef`. `adoptPhotograph` is the only place it is
+      cleared, and it clears it for a NEW photograph, which is a new thing to file.
+
+      AND A REFUSAL NO LONGER DEAD-ENDS THE PHOTOGRAPH, WHICH IS A BEHAVIOUR CHANGE AND A WANTED ONE.
+      The mark is still left standing here on a refusal, exactly as before. What changed is that on a
+      host that answers `photographFiled` the mark is no longer read ALONE: a refusal means the host
+      wrote nothing, so `photographFiled` stays false, so the guard above lets the next press through
+      and the photograph is really offered again. That is what `attachSourceOnly`'s own note has
+      always promised in words — "the designer can act on the refusal (choose a row, reload the
+      stage) and press again" — and what the ref-only guard quietly refused to do: the second press
+      matched the mark, returned `"already"`, called nobody, and told the designer a photograph that
+      had been REFUSED was already filed. Re-offering after a refusal is a retry, not a duplicate;
+      the duplicate the mark exists to stop is a second offer of bytes that DID land.
+    */
     sourceFiledRef.current = chosen;
-    // A REFUSAL IS ITS OWN ANSWER rather than being folded into "filed": the sentence the designer
-    // reads names which of the things happened, and "was filed alongside it" over a file the host
-    // rejected is the class of contradiction this whole change is about.
-    return (await onAttachSource(chosen)) === false ? "refused" : "filed";
+    // RAISED IN THE SAME BREATH AS THE MARK, because the two are one fact until the host answers:
+    // "offered, and nobody can tell you yet whether it landed". See `sourceInFlightRef` for the
+    // window this covers — it is the whole of `attach`'s phase two, with this button live.
+    sourceInFlightRef.current = true;
+    try {
+      // A REFUSAL IS ITS OWN ANSWER rather than being folded into "filed": the sentence the designer
+      // reads names which of the things happened, and "was filed alongside it" over a file the host
+      // rejected is the class of contradiction this whole change is about.
+      return (await onAttachSource(chosen)) === false ? "refused" : "filed";
+    } finally {
+      /*
+        LOWERED IN A `finally`, INCLUDING WHEN THE HOST THREW. A host that throws leaves this offer
+        unanswered for ever, and a flag stuck at true would go on reporting `"already"` for the rest
+        of the afternoon over a photograph nothing recorded — the same shape as a spinner left
+        running over a write that is long dead, which `PrototypeModelField` clears in a `finally` for
+        the same reason. Once this is down the host's own answer takes over as the authority, and on
+        a throw that answer is "not filed", which is the truth.
+      */
+      sourceInFlightRef.current = false;
+    }
   }
 
   /**
@@ -1536,10 +1942,40 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    */
   async function attachSourceOnly() {
     if (file === null || !onAttachSource) return;
+    /*
+      THE THIRD BUTTON THAT AWAITS THE HOST, AND THE ONLY ONE THAT WAS LEFT WITHOUT THE TOKEN.
+
+      `attachTrace` takes `pickRef.current` before its run and compares it past four awaits;
+      `downloadDerived` does the same past two. This press awaits the SAME host callback both of those
+      end at — `onAttachSource` is `UploadTabHost.attach`, which stages the bytes, writes the draft,
+      awaits `syncDesignWorkshopDrafts()` and reloads the stage twice before it resolves — so it is
+      the LONGEST of the three on a courtyard hotspot, and it had no guard at all.
+
+      The window is not theoretical and it is not narrow. `attach` clears the host's `busy` the moment
+      the bytes are on the device (its own note says why: "Holding the whole tab for the duration would
+      look like the feature had hung"), so the shared picker above this panel is pressable for the
+      whole of phase two. Press "Attach the photograph only" on A, choose B while A is going up, and
+      without this line the resolution wrote `setDone("A.jpg was filed exactly as it is")` into the
+      live region under photograph B and then called `setOpen(false)` — collapsing the panel the
+      designer was working in, under a green sentence naming a file it no longer holds. `file` is
+      closed over from the render that drew the button, so every word of that sentence is about A.
+
+      SILENTLY, UNDER `AttachAnswer`'S OWN RULE, and before the refusal branch for the same reason
+      `attachTrace` guards before `isExported`: a refusal about a sheet the designer has moved on from
+      accuses the wrong photograph. Nothing is lost by saying nothing — the host has already printed
+      its own two-phase notice about A, and `adoptPhotograph` has emptied this panel of everything a
+      sentence here could refer to.
+    */
+    const pick = pickRef.current;
     const source = await fileSourceOnce(file);
+    if (pick !== pickRef.current || goneRef.current) return;
     // REFUSED BY THE HOST: it has printed its own reason beside the picker, and this panel must not
     // print "was filed" over it. The panel is left open with the photograph still chosen, so the
-    // designer can act on the refusal (choose a row, reload the stage) and press again.
+    // designer can act on the refusal (choose a row, reload the stage) and press again — and that
+    // second press now really does offer the photograph again. It did not use to: `fileSourceOnce`
+    // read only its own mark, so the retry this line has always been written for answered "already
+    // filed" over a photograph the host had just rejected. That function's guard is where the fix
+    // lives; this comment is the promise it finally keeps.
     if (source === "refused") return;
     setProblem(null);
     setDone(
@@ -1564,13 +2000,54 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    */
   const busy = running !== null;
 
+  /**
+   * The one sentence under the card's name, in both states.
+   *
+   * ONE STRING FOR COLLAPSED AND OPEN, because they were two: closed, this card said nothing at all,
+   * and open it said this — so the fact that decides whether a designer is willing to hand a
+   * photograph to a tracing tool (that nothing leaves the device) was readable only after they had
+   * already committed to opening it. Its neighbour states its own rule while closed, and now so does
+   * this one.
+   */
+  const CARD_DESCRIPTION = `Everything below is computed on this device — the photograph is not sent anywhere to be traced. The original stays exactly as it is; only the drawing is added to “${targetLabel}”.`;
+
   if (phase.status === "unavailable") {
-    // "This device cannot do it at all" wants the control gone, not a button that fails. The ordinary
-    // file picker underneath is untouched and the photograph can still be attached as it is.
+    /*
+      "This device cannot do it at all" wants the control gone, not a button that fails.
+
+      ── AND THE PHOTOGRAPH IS STILL UNFILED HERE. TWO COMMENTS HAVE NOW CLAIMED OTHERWISE. ────────
+
+      The first said "the ordinary file picker underneath is untouched", which was false because this
+      panel WAS the only picker the Upload tab had. The second — written when the picker moved out —
+      said both hosts "now really do have one", and named the shared card above this one. That is true
+      of CHOOSING and false of FILING, which are the two halves this tab is careful to keep apart
+      everywhere else: `SharedPhotoField`'s own header says it "CHOOSES and it FILES NOTHING", and
+      `MeasureFromPhotoCard` says the same of itself. The only route from a chosen photograph to
+      `sketch.image` on this tab is `onAttachSource`, and `onAttachSource` is reached from exactly two
+      buttons — "Add the line art" and "Attach the photograph only" — both of which live inside the
+      panel this branch returns instead of.
+
+      So on the record form the claim holds (that host has its own image field, and this panel is an
+      optional tool over it), and on the Upload tab it does not: a designer whose tracing engine will
+      not load can choose the photograph of the sheet, is told by the card above that it will be
+      written "when a button in one of them is pressed", and has no such button. The honest fix is a
+      control here — `attachSourceOnly` already exists and needs only `onAttachSource` and `file`,
+      both of which are in scope at this line — rendered outside this `role="alert"` (interactive
+      content inside a live region is announced as part of the alert) and with the `done`/`problem`
+      region below it, which this early return also skips. That is a change to what this tab OFFERS
+      rather than a correction to what it says, so it is left to the owner and recorded here in the
+      one place the next reader will be standing when they need it.
+
+      WHAT MUST NOT HAPPEN AGAIN IS THE THIRD VERSION OF THIS SENTENCE. Both previous ones were
+      written in good faith by someone who had just improved the picker and assumed the rest followed.
+      The check is one grep, and it fits on a line:
+
+          grep -n "onAttachSource" frontend/components/sketches/upload/SketchTraceField.tsx
+    */
     return (
       <div
         role="alert"
-        className="mt-2 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-500"
+        className="mt-3 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-500"
       >
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
         <span>{phase.reason}</span>
@@ -1578,19 +2055,85 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
     );
   }
 
+  /**
+   * ── THE CARD SHELL, DRAWN HERE AND DRAWN AGAIN IN `MeasureFromPhotoCard`, ON PURPOSE ───────────
+   *
+   * These two cards sit one above the other in the same section and had four different shapes
+   * between them: collapsed, this one was an auto-width `field-button-secondary` — a 40px inline
+   * button, not a card — while the measuring card was a full-width bordered `<section>`; open, this
+   * one was `rounded-lg … p-3` and that one `rounded-md` with the padding on its children; this one
+   * carried no description line at all until it was opened and that one carried an always-visible
+   * one; and their top margins were `mt-2` here against `mt-3` there. A designer reading down the
+   * section met two controls that plainly were not the same kind of thing, and one of them did not
+   * look like a control at all.
+   *
+   * They are now one grammar — `<section className="rounded-md border border-line-200 bg-surface-50">`,
+   * an icon, an `<h4>`, a description line under it in a `min-w-0 flex-1` column, a chevron while
+   * collapsed, a close at the top and a "Collapse …" at the foot while open, and the same 3-step
+   * everywhere. The tints are NOT normalised with the sizes: `.panel` is `bg-card`, these two cards
+   * are `bg-surface-50` inside it, and `MeasureFromPhotoCard` refuses `.panel` for its own root in
+   * as many words. That layering is deliberate and survives.
+   *
+   * ── AND WHY IT IS NOT A SHARED COMPONENT, WHICH IS THE FIRST THING TO ASK ──────────────────────
+   *
+   * Two reasons, and the second is the hard one.
+   *
+   *   1. A shell that covered both would need a flag per difference — the icon, the focus target on
+   *      open, whether the header is itself the toggle, the close control's wording, whether there
+   *      is a foot control, the busy treatment — and six mode flags on one component is the thing
+   *      this repository's own guidance says two clear components beat.
+   *   2. THIS FILE MAY NOT GAIN A RUNTIME IMPORT. `e2e/sketch-trace-panel.spec.ts` compiles this
+   *      module alone and serves it through a hand-built registry that throws on any specifier it
+   *      was not handed, and that spec is not this change's to edit. A shared shell module would
+   *      fail at mount, in twenty-seven cases, with a message about the harness.
+   *
+   * So the words and the classes are the shared thing, not the symbol — which is the same answer
+   * `MeasureFromPhotoCard`'s `CARD_TITLE` records for the four copies of its own name. The grep that
+   * finds the pair:
+   *
+   *     grep -n "rounded-md border border-line-200 bg-surface-50" frontend/components/sketches/upload/
+   */
   const trigger = (
-    <button
-      type="button"
-      ref={triggerRef}
-      className="field-button-secondary"
-      onClick={() => setOpen(true)}
-      disabled={disabled}
-      aria-expanded={false}
-      aria-controls={panelId}
-    >
-      <Wand2 className="h-4 w-4" aria-hidden />
-      Trace a sketch into line art
-    </button>
+    <section className="rounded-md border border-line-200 bg-surface-50">
+      <h4>
+        <button
+          type="button"
+          ref={triggerRef}
+          className="flex w-full items-start gap-2 rounded-md p-3 text-left disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => setOpen(true)}
+          disabled={disabled}
+          aria-expanded={false}
+          /*
+            NO `aria-controls` WHILE THE PANEL IS UNMOUNTED — §17 of the frontend contract, and this
+            trigger broke it: it pointed at `panelId` in every state, including the closed one, where
+            that id is in no document at all. Pointing at a missing id is worse than not pointing,
+            because a reader is offered a jump that goes nowhere. Opening replaces this button
+            outright, so there is no state in which it can honestly carry one.
+          */
+        >
+          <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-ink-900">{CARD_TITLE}</span>
+            {/*
+              THE LINE A COLLAPSED CARD OWES ITS READER, which this one did not have. Closed, its
+              only text was its own name — so what the panel would do, and the one fact that decides
+              whether somebody is willing to open a tracing tool over a photograph at all (that it
+              runs here, and that nothing is sent anywhere), was visible only AFTER opening it. Its
+              neighbour has always said both while closed.
+            */}
+            <span className="mt-0.5 block text-xs leading-5 text-ink-500">{CARD_DESCRIPTION}</span>
+          </span>
+          {/*
+            The chevron is DECORATION over `aria-expanded`, never the state itself, and its rotation
+            is a CSS transition that both reduced-motion sources zero (§5) — so open and closed are
+            still told apart by the arrow's direction with no motion at all. Byte-for-byte the
+            treatment `MeasureFromPhotoCard` uses, because two chevrons that rotate differently in
+            one section read as two different kinds of control.
+          */}
+          <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-ink-500 transition-transform" aria-hidden />
+        </button>
+      </h4>
+    </section>
   );
 
   /**
@@ -1653,7 +2196,13 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         should have to know what a `.dxf` is before pressing a button that makes one, and the
         sentence that says what a format is FOR is the same string the "Attach as" chooser
         shows, so the two surfaces cannot describe one format differently. */}
-    <ul className="mt-2 grid max-w-prose gap-1 text-xs leading-5 text-ink-500">
+    {/* FULL WIDTH, NOT `max-w-prose`. This is a two-column-shaped LIST of formats, not running
+        prose: 65ch against a 12px font is ~400px while every ancestor here is full width, so the
+        measure clamp wrapped "what a .dxf is for" into a narrow ribbon with the rest of the panel
+        empty beside it. Android's `DwSketchTraceExportCard.kt` renders the same five strings in a
+        `Column(fillMaxWidth())` and always has — this is the web catching up to it, so do not
+        re-add the clamp on one client without the other. */}
+    <ul className="mt-2 grid gap-1 text-xs leading-5 text-ink-500">
       {EXPORT_FORMATS.map((entry) => (
         <li key={entry.id}>
           <span className="font-medium text-ink-700">{entry.label}</span> — {entry.hint}
@@ -1736,22 +2285,47 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
   );
 
   const panel = (
-    <div id={panelId} className="rounded-lg border border-line-200 bg-surface-50 p-3">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          {/* `tabIndex={-1}` makes the heading focusable by script and not by Tab, which is what a
-              deliberate focus move needs and what a tab stop on a heading would get wrong. */}
+    <section className="rounded-md border border-line-200 bg-surface-50">
+      {/*
+        THE HEADER CARRIES THE PADDING AND THE BODY CARRIES ITS OWN, and the root carries none —
+        `MeasureFromPhotoCard`'s scheme, adopted here so the two cards' interiors line up. The border
+        between them replaces the gap that would otherwise separate the two, which is what keeps this
+        card out of the extra vertical air the section was already carrying too much of.
+      */}
+      <div className="flex items-start gap-2 p-3">
+        <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
+        <div className="min-w-0 flex-1">
+          {/*
+            `tabIndex={-1}` makes the heading focusable by script and not by Tab, which is what a
+            deliberate focus move needs and what a tab stop on a heading would get wrong.
+
+            AND IT IS THE ONE THING THAT KEEPS THIS HEADER A HEADING RATHER THAN A TOGGLE, which is
+            the single shape difference from the measuring card and is worth the sentence. Opening
+            this panel moves focus here on purpose, so a reader hears the panel's NAME — "Trace a
+            sketch into line art, heading" — and knows where they have landed. A heading that were
+            also the collapse button would be announced as a button, and a reflex Space on arrival
+            would shut the panel the designer had just asked for. The measuring card has no such
+            focus move, so there the header may safely be the toggle.
+
+            `min-w-0 flex-1` ON THE COLUMN, which this header did not have: it was a bare `<div>` in
+            a `justify-between` row, so a long registry label in the sentence below pushed the close
+            control off its own edge instead of wrapping. §17 — "`min-w-0` is load-bearing wherever
+            it appears".
+          */}
           <h4
             ref={headingRef}
             tabIndex={-1}
-            className="font-display text-sm font-semibold text-ink-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-600/40"
+            className="text-sm font-medium text-ink-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-600/40"
           >
-            Trace a sketch into line art
+            {CARD_TITLE}
           </h4>
-          <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
-            Everything below is computed on this device — the photograph is not sent anywhere to be traced. The
-            original stays exactly as it is; only the drawing is added to “{targetLabel}”.
-          </p>
+          {/*
+            NO `max-w-prose`, WHICH IT USED TO CARRY. Inside a card this narrow the clamp never bound
+            the line — it only made this card's sentence wrap at a different width from the identical
+            sentence in the card below it, which is the asymmetry the pair was reported for. The
+            column is the measure now, in both cards, and it is `min-w-0 flex-1` in both.
+          */}
+          <p className="mt-0.5 text-xs leading-5 text-ink-500">{CARD_DESCRIPTION}</p>
         </div>
         <button
           type="button"
@@ -1763,6 +2337,14 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         </button>
       </div>
 
+      {/*
+        ── THE BODY. Everything below this line to the `</div>` above `</section>` is the panel's
+        contents, and it is left at its original indentation deliberately: wrapping it cost one
+        element, and re-indenting nine hundred lines of JSX to match would have buried a fifteen-line
+        change in a diff nobody could read. The `p-3` here is the padding this card used to carry on
+        its root, moved so the header can own its own — the scheme `MeasureFromPhotoCard` uses.
+      */}
+      <div id={panelId} className="border-t border-line-200 p-3">
       {phase.status === "loading" ? (
         <p aria-live="polite" className="flex items-center gap-2 py-6 text-sm text-ink-500">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -1774,20 +2356,98 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         <>
           {/* ── The photograph ─────────────────────────────────────────────── */}
           {/*
-            A DROP CARD RATHER THAN A BARE `<input type="file">`, WHICH IS THE OWNER'S THIRD REQUEST —
-            and the button did not go away, it moved inside the card. See `DropCard`'s header: file drop
-            does not exist on touch at all (`dragover` never fires on Android Chrome, and a handset has
-            no second window to drag a file out of), so on the device most of this fieldwork happens on,
-            the tap is the only route there is. A card with only a drop would be a regression on the
-            input it replaced.
+            ── ONE PICKER PER SCREEN, AND WHICH SCREEN DECIDES WHERE IT IS ───────────────────────
 
-            THIS ALSO CLOSES A LIVE INCONSISTENCY. The input this replaces never cleared
-            `event.target.value`, so re-choosing the same photograph after a refusal fired no `change`
-            event and the panel did nothing at all — `WorkshopCodeScanner` and `PrototypeModelField`
-            both clear it and both say why. `DropCard` clears it for every caller.
+            Where this panel is handed a photograph, it draws NO picker: the card above the section
+            owns the file dialog, the decode and the object URL, and the measuring card below is
+            working from the same pick. A picker here as well would be the second upload of one
+            photograph — the complaint this arrangement answers — and it would be worse than the
+            original two, because the two would now be visibly side by side and a designer could put
+            a different sheet in each without either card saying so.
+
+            Where it is NOT handed one it keeps its own, unchanged, because on that host there is no
+            card above: a record form's stage field mounts this panel beside its own image field
+            (`FieldInput.tsx`), and the bare mount in `e2e/sketch-trace-panel.spec.ts` is that same
+            shape. Both branches end at `chooseFile`/`adoptPhotograph`, so the resets a new photograph
+            owes this panel are the same whichever side chose it.
           */}
-          <div className="mb-3">
-            <DropCard
+          {fedFromOutside ? (
+            <div className="mb-3">
+              {/*
+                WHAT THIS PANEL IS WORKING FROM, NAMED — not silence. Two cards reading one photograph
+                is only safe if each of them says which photograph that is; the card above shows the
+                picture and this line names the same file, so the pair can be checked against each
+                other without scrolling between them.
+              */}
+              <p className="rounded-md border border-line-200 bg-card px-3 py-2 text-xs leading-5 text-ink-500">
+                {file ? (
+                  <>
+                    <span className="font-medium text-ink-900">{file.name}</span>
+                    {photograph?.problem
+                      ? /* `decodeToPixels`'s own sentence, carried rather than paraphrased — the
+                           shared card above prints the same one beside the picker, so a reader who
+                           opened this panel first is not left with a photograph that says nothing. */
+                        ` — ${photograph.problem}`
+                      : pixels && (pixels.sourceWidth !== pixels.width || pixels.sourceHeight !== pixels.height)
+                        ? ` — read at ${pixels.width}x${pixels.height}, reduced from ${pixels.sourceWidth}x${pixels.sourceHeight}.`
+                        : pixels
+                          ? ` — ${pixels.width}x${pixels.height}.`
+                          : " — reading…"}
+                    {/*
+                      WHAT THIS PANEL CAN SEE, AND NOT A CLAIM ABOUT THE ONE BELOW IT.
+
+                      This read "the measuring panel below is working from the same one", stated
+                      unconditionally — and that panel carries an escape hatch ("Measure a different
+                      photograph") which this one is not told about and cannot observe. Use it, and
+                      the two cards contradicted each other on one screen: this line said they shared
+                      a photograph while the card six inches down said "ruler.jpg is being measured
+                      here and nowhere else". Two answers to one question is the failure this tab has
+                      already paid for twice, and the reader believes whichever they read first.
+
+                      SO IT STATES THE DEFAULT AND POINTS AT THE PANEL THAT KNOWS. The shared
+                      photograph really is what the measuring card starts from, that is the whole of
+                      requirement 5 and worth saying here; the exception is one the card announces
+                      itself, in its own words, at the moment it is in force. A sentence that is true
+                      in every state beats a shorter one that is true in most.
+                    */}
+                    {" Chosen in “Photograph of the sketch” above. The measuring panel below starts from the same one, unless it has been pointed at a different photograph — it says so on its own card when it has."}
+                  </>
+                ) : (
+                  /*
+                    THE EMPTY STATE THIS CARD NEVER HAD. Opened with nothing chosen it used simply to
+                    show a file picker, which was its own explanation while the picker lived here.
+                    With the picker above, an unexplained panel of inert controls is exactly the
+                    "control that vanishes is indistinguishable from a feature this build does not
+                    have" failure its neighbour was written to end — so it says what is missing and
+                    where the one control that supplies it is. Same treatment as that card's own
+                    empty sentence: an icon, one sentence, and nothing else.
+                  */
+                  <span className="flex items-start gap-2">
+                    <ImageIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-500" aria-hidden />
+                    <span>
+                      No photograph has been chosen yet. Choose one in “Photograph of the sketch” above — it is the
+                      same photograph this panel traces and the panel below measures.
+                    </span>
+                  </span>
+                )}
+              </p>
+            </div>
+          ) : (
+            <div className="mb-3">
+              {/*
+                A DROP CARD RATHER THAN A BARE `<input type="file">`, WHICH IS THE OWNER'S THIRD REQUEST —
+                and the button did not go away, it moved inside the card. See `DropCard`'s header: file drop
+                does not exist on touch at all (`dragover` never fires on Android Chrome, and a handset has
+                no second window to drag a file out of), so on the device most of this fieldwork happens on,
+                the tap is the only route there is. A card with only a drop would be a regression on the
+                input it replaced.
+
+                THIS ALSO CLOSES A LIVE INCONSISTENCY. The input this replaces never cleared
+                `event.target.value`, so re-choosing the same photograph after a refusal fired no `change`
+                event and the panel did nothing at all — `WorkshopCodeScanner` and `PrototypeModelField`
+                both clear it and both say why. `DropCard` clears it for every caller.
+              */}
+              <DropCard
               label="Photograph to trace"
               buttonLabel="Choose a photograph"
               accept={TRACEABLE_ACCEPT}
@@ -1827,8 +2487,9 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                       : " — reading…"}
                 </p>
               ) : null}
-            </DropCard>
-          </div>
+              </DropCard>
+            </div>
+          )}
 
           {/* ── What the trace is framed to ─────────────────────────────────── */}
           {/*
@@ -1941,6 +2602,18 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
                   </button>
                 </div>
               ) : null}
+              {/*
+                ── THE ONE SIZE THAT IS DELIBERATELY NOT THE MEASURING CARD'S ────────────────────
+
+                420px, and the measuring panel below sets no such ceiling on its own viewport. That
+                is not an oversight in either direction: this canvas is a picture to LOOK at, and a
+                drawing taller than a phone screen pushes the attach buttons under it out of reach —
+                whereas that viewport is a surface to place marks ON, and every pixel of height it
+                loses is precision lost off a measurement, which is why it takes the room it is
+                given and offers a pinch-zoom on top. Matching them would make one card worse to
+                answer a complaint about the other. `PREVIEW_BOX_PX` above is the same number for the
+                live preview, and both are the handset's.
+              */}
               <div className="mt-2 grid place-items-center rounded-md bg-field-100 p-2">
                 <canvas ref={canvasRef} className="max-h-[420px] max-w-full" aria-label="The traced drawing" />
               </div>
@@ -2550,13 +3223,46 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
           </div>
           <p className="mt-2 text-xs text-ink-500">
             {onAttachSource
-              ? "Nothing is filed until one of these is pressed. “Attach the photograph only” files the photograph exactly as it was taken and stops there; adding the line art files both, the photograph unaltered beside the drawing. Closing this panel with the × files neither."
+              ? // BOTH CLOSE CONTROLS ARE NAMED, since this panel gained the one at its foot. The
+                // sentence used to say "the ×" and mean "any way out of here", which was true while
+                // there was only one — and a designer who put the panel away from the bottom would
+                // have been told nothing about what that did.
+                "Nothing is filed until one of these is pressed. “Attach the photograph only” files the photograph exactly as it was taken and stops there; adding the line art files both, the photograph unaltered beside the drawing. Closing this panel — with the × above or “Collapse” below — files neither."
               : "Declining costs nothing: the photograph you attached stays exactly as it is, and a drawing can be traced from it later."}
           </p>
 
         </>
       ) : null}
-    </div>
+
+      {/*
+        ── THE COLLAPSE AT THE FOOT, WHICH THIS CARD OWED ITS READER AND ITS NEIGHBOUR ALREADY HAD ─
+
+        This panel is the taller of the two by a wide margin — a picker, a frame readout, two preset
+        pickers, the essential controls, the result, a comparator, five download buttons behind a
+        disclosure and a row of attach buttons — so a designer who has just pressed the last of them
+        is at the BOTTOM of all of it, and a close control only in the header means scrolling back up
+        past everything they have finished with to put it away. `MeasureFromPhotoCard` carries the
+        same control for the same complaint, raised about the handset's panel
+        (`DwPhotoMeasureField.kt:618`), and this is the pair of it.
+
+        A REAL BUTTON WITH THE CARD'S NAME IN IT, not a bare "Close": at the foot of a panel this long
+        there is no heading in view to say what would be closing, and this is one of several stacked
+        disclosures on the tab. It closes by the same path the header × does — `setOpen(false)`, whose
+        effect hands focus back to the trigger — so the two controls are one act rather than two that
+        can disagree about what is open.
+      */}
+      <div className="mt-3">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-500 underline"
+          onClick={() => setOpen(false)}
+        >
+          <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+          Collapse “{CARD_TITLE}”
+        </button>
+      </div>
+      </div>
+    </section>
   );
 
   /**
@@ -2569,7 +3275,13 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * switch means it is in the document from the first render and only its contents ever change.
    */
   return (
-    <div className="mt-2">
+    /*
+      `mt-3` AND NOT `mt-2`, WHICH IS THE FOURTH OF THE FOUR SIZE MISMATCHES. The measuring card
+      below is positioned by `UploadTabPanel` with `mt-3`; this panel supplies its own, because its
+      OTHER host drops it into a column of registry fields with no wrapper to hang one on. One token,
+      two owners — and one gap on screen, where there were two.
+    */
+    <div className="mt-3">
       {open ? panel : trigger}
       <div aria-live="polite" aria-atomic="true">
         {done ? (

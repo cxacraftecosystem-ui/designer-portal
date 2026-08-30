@@ -4,6 +4,7 @@ Tiers (strictly increasing): DOWNLOAD < COMMENT < EDIT — see app.services.acce
 used across the record routes. This module owns the request/grant lifecycle plus the comment and
 revision read/write endpoints.
 """
+
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,7 +29,13 @@ from app.services.records import public_encode
 
 router = APIRouter(prefix="/data-access", tags=["data-access"])
 
-GRANT_INCLUDE = {"owner": True, "grantee": True, "requestedBy": True, "decidedBy": True, "scopeItems": True}
+GRANT_INCLUDE = {
+    "owner": True,
+    "grantee": True,
+    "requestedBy": True,
+    "decidedBy": True,
+    "scopeItems": True,
+}
 
 # record type -> (delegate, owner-id field). Used to resolve a record's owner for comment/edit checks.
 RECORD_DELEGATES: dict[str, tuple[Any, str]] = {
@@ -46,13 +53,17 @@ RECORD_DELEGATES: dict[str, tuple[Any, str]] = {
 
 def _validate_tier(tier: str | None) -> None:
     if tier is not None and tier not in TIERS:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid access tier")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid access tier"
+        )
 
 
 async def _resolve_record_owner(record_type: str, record_id: str) -> str | None:
     entry = RECORD_DELEGATES.get(record_type.lower())
     if entry is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported record type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported record type"
+        )
     delegate, owner_field = entry
     record = await delegate.find_unique(where={"id": record_id})
     if record is None:
@@ -61,13 +72,18 @@ async def _resolve_record_owner(record_type: str, record_id: str) -> str | None:
 
 
 def _scope_create(scope_items: list[Any] | None) -> list[dict[str, Any]]:
-    return [{"recordType": s.recordType.lower(), "recordId": s.recordId} for s in (scope_items or [])]
+    return [
+        {"recordType": s.recordType.lower(), "recordId": s.recordId} for s in (scope_items or [])
+    ]
 
 
 @router.get("/tiers")
 async def list_tiers(_: Any = Depends(get_current_user)) -> list[dict[str, str]]:
     """The tier catalogue with human definitions, so the UI can show exactly what each tier confers."""
-    return [{"tier": tier, "description": TIER_DESCRIPTIONS[tier]} for tier in ("DOWNLOAD", "COMMENT", "EDIT")]
+    return [
+        {"tier": tier, "description": TIER_DESCRIPTIONS[tier]}
+        for tier in ("DOWNLOAD", "COMMENT", "EDIT")
+    ]
 
 
 @router.get("/grants")
@@ -196,12 +212,16 @@ async def _upsert_grant(
 
 
 @router.post("/requests", status_code=status.HTTP_201_CREATED)
-async def request_access(payload: DataAccessRequestIn, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def request_access(
+    payload: DataAccessRequestIn, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     """A researcher requests access to another researcher's data (PENDING until the owner decides)."""
     _validate_tier(payload.tier)
     uid = get_value(current_user, "id")
     if payload.ownerId == uid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You already own your data")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You already own your data"
+        )
     owner = await db.user.find_unique(where={"id": payload.ownerId})
     if owner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Owner not found")
@@ -237,12 +257,16 @@ async def request_access(payload: DataAccessRequestIn, current_user: Any = Depen
 
 
 @router.post("/grants", status_code=status.HTTP_201_CREATED)
-async def grant_access(payload: DataAccessGrantIn, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def grant_access(
+    payload: DataAccessGrantIn, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     """An owner proactively grants a researcher access to their data (immediately GRANTED)."""
     _validate_tier(payload.tier)
     uid = get_value(current_user, "id")
     if payload.granteeId == uid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You already have your own data")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You already have your own data"
+        )
     grantee = await db.user.find_unique(where={"id": payload.granteeId})
     if grantee is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grantee not found")
@@ -262,19 +286,28 @@ async def grant_access(payload: DataAccessGrantIn, current_user: Any = Depends(g
 
 
 async def _require_owned_grant(grant_id: str, current_user: Any) -> Any:
-    grant = await db.dataaccessgrant.find_unique(where={"id": grant_id}, include={"scopeItems": True})
+    grant = await db.dataaccessgrant.find_unique(
+        where={"id": grant_id}, include={"scopeItems": True}
+    )
     if grant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grant not found")
     if grant.ownerId != get_value(current_user, "id") and not is_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the data owner can change this")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only the data owner can change this"
+        )
     return grant
 
 
 @router.post("/grants/{grant_id}/decide")
-async def decide_request(grant_id: str, payload: DataAccessDecisionIn, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def decide_request(
+    grant_id: str, payload: DataAccessDecisionIn, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     """The owner approves (GRANTED) or denies (DENIED) a pending request, optionally adjusting tier/scope."""
     if payload.status not in {"GRANTED", "DENIED"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="status must be GRANTED or DENIED")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="status must be GRANTED or DENIED",
+        )
     _validate_tier(payload.tier)
     grant = await _require_owned_grant(grant_id, current_user)
     if _status_str(grant.status) != "PENDING":
@@ -299,10 +332,15 @@ async def decide_request(grant_id: str, payload: DataAccessDecisionIn, current_u
 
 
 @router.patch("/grants/{grant_id}")
-async def update_grant(grant_id: str, payload: DataAccessUpdateIn, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def update_grant(
+    grant_id: str, payload: DataAccessUpdateIn, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     """The owner edits an existing grant (change tier, scope, or revoke/reinstate)."""
     if payload.status is not None and payload.status not in {"GRANTED", "REVOKED"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="status must be GRANTED or REVOKED")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="status must be GRANTED or REVOKED",
+        )
     _validate_tier(payload.tier)
     grant = await _require_owned_grant(grant_id, current_user)
     grant = await _upsert_grant(
@@ -321,7 +359,9 @@ async def update_grant(grant_id: str, payload: DataAccessUpdateIn, current_user:
 
 
 @router.post("/grants/{grant_id}/revoke")
-async def revoke_grant(grant_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def revoke_grant(
+    grant_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     grant = await _require_owned_grant(grant_id, current_user)
     updated = await db.dataaccessgrant.update(
         where={"id": grant.id}, data={"status": "REVOKED"}, include=GRANT_INCLUDE
@@ -351,6 +391,7 @@ def _status_str(value: Any) -> str:
 
 # ----------------------------------------------------------------------------- comments
 
+
 @router.get("/comments")
 async def list_comments(
     recordType: str = Query(..., min_length=1),
@@ -368,9 +409,13 @@ async def list_comments(
 
 
 @router.post("/comments", status_code=status.HTTP_201_CREATED)
-async def add_comment(payload: CommentIn, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def add_comment(
+    payload: CommentIn, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     owner_id = await _resolve_record_owner(payload.recordType, payload.recordId)
-    tier = await effective_tier_for_record(current_user, owner_id, payload.recordType, payload.recordId)
+    tier = await effective_tier_for_record(
+        current_user, owner_id, payload.recordType, payload.recordId
+    )
     if not tier_at_least(tier, "COMMENT"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -394,11 +439,14 @@ async def delete_comment(comment_id: str, current_user: Any = Depends(get_curren
     if comment is None:
         return
     if comment.authorId != get_value(current_user, "id") and not is_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own comments")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own comments"
+        )
     await db.entrycomment.delete(where={"id": comment_id})
 
 
 # ----------------------------------------------------------------------------- revisions (edit history)
+
 
 @router.get("/revisions")
 async def list_revisions(
@@ -418,7 +466,10 @@ async def list_revisions(
     """
     owner_id = await _resolve_record_owner(recordType, recordId)
     if not is_admin(current_user) and owner_id != get_value(current_user, "id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner or an admin can view edit history")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the owner or an admin can view edit history",
+        )
     rows = await db.recordrevision.find_many(
         where={"recordType": recordType.lower(), "recordId": recordId},
         include={"editedBy": True},

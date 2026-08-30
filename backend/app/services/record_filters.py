@@ -68,12 +68,7 @@ def resolve_workshop_ids(raw: list[str] | None) -> tuple[list[str], bool] | None
     """
     if not raw:
         return None
-    wanted = [
-        part.strip()
-        for value in raw
-        for part in str(value).split(",")
-        if part.strip()
-    ]
+    wanted = [part.strip() for value in raw for part in str(value).split(",") if part.strip()]
     if not wanted:
         return None
     include_unassigned = any(value == UNASSIGNED_WORKSHOP for value in wanted)
@@ -113,7 +108,7 @@ def workshop_clause(
 
 
 def artisan_workshop_clause(ids: list[str], include_unassigned: bool) -> dict[str, Any]:
-    """"Which artisans belong to these workshops" — an ``Artisan`` predicate, always non-empty.
+    """ "Which artisans belong to these workshops" — an ``Artisan`` predicate, always non-empty.
 
     AN ARTISAN BELONGS TO A WORKSHOP THREE WAYS and all three count, which is why this is a shared
     helper rather than an inline clause on whichever screen needed it first. Two screens disagreeing
@@ -137,7 +132,11 @@ def artisan_workshop_clause(ids: list[str], include_unassigned: bool) -> dict[st
             [
                 {"workshopId": {"in": ids}},
                 {"workshops": {"some": {"workshopId": {"in": ids}}}},
-                {"questionnaireInterviews": {"some": {"interview": {"is": {"workshopId": {"in": ids}}}}}},
+                {
+                    "questionnaireInterviews": {
+                        "some": {"interview": {"is": {"workshopId": {"in": ids}}}}
+                    }
+                },
             ]
         )
     if include_unassigned:
@@ -149,7 +148,7 @@ def artisan_workshop_clause(ids: list[str], include_unassigned: bool) -> dict[st
 
 
 def craft_workshop_clause(ids: list[str], include_unassigned: bool) -> dict[str, Any]:
-    """"Which crafts belong to these workshops" — a ``Craft`` predicate, always non-empty.
+    """ "Which crafts belong to these workshops" — a ``Craft`` predicate, always non-empty.
 
     A CRAFT REACHES A WORKSHOP TWO WAYS and both count, which is why this is a shared helper rather
     than the bare ``workshopId`` column test every other table gets:
@@ -196,10 +195,8 @@ _WIDE_WORKSHOP_CLAUSES = {
 }
 
 
-def bucket_workshop_clause(
-    bucket: str, ids: list[str], include_unassigned: bool
-) -> dict[str, Any]:
-    """"Which rows of ``bucket`` belong to these workshops" — the ONE answer, always non-empty.
+def bucket_workshop_clause(bucket: str, ids: list[str], include_unassigned: bool) -> dict[str, Any]:
+    """ "Which rows of ``bucket`` belong to these workshops" — the ONE answer, always non-empty.
 
     THIS FUNCTION EXISTS BECAUSE THE ANSWER WAS ONCE WRITTEN TWICE AND THE TWO DISAGREED. The
     artisans bucket of ``build_record_wheres`` was narrowed by the generic ``workshop_clause`` —
@@ -256,10 +253,7 @@ def resolve_types(raw: list[str] | None) -> set[str]:
     if not raw:
         return set(RECORD_TYPES)
     wanted = {
-        part.strip().lower()
-        for value in raw
-        for part in str(value).split(",")
-        if part.strip()
+        part.strip().lower() for value in raw for part in str(value).split(",") if part.strip()
     }
     if not wanted:
         return set(RECORD_TYPES)
@@ -273,6 +267,143 @@ def resolve_types(raw: list[str] | None) -> set[str]:
             ),
         )
     return wanted
+
+
+def enum_filter_list_or_422(
+    raw: list[str] | None, allowed: frozenset[str], *, field: str
+) -> set[str] | None:
+    """Multi-valued filter over an enum column. ``None`` means DO NOT FILTER.
+
+    THE PLURAL SIBLING OF ``records.enum_filter_or_422``. That one checks a single value on its way
+    into ``where[field] = value``; this one checks a list on its way into
+    ``where[field] = {"in": sorted(...)}``. Reach for that one when the control is a single-select
+    with a blank option, for this one when it is a multi-select. Both exist so that a filter value
+    the enum does not have is a 422 the client can act on rather than a Prisma
+    ``FieldNotFoundError`` — a bare 500 with a stack trace in the log, which the web then renders to
+    the operator as "you are offline" (``lib/offline.ts``). It lives HERE, beside ``resolve_types``
+    and ``resolve_workshop_ids`` rather than beside that sibling, because this module is where the
+    repository's filter grammar is written down and this is that grammar: two spellings, three ways
+    to say "everything", and a named vocabulary in the error.
+
+    ``None`` (absent, empty, or all-blank) MEANS DO NOT FILTER, and it is deliberately not an empty
+    set. A caller that means "no statuses at all" has nothing to ask for, while the default state of
+    a multi-select is "everything" — and if "nothing ticked" and "everything ticked" were both
+    spelled as a list of every member, the control would have two states that cannot be told apart
+    on the wire, and no reader of a request log could tell a default from a deliberate choice.
+    Empty means everything BY ABSENCE: the caller writes no key into the ``where`` at all.
+    ``resolve_workshop_ids`` above says the same thing about ids, and a reserved token like its
+    ``UNASSIGNED_WORKSHOP`` ("the rows that have none") is therefore a MEMBER of ``allowed`` — never
+    an empty list, which would mean the opposite.
+
+    BOTH SPELLINGS ARE ACCEPTED — repeated parameters (``?roles=ADMIN&roles=DESIGNER``) and one
+    comma-joined value (``?roles=ADMIN,DESIGNER``) — for ``resolve_types``' reason: the web and
+    Android build query strings differently, and a filter that quietly covered everything because it
+    was spelled the other way would look exactly like the filter not working.
+
+    AN UNRECOGNISED TOKEN IS A 422 NAMING THE VOCABULARY, never a silent omission. Dropping it would
+    answer a request for "PENDNG" with a perfectly well-formed result over whichever OTHER tokens
+    came with it — a wrong answer dressed as a correct one — and dropping the only token would widen
+    the request to the whole table. The message carries ``field`` and the allowed values because
+    that is the part a client can act on: "roles must be one of ADMIN, …" tells a developer their
+    spelling is wrong, where a 500 tells them the server is broken. ``field`` has no default, unlike
+    the sibling's ``"status"``: this helper serves ``status``, ``roles`` and ``institutions`` on one
+    route, and a message naming the wrong box sends a developer to the wrong control.
+
+    CASE IS FOLDED FOR THE COMPARISON AND THE VOCABULARY'S OWN SPELLING IS WHAT COMES BACK, which is
+    ``resolve_types``' case handling restated for a vocabulary that is not uniformly lower-case.
+    ``resolve_types`` writes ``part.strip().lower()``, and that IS canonicalisation there because
+    every member of ``RECORD_TYPES`` is lower-case; over a lower-case vocabulary the two functions
+    accept and reject exactly the same strings. But these vocabularies are MIXED WITHIN ONE SET —
+    ``ACCESS_ROLE_FILTER_TOKENS`` is ``frozenset(ROLE_RANK) | {"default"}``, so ``ADMIN`` sits
+    beside the reserved ``default`` — and there lowering would hand Prisma an ``admitRole`` of
+    "admin", a value the enum does not have and precisely the 500 the sibling exists to prevent,
+    while upper-casing would destroy the reserved token instead. So the fold decides only WHETHER a
+    token matches; the member of ``allowed`` is what is returned.
+
+    THE RETURN IS ALWAYS A SUBSET OF ``allowed``, and that is the guarantee the call sites ride:
+    ``{"in": sorted(result)}`` can only ever name real enum members, and ``result - {"default"}``
+    can only ever strip a token the vocabulary actually holds. It is established once here rather
+    than re-checked at every caller.
+
+    THE ONE WAY THE FOLD CAN LIE is a vocabulary holding two members that differ only by case, and
+    that is a ``ValueError`` — a 500 — rather than a 422, because nothing the client sent is wrong.
+    It is not hypothetical for the vocabulary above: a ``DEFAULT`` tier added to ``ROLE_RANK`` would
+    collide with the reserved ``default``, and a frozenset has no order, so which of the two a
+    request resolved to would depend on the hash seed. One filter option would silently become
+    unreachable, or ``?roles=default`` would start filtering ``admitRole = "DEFAULT"`` instead of
+    ``admitRole IS NULL`` — a picker row answering a different question than the one on its label.
+
+    ``allowed`` MUST BE A VOCABULARY SOMEBODY WROTE, NEVER ONE ASSEMBLED FROM A TEXT COLUMN, and
+    that is a hard rule rather than a preference. Both of the grammar's own devices — the comma
+    separator and the case fold — are safe only over tokens chosen to be safe, and every enum in
+    this repository is: ``RECORD_STATUSES``, ``MEDIA_TYPES``, ``ROLE_RANK`` and the reserved words
+    beside them hold no commas and no two members that fold together. Hand this a set built by a
+    ``SELECT DISTINCT`` over free text and all three of its failure modes become DATA conditions,
+    none of which any client can spell its way out of and all of which take the route down for
+    everybody until somebody edits the database:
+
+    1. **A member with a comma in it is unreachable.** ``DesignerRoster.institution`` is an
+       admin-typed ``String?`` (``prisma/schema.prisma:3954``), so "National Institute of Design,
+       Ahmedabad" is an ordinary value, and ``GET /designers/roster/institutions`` — which is a
+       ``SELECT DISTINCT`` over it — serves that straight into a picker. Ticking the row
+       sends the string, the split above cuts it in two, and the request 422s naming two
+       institutions that do not exist — a filter option the server itself offered and then refuses.
+       The message is unreadable as well, because it comma-joins members that contain commas.
+    2. **A reserved token collides with real data.** ``none`` is the reserved word for
+       ``institution IS NULL``, on the ``UNASSIGNED_WORKSHOP`` precedent at ``:53`` above — the
+       same string, and safe there only because a workshop id is a cuid. One admin who typed
+       "None" into the box instead of leaving it blank puts ``"None"`` in the DISTINCT set, it
+       folds onto the reserved ``none``, and the ``ValueError`` above 500s every
+       institution-filtered request.
+    3. **Two spellings of one name.** "NID Ahmedabad" and "NID ahmedabad" are two rows to a text
+       column and one token to the fold — the same 500, from two people typing.
+
+    The ``ValueError`` is still right: silently picking a winner would make one filter row mean
+    something other than its label. What is wrong is reaching this function for that vocabulary at
+    all. A free-text filter needs an accessor with no separator and no fold — the wire carries one
+    whole value per repeated parameter and compares it byte for byte — or a served vocabulary of
+    stable tokens rather than of the display strings themselves. Whichever is chosen, it is a
+    decision about the route (§4.5) and not something to be patched in here, because loosening
+    either device would loosen it for ``status`` and ``roles`` too, and those are the two the 422
+    exists for.
+    """
+    if not raw:
+        return None
+    wanted = [part.strip() for value in raw for part in str(value).split(",") if part.strip()]
+    if not wanted:
+        return None
+
+    # Rebuilt per call rather than cached on ``allowed``: these vocabularies hold eight to fifteen
+    # tokens, so it is a few microseconds against a database round trip, and a cache would be one
+    # more thing to reason about for the vocabularies that are assembled at request time.
+    canonical: dict[str, str] = {}
+    for member in allowed:
+        folded = member.lower()
+        collision = canonical.get(folded)
+        if collision is not None:
+            raise ValueError(
+                f"{field} cannot be matched case-insensitively: {collision!r} and {member!r} "
+                "differ only by case, so which one a request resolved to would depend on the "
+                "iteration order of a frozenset. Rename one of them."
+            )
+        canonical[folded] = member
+
+    # Checked over the WHOLE list before anything is returned, exactly as ``resolve_types`` does:
+    # one bad token among five good ones must not come back as a well-formed four-token filter.
+    # Reported in the client's own spelling, because that is the string they have to go and find,
+    # and sorted so the message reads the same on every request rather than following set order.
+    unknown = sorted({token for token in wanted if token.lower() not in canonical})
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Unknown {field} value{'s' if len(unknown) > 1 else ''}: {', '.join(unknown)}. "
+                f"{field} must be one of {', '.join(sorted(allowed))}."
+            ),
+        )
+    # A set, so a token repeated across the two spellings ("?roles=ADMIN&roles=admin,ADMIN") narrows
+    # once. A duplicate is what a hand-edited URL looks like, not a mistake worth refusing.
+    return {canonical[token.lower()] for token in wanted}
 
 
 async def build_record_wheres(
@@ -319,8 +450,16 @@ async def build_record_wheres(
     # Each filter below writes its own key, so every active one ANDs with the rest: a query plus a
     # place plus a date range narrows to the rows satisfying all three, never their union.
     if q:
-        artisan_where["OR"] = [{"name": contains(q)}, {"localName": contains(q)}, {"place": contains(q)}]
-        workshop_where["OR"] = [{"title": contains(q)}, {"place": contains(q)}, {"description": contains(q)}]
+        artisan_where["OR"] = [
+            {"name": contains(q)},
+            {"localName": contains(q)},
+            {"place": contains(q)},
+        ]
+        workshop_where["OR"] = [
+            {"title": contains(q)},
+            {"place": contains(q)},
+            {"description": contains(q)},
+        ]
         product_where["OR"] = [
             {"productName": contains(q)},
             {"craftName": contains(q)},

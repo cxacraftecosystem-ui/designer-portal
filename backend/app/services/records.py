@@ -582,9 +582,7 @@ async def media_url_owners(viewer: Any) -> set[str] | None:
     viewer_id = get_value(viewer, "id")
     if not viewer_id:
         return set()
-    grants = await db.dataaccessgrant.find_many(
-        where={"granteeId": viewer_id, "status": "GRANTED"}
-    )
+    grants = await db.dataaccessgrant.find_many(where={"granteeId": viewer_id, "status": "GRANTED"})
     return {viewer_id, *(grant.ownerId for grant in grants)}
 
 
@@ -602,6 +600,7 @@ def jsonify_metadata(data: dict[str, Any], *fields: str) -> dict[str, Any]:
         if key in data and isinstance(data[key], (dict, list)):
             data[key] = Json(data[key])
     return data
+
 
 # Keys a client may deliberately CLEAR on EVERY model that has them.
 #
@@ -971,6 +970,23 @@ def enum_filter_or_422(value: str, allowed: frozenset[str], *, field: str = "sta
     The 422 NAMES THE ALLOWED VALUES, which is the part a client can act on: "status must be one
     of APPROVED, DRAFT, …" tells a developer their casing is wrong, where a 500 tells them the
     server is broken.
+
+    THE PLURAL IS ``record_filters.enum_filter_list_or_422``, and a multi-select must reach for that
+    one rather than calling this in a loop. It answers absent / empty / all-blank with ``None``,
+    meaning DO NOT FILTER — the one thing a loop over this function cannot express. A cleared
+    multi-select would come through such a loop as an empty list and then as ``{"in": []}``, which
+    narrows the page to nothing; what a cleared multi-select means is "everything", and it says so
+    by writing no key at all. It also accepts both the repeated-parameter and the comma-joined
+    spelling, which a single value has no need of.
+
+    IT ALSO FOLDS CASE AGAINST ITS VOCABULARY AND THIS ONE DELIBERATELY DOES NOT, which is why the
+    two are not the same function with a loop around it. The vocabularies it serves are mixed inside
+    one set (``frozenset(ROLE_RANK) | {"default"}`` — an upper-case ladder beside a lower-case
+    reserved token), so it has to decide membership by a fold and then hand back the member it
+    matched. Here the value goes straight into a column whose spelling IS the enum's, there is
+    nothing to canonicalise against beyond ``allowed`` itself, and a lower-case "draft" is a typo
+    worth naming in a message rather than a spelling worth quietly accepting — see the paragraph
+    above, which is the whole reason this function exists.
     """
     if value not in allowed:
         raise HTTPException(
@@ -1206,7 +1222,9 @@ def apply_status_policy_create(user: Any, data: dict[str, Any]) -> dict[str, Any
     return data
 
 
-async def apply_status_policy_update(user: Any, record: Any, data: dict[str, Any]) -> dict[str, Any]:
+async def apply_status_policy_update(
+    user: Any, record: Any, data: dict[str, Any]
+) -> dict[str, Any]:
     """Authorize a status change on update, else silently drop it — old clients always echo the current
     status, so an unauthorized change must never 403. A status change sticks only when the editor is
     Professor+ AND is either the record's creator or ranks high enough to review the creator's work
@@ -1234,7 +1252,9 @@ async def apply_status_policy_update(user: Any, record: Any, data: dict[str, Any
     return data
 
 
-def add_date_range(where: dict[str, Any], field: str, date_from: datetime | None, date_to: datetime | None) -> None:
+def add_date_range(
+    where: dict[str, Any], field: str, date_from: datetime | None, date_to: datetime | None
+) -> None:
     range_filter: dict[str, Any] = {}
     if date_from:
         range_filter["gte"] = date_from
@@ -1309,9 +1329,7 @@ def include_of(relations: Sequence[Relation]) -> dict[str, Any]:
     like on the wire" from drifting apart — a relation added for the list would otherwise quietly go
     missing from the response to the PATCH that created it.
     """
-    return {
-        rel.field: ({"include": rel.include} if rel.include else True) for rel in relations
-    }
+    return {rel.field: ({"include": rel.include} if rel.include else True) for rel in relations}
 
 
 async def hydrate_relations(rows: Sequence[Any], relations: Sequence[Relation]) -> None:
@@ -1452,7 +1470,9 @@ PROVENANCE_SKIP_FIELDS = {
 _EXTRA_NOT_CARRIED = frozenset({"workshopSubmission", "fieldProvenance"})
 
 
-def merge_field_provenance(new_data: dict[str, Any], user: Any, previous: Any | None = None) -> None:
+def merge_field_provenance(
+    new_data: dict[str, Any], user: Any, previous: Any | None = None
+) -> None:
     """Record which user populated/changed each field, stored under extraMetadata.fieldProvenance.
 
     On create (``previous`` is ``None``) every non-empty field is attributed to ``user``. On update
@@ -1542,7 +1562,11 @@ def merge_field_provenance(new_data: dict[str, Any], user: Any, previous: Any | 
         if field in PROVENANCE_SKIP_FIELDS or is_empty_value(value):
             continue
         previous_value = get_value(previous, field) if previous is not None else None
-        if previous is None or is_empty_value(previous_value) or not values_match(previous_value, value):
+        if (
+            previous is None
+            or is_empty_value(previous_value)
+            or not values_match(previous_value, value)
+        ):
             # INSIDE THIS LOOP AND NOWHERE ELSE. The loop only fires for a field whose value actually
             # changed, which is the guard against the worst way this feature can go wrong: both web
             # forms re-send every dimension on every save, so a client that blanket-sent

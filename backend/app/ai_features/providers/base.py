@@ -52,9 +52,7 @@ class AiProvider(ABC):  # noqa: B024 - see below: abstract by intent, not by an 
     def _fail(self, message: str, *, capability: Capability, **kwargs: Any) -> ProviderFailed:
         """Build a failure that already knows who raised it. Returned, not raised, to keep the
         ``raise`` visible at the call site."""
-        return ProviderFailed(
-            message, capability=capability, provider=self.provider_id, **kwargs
-        )
+        return ProviderFailed(message, capability=capability, provider=self.provider_id, **kwargs)
 
 
 class ImageAiProvider(AiProvider):

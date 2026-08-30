@@ -106,16 +106,24 @@ class QuestionnaireWorkshopPickerTest {
         assertEquals("w-1", options.first().value)
     }
 
-    /** Runs the suspend function to completion on this thread; the fake server never suspends. */
-    private fun drive(fetch: suspend (Int, Int) -> DesignWorkshopPageDto): List<com.designprototype.workshop.ui.SelectOption> {
-        var result: List<com.designprototype.workshop.ui.SelectOption>? = null
+    /**
+     * Runs the suspend function to completion on this thread; the fake server never suspends.
+     *
+     * `.options()` with no argument is the CREATE case — nothing attached yet — which is what these
+     * cases are about. The attached-workshop argument has its own case below.
+     */
+    private fun drive(
+        fetch: suspend (Int, Int) -> DesignWorkshopPageDto
+    ): List<com.designprototype.workshop.ui.SelectOption> = walk(fetch).options()
+
+    /** The whole answer, including what happened and whether the walk covered the account. */
+    private fun walk(fetch: suspend (Int, Int) -> DesignWorkshopPageDto): AttachableWorkshops {
+        var result: AttachableWorkshops? = null
         var failure: Throwable? = null
-        val block: suspend () -> List<com.designprototype.workshop.ui.SelectOption> = {
-            designWorkshopOptionsAcrossPages(fetch)
-        }
-        block.startCoroutine(object : Continuation<List<com.designprototype.workshop.ui.SelectOption>> {
+        val block: suspend () -> AttachableWorkshops = { walkAttachableDesignWorkshops(fetch) }
+        block.startCoroutine(object : Continuation<AttachableWorkshops> {
             override val context: CoroutineContext = EmptyCoroutineContext
-            override fun resumeWith(outcome: Result<List<com.designprototype.workshop.ui.SelectOption>>) {
+            override fun resumeWith(outcome: Result<AttachableWorkshops>) {
                 result = outcome.getOrNull()
                 failure = outcome.exceptionOrNull()
             }

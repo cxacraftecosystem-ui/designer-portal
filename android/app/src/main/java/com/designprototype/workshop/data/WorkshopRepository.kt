@@ -25,6 +25,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -164,6 +165,19 @@ internal const val OFFLINE_CUSTOM_QUESTIONNAIRE = "customQuestionnaire"
 internal const val OFFLINE_MEDIA_ONLY = "recordMediaOnly"
 
 /**
+ * How many workshops the tray's re-pick dialog asks for.
+ *
+ * LARGER THAN THE FORM PICKER'S TWENTY, on purpose. `DesignWorkshopPicker` asks for twenty because a
+ * long scroll on a form is a longer route to an answer the designer already has in mind, and a
+ * sentence under it names what reaches the rest. This dialog has no such sentence and no such
+ * elsewhere to point at: it is the last route out of a parked entry, and a workshop that falls off
+ * the end of this page is a record a designer cannot un-park at all. Fifty is what the design
+ * document's cap rule asks for — a number chosen so it is not reached rather than one that trims —
+ * and the dialog still says so on screen when it bites.
+ */
+private const val REPICK_PAGE = 50
+
+/**
  * The ceiling on a `.dpwq` file as it sits on disk, checked before a byte of it is read into memory.
  *
  * The measured questionnaire is 8,501 bytes gzipped. 4 MB is 490 times that, so nothing real is near
@@ -244,6 +258,24 @@ data class ApiRefusal(
      * refusal whose fix is an update rather than an edit.
      */
     val schemaSkew: Boolean,
+    /**
+     * THE FIELDS THE SERVER ITSELF NAMED, when it named any. Empty on every answer that did not.
+     *
+     * Pydantic puts the offending field in `loc` — `{"loc":["body","designWorkshopId"], …}` — and
+     * that is the difference between a tray row that says *"points at a design & prototype workshop
+     * that is not on the server"* and one that says *"Record not found"* and leaves a designer
+     * guessing which of the two workshop boxes on the form is the problem.
+     *
+     * OUT OF THE SAME SINGLE READ as the other two facts, for this class's whole reason: Retrofit
+     * buffers the error body and `string()` consumes the buffer, so asking a second question of the
+     * same exception silently answers it with nothing — here, an empty list on every refusal, which
+     * would look exactly like a server that never names fields.
+     *
+     * `body` and every numeric index are stripped, so a nested `["body","steps",0,"productId"]`
+     * answers `["steps","productId"]` and the caller can still find the key it knows. Defaulted, so
+     * every existing construction of this class is unchanged.
+     */
+    val namedFields: List<String> = emptyList(),
 )
 
 /** See [ApiRefusal]. Call once per failure — it consumes the buffered error body. */
@@ -262,8 +294,24 @@ fun Throwable.apiRefusal(fallback: String): ApiRefusal {
     val skew = http.code() == 422 && (detail as? JsonArray)?.any { entry ->
         ((entry as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull == "extra_forbidden"
     } == true
-    return ApiRefusal(detailMessage(detail) ?: plain, schemaSkew = skew)
+    return ApiRefusal(detailMessage(detail) ?: plain, schemaSkew = skew, namedFields = detail.locFields())
 }
+
+/**
+ * The field names inside a pydantic error list's `loc` entries, in the order the server gave them.
+ *
+ * `"body"` is dropped because it is the request itself and names nothing, and integers are dropped
+ * because they are positions in a list rather than columns — `["body","steps",0,"productId"]` is
+ * about `productId`, and a caller matching against a set of column names would find nothing in the
+ * `0`. Anything that is not a pydantic error list answers empty, which is the honest reading of "the
+ * server named no field".
+ */
+private fun JsonElement.locFields(): List<String> =
+    (this as? JsonArray).orEmpty().flatMap { entry ->
+        ((entry as? JsonObject)?.get("loc") as? JsonArray).orEmpty().mapNotNull { part ->
+            (part as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf { it != "body" }
+        }
+    }.distinct()
 
 /**
  * Was this refusal ANSWERED BY THE APPLICATION, and if so what did it say?
@@ -557,6 +605,13 @@ class WorkshopRepository(
         // wrong box has to be retractable from the form that typed it". It was not, from this form.
         "craftStartDate",
         "experienceYears",
+        // Added 2026-08-30 alongside `MainActivity.kt`'s artisan form finally drawing the
+        // `ExperienceFields` months picker — see `ArtisanCreateRequest.experienceMonths`'s own KDoc,
+        // which names this exact list as where the key has to appear before an emptied months box
+        // can clear the column at all. Without it here, a null in this scalar's position on the
+        // request body is silently dropped by the PATCH's `exclude_unset` read on the server, and
+        // the stored value survives an edit the form told the designer had removed it.
+        "experienceMonths",
         "dos",
         "donts"
     )
@@ -1901,26 +1956,83 @@ class WorkshopRepository(
     // of those are worse than an honest error, so a failure here propagates.
 
     /**
-     * The whole roster, newest empanelment first, across as many pages as the server reports.
+     * ONE PAGE of the roster, narrowed and ordered BY THE SERVER.
      *
-     * A WALK AND NOT ONE REQUEST, for the reason [walkPagedListing] exists: the server's default page
-     * is 50 rows of a table an institution adds to for years, and a list that quietly stops at the
-     * newest 50 is indistinguishable from an institution that has only ever empanelled 50 people.
-     * The one row an admin opens this screen to find is the SUSPENDED designer standing in front of
-     * them saying they cannot sign in — a row that was added long ago and sorts last. That is exactly
-     * the row a single-page read cannot reach.
+     * ── THIS WAS A WALK, AND THE WALK IS GONE ────────────────────────────────────────────────────
      *
-     * `PagedListing.truncated` is carried to the screen rather than swallowed, so a roster past the
-     * walk's ceiling is stated on screen instead of being left for an admin to infer from a person
-     * who is not in it.
+     * It used to call [walkPagedListing] to gather up to 500 rows and hand the whole lot to a screen
+     * that then sorted and filtered them in Kotlin. The argument for that was written here and it was
+     * wrong in three separate ways, each of which is a rule in DROPDOWN_DESIGN §4.6:
+     *
+     *  - **It answered "no match" about designers who exist.** 100 × 5 is a 500-row ceiling against a
+     *    table `design_workshop_viewers.py:106` counts at about 1,300, so the device-side search box
+     *    was filtering a PREFIX and reporting its result as an answer about the roster (rule iv).
+     *  - **It lost the wrong end.** The walk read `createdAt desc` from page one, so a short read kept
+     *    the NEWEST empanelments and dropped the OLDEST — and the oldest is the row this screen is
+     *    opened for: the designer empanelled two seasons ago who cannot sign in today.
+     *  - **It cost five requests to answer one question**, on the connection the courtyard argument
+     *    was worried about in the first place.
+     *
+     * Every parameter now goes to the server and one page comes back. Nothing in this app narrows a
+     * roster on the device any more, and `RosterFilterWireTest` asserts it.
+     *
+     * ── WHAT THE DEFAULTS SEND, WHICH IS THE POINT OF RULE (ii) ──────────────────────────────────
+     *
+     * Every filter is nullable and every null is omitted by Retrofit, so calling this with nothing but
+     * a page number issues `GET /designers/roster?page=1&pageSize=50` — byte for byte what the walk's
+     * first request was, and the server's spelling of "every standing, every tier, every institution".
+     * Suspended rows are in that answer, which is the whole reason the screen is usable.
+     *
+     * `activeOnly` IS NOT SENT AND MUST NOT BE. `standing` is the same question in §4.1's grammar and
+     * sending both is a 422 rather than a silent winner.
      *
      * Admin and above — the server refuses everyone else, and the screen does not even issue the
      * request for an account that may not have it.
      */
-    suspend fun designerRoster(): PagedListing<DesignerRosterDto> =
-        walkPagedListing(idOf = { it.id }) { page, pageSize ->
-            api.designerRoster(page = page, pageSize = pageSize)
-        }
+    suspend fun designerRoster(
+        page: Int = 1,
+        pageSize: Int = 50,
+        search: String? = null,
+        standing: String? = null,
+        roles: String? = null,
+        institutions: String? = null,
+        dateField: String? = null,
+        dateFrom: String? = null,
+        dateTo: String? = null,
+        sort: String? = null,
+        dir: String? = null,
+    ): RosterPageDto<DesignerRosterDto> = api.designerRoster(
+        page = page,
+        pageSize = pageSize,
+        search = search?.trim()?.ifBlank { null },
+        standing = standing,
+        roles = roles,
+        institutions = institutions,
+        dateField = dateField,
+        dateFrom = dateFrom,
+        dateTo = dateTo,
+        sort = sort,
+        dir = dir,
+    )
+
+    /**
+     * The distinct institutions on the roster, for the filter picker over them.
+     *
+     * SERVER-SERVED AND NOT ASSEMBLED FROM THE PAGE ON SCREEN. `DesignerRoster.institution` is free
+     * text, so an exact-match filter is only usable behind a picker of the values that exist — and a
+     * picker built from the fifteen rows this handset happens to hold could only ever offer the
+     * institutions those fifteen rows carried. An admin filtering for one that is two pages down
+     * would find no row for it and read that as "nobody is from there".
+     *
+     * ITS FAILURE IS THE CALLER'S TO WORD AND IS NEVER SWALLOWED HERE. This endpoint ships in the same
+     * wave as the screen, so the two halves may be deployed in either order and a 404 is an ordinary
+     * outcome rather than a fault. A 404 is an ANSWERED refusal, so §3.5's could-not-be-listed
+     * sentence is the honest one; returning an empty list from here instead would tell the picker that
+     * the roster holds no institutions, which is the claim this whole design exists to stop a control
+     * from making.
+     */
+    suspend fun designerRosterInstitutions(): RosterInstitutionsDto =
+        api.designerRosterInstitutions()
 
     /**
      * The accounts an admin may hand a workshop to — used here purely as the email -> account id
@@ -2007,18 +2119,32 @@ class WorkshopRepository(
      * whole history of the front door over mobile data. The server filters and pages instead, and
      * the screen renders `PageResponse.total` and `pages` rather than counting what it holds.
      *
-     * @param status one of [AccessStatus], or null for every state. PENDING is how the queue is read.
+     * @param status one [AccessStatus], or several COMMA-JOINED, or null for every state. One value is
+     *   byte-identical to what this client sent before requirement 30 — which is how the pending queue
+     *   below keeps reading `?status=PENDING` and is untouched by the filter work.
      */
     suspend fun accessRoster(
         page: Int = 1,
         pageSize: Int = 25,
         status: String? = null,
-        search: String? = null
-    ): PageResponse<AccessRosterDto> = api.accessRoster(
+        search: String? = null,
+        roles: String? = null,
+        dateField: String? = null,
+        dateFrom: String? = null,
+        dateTo: String? = null,
+        sort: String? = null,
+        dir: String? = null,
+    ): RosterPageDto<AccessRosterDto> = api.accessRoster(
         page = page,
         pageSize = pageSize,
         status = status,
-        search = search?.trim()?.ifBlank { null }
+        search = search?.trim()?.ifBlank { null },
+        roles = roles,
+        dateField = dateField,
+        dateFrom = dateFrom,
+        dateTo = dateTo,
+        sort = sort,
+        dir = dir,
     )
 
     /**
@@ -3930,6 +4056,45 @@ class WorkshopRepository(
         workshops(accessibleOnly = true).sortedByDescending { it.occurrenceDate() }
 
     /**
+     * The same scoped list, WITH THE NUMBER THE SERVER HOLDS — the one fact [workshopsIMaySubmitTo]
+     * throws away, and the one `workshopCapLine` cannot print a sentence without.
+     *
+     * -- WHY A SECOND FUNCTION RATHER THAN A WIDENED ONE ------------------------------------------
+     *
+     * Because the existing one is called from a screen this parcel may not edit, and a signature
+     * change there would be a compile error in `MainActivity.kt` landing under another agent's hands
+     * mid-edit. This is additive: every existing caller keeps the list it already reads, and the
+     * record form adopts this one in the same commit that starts printing the sentence.
+     *
+     * -- WHAT THE NUMBER IS FOR, AND THE DEFECT ITS ABSENCE IS -----------------------------------
+     *
+     * [workshops] asks for `pageSize = 100` and takes `.items`. `GET /workshops` serves a table this
+     * deployment counts at 196 rows (`components/data/cappedList.ts` counts the live tables:
+     * MediaFile 2530, Artisan 749, Workshop 196, Craft 178), so the picker over it is ONE
+     * SERVER-TRUNCATED PAGE and always has been — silently. A designer assigned to more workshops
+     * than fit that page is offered a prefix and told nothing, which is R4's failure exactly:
+     * *"196 workshops -> 100 fetched -> 80 drawn -> silence."*
+     *
+     * `total` is what makes the sentence honest rather than alarming. `workshopCapLine` prints
+     * nothing at all while `shown == total`, so the ordinary designer on four workshops never reads
+     * a word about a ceiling they cannot reach — and the sentence appears, with BOTH numbers, for
+     * exactly the account it is about. Keeping `items` and discarding `total` is the shape
+     * `DesignWorkshopPickerState.total` records eleven call sites in this app as having shipped.
+     *
+     * -- AND WHY IT DOES NOT SORT -----------------------------------------------------------------
+     *
+     * [workshopsIMaySubmitTo] sorts by occurrence on the device before handing the list on, and that
+     * sort is now a SECOND opinion: `WorkshopOptions.fieldWorkshopOptions` owns the one order both
+     * clients draw (open workshops first, then occurrence, then label, then id) and re-sorts whatever
+     * it is given. Two sorts over one list is how a picker comes to disagree with the web about which
+     * workshop is at the top, so this one hands the page over exactly as it was served and lets the
+     * single owner decide. The page is still a prefix chosen by the SERVER's order, which is what
+     * `total` is there to say out loud.
+     */
+    suspend fun workshopsIMaySubmitToPage(): PageResponse<WorkshopDetailDto> =
+        api.workshops(pageSize = 100, accessibleOnly = true)
+
+    /**
      * The pre-flight above: what submitting a record into [workshopId] would mean for this user.
      *
      * Returns null instead of throwing when the answer cannot be had — the endpoint is missing, the
@@ -3994,8 +4159,93 @@ class WorkshopRepository(
     suspend fun lookupArtisanByAadhaar(number: String): AadhaarLookupDto =
         api.lookupArtisanByAadhaar(number.trim())
 
-    suspend fun updateArtisan(id: String, body: ArtisanCreateRequest): ArtisanDetailDto =
-        api.updateArtisan(id, artisanPatchBody(body))
+    suspend fun updateArtisan(
+        id: String,
+        body: ArtisanCreateRequest,
+        clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+    ): ArtisanDetailDto = api.updateArtisan(id, artisanPatchBody(body, clearedLinks))
+
+    /**
+     * A PATCH BODY THAT CAN SAY "NOTHING" — the general form of [artisanPatchBody], for the two
+     * workshop links that every record type carries.
+     *
+     * ── THE LIE THIS ENDS, WHICH WAS WRITTEN DOWN A YEAR BEFORE IT WAS FIXED ──────────────────
+     *
+     * `DesignWorkshopPicker` draws a "None" row and has never been able to mean it, and its own KDoc
+     * says so: *"a designer clearing the box, pressing Save, being told it saved, and finding the
+     * workshop still there — which is the 'exit zero is not evidence' class of defect wearing a
+     * form."* The mechanism is [ApiClient.json]'s `explicitNulls = false` meeting the API's
+     * `model_dump(exclude_unset=True)`: a null property is dropped, an absent key means "leave the
+     * stored value alone", and the un-filing returns 200 having changed nothing.
+     *
+     * The server has been ready the whole time. `designWorkshopId` and `workshopId` are both in
+     * `services/records.CLEARABLE_KEYS`, added with the column and with the failure spelled out:
+     * *"without this entry `{"designWorkshopId": null}` would be stripped as an unset optional, the
+     * save would return 200, the form would show it unfiled, and the old link would survive in the
+     * database."* Only the handset could not spell it. BOTH columns are fixed at once, because
+     * `WorkshopPickerState.value()` and `DesignWorkshopPickerState.value()` are the same three lines
+     * with the same consequence, and a form with one box that clears and one that pretends to is
+     * worse than a form with two that pretend.
+     *
+     * ── WHY SENDING THESE NULLS IS SAFE, WHICH IS THE ONLY DANGEROUS PART ─────────────────────
+     *
+     * An explicit null DESTROYS a link, so [artisanPatchBody]'s two conditions have to hold here too
+     * and both do:
+     *
+     *   1. THE BOX IS SEEDED FROM THE RECORD. Both pickers take the stored id as `initialId` and
+     *      neither clears it when its list fails to load — `DesignWorkshopPickerState(initialId)`,
+     *      `WorkshopPickerState(repository, initialId)` — so an empty box on an edit means the person
+     *      editing this record emptied it, never "this screen never knew". A record filed under a
+     *      workshop that is off the end of the picker's page keeps its id in state and sends it back.
+     *   2. THE COLUMN IS ON THE SERVER'S OWN CLEARABLE LIST, so a key sent for a model that does not
+     *      have it would be dropped rather than acted on — and it is not sent at all, because
+     *      [declaredKeys] asks the request class what it declares first. `APIModel` is
+     *      `extra="forbid"`: posting `workshopId` to a route whose body has no such field is a 422
+     *      carrying `extra_forbidden`, which this queue would then read as a disagreement between
+     *      BUILDS and re-attempt once per app run for ever.
+     *
+     * ── AND WHY THE REPLAY PASSES A DIFFERENT SET ─────────────────────────────────────────────
+     *
+     * [clearable] is the caller's, not a constant, because the two callers know different things.
+     * A form on screen was built by THIS build, so an empty box is evidence: the online path passes
+     * both columns. A queued correction may have been written a fortnight ago by a build that had no
+     * design-workshop picker at all, and its silence is not evidence of anything —
+     * `PendingEntry.clearedLinkKeys` is empty for every such entry, so the replay omits the key and
+     * the stored link stands. That is the compatibility rule for this whole change, in one argument.
+     */
+    private fun <T> patchBodyWithClearances(
+        serializer: KSerializer<T>,
+        body: T,
+        clearable: Set<String>,
+    ): JsonObject {
+        val encoded = ApiClient.json.encodeToJsonElement(serializer, body).jsonObject
+        val declared = declaredKeys(serializer)
+        val out = encoded.toMutableMap()
+        for (column in clearable) if (column in declared && column !in out) out[column] = JsonNull
+        return JsonObject(out)
+    }
+
+    /**
+     * The property names a request class actually declares, asked of the serializer rather than
+     * remembered in a list here.
+     *
+     * ASKED, AND NOT LISTED, because the list would be the thing that rots. `APIModel` is
+     * `extra="forbid"` on the server, so posting `workshopId` to a route whose body has no such field
+     * is a 422 carrying `extra_forbidden` — which this queue reads as a disagreement between BUILDS
+     * and re-attempts once per app run, for ever, on a prepaid connection. A hand-kept list of which
+     * of the six request classes carries which link column is one refactor away from producing
+     * exactly that, silently, on one record type.
+     *
+     * THE OPT-IN IS SCOPED TO THIS FUNCTION and is the whole of the experimental surface used here.
+     * `SerialDescriptor.elementsCount` and `getElementName` are `@ExperimentalSerializationApi` in
+     * this version; what they answer — the declared property names of a `@Serializable` class — is
+     * the most stable thing about it, and the alternative is the rotting list above.
+     */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    private fun declaredKeys(serializer: KSerializer<*>): Set<String> =
+        (0 until serializer.descriptor.elementsCount).mapTo(mutableSetOf()) {
+            serializer.descriptor.getElementName(it)
+        }
 
     /**
      * The artisan PATCH body: the form's request, plus an EXPLICIT `null` for every column the server
@@ -4041,12 +4291,18 @@ class WorkshopRepository(
      * The encoding goes through `ApiClient.json` — the very encoder Retrofit's converter uses — so
      * everything except the added nulls is byte-identical to the body the typed call would have sent.
      */
-    private fun artisanPatchBody(body: ArtisanCreateRequest): JsonObject {
-        val encoded = ApiClient.json.encodeToJsonElement(ArtisanCreateRequest.serializer(), body).jsonObject
-        val out = encoded.toMutableMap()
-        for (column in ARTISAN_CLEARABLE_COLUMNS) if (column !in out) out[column] = JsonNull
-        return JsonObject(out)
-    }
+    private fun artisanPatchBody(
+        body: ArtisanCreateRequest,
+        clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+    ): JsonObject = patchBodyWithClearances(
+        ArtisanCreateRequest.serializer(),
+        body,
+        // The eleven scalar columns are unconditional for the reason above: every one of them is
+        // seeded from the record when the form opens. The two LINK columns are the caller's, because
+        // a queued correction written by an older build never carried them — see
+        // [patchBodyWithClearances].
+        ARTISAN_CLEARABLE_COLUMNS.toSet() + clearedLinks,
+    )
 
     suspend fun artisanQuestionnaire(id: String): ArtisanQuestionnaireDto = api.artisanQuestionnaire(id)
 
@@ -4622,31 +4878,56 @@ class WorkshopRepository(
 
     suspend fun createProcess(body: ProcessCreateRequest): ProcessDetailDto = api.createProcess(body)
 
-    suspend fun updateProcess(id: String, body: ProcessCreateRequest): ProcessDetailDto = api.updateProcess(id, body)
+    suspend fun updateProcess(
+        id: String,
+        body: ProcessCreateRequest,
+        clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+    ): ProcessDetailDto =
+        api.updateProcess(id, patchBodyWithClearances(ProcessCreateRequest.serializer(), body, clearedLinks))
 
     suspend fun createCraft(body: CraftCreateRequest): CreatedRecordDto = api.createCraft(body)
 
     suspend fun craft(id: String): CraftDto = api.craft(id)
 
-    suspend fun updateCraft(id: String, body: CraftCreateRequest): CraftDto = api.updateCraft(id, body)
+    suspend fun updateCraft(
+        id: String,
+        body: CraftCreateRequest,
+        clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+    ): CraftDto =
+        api.updateCraft(id, patchBodyWithClearances(CraftCreateRequest.serializer(), body, clearedLinks))
 
     suspend fun createWorkshop(body: WorkshopCreateRequest): CreatedRecordDto = api.createWorkshop(body)
 
     suspend fun workshop(id: String): WorkshopDetailDto = api.workshop(id)
 
-    suspend fun updateWorkshop(id: String, body: WorkshopCreateRequest): WorkshopDetailDto = api.updateWorkshop(id, body)
+    suspend fun updateWorkshop(
+        id: String,
+        body: WorkshopCreateRequest,
+        clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+    ): WorkshopDetailDto =
+        api.updateWorkshop(id, patchBodyWithClearances(WorkshopCreateRequest.serializer(), body, clearedLinks))
 
     suspend fun createProduct(body: ProductCreateRequest): CreatedRecordDto = api.createProduct(body)
 
     suspend fun product(id: String): ProductDetailDto = api.product(id)
 
-    suspend fun updateProduct(id: String, body: ProductCreateRequest): ProductDetailDto = api.updateProduct(id, body)
+    suspend fun updateProduct(
+        id: String,
+        body: ProductCreateRequest,
+        clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+    ): ProductDetailDto =
+        api.updateProduct(id, patchBodyWithClearances(ProductCreateRequest.serializer(), body, clearedLinks))
 
     suspend fun createTool(body: ToolCreateRequest): CreatedRecordDto = api.createTool(body)
 
     suspend fun tool(id: String): ToolDetailDto = api.tool(id)
 
-    suspend fun updateTool(id: String, body: ToolCreateRequest): ToolDetailDto = api.updateTool(id, body)
+    suspend fun updateTool(
+        id: String,
+        body: ToolCreateRequest,
+        clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+    ): ToolDetailDto =
+        api.updateTool(id, patchBodyWithClearances(ToolCreateRequest.serializer(), body, clearedLinks))
 
     suspend fun questionnaireQuestions(): List<QuestionnaireQuestionDto> = api.questionnaireQuestions()
 
@@ -5327,6 +5608,118 @@ class WorkshopRepository(
         OfflineOutbox.discard(context, entryId)
 
     /**
+     * RE-PICK ONE FIELD ON A QUEUED RECORD THAT POINTS AT SOMETHING THE SERVER DOES NOT HAVE, and
+     * send it.
+     *
+     * ── THE THIRD DOOR, ON THE ONE ROW THAT HAD ONLY TWO BAD ONES ─────────────────────────────
+     *
+     * A dangling foreign key is a permanent refusal ([blocksRetry] parks it, correctly — a bare retry
+     * fetches the identical 404), so before this the tray offered *Try again*, which cannot work, and
+     * *Throw away*, which destroys the only copy of the record and its photographs. Neither is the
+     * remedy, and the remedy is small: the record is whole on this phone and exactly one key in it is
+     * wrong. This changes that key.
+     *
+     * IT DRAINS THE QUEUE AFTERWARDS for the reason [retryOutboxEntry] does — a person who has just
+     * fixed a record wants it gone, and they are by definition holding a phone with a connection,
+     * because a 404 is an answer. The result is reported the same way and about THIS entry only:
+     * `syncOutbox`'s number counts every entry the pass moved, and reading it as the answer about one
+     * row is how "“A” was sent." came to be printed above A, still listed.
+     *
+     * NOTHING IS DELETED HERE AND NOTHING CAN BE. [OfflineOutbox.repick] rewrites one key inside the
+     * payload and clears the refusal; the staged bytes are not touched, and `discard` is still the
+     * only door out of this queue that is not a successful send. If the re-picked id is ALSO not on
+     * the server, the next pass records the identical outcome and the row comes back with its
+     * sentence — which is the honest end of a bad guess, rather than a deletion.
+     *
+     * @param field the wire name of the column — one of `PendingEntry.danglingKeys`.
+     * @param value the new id, or null/blank for "file it under nothing", which is a real choice and
+     *   is recorded as one ([UNFILED_BY_CHOICE]) so the replay sends the explicit null the server
+     *   needs rather than an omitted key it would read as "leave it alone".
+     */
+    suspend fun repickOutboxEntry(
+        context: Context,
+        entryId: String,
+        field: String,
+        value: String?,
+    ): OutboxRetryResult {
+        val online = isOnline(context)
+        val rewritten = OfflineOutbox.repick(context, entryId, field, value)
+        // A payload that would not parse, or an entry that is no longer queued. Nothing was changed,
+        // so nothing is claimed and the pass is not run: reporting "still did not go" over a request
+        // that was never made is the defect `OutboxRetryResult.attempted` exists to prevent.
+        if (!rewritten) return OutboxRetryResult(false, 0, 1, 0, attempted = false)
+        val moved = syncOutbox(context)
+        val stillQueued = OfflineOutbox.all(context).any { it.id == entryId }
+        return OutboxRetryResult(
+            requestedSent = !stillQueued,
+            refusedSent = if (stillQueued) 0 else 1,
+            refusedTried = 1,
+            othersSent = (moved - if (stillQueued) 0 else 1).coerceAtLeast(0),
+            attempted = online,
+        )
+    }
+
+    /**
+     * The options for a re-picked workshop link, as the tray's picker needs them: id and label.
+     *
+     * ── IT ASKS THE SERVER AND NEVER A CACHE, LIKE EVERY OTHER ACCESS LIST ────────────────────
+     *
+     * R6, and it binds here as hard as it binds on the form: *"a stale copy of an access list is
+     * wrong in the PERMISSIVE direction — a revoked grant still reads as a grant — and this is the
+     * one control whose whole job is offering."* Offering a workshop from a cache on THIS screen
+     * would be worse than on a form, because the designer is here precisely because a workshop id
+     * turned out not to be honourable, and answering that with a remembered list is answering a
+     * question about the server with a question about the phone.
+     *
+     * A FAILED READ IS AN EMPTY LIST AND THE CALLER SAYS SO. It never throws into the tray: the entry
+     * is safe either way, and the one thing that must not happen on this screen is a dialog that
+     * cannot open over a record whose only remaining route out is that dialog.
+     */
+    suspend fun repickOptions(field: String): RepickChoices = when (field) {
+        "designWorkshopId" -> runCatching {
+            RepickChoices(
+                designWorkshops(page = 1, pageSize = REPICK_PAGE).items.map { workshop ->
+                    RepickOption(
+                        id = workshop.id,
+                        label = workshop.title.ifBlank { "Untitled workshop" },
+                        // The three facts that tell two workshops apart on a phone, exactly as
+                        // `DesignWorkshopField` assembles them — a designer choosing here is
+                        // choosing between the same rows they were choosing between on the form,
+                        // and two lists of the same workshops labelled two ways is how the wrong
+                        // one gets picked.
+                        hint = listOfNotNull(
+                            workshop.craftName?.takeIf { it.isNotBlank() },
+                            workshop.clusterName?.takeIf { it.isNotBlank() }
+                                ?: workshop.state?.takeIf { it.isNotBlank() },
+                            workshop.startDate?.take(10)?.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ").takeIf { it.isNotBlank() },
+                    )
+                },
+                listed = true,
+            )
+        }.getOrDefault(RepickChoices(emptyList(), listed = false))
+
+        "workshopId" -> runCatching {
+            RepickChoices(
+                workshopsIMaySubmitTo().map { workshop ->
+                    RepickOption(
+                        id = workshop.id,
+                        label = workshop.title.ifBlank { "Untitled workshop" },
+                        hint = workshop.place.takeIf { it.isNotBlank() },
+                    )
+                },
+                listed = true,
+            )
+        }.getOrDefault(RepickChoices(emptyList(), listed = false))
+
+        // Every other reference is dangling-able and not re-pickable from here — see
+        // `OutboxFailureRow.repickKeys`, which is why this is unreachable rather than merely empty.
+        // `listed = true` because there is nothing to read and no read to have failed; the tray does
+        // not open this dialog for such a field at all.
+        else -> RepickChoices(emptyList(), listed = true)
+    }
+
+    /**
      * Save a new record to the local outbox (no network). Copies the attached media into app storage so
      * nothing is lost, then enqueues the serialized create request. [payloadJson] is the record's
      * create request serialized with [offlineJson]. Synced later by [syncOutbox].
@@ -5352,6 +5745,19 @@ class WorkshopRepository(
         purposes: Map<Uri, String> = emptyMap(),
         /** Non-null queues a CORRECTION to that record rather than a new one. See [PendingEntry.targetId]. */
         targetId: String? = null,
+        /**
+         * WHY A WORKSHOP BOX ON THIS FORM WAS EMPTY, when one was — see [PendingEntry.unfiled].
+         *
+         * The form is the only place that knows, and it is the only place that can ever know: by the
+         * time the entry drains, days later, the picker that was empty in a courtyard with no signal
+         * is full again, and nothing on the device can reconstruct which of the two absences it was.
+         * `UNFILED_BY_CHOICE` reaches the wire as an explicit null and un-files the record;
+         * `UNFILED_NO_OPTIONS` sends nothing and is reported when the entry lands.
+         *
+         * DEFAULTED TO EMPTY, which is what every caller that has not been taught to pass it sends,
+         * and which decodes and replays exactly as an entry from any earlier build does.
+         */
+        unfiled: Map<String, String> = emptyMap(),
     ): OfflineQueueResult = queueOfflineEntry(
         context, type, payloadJson, label,
         mediaUris.mapIndexed { index, uri ->
@@ -5364,6 +5770,7 @@ class WorkshopRepository(
             )
         },
         targetId = targetId,
+        unfiled = unfiled,
     )
 
     /**
@@ -5424,6 +5831,8 @@ class WorkshopRepository(
         label: String,
         items: List<OfflineMediaSpec>,
         targetId: String? = null,
+        /** See [queueOffline]. Empty for every caller that does not mount a workshop picker. */
+        unfiled: Map<String, String> = emptyMap(),
     ): OfflineQueueResult = withContext(Dispatchers.IO) {
         val media = mutableListOf<PendingMedia>()
         val unreadable = mutableListOf<String>()
@@ -5464,6 +5873,7 @@ class WorkshopRepository(
                     media = media,
                     createdAt = Instant.now().toString(),
                     targetId = targetId,
+                    unfiled = unfiled,
                 )
             )
         } catch (e: Throwable) {
@@ -5539,6 +5949,27 @@ class WorkshopRepository(
                     ReplayOutcome.Synced -> {
                         OfflineOutbox.remove(context, queued)
                         synced++
+                        // THE THIRD OUTCOME, AND THE ONLY ONE THAT ENDS IN SUCCESS — which is
+                        // precisely why it has to be said out loud. This record went up filed under
+                        // nothing because the picker that would have filed it was EMPTY when the
+                        // designer filled the form in: no signal, and the access lists are never
+                        // cached because a stale one is wrong in the permissive direction
+                        // (`WorkshopRepository.kt` `designWorkshops`, `MainActivity`'s
+                        // `rememberWorkshopPicker`). Every visible sign now says the record arrived
+                        // intact — it did, unfiled — and without this sentence the absence is
+                        // discovered weeks later as a record missing from a workshop's lists, by
+                        // which time nobody can tell it from a record deliberately filed under
+                        // nothing. That is the collapse R7 forbids, arriving by the back door.
+                        val emptyPickers = queued.emptyPickerKeys
+                        if (emptyPickers.isNotEmpty()) {
+                            notifyUser(
+                                context,
+                                outboxSentUnfiledMessage(
+                                    label = queued.label,
+                                    nouns = emptyPickers.mapNotNull { REFERENCE_FIELD_NOUNS[it] },
+                                ),
+                            )
+                        }
                     }
                     is ReplayOutcome.Rejected -> {
                         OfflineOutbox.markFailure(
@@ -5552,6 +5983,12 @@ class WorkshopRepository(
                             // a record that has nothing to do with what is now standing in the way
                             // — the same reason `skewRun` is written unconditionally above.
                             conflict = outcome.conflict,
+                            // And unconditionally for the third time, for the third instance of the
+                            // same reason: an entry that dangled on one pass and was refused for a
+                            // bad field on the next must stop offering a Re-pick, or the tray hands
+                            // the designer a picker for a field that is no longer what is standing
+                            // in the way.
+                            danglingField = outcome.danglingField,
                         )
                         // SAID WHEN IT CHANGES, NOT ON EVERY PASS THAT REACHES IT. Until a schema
                         // refusal could be re-attempted, an entry was refused exactly once and this
@@ -5632,6 +6069,20 @@ class WorkshopRepository(
              * [blocksRetry] parks it and the tray offers the escape instead.
              */
             val conflict: Boolean = false,
+            /**
+             * THE COLUMN — or the candidates, comma-separated — this record points at and the server
+             * does not have. Null on every other refusal. See [PendingEntry.danglingField].
+             *
+             * The fifth outcome, and the mirror of [conflict] rather than a variant of it: a clash is
+             * something already occupying what this record asked for, this is something this record
+             * depends on being gone. [blocksRetry] parks both, because a bare retry fetches the
+             * identical answer either way — but only this one has a remedy that is a single tap on
+             * the record already sitting on the phone, which is what the tray's third button is.
+             *
+             * MUTUALLY EXCLUSIVE WITH [schemaSkew] and [conflict] by construction: 422-with-
+             * `extra_forbidden`, 409, and 404/422-naming-a-reference are three different answers.
+             */
+            val danglingField: String? = null,
         ) : ReplayOutcome
     }
 
@@ -5684,6 +6135,54 @@ class WorkshopRepository(
                         // on a prepaid connection — every answer the identical 409.
                         schemaSkew = false,
                         conflict = true,
+                    )
+                }
+                // A REFERENCE THIS RECORD POINTS AT IS NOT ON THE SERVER — the fifth outcome, and
+                // the opposite failure to the clash above it. Asked AFTER the skew test and gated on
+                // it, because a 422 carrying `extra_forbidden` is a disagreement between builds that
+                // no re-pick can settle and that the next app run must re-attempt by itself.
+                //
+                // AND GATED ON THERE BEING A FIELD TO NAME. `danglingReferenceCandidates` answers
+                // empty when this entry sent no reference at all, and an empty answer stays an
+                // ordinary refusal: a Re-pick button over a record with no id in it would be a
+                // remedy with nothing to change, which is the shape of dead end this whole outcome
+                // exists to remove rather than to add a second one of.
+                val isCorrection = entry.targetId != null && entry.type != OFFLINE_MEDIA_ONLY
+                val dangling = if (isMissingReferenceRefusal(e) && !refusal.schemaSkew) {
+                    danglingReferenceCandidates(
+                        payload = entry.payloadJson,
+                        named = refusal.namedFields,
+                        isCorrection = isCorrection,
+                        // A 422 IS ABOUT A VALUE UNTIL THE SERVER SAYS OTHERWISE. Every field
+                        // validator on these routes answers 422 — a name that is too long, an
+                        // Aadhaar that fails its checksum — so reading ids out of the payload on
+                        // one of those would print "points at an artisan that is not on the server"
+                        // over a refusal about a name. A 404 carries no such ambiguity on any route
+                        // this outbox replays. See `danglingReferenceCandidates`.
+                        namedOnly = (e as? HttpException)?.code() == 422,
+                    )
+                } else {
+                    emptyList()
+                }
+                if (dangling.isNotEmpty()) {
+                    return ReplayOutcome.Rejected(
+                        outboxDanglingSentence(
+                            said = refusal.message,
+                            nouns = dangling.map { key ->
+                                referenceFieldNoun(key, recordNoun = outboxRecordNoun(entry.type))
+                            },
+                            // Nothing has been uploaded: this leg only runs while `createdId` is
+                            // null, so every staged capture is still on the phone. Same argument,
+                            // same line, as the clash arm above.
+                            files = entry.media.size,
+                            isCorrection = isCorrection,
+                        ),
+                        // NOT a skew and NOT a clash, explicitly rather than by omission, for the
+                        // reason the clash arm gives about `schemaSkew`: an outcome that is written
+                        // conditionally is an outcome that survives from the pass before it.
+                        schemaSkew = false,
+                        conflict = false,
+                        danglingField = dangling.joinToString(","),
                     )
                 }
                 return ReplayOutcome.Rejected(
@@ -5991,6 +6490,23 @@ class WorkshopRepository(
             )
         }
         if (target == null) return createFromEntry(entry)
+        /*
+          THE LINK COLUMNS THIS ENTRY'S AUTHOR DELIBERATELY EMPTIED, and ONLY those.
+
+          The online forms pass both workshop columns unconditionally, because a form on screen was
+          built by this build and an empty box on it is evidence that the person editing the record
+          emptied it (see `patchBodyWithClearances`). A QUEUED correction carries no such guarantee:
+          the queue on a handset that has been out of coverage for a fortnight was written by the
+          build installed a fortnight ago, and `designWorkshopId` only reached these forms on
+          2026-08-28. An old entry is silent about the column because it had never heard of it — not
+          because anybody asked for it to be cleared — and reading that silence as a clearance would
+          strip a workshop link on a record nobody touched, under a 200, on the drain of a correction
+          about something else entirely.
+
+          `clearedLinkKeys` is empty for every entry from every earlier build, so those replay exactly
+          as they do today. It is non-empty only where this build wrote down a choice a person made.
+        */
+        val cleared = entry.clearedLinkKeys
         return when (entry.type) {
             // THE REPOSITORY'S OWN METHODS AND NOT `api.` DIRECTLY, for one of them specifically:
             // `updateArtisan` wraps the body in `artisanPatchBody`, which adds the EXPLICIT nulls
@@ -6004,16 +6520,28 @@ class WorkshopRepository(
             // over whatever is stored, which on an old entry would answer a question about a card
             // nobody asked about. An edit form seeds the field from the record, so it is already set.
             "artisan" -> CreatedRecord(
-                updateArtisan(target, offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson)).id
+                updateArtisan(
+                    target,
+                    offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson),
+                    cleared,
+                ).id
             )
-            "product" -> CreatedRecord(updateProduct(target, offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson)).id)
-            "tool" -> CreatedRecord(updateTool(target, offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson)).id)
-            "workshop" -> CreatedRecord(updateWorkshop(target, offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson)).id)
-            "craft" -> CreatedRecord(updateCraft(target, offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson)).id)
+            "product" -> CreatedRecord(
+                updateProduct(target, offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson), cleared).id
+            )
+            "tool" -> CreatedRecord(
+                updateTool(target, offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson), cleared).id
+            )
+            "workshop" -> CreatedRecord(
+                updateWorkshop(target, offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson), cleared).id
+            )
+            "craft" -> CreatedRecord(
+                updateCraft(target, offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson), cleared).id
+            )
             // The step ids come back from the UPDATE too, and they have to be read: a queued
             // correction can carry step media, and `linkTargetFor` resolves `stepIndex` against this
             // list. Reading only the id would attach a step photograph to nothing.
-            "process" -> updateProcess(target, offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson))
+            "process" -> updateProcess(target, offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson), cleared)
                 .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
             // DELIBERATELY ABSENT: "questionnaire". A questionnaire interview's edit route takes
             // `QuestionnaireInterviewUpdateRequest`, whose `responses` and `artisanIds` fields mean

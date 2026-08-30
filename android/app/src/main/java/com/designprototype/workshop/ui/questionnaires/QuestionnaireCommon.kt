@@ -14,8 +14,8 @@ import com.designprototype.workshop.data.CustomEntryDto
 import com.designprototype.workshop.data.CustomQuestionnaireDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.ui.FieldPermissions
-import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.WorkshopListState
 import com.designprototype.workshop.ui.field
 
 /*
@@ -100,7 +100,7 @@ internal fun activeQuestionCount(form: CustomQuestionnaireDto): Int =
     form.sections.filter { it.isActive }.sumOf { section -> section.questions.count { it.isActive } }
 
 /**
- * The design workshops this questionnaire could be attached to.
+ * The design workshops this questionnaire could be attached to, and what happened when we asked.
  *
  * EVERY PAGE, not the first. This asked for one page of a hundred on the premise that "a designer
  * runs a handful of workshops, not a hundred" — which the running API refutes: designer@example.org
@@ -111,25 +111,39 @@ internal fun activeQuestionCount(form: CustomQuestionnaireDto): Int =
  *
  * Still no search box wired to the server: [com.designprototype.workshop.ui.SearchableSelectField]
  * filters what it is given in memory, so a per-keystroke request would buy nothing here except a
- * spinner in the middle of a two-second decision on a metered connection.
+ * spinner in the middle of a two-second decision on a metered connection. The list IS the whole
+ * answer — that is what a walk buys — so the box stays on and the threshold decides, which is
+ * DROPDOWN_DESIGN §3.6's second row and the opposite ruling from the record forms' picker, where the
+ * options are one truncated page and the box is switched off.
  *
- * A CancellationException is rethrown rather than swallowed into an empty list. These pickers load
- * from a `LaunchedEffect`, so a screen left mid-load cancels the walk; catching that like a network
- * failure would report "no workshops" for a connection that was fine — the same confusion the list
- * screen documents at WorkshopListScreen.kt.
+ * A CancellationException is rethrown rather than swallowed. These pickers load from a
+ * `LaunchedEffect`, so a screen left mid-load cancels the walk; catching that like a network failure
+ * would report "no workshops" for a connection that was fine — the same confusion the list screen
+ * documents at WorkshopListScreen.kt.
+ *
+ * ── AND THE FAILURE ARM IS NO LONGER AN EMPTY LIST ─────────────────────────────────────────────
+ *
+ * It used to `return emptyList()`, with the note that "an empty picker is therefore a degraded but
+ * honest offline state". The first half was true and the second was not: the picker said nothing at
+ * all, and a picker that opens on nothing reads as *there are none*. The attach control being
+ * optional is an argument for not BLOCKING the screen — which nothing here does — and not an
+ * argument for leaving a designer to infer why their workshops are missing. So the failure is
+ * carried out as a state with a sentence attached, and `isTransient` decides which of §3.5's two
+ * failure sentences is the true one: no signal, or a server that answered and refused.
  */
-internal suspend fun designWorkshopOptions(repository: WorkshopRepository): List<SelectOption> =
+internal suspend fun attachableDesignWorkshops(repository: WorkshopRepository): AttachableWorkshops =
     try {
-        designWorkshopOptionsAcrossPages { page, pageSize ->
+        walkAttachableDesignWorkshops { page, pageSize ->
             repository.designWorkshops(page = page, pageSize = pageSize)
         }
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
-    } catch (offline: Throwable) {
-        // The attach control is optional: a questionnaire with no workshop on it is valid, and the
-        // server accepts a null `designWorkshopId`. An empty picker is therefore a degraded but
-        // honest offline state, not a blocked screen.
-        emptyList()
+    } catch (failure: Throwable) {
+        AttachableWorkshops(
+            rows = emptyList(),
+            state = WorkshopListState.Failed,
+            online = !repository.isTransient(failure),
+        )
     }
 
 /** The muted "nothing here yet" line every one of these screens needs in at least two places. */

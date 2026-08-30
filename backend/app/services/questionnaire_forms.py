@@ -82,6 +82,7 @@ from app.services.questionnaire_xlsx import (
     ParsedQuestionnaire,
     derive_section_code,
 )
+
 # The report annexure's value objects, imported rather than re-declared. ``report_questionnaires``
 # is pure — it reaches ``report_model`` and nothing else, never the database — so this direction of
 # the dependency is the safe one and there is no cycle: the report pipeline imports THIS module.
@@ -212,7 +213,8 @@ async def load_form(
     # question's ``hasAnswers`` — still sees the whole form. Narrowing the query would tell a
     # colleague they may reword a question that in fact already carries somebody else's answers.
     visible_entries = (
-        entries if only_entries_of is None
+        entries
+        if only_entries_of is None
         else [e for e in entries if e.createdById == only_entries_of]
     )
 
@@ -319,10 +321,14 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
         db.questionnaireformquestion.find_many(
             where={"sectionId": {"in": section_ids}},
             order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
-        ) if section_ids else _none(),
+        )
+        if section_ids
+        else _none(),
         db.questionnaireformanswer.find_many(
             where={"entryId": {"in": entry_ids}},
-        ) if entry_ids else _none(),
+        )
+        if entry_ids
+        else _none(),
     )
 
     # THE ORDER OF THIS LIST IS THE ORDER THE ANNEXURE PRINTS, and it is built once here rather than
@@ -430,7 +436,9 @@ async def export_payload(questionnaire_id: str) -> dict[str, Any] | None:
         labels.append(label)
         for answer in entry["answers"]:
             if answer["answerText"]:
-                answers_by_question.setdefault(answer["questionId"], {})[label] = answer["answerText"]
+                answers_by_question.setdefault(answer["questionId"], {})[label] = answer[
+                    "answerText"
+                ]
             if answer["notes"]:
                 notes_by_question.setdefault(answer["questionId"], {})[label] = answer["notes"]
 
@@ -896,6 +904,7 @@ async def _store_uploaded_answers(
         answers_written += len(rows)
     return (entries_created, answers_written)
 
+
 # --- Writing: reusing one questionnaire at another workshop ---------------------------------------
 
 
@@ -1153,7 +1162,8 @@ async def reuse_questionnaire(
         reason = (
             f"This is a new questionnaire carrying the {questions_made} "
             + ("question" if questions_made == 1 else "questions")
-            + f" of “{form['title']}”." + settled
+            + f" of “{form['title']}”."
+            + settled
         )
     else:
         reason = (
@@ -1211,6 +1221,7 @@ async def reuse_questionnaire(
         # list carries for a reuse: an instrument too large to have been copied whole.
         "problems": problems,
     }
+
 
 # --- Writing: applying an edit to a questionnaire that may already have answers ------------------
 
@@ -1551,7 +1562,9 @@ async def _answered_question_ids(question_ids: list[str]) -> set[str]:
 # --- Writing: single-question edits from the editor UI -------------------------------------------
 
 
-async def guard_question_edit(question: Any, *, new_prompt: str | None, deleting: bool) -> str | None:
+async def guard_question_edit(
+    question: Any, *, new_prompt: str | None, deleting: bool
+) -> str | None:
     """The same rule, for the one-question-at-a-time editor rather than a re-upload.
 
     Returns the ACTION the caller must take instead of the naive one — ``"supersede"`` or
@@ -1646,9 +1659,7 @@ async def save_answers(
     if foreign:
         # The failure this prevents: an answer sheet for questionnaire A quietly accumulating
         # answers to questionnaire B's questions, which then appear in A's export.
-        raise QuestionnaireEditError(
-            "Some of those questions belong to a different questionnaire."
-        )
+        raise QuestionnaireEditError("Some of those questions belong to a different questionnaire.")
     retired = [q.prompt for q in questions if not q.isActive]
     if retired:
         raise QuestionnaireEditError(

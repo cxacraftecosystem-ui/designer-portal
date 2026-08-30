@@ -3,14 +3,27 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
-import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
+import { LIST_PAGE_CEILING, mergeById } from "@/components/data/cappedList";
 import { Field } from "@/components/FormControls";
 import { LateSubmissionDialog } from "@/components/LateSubmissionDialog";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
-import { ComboBox } from "@/components/ui/Dropdown";
+import { ComboBox, type DropdownServerQuery } from "@/components/ui/Dropdown";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Workshop, WorkshopSubmissionCheck } from "@/lib/types";
+import {
+  NO_FIELD_WORKSHOP,
+  WORKSHOP_OPTION_PAGE_SIZE,
+  deviceLooksOffline,
+  fieldWorkshopOptions,
+  workshopCutSentence,
+  workshopEmptyLabel,
+  workshopListNotice,
+  workshopListStandsDown,
+  type WorkshopListState,
+  type WorkshopListVoice,
+  type WorkshopOptionSet
+} from "@/lib/workshopOptions";
 
 /**
  * The ONE workshop picker every record form mounts, above its craft / artisan / product dropdowns.
@@ -66,10 +79,52 @@ import type { Workshop, WorkshopSubmissionCheck } from "@/lib/types";
  * THE ONE OPTION THAT IS NOT FROM THAT LIST is the record's own stored workshop, merged by
  * `useRecordOffPage` — see the note on `offPageWorkshop` for why removing it would be worse than
  * showing it.
+ *
+ * ── WHERE THE SEARCH BOX POINTS, AND WHY THAT MOVED ─────────────────────────────────────────────
+ *
+ * THE BOX IN THE PANEL NOW GOES TO THE SERVER (`serverQuery`), and until it did this control had
+ * the defect its own cap notice was written to admit rather than to fix. `/workshops` clamps
+ * `pageSize` to 100, this database holds 196 workshop rows, and the `ComboBox` this field is built
+ * on FORCES a filter box on — one that filtered the array it had been handed. So a researcher who
+ * typed the title of a workshop that exists but sits at row 140 was answered "No matches" about a
+ * record that is in the table, and the documented consequence of that on a record form is not a
+ * failed search: it is a record saved with no workshop, or filed against the wrong one, because the
+ * next thing a person does after "no matches" is pick something else. `GET /workshops` has accepted
+ * `search` the whole time, AND-ed with `accessibleOnly`, so the term now goes into the request and
+ * the answer is about the whole accessible list rather than about page one of it.
+ *
+ * Two things follow, and both are deliberate. `pageSize` is `WORKSHOP_OPTION_PAGE_SIZE` — the
+ * render cap, so the number fetched and the number drawn are ONE number and two truncation
+ * sentences with two different totals cannot both be true. And the list this hook holds is now two
+ * lists rather than one: `list` is the answer to the term in the box, which is what the options are
+ * built from, while `workshops` is everything this form has learned about across every answer, which
+ * is what a caller reads a title out of and what the pre-flight dates come from. Collapsing them
+ * would mean a researcher typing three letters made the workshop already on the record disappear
+ * out of `workshopName` on the save payload.
+ *
+ * ── AND THE VOCABULARY IS NOT THIS FILE'S ANY MORE ──────────────────────────────────────────────
+ *
+ * The label, the grouping, the sort, the "none" row, the four state sentences and the truncation
+ * sentence all come from `lib/workshopOptions` and `components/ui/selectFilter`, because the four
+ * record forms mount this picker directly above the DESIGN-workshop picker and every one of those
+ * six facts used to be spelled differently in the two files. See `DROPDOWN_DESIGN.md` §2.
  */
 
 /** How far down the list the auto-default walks looking for a workshop the user may submit to. */
 const DEFAULT_PROBE_LIMIT = 5;
+
+/**
+ * How long a keystroke waits before it becomes a request. The same 300 ms every server-backed box
+ * in this app uses (`design-review`, `DesignWorkshopViewersPanel`, `StageReferenceField`, the media
+ * picker), because a researcher who has learnt how fast one of them answers is entitled to the same
+ * from the rest.
+ *
+ * IT IS SKIPPED WHEN THE BOX IS CLEARED, and that is not a micro-optimisation: an empty box is the
+ * unnarrowed list — the one request that cannot be superseded by the next letter — and making the
+ * way back to the full list wait a third of a second is what teaches somebody that clearing it does
+ * nothing.
+ */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /**
  * The workshops this account may file against, as ONE request shared by every control on the page.
@@ -127,7 +182,17 @@ export function loadAccessibleWorkshops(): Promise<Workshop[]> {
   return accessibleWorkshopsRequest;
 }
 
-const NO_WORKSHOP_LABEL = "Not linked to a workshop";
+/*
+  THE "NOT LINKED TO A WORKSHOP" ROW USED TO BE BUILT HERE. It is now `NO_FIELD_WORKSHOP`, passed to
+  the picker as `noneLabel`, and the row itself is drawn by `components/ui/SearchableSelect`.
+
+  The string is unchanged; what moved is which layer owns the ROW. Two layers entitled to draw it is
+  two options sharing the React key "", a list offering one answer twice, and a control that cannot
+  say which of the two is selected — and the primitive has to own it anyway, because the other
+  picker on these same four forms could not draw one at all: `DesignWorkshopSelect` prepended
+  nothing, so a record filed under the wrong design workshop by mistake could not be un-filed on the
+  web at any point. One row, one owner, one spelling on both pickers.
+*/
 
 /**
  * The date a workshop HAPPENED — Android parity with `WorkshopDetailDto.occurrenceDate()`
@@ -143,17 +208,15 @@ export function sortWorkshopsByOccurrence(workshops: Workshop[]): Workshop[] {
   return [...workshops].sort((a, b) => workshopOccurrenceDate(b).localeCompare(workshopOccurrenceDate(a)));
 }
 
-/**
- * Clean human label: title plus the day it ran. Never an id.
- *
- * "·" (middle dot) is the separator Android uses in `workshopOptionLabel` and in every other record
- * label, so the same workshop reads identically on both clients.
- */
-function workshopOptionLabel(workshop: Workshop): string {
-  const title = workshop.title?.trim() || "Untitled workshop";
-  const when = formatDate(workshopOccurrenceDate(workshop) || null);
-  return when === "-" ? title : `${title} · ${when}`;
-}
+/*
+  `workshopOptionLabel` USED TO LIVE HERE — `title · date`, one of the six label shapes this app
+  shipped for one question. It is now `fieldWorkshopOptions`, and the shape changed with the move:
+  the title alone is the `label` and everything that tells two workshops apart (the place, the day,
+  and "Ended" where the window has closed) is the `hint`, which `selectFilter` searches as well as
+  draws. The argument is in `lib/workshopOptions` — the short version is that a date folded into the
+  label gives every row a shared suffix, demotes nothing, and is what makes typing a workshop's own
+  title lose to a coincidental match somewhere else in the list.
+*/
 
 /**
  * Local fallback for "has this workshop ended?", used only when the pre-flight endpoint is
@@ -173,23 +236,55 @@ export type WorkshopSelection = {
   workshopId: string;
   /** True once the USER picked a workshop (or the form opened on a record that already had one). */
   touched: boolean;
+  /**
+   * EVERY WORKSHOP THIS FORM HAS LEARNED ABOUT, most recent occurrence first — not the current
+   * answer.
+   *
+   * The distinction was free while there was one request and is load-bearing now that the panel's
+   * box goes to the server. Four forms read a title out of this array to put `workshopName` on a
+   * save payload and on the carry banner; if it held the answer to the term in the box, a
+   * researcher who typed three letters and did not clear them would send a payload naming no
+   * workshop for a record that has one. It only ever grows (`mergeById`), so nothing a page once
+   * held can be searched away from a caller.
+   */
   workshops: Workshop[];
   loading: boolean;
   /**
-   * What the picker is NOT showing, or null when it holds every workshop — see
-   * `components/data/cappedList`.
+   * WHAT THE READ ANSWERED, as three states rather than as an array that cannot tell them apart.
    *
-   * `/workshops` clamps `pageSize` to 100 and this database holds 196 workshop rows (counted
-   * 2026-08-15), so the list below is ONE PAGE, and the page is ordered by the date the workshop
-   * HAPPENED — `startDate desc, date desc, createdAt desc` (`routes/workshops`, where the ordering
-   * carries a long note about why it is not `createdAt`). This comment said `createdAt desc` and was
-   * wrong about which row falls off the end: the cut drops the oldest-OCCURRING accessible workshop,
-   * not the oldest-entered one. The client re-sort below is by the same occurrence key and therefore
-   * agrees with the server rather than reordering it; **it still cannot recover what the server
-   * already cut**. Rendered by <WorkshopSelect>; exposed on the selection so a form that draws its
-   * own workshop control cannot silently drop the sentence.
+   * `{ kind: "failed" }` used to be spelled `setWorkshops([])`, which is how a timeout came to draw
+   * "No workshops are open to this account yet" — a claim about a grant table made by a request that
+   * never arrived, telling a researcher to go and ask an admin for access they already hold. The
+   * four sentences those states earn are `workshopListNotice`'s.
    */
-  cut: ListCut | null;
+  list: WorkshopListState<Workshop>;
+  /**
+   * The options as drawn, plus an honest account of what the answer left out — `drawn`, `total`,
+   * `cut`, `truncated`, `recovered`.
+   *
+   * This REPLACES the `cut: ListCut | null` that used to be here. One record, from the builder that
+   * decided the rows, so the sentence under the control and the rows inside it cannot disagree about
+   * how many there are; `workshopCutSentence` turns it into the one sentence, and a form that draws
+   * its own workshop control still cannot silently drop it.
+   */
+  options: WorkshopOptionSet;
+  /**
+   * The panel's box: the live term, the keystroke handler, and whether a read is outstanding.
+   *
+   * Shaped as `DropdownServerQuery` so it goes straight to `serverQuery` on the control. The
+   * debounce, the page size and the discarding of an out-of-order answer are this hook's, which is
+   * where `apiFetch` (no `AbortSignal`) leaves them.
+   */
+  search: DropdownServerQuery;
+  /**
+   * The term the answer IN HAND is about — not the term in the box.
+   *
+   * They differ for the second and a half between a keystroke and an answer, and every sentence
+   * that describes the list has to be written about this one. "No workshops are open to this
+   * account" printed over an answer to "zzz" is the same false claim as printing it over a failed
+   * read, and the reader cannot tell either from a genuinely empty scope.
+   */
+  searchApplied: string;
   /** Pre-flight answer for the current selection; null while loading or when unavailable. */
   check: WorkshopSubmissionCheck | null;
   setWorkshopId: (workshopId: string) => void;
@@ -219,9 +314,29 @@ export function useWorkshopSelection({
   isEdit?: boolean;
   resetKey?: string | null;
 } = {}): WorkshopSelection {
-  const [workshops, setWorkshops] = useState<Workshop[]>([]);
-  const [cut, setCut] = useState<ListCut | null>(null);
-  const [loading, setLoading] = useState(true);
+  /** Everything any answer has ever held, plus the record's own row. See `WorkshopSelection`. */
+  const [known, setKnown] = useState<Workshop[]>([]);
+  /**
+   * The rows of the UNNARROWED read — the only list the default probe is allowed to walk.
+   *
+   * Kept apart from `known` so that a researcher who opens the picker and types before the first
+   * answer lands cannot have their form pre-filled with "the most recent workshop matching the
+   * three letters I happened to type". The probe preselects a workshop the user never chose; the
+   * one thing it must be is the answer to the question nobody asked.
+   */
+  const [baseline, setBaseline] = useState<Workshop[]>([]);
+  const [list, setList] = useState<WorkshopListState<Workshop>>({ kind: "loading" });
+  /** The panel's box. `term` is what is typed; `searchApplied` is what the answer is about. */
+  const [term, setTerm] = useState("");
+  const [searchApplied, setSearchApplied] = useState("");
+  /**
+   * A read is outstanding — INCLUDING while the debounce timer is still counting.
+   *
+   * If it only covered the request, the third of a second between the last keystroke and the fetch
+   * would be spent drawing the PREVIOUS term's rows with no server filter applied to them (the local
+   * filter is bypassed under `serverQuery`), i.e. a list that looks like an answer and is not one.
+   */
+  const [pending, setPending] = useState(true);
   const [workshopId, setWorkshopIdState] = useState(initialWorkshopId ?? "");
   const [touched, setTouched] = useState(Boolean(initialWorkshopId));
   const [check, setCheck] = useState<WorkshopSubmissionCheck | null>(null);
@@ -236,27 +351,59 @@ export function useWorkshopSelection({
 
   useEffect(() => {
     let cancelled = false;
-    /*
-      `accessibleOnly` — see the header. Sent as the literal string "true" and omitted when off,
-      because `buildQuery` takes no booleans (it stringifies, and it drops "" as if it were null).
-      There is no "off" here: this control exists to be saved from.
-    */
-    listResource<Workshop>("/workshops", { pageSize: LIST_PAGE_CEILING, accessibleOnly: "true" })
-      .then((result) => {
-        if (cancelled) return;
-        setWorkshops(sortWorkshopsByOccurrence(result.items));
-        setCut(listCut(result, "workshops"));
+    const trimmed = term.trim();
+    // Announced BEFORE the timer, not inside it — see `pending`.
+    setPending(true);
+    const timer = window.setTimeout(() => {
+      /*
+        `accessibleOnly` — see the header. Sent as the literal string "true" and omitted when off,
+        because `buildQuery` takes no booleans (it stringifies, and it drops "" as if it were null).
+        There is no "off" here: this control exists to be saved from.
+
+        `search` is the panel's box, AND-ed with that narrowing on the server rather than OR-ed —
+        `list_workshops` appends the scope to the same `AND` list for exactly this reason, so typing
+        cannot reopen a workshop this account may not file against.
+
+        `pageSize` is the render cap and not `LIST_PAGE_CEILING`: one number for the fetch and the
+        render is the only arrangement in which the sentence under the control and the rows inside
+        it cannot report two different cuts.
+      */
+      listResource<Workshop>("/workshops", {
+        pageSize: WORKSHOP_OPTION_PAGE_SIZE,
+        accessibleOnly: "true",
+        search: trimmed || undefined
       })
-      .catch(() => {
-        if (!cancelled) setWorkshops([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        .then((result) => {
+          if (cancelled) return;
+          const rows = sortWorkshopsByOccurrence(result.items);
+          setList({ kind: "ok", rows, total: result.total });
+          setSearchApplied(trimmed);
+          // Only ever ADDS. A caller reading a title off `workshops` must not lose it because
+          // somebody narrowed the panel; see `WorkshopSelection.workshops`.
+          setKnown((previous) => sortWorkshopsByOccurrence(mergeById(previous, rows)));
+          if (!trimmed) setBaseline(rows);
+        })
+        .catch(() => {
+          // NOT `setKnown([])`. A failed read is a different fact from an empty list and gets a
+          // different sentence (§3.5); collapsing them is what made a timeout print a claim about
+          // this account's grants. What is already on screen also stays there — a workshop that was
+          // listed a minute ago has not stopped existing because the next keystroke timed out.
+          if (!cancelled) setList({ kind: "failed" });
+        })
+        .finally(() => {
+          if (!cancelled) setPending(false);
+        });
+    }, trimmed ? SEARCH_DEBOUNCE_MS : 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, []);
+    /*
+      ONE TIMER, AND IT IS THIS EFFECT'S, so a late answer to a term the reader has typed past is
+      discarded by `cancelled` rather than by a generation counter — `apiFetch` carries no
+      `AbortSignal`, and this is the arrangement `design-review` already uses for the same reason.
+    */
+  }, [term]);
 
   // Declared BEFORE the default probe so a record switch clears `touched` in the same commit that
   // the probe reads it.
@@ -282,12 +429,13 @@ export function useWorkshopSelection({
   }, []);
 
   // Create only: preselect the most recent workshop the user may actually submit to, walking down
-  // the occurrence order past workshops they are not assigned to.
+  // the occurrence order past workshops they are not assigned to. Over `baseline` and never over
+  // the current answer — see `baseline`.
   useEffect(() => {
-    if (isEdit || touchedRef.current || !workshops.length) return;
+    if (isEdit || touchedRef.current || !baseline.length) return;
     let cancelled = false;
     (async () => {
-      for (const workshop of workshops.slice(0, DEFAULT_PROBE_LIMIT)) {
+      for (const workshop of baseline.slice(0, DEFAULT_PROBE_LIMIT)) {
         const result = await fetchCheck(workshop.id);
         if (cancelled || touchedRef.current) return;
         if (!result || result.canSubmit) {
@@ -297,12 +445,12 @@ export function useWorkshopSelection({
       }
       // Every recent workshop belongs to somebody else: land on the most recent anyway so the
       // inline warning can explain why, instead of silently offering nothing.
-      if (!cancelled && !touchedRef.current) setWorkshopIdState(workshops[0].id);
+      if (!cancelled && !touchedRef.current) setWorkshopIdState(baseline[0].id);
     })();
     return () => {
       cancelled = true;
     };
-  }, [workshops, isEdit, fetchCheck]);
+  }, [baseline, isEdit, fetchCheck]);
 
   // Keep the pre-flight answer in step with the selection (cache hits cost no request).
   useEffect(() => {
@@ -369,18 +517,66 @@ export function useWorkshopSelection({
    * already on the record, and the red sentence below says out loud that saving against it will be
    * refused. Nothing here can reach a workshop the account was never given.
    */
-  const offPageWorkshop = useRecordOffPage<Workshop>("/workshops", workshopId, workshops);
+  const offPageWorkshop = useRecordOffPage<Workshop>("/workshops", workshopId, known);
   const allWorkshops = useMemo(
-    () => (offPageWorkshop ? sortWorkshopsByOccurrence(mergeById(workshops, [offPageWorkshop])) : workshops),
-    [workshops, offPageWorkshop]
+    () => (offPageWorkshop ? sortWorkshopsByOccurrence(mergeById(known, [offPageWorkshop])) : known),
+    [known, offPageWorkshop]
+  );
+
+  /**
+   * The row to hand `offPage`, taken from EVERYTHING THIS FORM KNOWS and not only from the by-id
+   * read.
+   *
+   * The by-id read alone was enough while the options were one fixed page. It stopped being enough
+   * the moment the box went to the server: a record whose workshop IS on page one is never fetched
+   * by id (`useRecordOffPage` skips it, correctly), so the instant a term narrowed that row out of
+   * the answer there was nothing to merge back, the control lost its own value, and the trigger
+   * fell back to the placeholder over a record that has a workshop. The panel's box does not clear
+   * itself on close either — the term is the caller's — so that state survives being dismissed, and
+   * a blank workshop box is the one thing this whole file exists to prevent: somebody repairs it by
+   * picking a different workshop and re-files the record against the wrong fortnight.
+   */
+  const storedWorkshop = useMemo(
+    () => allWorkshops.find((workshop) => workshop.id === workshopId) ?? null,
+    [allWorkshops, workshopId]
+  );
+
+  /**
+   * `offPage: "recover"`, which is this file's own ruling made explicit rather than re-derived.
+   *
+   * The builder merges the stored row ONLY when the answer does not already contain it, and draws it
+   * under "Already on this record" — its own heading, so the scope sentence under the control stays
+   * true of everything under "Open". `"refuse"` is the other branch and belongs to a control that
+   * AUTHORISES A WRITE it cannot take back (`AdoptLocalDraftDialog`); this one describes a read that
+   * is already true.
+   *
+   * `group: true` because the difference between a workshop that is still running and one whose
+   * window has closed is a fact the researcher must act on before saving, not after.
+   */
+  const options = useMemo(
+    () => fieldWorkshopOptions(list, { group: true, offPage: { mode: "recover", row: storedWorkshop } }),
+    [list, storedWorkshop]
+  );
+
+  const search = useMemo<DropdownServerQuery>(
+    // No `truncated`: `/workshops` answers with a `total`, so the exact sentence is available and is
+    // drawn once, under the field, by `workshopCutSentence`. Setting the flag as well would put the
+    // vaguer of two true sentences ("more than are drawn, and the server did not say how many")
+    // inside the panel over the precise one underneath it, and a control that describes one cut in
+    // two wordings has taught the reader that neither is worth reading.
+    () => ({ value: term, onChange: setTerm, pending }),
+    [term, pending]
   );
 
   return {
     workshopId,
     touched,
     workshops: allWorkshops,
-    loading,
-    cut,
+    loading: list.kind === "loading",
+    list,
+    options,
+    search,
+    searchApplied,
     check,
     setWorkshopId,
     confirmSubmission,
@@ -417,19 +613,52 @@ export function WorkshopSelect({
   onDirty?: () => void;
   saving?: boolean;
 }) {
-  const { workshopId, workshops, loading, cut, check, setWorkshopId, dialog } = state;
+  const { workshopId, workshops, list, options, search, searchApplied, check, setWorkshopId, dialog } = state;
   // Named so the sentence explaining WHAT THE LIST IS reaches the control itself. A scoped list that
   // explains itself only to a reader who happens to look under the field is a list that reads, to
   // everybody else, as a repository with four workshops in it.
-  const scopeNoteId = `${useId()}-scope`;
+  const baseId = useId();
+  const scopeNoteId = `${baseId}-scope`;
+  // The cut gets its own id and is named alongside the scope sentence, because they are two facts
+  // about the list — what it IS and what it LEFT OUT — and a screen-reader user needs both AT the
+  // control rather than one of them somewhere underneath it. `aria-describedby` takes both.
+  const cutNoteId = `${baseId}-cut`;
 
-  const options = useMemo(
-    () => [
-      { value: "", label: NO_WORKSHOP_LABEL },
-      ...workshops.map((workshop) => ({ value: workshop.id, label: workshopOptionLabel(workshop) }))
-    ],
-    [workshops]
-  );
+  /**
+   * WHICH LIST THIS IS, for the four sentences. `scoped` is true because the request carries
+   * `accessibleOnly=true`: an empty answer here means "no workshop is open to this account", whose
+   * next move is an administrator — never "no workshops have been recorded", whose next move is to
+   * create one. `deviceLooksOffline` splits the failure sentence in two the same way.
+   */
+  const voice: WorkshopListVoice = { table: "field", scoped: true, online: !deviceLooksOffline() };
+
+  /**
+   * §3.5's sentence about the list, or "" when the list has nothing to explain.
+   *
+   * SUPPRESSED WHILE THE ANSWER IS ABOUT A TERM, and that guard is the whole reason `searchApplied`
+   * is on the selection. "No workshops are open to this account" is a claim about a SCOPE; over an
+   * answer to "zzz" it is simply false, and it is false in the direction that sends a researcher to
+   * an administrator about access they already have. The panel says the true thing in that state —
+   * `serverNoMatchSentence`, which is a claim about the whole list because the term went to the
+   * server — and it says it where the reader is looking. A FAILED read still speaks, term or no
+   * term: the read failing is not something the box did.
+   */
+  const listNotice = list.kind === "ok" && searchApplied ? "" : workshopListNotice(list, voice);
+
+  /**
+   * R2 and R3: nothing to pick means the control is disabled AND a sentence says why. A required
+   * closed list with no members refuses the submit before the offline outbox is ever reached, and
+   * the interview and its photographs die with the tab (`LocationFields`, whose two required flags
+   * both end in `&& options.length > 0`).
+   *
+   * NOT WHILE THE BOX HOLDS A TERM, which is not a softening of the rule but the only way to obey it
+   * here: the box lives INSIDE the panel, so disabling the trigger makes the panel unopenable and
+   * the term unclearable, and a reader who typed something that matched nothing would be locked out
+   * of the control by their own keystroke with no way back. A read still in flight does not stand
+   * anything down either — "there is nothing to pick" is a claim, and mid-flight it is not one this
+   * knows to be true.
+   */
+  const standingDown = !search.pending && !search.value.trim() && workshopListStandsDown(options);
 
   const selected = workshops.find((workshop) => workshop.id === workshopId);
   const blocked = Boolean(check && !check.canSubmit);
@@ -443,35 +672,70 @@ export function WorkshopSelect({
     <div className="grid min-w-0 content-start gap-1" onInput={(event) => event.stopPropagation()}>
       <Field label={label}>
         <ComboBox
-          options={options}
+          options={options.options}
           value={workshopId}
           onChange={(next) => {
             setWorkshopId(next);
             onDirty?.();
           }}
-          placeholder={loading ? "Loading workshops…" : "Select or type to search"}
-          describedBy={scopeNoteId}
+          /*
+            Nearly unreachable now, and deliberately kept for the case that is left. With `noneLabel`
+            set the trigger reads back the "none" row whenever the value is "", so the placeholder is
+            only ever seen while an EDIT form holds an id whose row has not arrived — which is
+            exactly the second where "Loading workshops…" is the true thing to say and "Select or
+            type to search" would be an invitation to overwrite a link that is already there.
+          */
+          placeholder={list.kind === "loading" ? "Loading workshops…" : "Select or type to search"}
+          /*
+            The panel's own line when the list holds nothing — never the literal "No options", and
+            never a claim the state does not support. It is `SEARCHING_LABEL` mid-flight, the failure
+            sentence after a failure, and the scoped "no workshops are open to this account" only
+            when the read actually answered with none. With a term typed the panel draws
+            `serverNoMatchSentence` instead and this is not reached.
+          */
+          emptyLabel={workshopEmptyLabel(list, voice)}
+          /*
+            THE ROW THAT UN-FILES THE RECORD, drawn by the primitive: first, ungrouped, exempt from
+            the render cap, and hidden while a term is active because it is not a row of the corpus
+            and a reader who is typing is hunting rather than un-filing.
+          */
+          noneLabel={NO_FIELD_WORKSHOP}
+          serverQuery={search}
+          disabled={standingDown}
+          describedBy={`${scopeNoteId} ${cutNoteId}`}
         />
       </Field>
-      {/* The ComboBox's own search filters the array it was handed (see ui/SearchableSelect), so on a
-          cut list "type to search" reaches only the rows already loaded — which is exactly when a
-          researcher concludes the workshop was never recorded. Say so instead. */}
-      <CappedListNotice cuts={[cut]} />
+      {/*
+        WHAT THE LIST LEFT OUT. The box now reaches past the cut — it goes to the server's `search`,
+        AND-ed with the access scope — so the sentence names the box ("Keep typing to narrow the
+        list") and is true for the first time; before this pass the same field printed a cap notice
+        under a box that could only sift the rows already drawn.
+
+        Worded by `workshopCutSentence` and rendered by `CappedListNotice`. The split is deliberate:
+        the DECISION stays in a module (five screens describing one cut in five sentences teaches a
+        reader that none of them means much), and the sentence chosen is the panel's vocabulary
+        rather than the page's, because the box it points at is inside the panel — `cappedListNotice`'s
+        "type in the box above" would be naming a control that is not above anything here.
+      */}
+      <CappedListNotice
+        cuts={[workshopCutSentence(options, { term: searchApplied, searchable: true })]}
+        id={cutNoteId}
+      />
       {/*
         WHAT THE LIST IS, SAID ON SCREEN. The scope is invisible from the outside — a designer cannot
         tell "the workshops I may use" from "every workshop there is" by looking at a dropdown — and a
         narrowing nobody announced is this repository's most repeated bug class wearing a filter:
-        absence reading as non-existence. The empty case gets its own sentence because it is a
-        different fact and needs a different next move; it is reachable only where every workshop has
-        a curated roster and this account is on none of them, which is an admin's job to fix and not a
-        thing to sit and retry.
+        absence reading as non-existence.
+
+        The empty and failed cases are no longer spelled here. They are four different facts with
+        four different next moves — wait, connect, ask an administrator, create one — and this
+        paragraph could only ever say one of them, which is how a failed read came to print a
+        sentence about this account's grants. `workshopListNotice` picks; when it has nothing to
+        report (the list arrived, or is still arriving) the scope sentence stands, which is true in
+        both of those states and does not flicker between three wordings on a slow connection.
       */}
       <p id={scopeNoteId} className="text-xs text-ink-500">
-        {loading
-          ? "Loading the workshops you have access to…"
-          : workshops.length
-            ? "Only workshops you have access to are listed. Ask an admin if one you worked at is missing."
-            : "No workshops are open to this account yet. A record can be saved without one, or an admin can give you access to the workshop you worked at."}
+        {listNotice || "Only workshops you have access to are listed. Ask an admin if one you worked at is missing."}
       </p>
       {blocked ? (
         <p className="text-xs font-medium text-error-600">

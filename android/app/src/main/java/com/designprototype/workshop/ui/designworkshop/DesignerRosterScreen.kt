@@ -23,9 +23,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,7 +37,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -51,7 +48,25 @@ import com.designprototype.workshop.data.DesignerRosterDto
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.ui.DesignerStandingChips
 import com.designprototype.workshop.ui.FieldPermissions
+import com.designprototype.workshop.ui.InstitutionVocabulary
+import com.designprototype.workshop.ui.RosterEmptyState
+import com.designprototype.workshop.ui.RosterFilterButton
+import com.designprototype.workshop.ui.RosterFilterSheet
+import com.designprototype.workshop.ui.RosterHint
+import com.designprototype.workshop.ui.RosterKind
+import com.designprototype.workshop.ui.RosterLabels
+import com.designprototype.workshop.ui.RosterLoadingRow
+import com.designprototype.workshop.ui.RosterNotice
+import com.designprototype.workshop.ui.RosterPageBar
+import com.designprototype.workshop.ui.RosterSortButton
+import com.designprototype.workshop.ui.emptyRosterFilters
+import com.designprototype.workshop.ui.hasActiveRosterFilters
+import com.designprototype.workshop.ui.roleMatchCutNotice
+import com.designprototype.workshop.ui.rosterFilterGrammarNotice
+import com.designprototype.workshop.ui.rosterFilterRefusalHint
+import com.designprototype.workshop.ui.rosterQueryParams
 // The shared record-form prose box: on-device dictation and the rich editor, both opt-in.
 import com.designprototype.workshop.ui.RecordProseField
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt. Every file
@@ -59,6 +74,7 @@ import com.designprototype.workshop.ui.RecordProseField
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -88,6 +104,41 @@ import kotlinx.coroutines.launch
  * it does not issue the request at all, and every mutation re-derives the permission from the cached
  * account at the moment of the tap rather than trusting the composition that drew the button.
  *
+ * ── THE SERVER FILTERS, ORDERS AND PAGES. THE DEVICE DOES NONE OF IT ─────────────────────────────
+ *
+ * THIS SCREEN USED TO WALK THE WHOLE TABLE — five requests of a hundred rows — and then sort and
+ * filter the result in Kotlin. The walk, the sort, the local filter and the notice describing the
+ * walk's truncation were all deleted together, because leaving any one of them behind would have left
+ * a screen saying something about itself that had stopped being true. Three reasons, each of them a
+ * rule in DROPDOWN_DESIGN §4.6:
+ *
+ *  - **The box answered "no match" about designers who exist.** 100 × 5 is a 500-row ceiling against
+ *    a roster of about 1,300 (`design_workshop_viewers.py:106`), so the device-side search was
+ *    filtering a PREFIX and reporting its result as an answer about the roster. That is this
+ *    repository's most repeated bug class, on the screen where the wrong conclusion — "this person
+ *    was never empanelled" — is about somebody's access.
+ *  - **It lost the wrong end.** The walk read `createdAt desc` from page one, so a short read kept the
+ *    NEWEST empanelments and dropped the OLDEST — and the oldest is the row this screen is opened
+ *    for: the designer empanelled two seasons ago who cannot sign in today.
+ *  - **The device-side sort could not be right across pages.** "Outstanding invitations first, then
+ *    by name" was a reordering of whichever rows had arrived. It survives as `sort=firstSeen&dir=desc`
+ *    — Postgres puts NULLs first on `desc`, so outstanding invitations float to the top of the WHOLE
+ *    roster, page by page, which the old sort never managed.
+ *
+ * Everything is a query parameter now, built by `ui/RosterFilters.kt` and shared byte for byte with
+ * `AccessRosterScreen` and with the web's two admin pages. There is no predicate over a fetched page
+ * anywhere in this file and there must never be one again.
+ *
+ * ── AND WHEN THE SERVER IS OLDER THAN THIS BUILD ─────────────────────────────────────────────────
+ *
+ * FastAPI drops an undeclared query parameter in SILENCE, so a deployment predating §4.1 answers a
+ * filtered request with the whole unfiltered roster and a 200 while the controls say otherwise —
+ * the same lie a silently empty picker tells, in the other direction. `roleMatchTruncated` rides
+ * every §4.1 answer, so its ABSENCE is the signal, and `rosterFilterGrammarNotice` names on screen
+ * which controls did not reach the server. This screen needs the network and says so rather than
+ * rendering an empty list: an empty roster reads as "nobody is empanelled", which here is the most
+ * alarming possible untruth.
+ *
  * ── TWO REQUESTS, AND WHY THE SECOND ONE IS NOT OPTIONAL ─────────────────────────────────────────
  *
  * A roster row is keyed by EMAIL and carries no account id, while the profile an admin opens from it
@@ -103,6 +154,7 @@ import kotlinx.coroutines.launch
  * silence that reads as "this designer never signed up".
  */
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DesignerRosterScreen(
     repository: WorkshopRepository,
@@ -121,9 +173,10 @@ fun DesignerRosterScreen(
     val canManage = remember(viewer) { mayManageDesignerRoster(viewer) }
 
     var rows by remember { mutableStateOf<List<DesignerRosterDto>>(emptyList()) }
-    /** What the SERVER said the roster holds, which is not always what [rows] gathered. */
+    /** THE SERVER'S numbers, always. What this page holds is never presented as what the roster holds. */
     var rosterTotal by remember { mutableIntStateOf(0) }
-    var rosterTruncated by remember { mutableStateOf(false) }
+    var pages by remember { mutableIntStateOf(0) }
+    var page by remember { mutableIntStateOf(1) }
     /** Lower-cased email -> the id of the account that signed up under it, for "Open designer profile". */
     var accounts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     /** Account id -> name, so "Empanelled by" can name the admin `addedById` points at. */
@@ -132,13 +185,38 @@ fun DesignerRosterScreen(
     var loading by remember { mutableStateOf(canManage) }
     var busy by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
+    /** The BOX. [RosterFilters.search] is what was actually sent — see the debounce below. */
     var search by remember { mutableStateOf("") }
-    var showSuspended by remember { mutableStateOf(true) }
+    /** Everything the server is asked to narrow and order by. Its default narrows nothing. */
+    var filters by remember { mutableStateOf(emptyRosterFilters(RosterKind.DESIGNER)) }
+    var filterSheet by remember { mutableStateOf(false) }
+    /** The institution vocabulary behind the filter, and which of §3.5's states it is in. */
+    var institutions by remember {
+        mutableStateOf<InstitutionVocabulary>(InstitutionVocabulary.Loading)
+    }
+    /** The server's own words for a read that did not come back. Null while the last read answered. */
+    var readFailure by remember { mutableStateOf<String?>(null) }
+    var roleMatchTruncated by remember { mutableStateOf<Boolean?>(null) }
+    /** Present-versus-absent on `roleMatchTruncated`: does this deployment know §4.1's grammar at all? */
+    var grammarUnderstood by remember { mutableStateOf<Boolean?>(null) }
+    var grammarKeysSent by remember { mutableStateOf<List<String>>(emptyList()) }
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<DesignerRosterDto?>(null) }
     var confirming by remember { mutableStateOf<DesignerRosterDto?>(null) }
 
-    LaunchedEffect(reload, canManage) {
+    // THE SEARCH BOX IS DEBOUNCED NOW, AND IT HAS TO BE. It used to filter a list already on the
+    // device, so a keystroke cost nothing and there was nothing to wait for; it now reaches the
+    // server, and an undebounced box would spend one request per letter on the connection this
+    // screen is most often opened over. The same 400 ms the allow-list has always used, so the two
+    // screens do not feel like two products.
+    LaunchedEffect(search) {
+        if (search == filters.search) return@LaunchedEffect
+        delay(DESIGNER_SEARCH_DEBOUNCE_MS)
+        filters = filters.copy(search = search)
+        page = 1
+    }
+
+    LaunchedEffect(reload, canManage, page, filters) {
         // The request is not made at all for a non-admin. Making it and swallowing the 403 would put
         // an unexplained failure in the error channel every time such an account opened the screen,
         // and would ask the server to refuse something this client already knows it may not have.
@@ -147,28 +225,76 @@ fun DesignerRosterScreen(
             return@LaunchedEffect
         }
         loading = true
+        // BUILT INSIDE THE EFFECT AND NEVER REMEMBERED: `rosterQueryParams` resolves the date presets
+        // against this device's clock at the moment it is called, so a screen left open overnight
+        // does not keep asking about yesterday.
+        val query = rosterQueryParams(RosterKind.DESIGNER, filters)
         try {
-            val served = repository.designerRoster()
-            // Outstanding invitations first, then everyone else by name. An admin opens this
-            // screen to answer "who have I added who has not turned up", so the rows that answer
-            // it are the rows at the top; sorting by creation date buries them under whoever was
-            // added most recently, which is the one thing they already know.
-            rows = served.items.sortedWith(
-                compareBy<DesignerRosterDto> { it.firstSeenAt != null }
-                    .thenBy { (it.fullName ?: it.email).lowercase() }
+            val served = repository.designerRoster(
+                page = page,
+                pageSize = DESIGNER_PAGE_SIZE,
+                search = query.search,
+                standing = query.standing,
+                roles = query.roles,
+                institutions = query.institutions,
+                dateField = query.dateField,
+                dateFrom = query.dateFrom,
+                dateTo = query.dateTo,
+                sort = query.sort,
+                dir = query.dir,
             )
+            // NO `sortedWith` AND NO `filter`. The server ordered and narrowed this page; re-ordering
+            // it here would be a second order over a fragment of the first, which is exactly how the
+            // deleted walk managed to be wrong on every page but the first.
+            rows = served.items
             rosterTotal = served.total
-            rosterTruncated = served.truncated
+            pages = served.pages
+            readFailure = null
+            roleMatchTruncated = served.roleMatchTruncated
+            grammarUnderstood = served.roleMatchTruncated != null
+            grammarKeysSent = query.newGrammarKeys
+            // Suspending the last row of the last page must not leave the admin on an empty page
+            // below a total that says otherwise — the allow-list's step-back, for the same reason.
+            if (served.items.isEmpty() && served.pages > 0 && page > served.pages) page = served.pages
         } catch (cancelled: CancellationException) {
-            // RETHROWN, never reported. Every roster mutation bumps `reload`, which cancels a walk
+            // RETHROWN, never reported. Every roster mutation bumps `reload`, which cancels a read
             // still in flight — so a `runCatching` here announced "Could not load the designer
             // roster." at the exact moment a suspension had just succeeded, over a screen that was
             // already reloading correctly.
             throw cancelled
         } catch (error: Throwable) {
-            onError(error.apiErrorMessage("Could not load the designer roster."))
+            val said = error.apiErrorMessage("Could not load the designer roster.")
+            onError(said)
+            // Kept on the failure path too: a server predating §4.1 answers either by DROPPING a
+            // parameter it does not declare or by refusing a value it cannot parse, and the second is
+            // a 422 an admin would otherwise read as the product being broken.
+            grammarKeysSent = query.newGrammarKeys
+            // KEPT, because a toast is gone in four seconds and an empty list is not. An empty roster
+            // drawn from a failed read reads as "nobody is empanelled", which on THIS screen is the
+            // most alarming possible lie — it is the list that decides who may sign in.
+            readFailure = said
         }
         loading = false
+    }
+
+    // The institution vocabulary. Its own read, fetched once, and NOT keyed on `reload`: a roster
+    // mutation can add an institution, but re-reading a two-hundred-row vocabulary after every
+    // Suspend would spend a request to catch a case the admin can fix by reopening the screen.
+    //
+    // ITS FAILURE IS NEVER SILENT AND NEVER FATAL. The endpoint ships in the same wave as this
+    // screen, so a handset ahead of the API meets a 404 — an ANSWERED refusal, not a transient one,
+    // so §3.5's could-not-be-listed sentence is the honest one and the picker says it. The roster
+    // itself stays readable, filterable and suspendable throughout.
+    LaunchedEffect(canManage) {
+        if (!canManage) return@LaunchedEffect
+        institutions = try {
+            val served = repository.designerRosterInstitutions()
+            InstitutionVocabulary.Listed(names = served.items, truncated = served.truncated)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            InstitutionVocabulary.Failed(online = !repository.isTransient(error))
+        }
     }
 
     // The email -> account join. Deliberately NOT keyed on `reload`: a roster mutation cannot create
@@ -253,44 +379,25 @@ fun DesignerRosterScreen(
             fontSize = 12.sp
         )
 
-        val outstanding = rows.count { it.firstSeenAt == null }
-        val suspended = rows.count { !it.isActive }
+        // THE SERVER'S TOTAL, AND NOTHING DERIVED FROM THE PAGE.
+        //
+        // What stood here counted outstanding invitations and suspensions out of `rows` and printed
+        // them beside a roster count. Over a walk that had gathered everything those tallies were
+        // true; over ONE PAGE they are counts of fifteen cards presented as facts about the
+        // institution, which is the same defect as a capped list drawn as a whole one. Both questions
+        // they answered are now askable properly and the line says where: standing is a chip, and
+        // "who have I added who has not turned up" is the `First signed in` order, whose nullable
+        // column floats every outstanding invitation to the top across every page — which a
+        // device-side sort over whichever rows had arrived never did.
         Text(
-            listOfNotNull(
-                // Says how many arrived AND how many exist whenever the two differ. "${rows.size} on
-                // the roster" over a partial read is a count of the screen presented as a count of
-                // the institution.
-                if (rosterTruncated) "${rows.size} of $rosterTotal on the roster"
-                else "${rows.size} on the roster",
-                "$outstanding invitation${if (outstanding == 1) "" else "s"} outstanding"
-                    .takeIf { outstanding > 0 },
-                "$suspended suspended".takeIf { suspended > 0 },
-            ).joinToString(" · "),
+            "$rosterTotal on the roster",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
-
-        // A list that quietly stops is indistinguishable from an institution that never empanelled
-        // the person being looked for — and the person being looked for is usually an old row, which
-        // is the end a truncated read loses. The search box is named because it filters what is on
-        // this device, so a truncated roster makes "no match" mean two different things.
-        if (rosterTruncated) {
-            // NAMES WHICH END IS MISSING, because "the first N" names an order that appears nowhere
-            // on this screen. The server sorts `createdAt desc` and the walk reads from page 1, so a
-            // short read keeps the NEWEST empanelments and loses the OLDEST — and the oldest is
-            // exactly the row this screen gets opened for: the designer standing in front of the
-            // admin saying they cannot sign in, empanelled two seasons ago. An admin told only that
-            // the list is a prefix would reasonably scroll to the bottom of it looking for them.
-            // The rows on screen are then re-sorted by invitation and by name, so "first" would not
-            // even describe what they are reading.
-            RosterNotice(
-                "The ${rows.size} most recently empanelled rows of $rosterTotal are on this " +
-                    "screen; the ${rosterTotal - rows.size} oldest were not fetched. The search " +
-                    "box filters only what is here, so a designer who does not appear may still " +
-                    "be on the roster — an empanelment from an earlier season especially. Open " +
-                    "the roster on the web to reach the whole list."
-            )
-        }
+        RosterHint(
+            "To see who has not turned up, order by \"First signed in\" — outstanding invitations " +
+                "come first. To see who cannot sign in, use the standing chips."
+        )
 
         // Web parity, and the same sentence: the account list stops at a cap, so the profile action
         // can be missing from a row whose account exists. Stated rather than left as a button that
@@ -307,7 +414,14 @@ fun DesignerRosterScreen(
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
-                label = { Text("Search name or email") },
+                // NAMES THE THREE COLUMNS IT REACHES, which is §4.8 and not verbosity: this box now
+                // goes to the server and is OR-ed over email, full name and institution there. The
+                // old label said "name or email" over a device-side match that also read the
+                // institution — a control describing itself wrongly in the one place a reader is
+                // deciding whether to trust it. Supporting text rather than the label, for the reason
+                // on `RosterLabels.SEARCH`: visible AND announced, at every font scale.
+                label = { Text(RosterLabels.SEARCH) },
+                supportingText = { Text(RosterLabels.DESIGNER_SEARCH) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
@@ -318,43 +432,75 @@ fun DesignerRosterScreen(
             }
         }
 
-        // A FILTER and never the default. A suspended designer hidden by default is a person an admin
-        // cannot find in order to restore them, and the only way back would be re-adding an email the
-        // unique index already holds — a 409 that reads as "this person is already on the roster"
-        // while the roster on screen visibly does not contain them.
-        FilterChip(
-            selected = showSuspended,
-            onClick = { showSuspended = !showSuspended },
-            label = { Text(if (showSuspended) "Showing suspended designers" else "Active designers only") }
+        // SUSPENDED ROWS ARE LISTED BY DEFAULT — the first chip is the widest view and is chosen on
+        // open. A suspended designer hidden by default is a person an admin cannot find in order to
+        // restore them, and the only way back would be re-adding an email the unique index already
+        // holds: a 409 that reads as "this person is already on the roster" while the roster on
+        // screen visibly does not contain them.
+        DesignerStandingChips(
+            selected = filters.standing,
+            onSelect = { picked -> filters = filters.copy(standing = picked); page = 1 },
         )
 
-        val visible = rows.filter { row ->
-            (showSuspended || row.isActive) && row.matches(search)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            RosterFilterButton(RosterKind.DESIGNER, filters) { filterSheet = true }
+            RosterSortButton(RosterKind.DESIGNER, filters) { filterSheet = true }
+        }
+
+        // ── The three things this answer cannot say for itself ───────────────────────────────────
+        rosterFilterGrammarNotice(grammarUnderstood, grammarKeysSent)?.let { RosterNotice(it) }
+        // THE ROLE FILTER ITSELF MAY BE INCOMPLETE, and that is worse than a short page: a designer
+        // whose account fell past the read limit is missing from EVERY page of this filter, as though
+        // they had never been empanelled.
+        roleMatchCutNotice(roleMatchTruncated)?.let { RosterNotice(it) }
+        if (readFailure != null && rows.isNotEmpty()) {
+            RosterNotice(
+                "These rows are the last answer that arrived. The most recent refresh failed, so an " +
+                    "empanelment or a suspension made since then may not be shown here yet."
+            )
         }
 
         when {
-            loading -> Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+            loading -> RosterLoadingRow("Loading the roster…")
+
+            // TESTED BEFORE EVERY EMPTY ARM. An empty roster drawn from a failed read says "nobody is
+            // empanelled", and on this screen that is a claim about the institution's access control
+            // made from a network error — the admin then re-adds addresses the unique index holds.
+            readFailure != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RosterEmptyState(
+                    title = "The roster could not be loaded",
+                    body = "This is not showing who is empanelled, and it is not a claim that " +
+                        "nobody is — the request did not come back. Nothing on the server has changed.",
+                )
+                rosterFilterRefusalHint(grammarUnderstood, grammarKeysSent)?.let { RosterNotice(it) }
             }
 
-            rows.isEmpty() -> Text(
-                "Nobody is on the designer roster yet. Until somebody is, no account can hold the " +
-                    "Designer role and sign in with it.",
-                color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+            rows.isEmpty() && rosterTotal > 0 -> RosterEmptyState(
+                title = "Nothing on this page",
+                body = "None of the $rosterTotal empanelments could be listed on this page — this " +
+                    "is not an empty roster. Step back a page.",
             )
 
-            visible.isEmpty() -> Text(
-                "No roster row matches that filter.",
-                color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+            rows.isEmpty() && hasActiveRosterFilters(RosterKind.DESIGNER, filters) -> RosterEmptyState(
+                title = "Nobody matches these filters",
+                body = "The filters are applied on the server, over the whole roster and not only " +
+                    "the rows this page had loaded, so this is an answer about every empanelment " +
+                    "there has ever been. Clear every filter to see everybody again, suspended " +
+                    "entries included.",
             )
 
-            else -> visible.forEach { row ->
+            rows.isEmpty() -> RosterEmptyState(
+                title = "Nobody is on the designer roster yet",
+                body = "Until somebody is, no account can hold the Designer role and sign in with " +
+                    "it. Add the first address above — the account creates itself when that person " +
+                    "signs in.",
+            )
+
+            else -> rows.forEach { row ->
                 RosterCard(
                     row = row,
                     busy = busy,
@@ -374,7 +520,47 @@ fun DesignerRosterScreen(
                 )
             }
         }
+        if (pages > 1) {
+            RosterPageBar(
+                page = page,
+                pages = pages,
+                total = rosterTotal,
+                noun = RosterKind.DESIGNER.noun,
+                busy = busy,
+                onPage = { page = it },
+            )
+        }
         Spacer(Modifier.height(8.dp))
+    }
+
+    if (filterSheet) {
+        RosterFilterSheet(
+            kind = RosterKind.DESIGNER,
+            filters = filters,
+            institutions = institutions,
+            onChange = { next ->
+                // THE BOX FOLLOWS THE APPLIED TERM. The allow-list carries this line for the same
+                // reason and in the same place; see `AccessRosterScreen` for the argument in full.
+                //
+                // Short version, because it bites hardest on THIS screen: [search] is the keystroke,
+                // `filters.search` is what the last request carried, and the sheet's clear-all blanks
+                // only the second. Left alone, an admin who searches for a designer, finds nothing,
+                // and presses "Clear every filter" to check whether a filter was hiding them gets the
+                // whole roster back with that name still in the box — and on the one screen whose
+                // empty answer is read as "this person was never empanelled", a box and a list that
+                // disagree is the disagreement that matters. The debounce below is keyed on [search],
+                // so this also cancels an in-flight one that would otherwise have put the term back
+                // four hundred milliseconds after the button said it was gone; its guard then sees the
+                // two agree and returns without spending a request.
+                search = next.search
+                filters = next
+                // A filter or a sort change re-orders the whole list, so the rows at OFFSET 30 are
+                // not the rows that were there a moment ago. The sheet cannot do this itself — the
+                // page number is the screen's state and is deliberately not part of `RosterFilters`.
+                page = 1
+            },
+            onDismiss = { filterSheet = false },
+        )
     }
 
     if (adding) {
@@ -477,6 +663,25 @@ private fun mayManageDesignerRoster(viewer: UserDto?): Boolean =
 internal const val DESIGNER_DIRECTORY_CAP = 500
 
 /**
+ * One page of the roster. Small: this is a phone and every card is five lines tall.
+ *
+ * The same number the allow-list uses, because the two screens now behave the same way and an admin
+ * moving between them should not find one of them paging at fifteen and the other at fifty. The web
+ * uses 20 on both, which is the right number for a table.
+ */
+private const val DESIGNER_PAGE_SIZE = 15
+
+/**
+ * How long after the last keystroke the search is sent.
+ *
+ * NEW, AND IT IS NEW BECAUSE THE BOX IS NEW. Until requirement 30 this box filtered a list already on
+ * the device, so a keystroke cost nothing; it now reaches the server, and an undebounced box would
+ * spend one request per letter. The allow-list's number exactly — one request per typed word, on both
+ * screens, so neither feels different from the other.
+ */
+private const val DESIGNER_SEARCH_DEBOUNCE_MS = 400L
+
+/**
  * Lower-cased email -> account id, the join a roster row needs to reach a profile.
  *
  * LOWER-CASED ON BOTH SIDES. The roster lower-cases the address on write, `User.email` carries
@@ -493,13 +698,22 @@ internal fun accountsByEmail(directory: List<DesignerDirectoryEntryDto>): Map<St
         .filter { it.id.isNotBlank() && it.email.isNotBlank() }
         .associate { it.email.trim().lowercase() to it.id }
 
-/** Case-insensitive match over the two columns an admin actually remembers somebody by. */
-private fun DesignerRosterDto.matches(query: String): Boolean {
-    val terms = query.trim().split(' ').filter { it.isNotBlank() }
-    if (terms.isEmpty()) return true
-    val haystack = "$email ${fullName.orEmpty()} ${institution.orEmpty()}"
-    return terms.all { haystack.contains(it, ignoreCase = true) }
-}
+// THE DEVICE-SIDE `matches()` PREDICATE THAT STOOD HERE IS GONE, AND NOTHING REPLACES IT.
+//
+// It was a case-insensitive AND over email, full name and institution, applied to whichever rows the
+// walk had gathered. Over a complete table that is a reasonable search box; over the 500-row prefix
+// the walk actually produced on a roster of about 1,300 it was a box that answered "No roster row
+// matches that filter" about designers who are on the roster — the most repeated bug class in this
+// repository, on the one screen where the conclusion an admin draws from it ("this person was never
+// empanelled") is about somebody's access.
+//
+// `search` now goes to the server, which ORs it over the same three columns
+// (`api/routes/designers.py`) with `records.contains` — so the pasted-address case works properly
+// too: control bytes are stripped and LIKE metacharacters escaped, where the device-side version
+// treated `_` and `%` as literals and the server does not. One search, over the whole table.
+//
+// Do not put a predicate back here. `RosterFilterWireTest` asserts this file contains no `.filter(`
+// over the fetched page, which is rule (iv) of DROPDOWN_DESIGN §4.6.
 
 // --------------------------------------------------------------------------------------
 // Rows
@@ -614,25 +828,10 @@ private fun RosterCard(
     }
 }
 
-/**
- * A cap or a short read, said out loud.
- *
- * The warning container and not the muted body text: this is the one thing on the screen that
- * changes what an EMPTY result means, and a sentence explaining that has to be findable after the
- * admin has already scrolled past it once.
- */
-@Composable
-private fun RosterNotice(text: String) {
-    Text(
-        text,
-        color = MaterialTheme.field.onWarningContainer,
-        fontSize = 12.sp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.field.warningContainer, RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp)
-    )
-}
+// `RosterNotice` MOVED TO `ui/RosterFilterBar.kt` and is imported above. It was identical to the
+// allow-list's own warning box in everything but its file, and two copies of the one surface that
+// says "what you are reading is not the whole answer" is exactly the drift these two screens were
+// rewritten to remove.
 
 @Composable
 private fun RosterBadge(label: String, background: Color, foreground: Color) {

@@ -18,7 +18,7 @@
  * whole point of the feature is that they build the instrument in Excel.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClipboardList, Download, FileSpreadsheet, Plus, Upload } from "lucide-react";
@@ -27,6 +27,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Field, TextInput } from "@/components/FormControls";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
+import { cappedListNotice, cutOf } from "@/components/data/cappedList";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
@@ -52,6 +53,26 @@ import {
 } from "@/lib/questionnaireForms";
 import { saveOrQueue } from "@/lib/offline";
 import type { PageResult } from "@/lib/types";
+import {
+  designWorkshopOptions,
+  deviceLooksOffline,
+  NO_DESIGN_WORKSHOP,
+  WORKSHOP_OPTION_PAGE_SIZE,
+  workshopEmptyLabel,
+  workshopListNotice,
+  workshopListStandsDown,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
+
+/**
+ * "The read has not answered, or it failed", as ONE stable array.
+ *
+ * A fresh `[]` per render would give the two dialogs a new `workshops` prop identity on every
+ * keystroke of the search box above the table, which re-runs their own option memos for an answer
+ * that has not changed.
+ */
+const NO_WORKSHOP_ROWS: readonly DwSummary[] = [];
 
 export default function QuestionnairesPage() {
   const router = useRouter();
@@ -101,7 +122,19 @@ export default function QuestionnairesPage() {
   const [newDescription, setNewDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [newWorkshopId, setNewWorkshopId] = useState("");
-  const [workshops, setWorkshops] = useState<DwSummary[]>([]);
+  /**
+   * What the design-workshop read answered — three states, and `[]` was never one of them.
+   *
+   * It was `useState<DwSummary[]>([])` behind a `.catch(() => undefined)`, so a timeout and an
+   * account with no workshops produced the identical screen: an empty picker with nothing said, and
+   * a reuse dialog telling the designer "No design workshops are listed for this account here" on
+   * the strength of a request that never arrived. Those are four different facts with four different
+   * next moves and `lib/workshopOptions` owns the sentence for each.
+   */
+  const [workshopList, setWorkshopList] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
+  /** Was the device reachable when that read FAILED? Captured in the catch — see
+   *  `components/forms/DesignWorkshopSelect.tsx` for why it is not read at render time. */
+  const [workshopsOnline, setWorkshopsOnline] = useState(true);
   /**
    * The row "Reuse at another workshop" was pressed on, or null.
    *
@@ -144,18 +177,67 @@ export default function QuestionnairesPage() {
   // form and the upload dialog, so the two cannot offer different lists.
   useEffect(() => {
     let cancelled = false;
-    listDesignWorkshops({ pageSize: 100 })
+    // NEVER 100 INTO A CONTROL THAT DRAWS 80. `SearchableSelect` renders at most `RENDER_CAP` rows,
+    // so a hundred-row page put twenty workshops into these pickers that they silently would not
+    // draw, with no sentence anywhere admitting it. One number governs the fetch and the render.
+    listDesignWorkshops({ pageSize: WORKSHOP_OPTION_PAGE_SIZE })
       .then((result) => {
-        if (!cancelled) setWorkshops(result.items ?? []);
+        if (!cancelled) setWorkshopList({ kind: "ok", rows: result.items ?? [], total: result.total });
       })
-      // Silent: the picker is a convenience, and a questionnaire attaches to a workshop just as well
-      // from the detail page. An error banner for a shortcut that failed reads as the page itself
-      // being broken.
-      .catch(() => undefined);
+      // STILL NO BANNER, and still for the reason it never had one: the picker is a convenience, a
+      // questionnaire attaches to a workshop just as well from the detail page, and an error banner
+      // for a shortcut that failed reads as the page itself being broken. What has changed is that
+      // the failure is no longer SILENT — it is recorded, and the sentence goes on the control it is
+      // about rather than nowhere at all.
+      .catch(() => {
+        if (cancelled) return;
+        setWorkshopsOnline(!deviceLooksOffline());
+        setWorkshopList({ kind: "failed" });
+      });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * The rows, and the one thing the page has to say about them.
+   *
+   * `offPage: "refuse"` on this control and not `"recover"`: this picker files a questionnaire that
+   * does not exist yet, so its value can only ever be one of the rows it drew and there is nothing
+   * off-page to recover. The detail page's picker, which points at a STORED workshop, passes
+   * `"recover"` — and that difference is exactly why the parameter is required and has no default.
+   *
+   * `group: true`: attaching a new questionnaire to a workshop that has already been submitted is
+   * allowed and is something the reader must be able to see they are doing.
+   */
+  const workshopSet = useMemo(
+    () => designWorkshopOptions(workshopList, { group: true, offPage: { mode: "refuse" } }),
+    [workshopList]
+  );
+  /** SCOPED — `list_design_workshops` narrows by `visible_to_clause`, so an empty answer is about
+   *  this account's grants and its next move is an administrator, not a new workshop. */
+  const workshopVoice = useMemo<WorkshopListVoice>(
+    () => ({ table: "design", scoped: true, online: workshopsOnline }),
+    [workshopsOnline]
+  );
+  /**
+   * ONE SLOT, TWO SENTENCES THAT CANNOT BOTH APPLY — and it is handed to the two dialogs as a
+   * string so that three controls fed by one read cannot describe it three ways.
+   *
+   * With no rows, `workshopListNotice` says WHICH of the four empty states this is. With rows and a
+   * cut, `cappedListNotice` says the arithmetic — its default arm, which is the honest one here,
+   * because these pickers filter the rows already fetched: "the other N are not on this list, and
+   * typing here searches only the M shown". Neither is ever true at the same time as the other.
+   */
+  const workshopNotice =
+    workshopListNotice(workshopList, workshopVoice) ||
+    cappedListNotice(
+      workshopList.kind === "ok"
+        ? cutOf(workshopList.rows.length, workshopList.total ?? 0, "design workshops")
+        : null
+    );
+  /** The rows themselves, for the two dialogs, which take an answer rather than a read. */
+  const workshops = workshopList.kind === "ok" ? workshopList.rows : NO_WORKSHOP_ROWS;
 
   // Live search: 350ms after typing stops, Enter applies immediately. Both go through the same state
   // so the generation guard above stays the only race protection needed.
@@ -414,16 +496,37 @@ export default function QuestionnairesPage() {
               maxLength={220}
               explainWhenUnavailable={false}
             />
-            <FieldBlock label="Attach to a design workshop">
+            <FieldBlock
+              label="Attach to a design workshop"
+              hint={
+                /* WHICH OF THE FOUR EMPTY STATES, or the numbered cut — this picker had neither, at
+                   either level. `aria-live` because the trigger is not somewhere a reader can land
+                   while it is disabled. */
+                workshopNotice ? (
+                  <p className="mt-1 text-xs leading-5 text-ink-500" aria-live="polite">
+                    {workshopNotice}
+                  </p>
+                ) : null
+              }
+            >
               <Dropdown
                 value={newWorkshopId}
                 onChange={setNewWorkshopId}
-                options={[
-                  { value: "", label: "Not attached to a workshop" },
-                  ...workshops.map((workshop) => ({ value: workshop.id, label: workshop.title }))
-                ]}
+                options={workshopSet.options}
+                /* THE UN-FILE ROW IS THE PRIMITIVE'S, and its label is the shared constant. The
+                   hand-built `{ value: "", label: "Not attached to a workshop" }` was one of nine
+                   strings this app had for four genuinely different meanings, and building it here
+                   as well as passing `noneLabel` would give two rows sharing the key "". */
+                noneLabel={NO_DESIGN_WORKSHOP}
+                emptyLabel={workshopEmptyLabel(workshopList, workshopVoice)}
                 ariaLabel="Attach to a design workshop"
                 searchable
+                /* R2: a picker with nothing in it must not be a thing standing between a designer and
+                   their questionnaire — and there is nothing here to open but the un-file row, which
+                   is already the value. Never while the read is still in flight: `workshopEmptyLabel`
+                   answers "Searching…" in the panel, and a disabled trigger cannot be opened to read
+                   it. */
+                disabled={workshopList.kind !== "loading" && workshopListStandsDown(workshopSet)}
               />
             </FieldBlock>
           </div>
@@ -591,7 +694,23 @@ export default function QuestionnairesPage() {
           questionnaireId={reuseRow.id}
           sourceTitle={reuseRow.title}
           sourceWorkshopId={reuseRow.designWorkshopId}
-          workshops={workshops.map((workshop) => ({ id: workshop.id, title: workshop.title }))}
+          /* NARROWED, NOT HANDED WHOLE: `ReuseTarget` is the nine fields the picker reads, so the
+             dialog stays clear of `DwSummary`'s thirty and of the API layer behind them. The nine
+             are what the shared builder needs to draw `title` with a `craft · cluster · date` hint,
+             which is what replaced the bare title that made two workshops in one craft draw as two
+             identical rows. */
+          workshops={workshops.map((workshop) => ({
+            id: workshop.id,
+            title: workshop.title,
+            status: workshop.status,
+            craftName: workshop.craftName,
+            clusterName: workshop.clusterName,
+            state: workshop.state,
+            startDate: workshop.startDate,
+            createdAt: workshop.createdAt,
+            deletedAt: workshop.deletedAt
+          }))}
+          workshopsNotice={workshopNotice}
           onClose={() => setReuseRow(null)}
           onReused={(result) => {
             setReuseRow(null);
@@ -613,7 +732,20 @@ export default function QuestionnairesPage() {
       <UploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        workshops={workshops.map((workshop) => ({ id: workshop.id, title: workshop.title }))}
+        /* The same nine fields the reuse dialog gets, off the same one read, so the two dialogs and
+           the create form above cannot offer three differently-worded versions of one list. */
+        workshops={workshops.map((workshop) => ({
+          id: workshop.id,
+          title: workshop.title,
+          status: workshop.status,
+          craftName: workshop.craftName,
+          clusterName: workshop.clusterName,
+          state: workshop.state,
+          startDate: workshop.startDate,
+          createdAt: workshop.createdAt,
+          deletedAt: workshop.deletedAt
+        }))}
+        workshopsNotice={workshopNotice}
         onUploaded={(result) => {
           setUploadOpen(false);
           setReport(result.report);

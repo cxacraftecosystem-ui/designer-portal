@@ -47,8 +47,9 @@ _METHODS: dict[Capability, str] = {
 
 #: Failures an operator has to fix once, as opposed to failures that are about one image. These
 #: get announced once per process; a batch of 925 photographs must not write 925 identical lines.
-_CONFIGURATION_CODES = frozenset({"disabled", "dependency_missing", "not_configured",
-                                  "unknown_provider"})
+_CONFIGURATION_CODES = frozenset(
+    {"disabled", "dependency_missing", "not_configured", "unknown_provider"}
+)
 
 
 def remove_background(

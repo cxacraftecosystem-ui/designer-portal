@@ -132,6 +132,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
+from pydantic import model_validator
 
 from app.core.config import get_settings
 from app.core.db import db
@@ -222,7 +223,13 @@ from app.services.identity_ocr import (
 )
 from app.services.market_analysis import analyse, market_findings_payload
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.records import contains, enum_filter_or_422, owned_or_granted_where, plain
+from app.services.records import (
+    contains,
+    enum_filter_or_422,
+    owned_or_granted_where,
+    plain,
+    with_id_tiebreak,
+)
 from app.services.report_docx import DOCX_MIME
 from app.services.report_pdf import PDF_MIME
 from app.services.report_templates import (
@@ -274,6 +281,364 @@ _EXTENSION = {"DOCX": "docx", "PDF": "pdf"}
 #: makes the same refusal for the same reason — a body that could claim TIER_1 for cloud output would
 #: make the tier column worthless to the reviewer it exists for.
 _SERVER_TIER = ai_layers.AiTier.TIER_3
+
+
+# --------------------------------------------------------------------------------------
+# The workshop header: which of its columns a write may reach, and which it may never
+# --------------------------------------------------------------------------------------
+#
+# ONE TABLE READ BY THE CREATE AND BY THE EDIT, because two hand-kept tuples in one file is how the
+# two halves of "the workshop's own fields" come to disagree. ``DesignWorkshop`` declares thirty-odd
+# columns. Eleven of them are the header a person fills in; the rest answer to something else — to
+# stage 1, to the consent route, to DELETE and restore, or to the database itself — and every one of
+# those twenty is a column an edit form will be TEMPTED to render, because ``workshop_summary``
+# serialises most of them on the way out.
+#
+# THE RULE, AND IT IS DELIBERATELY THE WHOLE RULE:
+#
+#     PATCH writes exactly the columns POST writes, less the two stamps POST writes once.
+#
+# ``createdById`` and ``schemaVersion`` are facts about the create. Everything else the create body
+# can reach, an edit can correct. Written that way the rule is CHECKABLE rather than remembered, and
+# ``tests/test_design_workshops.py::test_the_edit_reaches_exactly_what_the_create_reaches`` reads
+# both tables and asserts it — because both ways of getting this wrong are silent:
+#
+# * A column CREATABLE AND NOT PATCHABLE is write-once with no screen anywhere saying so. ``notes``,
+#   ``templateId`` and ``workshopId`` were exactly that for the whole life of this product: the
+#   create form collected them, no stage-1 field mirrors them (see the create route's own
+#   "``notes`` and ``workshopId``, neither of which is a promoted column at all"), and so the only
+#   way to fix a typo in a workshop's notes was to delete the workshop and start the fortnight
+#   again.
+# * A column PATCHABLE AND NOT CREATABLE is a SECOND WRITER for a column that already has one,
+#   which for the promoted columns is the defect written up at length in ``seed_designer_prefill``.
+#
+# WHAT THIS TABLE IS NOT. It is not a permission and it is not a validation. Who may send a body at
+# all is ``_require_designer`` plus ``load_workshop_or_404``; what a value may CONTAIN is
+# ``DesignWorkshopUpdate`` and the registry. This is the narrower question of which COLUMNS the two
+# header endpoints own, asked once so that the answer cannot differ between them.
+
+
+#: The workshop's own non-date columns, in the order a refusal lists them.
+#:
+#: ``status`` is here because the create writes it (hard-coded ``"DRAFT"``) and the record page's
+#: SubmissionCard patches it — Mark complete / Submit / Reopen is the one workshop-entity write the
+#: web client has ever had. It is deliberately NOT something a details form should offer beside a
+#: title box: it has its own confirmation, its own readiness count and its own online-only failure
+#: sentence, and a second writer for it would let somebody archive a workshop while renaming it.
+#: The route accepts it; a details form should not send it.
+_HEADER_TEXT_COLUMNS: tuple[str, ...] = (
+    "title",
+    "templateId",
+    "craftName",
+    "clusterName",
+    "state",
+    "district",
+    "notes",
+    "workshopId",
+    "status",
+)
+
+#: The two that go through :func:`_parse_date` instead of being copied as text.
+_HEADER_DATE_COLUMNS: tuple[str, ...] = ("startDate", "endDate")
+
+#: Of the columns above, the ones ``prisma/schema.prisma`` declares NOT NULL — ``title`` bare,
+#: ``templateId`` with a default, ``status`` as an enum with a default.
+#:
+#: THEY ARE THE ONES AN EXPLICIT ``null`` MUST BE REFUSED FOR, and the refusal is the point of
+#: naming them. Prisma answers ``{"title": null}`` with ``MissingRequiredValueError``, which this
+#: API renders as a bare 500 — "the server is broken" to a client that in fact sent something the
+#: server can name. Everything not in this set is a nullable column and may genuinely be cleared;
+#: see :func:`_header_patch_data` for why those two cases have to stay distinguishable.
+_HEADER_REQUIRED_COLUMNS = frozenset({"title", "templateId", "status"})
+
+#: What ``create_design_workshop`` copies off its body when the value is truthy.
+#:
+#: DERIVED RATHER THAN RETYPED, and it evaluates to exactly the tuple that used to be written out
+#: at that loop — ``("craftName", "clusterName", "state", "district", "notes", "workshopId")``, in
+#: that order. The create's SEMANTICS are untouched and deliberately still differ from the edit's:
+#: it drops a falsy value silently (a blank box on a create means "not known yet", and there is no
+#: stored value for it to fail to overwrite) and it does not strip. Only the LIST OF COLUMNS is
+#: shared, which is the half that must never differ.
+_CREATE_OPTIONAL_COLUMNS: tuple[str, ...] = tuple(
+    key for key in _HEADER_TEXT_COLUMNS if key not in _HEADER_REQUIRED_COLUMNS
+)
+
+#: The stamps the create writes once and no edit may rewrite. Named so the rule at the head of this
+#: section can be asserted as arithmetic rather than kept in somebody's head.
+_CREATE_ONLY_STAMPS = frozenset({"createdById", "schemaVersion"})
+
+
+_STAGE_ONE_OWNS = (
+    "this is filled in by saving stage 1 (Workshop Setup & Cover Information), which is the only "
+    "writer of the workshop's cover columns. Open the stage and correct it there"
+)
+
+_CONSENT_HAS_ITS_OWN_ROUTE = (
+    "consent is recorded through POST /design-workshops/{id}/dictation-consent, which also writes "
+    "the append-only decision log. A consent that could be set from a header edit would be a "
+    "consent that could be manufactured"
+)
+
+
+#: Every key this endpoint refuses BY NAME, with the sentence the client is told.
+#:
+#: WHY NAMED REFUSALS RATHER THAN LEAVING IT TO ``extra="forbid"``. Both are a 422 and nothing is
+#: written either way, so this is not a safety fix — it is a legibility one, and the difference is
+#: whether the client can act on the answer. "Extra inputs are not permitted" cannot tell a TYPO
+#: from a field the product deliberately does not hand out, and the callers that will hit this are
+#: not typing: a web form that reads ``workshop_summary`` and posts the object back sends all
+#: twenty-four of its keys, and an Android build a release ahead sends whatever its create body
+#: carries. For half of the keys below the true answer is "yes, but somewhere else" — stage 1, or
+#: ``PUT /{id}/viewers``, or the consent route — and a client told only "not permitted" retries the
+#: same body.
+#:
+#: AND THE ALTERNATIVE TO REFUSING IS WORSE THAN EITHER. Accepting the key and quietly not writing
+#: it answers 200 to a request that changed nothing: the form clears its dirty flag, the designer
+#: watches the box go back to the old value on the next load, and there is nothing anywhere to
+#: read. That is the shape this whole table exists to refuse.
+#:
+#: THE ORDER IS THE ORDER A REFUSAL LISTS THEM IN, and the four groups are the argument.
+_NEVER_PATCHABLE: dict[str, str] = {
+    # ── NAMING THE DESIGNER IS A CREATE-TIME ACT ─────────────────────────────────────────────────
+    # It decides whose ``DesignerProfile`` is copied into stage 1 and stage 3 BEFORE stage 1
+    # exists, and the copy is the whole design — see ``seed_designer_prefill``. There is nothing
+    # here for an edit to re-decide: the values belong to this workshop now, the designer may have
+    # corrected them by hand for this workshop, and re-seeding would overwrite that with whatever
+    # the profile says today. The PATCH handler's docstring states that in full.
+    "designerUserId": (
+        "the lead designer is named when the workshop is created, because that is the moment their "
+        "profile is copied into stages 1 and 3. Correct the designer's details in stage 1 and "
+        "stage 3, or change who may open this workshop with PUT /design-workshops/{id}/viewers"
+    ),
+    "designerUserIds": (
+        "the designers a workshop is for are granted with PUT /design-workshops/{id}/viewers, "
+        "which writes the DesignWorkshopViewer rows, and never through this body"
+    ),
+    # ── THE SIX PROMOTED COLUMNS NOTHING BUT STAGE 1 COLLECTS ────────────────────────────────────
+    # ``promoted_values`` in stage_schema.py is the single writer of the denormalised columns;
+    # nothing else may set them, or the two readings drift.
+    #
+    # SIX OF THE THIRTEEN ARE ACCEPTED ALL THE SAME — craft, cluster, state, district and the two
+    # dates — and that is the EXISTING contract rather than something this change invented. The
+    # create body already collects those six, so the rule at the head of this section admits them,
+    # and an admin has always been able to correct a list entry without opening the stage. Their
+    # cost is real and belongs on screen rather than in a refusal: a value corrected here is
+    # overwritten the next time stage 1 is saved with that box empty, because ``_coerce_promoted``
+    # nulls a promoted column of a touched entity whose value is blank. The record page already
+    # prints the honest sentence; an edit form has to carry it too.
+    #
+    # THE SIX BELOW ARE COLLECTED NOWHERE BUT STAGE 1, so accepting them would mint a second writer
+    # for a column that has exactly one, with no create-form history to point at as precedent.
+    "venue": _STAGE_ONE_OWNS,
+    "scheme": _STAGE_ONE_OWNS,
+    "designerName": (
+        "the designer's name is stage 1's, copied from their profile when the workshop was opened "
+        "and correctable in the stage. It is the authorship line a ministry document prints — on "
+        "the cover, in the certification block and in the .docx's own dc:creator — and a wrong "
+        "name in it passes every automatic check this product has: completeness scores it 100%, "
+        "readiness shows green and the report emits no warning, because the field is not missing, "
+        "it is filled with the wrong person"
+    ),
+    "implementingAgency": _STAGE_ONE_OWNS,
+    "sponsor": _STAGE_ONE_OWNS,
+    "workshopCode": (
+        "the workshop code is stage 1's, it prints on the report cover, and it is what a scanned "
+        "card resolves to. A code that has been printed and stuck on a card is not a field"
+    ),
+    # ── PROVENANCE STAMPS: WHO, WHEN, AND AGAINST WHICH REGISTRY ─────────────────────────────────
+    "id": "a workshop's id is its identity, not one of its fields",
+    "createdById": (
+        "who opened this workshop is the first thing load_workshop_or_404 tests, so a creator that "
+        "could be patched would make access grantable by the person being granted it"
+    ),
+    "createdAt": "when the workshop was opened is set by the database and is not an opinion",
+    "updatedAt": "the database sets this on every write",
+    "deletedAt": (
+        "deletion is DELETE /design-workshops/{id} and restoring is POST "
+        "/design-workshops/{id}/restore. deletedAt and deletedById are one fact in two columns — "
+        "deleted, by whom — and nothing else may write half of it"
+    ),
+    "deletedById": (
+        "deletion is DELETE /design-workshops/{id} and restoring is POST "
+        "/design-workshops/{id}/restore"
+    ),
+    "schemaVersion": (
+        "the digest of the field registry this workshop was last written against. It is what lets "
+        "a draft written by a phone under an older registry be detected rather than guessed at, "
+        "and a value a client can set is a detector that lies"
+    ),
+    # ── THE CONSENT RECORD ───────────────────────────────────────────────────────────────────────
+    "dictationConsent": _CONSENT_HAS_ITS_OWN_ROUTE,
+    "dictationConsentAt": _CONSENT_HAS_ITS_OWN_ROUTE,
+    "dictationConsentById": _CONSENT_HAS_ITS_OWN_ROUTE,
+    "dictationConsentByName": (
+        "a display name resolved for the single-record read, not a stored column. See "
+        "dictationConsentById"
+    ),
+}
+
+
+def _immutable_field_refusal(offending: list[str]) -> str:
+    """One clause per refused key, in one message, for the whole body.
+
+    EVERY OFFENDING KEY AND NOT THE FIRST ONE, for the reason the create route already states about
+    ineligible designers: a caller who ticked four boxes and is told about one has been sent on the
+    first of two trips. A form that posted a whole ``workshop_summary`` back is sending fourteen of
+    these at once and needs to hear about all fourteen.
+    """
+    reasons = "; ".join(f"{key} — {_NEVER_PATCHABLE[key]}" for key in offending)
+    subject = (
+        "This field is not editable here"
+        if len(offending) == 1
+        else "These fields are not editable here"
+    )
+    return (
+        f"{subject}: {reasons}. The whole request was refused and nothing was written, rather than "
+        "the fields being dropped and a 200 returned for a change that did not happen."
+    )
+
+
+class DesignWorkshopPatch(DesignWorkshopUpdate):
+    """``DesignWorkshopUpdate`` plus a named refusal for the keys this endpoint does not hand out.
+
+    WHY A SUBCLASS, AND WHY IT LIVES IN THE ROUTER. Everything about WHAT A VALUE MAY CONTAIN is
+    inherited unchanged — the lengths, ``title``'s ``min_length=1``, and the
+    ``status``/``templateId`` model validator that 422s an unknown enum token or an unregistered
+    template naming the allowed values. Not one line of that is restated here, which is the point:
+    the edit's bounds and the create's bounds are the same bounds, and a second copy of them would
+    be a second thing to keep in step. What is ADDED is a statement about this ROUTE rather than
+    about the shape of a workshop — which of the workshop's columns this endpoint owns — so it sits
+    beside the route, next to ``_NEVER_PATCHABLE``, where the reason for each refusal is written
+    down.
+
+    THE VALIDATOR IS ``mode="before"`` BECAUSE ``extra="forbid"`` WOULD OTHERWISE GET THERE FIRST.
+    ``APIModel`` forbids unknown keys, so ``designerName`` is already a 422 today — with the message
+    "Extra inputs are not permitted", which is true and useless. Running before field validation is
+    what lets the answer name the field and say where the value actually lives.
+
+    A KEY THAT IS NEITHER DECLARED NOR NAMED IN THAT TABLE IS STILL ``extra_forbidden``, and that is
+    the right split: a genuine typo should read as a typo. The one cost is that a body carrying an
+    immutable key AND a typo is refused for the immutable key alone, so the typo is reported on the
+    next attempt rather than beside it.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_fields_this_endpoint_does_not_own(cls, data: Any) -> Any:
+        # Not a Mapping when FastAPI hands validation something else entirely — a list, a scalar,
+        # a body that is not JSON at all. There is nothing to inspect and pydantic's own error for
+        # that shape is the correct one.
+        if not isinstance(data, Mapping):
+            return data
+        offending = [key for key in _NEVER_PATCHABLE if key in data]
+        if offending:
+            raise ValueError(_immutable_field_refusal(offending))
+        return data
+
+
+def _header_patch_data(sent: Mapping[str, Any]) -> dict[str, Any]:
+    """Turn a validated PATCH body into the ``data`` Prisma is handed.
+
+    ``sent`` IS ``model_dump(exclude_unset=True)`` AND IT HAS TO BE. That is the whole of the
+    partial-update contract, and it is the difference between two states pydantic otherwise renders
+    identically:
+
+    * **absent** — the client did not mention this field. Leave the stored value alone.
+    * **present and ``null``** — the client means CLEAR IT. Write NULL.
+
+    Read with ``getattr(payload, key) is not None``, which is how this route read its body until
+    now, those two collapse into one and the SECOND one is the one that is lost: a designer who
+    emptied the notes box and pressed Save was answered 200, told the workshop was saved, and found
+    the old note still there on the next load with nothing anywhere to read. There is no ``""`` to
+    send instead, because ``notes`` is a nullable column and an empty string is a different stored
+    value from NULL — one that "has a note" is true of on every screen that asks.
+
+    A BLANK STRING IS A CLEAR TOO, and that is a separate decision from the one above. ``TextInput``
+    and ``TextArea`` send ``""`` for an emptied box and never ``null``, so a client that cannot send
+    JSON null would otherwise be unable to clear anything at all. It also keeps this route agreeing
+    with the OTHER writer of the six promoted columns it shares: ``_coerce_promoted`` sets a
+    promoted column back to NULL when its stage value is blank rather than storing "", so a craft
+    cleared here and a craft cleared in stage 1 have to end as the same stored value, or the list's
+    "no craft recorded" filter answers differently depending on which screen did the clearing.
+
+    AND A ``null`` ON A NOT NULL COLUMN IS A 422 NAMING IT, never a write. Prisma answers
+    ``{"title": null}`` with ``MissingRequiredValueError`` — a bare 500, which reads as "the server
+    is broken" to a client that sent something this server can perfectly well name. ``title`` is the
+    only one of the three that can arrive blank rather than null, because ``min_length=1`` catches
+    ``""`` but not ``"   "``, and a workshop titled with three spaces is a row that renders as a
+    blank heading on every screen that lists it and can then only be found by its id.
+    """
+    data: dict[str, Any] = {}
+    for key in _HEADER_TEXT_COLUMNS:
+        if key not in sent:
+            continue
+        value = sent[key]
+        if isinstance(value, str):
+            # Stripped BEFORE the emptiness test, so "   " and "" are one answer. The create route
+            # deliberately does not strip and is left alone; the asymmetry is stated at
+            # _CREATE_OPTIONAL_COLUMNS.
+            value = value.strip() or None
+        if value is None and key in _HEADER_REQUIRED_COLUMNS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{key} cannot be emptied. Every workshop has one, the column is NOT NULL, and "
+                    "an empty value would have been refused by the database rather than by this "
+                    "sentence."
+                ),
+            )
+        data[key] = value
+    for key in _HEADER_DATE_COLUMNS:
+        if key not in sent:
+            continue
+        raw = sent[key]
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            data[key] = None
+            continue
+        parsed = _parse_date(raw)
+        if parsed is None:
+            # A DATE THIS SERVER CANNOT READ IS A REFUSAL AND NOT A CLEAR, which is the one place
+            # this handler deliberately parts company with ``_parse_date``'s own contract. That
+            # helper answers None both for "nothing was sent" and for "that is not a date", which
+            # is right on the CREATE — a malformed date there is a box the admin has not filled in
+            # properly yet and there is no stored value to lose. Here the same answer would
+            # silently NULL a column that held a real date, under a 200, on a workshop whose dates
+            # print on the report cover and decide which list filters can find it.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{key} is not a date this server can read. Send it as yyyy-mm-dd, or send "
+                    "null to clear it."
+                ),
+            )
+        data[key] = parsed
+    return data
+
+
+async def _assert_linked_workshop_exists(workshop_record_id: str) -> None:
+    """Refuse a ``workshopId`` naming no ``Workshop`` row, rather than letting Prisma 500 on it.
+
+    ``DesignWorkshop.workshopId`` is a real foreign key, so an id that names nothing is a constraint
+    violation and a bare 500 — an answer no form can render and one indistinguishable from the
+    server being down. The create route carries the same hazard and is deliberately not changed
+    here; this is the surface a re-pointing control drives, and the one where the value comes out of
+    a picker whose list may be a fortnight stale on a handset.
+
+    WHAT THIS DOES NOT DO is warn about the cost of re-pointing a workshop that already has records
+    filed under it. Five registry REF fields are narrowed server-side by the linked workshop, so a
+    record created from one of those pickers and then filed against a different sitting is a record
+    that picker can never show again. That is a sentence for the screen beside the control, not a
+    refusal: moving a workshop onto the right link is a legitimate correction, and often the reason
+    somebody opened the edit form at all.
+    """
+    if await db.workshop.find_unique(where={"id": workshop_record_id}) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "No workshop record exists with that id, so this design workshop cannot be linked "
+                "to it. Choose one from the list, or send null to remove the link."
+            ),
+        )
 
 
 # --------------------------------------------------------------------------------------
@@ -348,9 +713,7 @@ def _if_none_match_matches(header: str, etag: str) -> bool:
 
 
 @router.get("/schema")
-async def get_stage_schema(
-    request: Request, _: Any = Depends(get_current_user)
-) -> Response:
+async def get_stage_schema(request: Request, _: Any = Depends(get_current_user)) -> Response:
     """The field registry every client renders its forms from.
 
     Served rather than duplicated, for the same reason ``/reference/address`` is: a field list
@@ -691,7 +1054,12 @@ async def decide_identity_photograph(
             where={"id": mediaId},
             data={"extraMetadata": with_retention(getattr(media, "extraMetadata", None), stamp)},
         )
-        return {"mediaId": mediaId, "decision": RETENTION_STORE, "deleted": False, "retention": stamp}
+        return {
+            "mediaId": mediaId,
+            "decision": RETENTION_STORE,
+            "deleted": False,
+            "retention": stamp,
+        }
 
     object_key = getattr(media, "objectKey", None)
     if object_key:
@@ -880,9 +1248,7 @@ async def get_dictation_allowance(
     is no workshop involved, and the number is this account's own.
     """
     _require_designer(current_user)
-    return dictation_cap.allowance_payload(
-        await dictation_cap.load_allowance(current_user.id)
-    )
+    return dictation_cap.allowance_payload(await dictation_cap.load_allowance(current_user.id))
 
 
 @router.get("/ai-verb-allowance")
@@ -925,9 +1291,7 @@ async def get_ai_verb_allowance(
     dictation allowance beside it: no workshop is involved and the number is this account's own.
     """
     _require_designer(current_user)
-    return ai_verb_cap.allowance_payload(
-        await ai_verb_cap.load_allowance(current_user.id)
-    )
+    return ai_verb_cap.allowance_payload(await ai_verb_cap.load_allowance(current_user.id))
 
 
 @router.get("/dictate")
@@ -1225,7 +1589,14 @@ async def _attach_deleted_by(rows: list[Any], items: list[dict[str, Any]]) -> No
 @router.get("")
 async def list_design_workshops(
     page: int = Query(1, ge=1),
-    pageSize: int = Query(20, ge=1),
+    # REFUSED PAST 100, NOT CLAMPED TO IT — matching ``workshops.py``'s own list route (``:229``)
+    # rather than inventing a second ceiling for the same shape of endpoint. Before this bound,
+    # ``pageSize=5000`` was accepted by FastAPI and only clamped deep inside ``normalize_pagination``,
+    # so a caller asking for one giant page silently got a 100-row page instead — the same number of
+    # rows every time, however large the ask, with nothing on the wire saying the request was not
+    # honoured. A 422 here is the caller finding that out from the response instead of from a
+    # ``pages`` count that no longer matches the ``pageSize`` it thinks it sent.
+    pageSize: int = Query(20, ge=1, le=100),
     search: str | None = None,
     statusFilter: str | None = None,
     craftName: str | None = None,
@@ -1318,7 +1689,25 @@ async def list_design_workshops(
     order = {"deletedAt": "desc"} if deletedOnly else {"createdAt": "desc"}
     total, rows = await asyncio.gather(
         db.designworkshop.count(where=where),
-        db.designworkshop.find_many(where=where, skip=skip, take=clean_size, order=order),
+        db.designworkshop.find_many(
+            where=where,
+            skip=skip,
+            take=clean_size,
+            # TOTAL ORDER, NOT JUST A SORT — neither ``createdAt`` nor ``deletedAt`` is unique, and
+            # ``LIMIT/OFFSET`` re-runs the whole sort from scratch on every page, so Postgres is free
+            # to break a tie between two rows differently on the request for page 2 than it did on
+            # page 1. A row that changes side of the cut between those two requests is handed over
+            # TWICE (sent on page 1, slides back above the cut on page 2) or NEVER (the mirror case,
+            # sliding below the cut both times) — and either way the response looks perfectly healthy:
+            # the count matches, the page is full, there is no gap to notice. The only way anyone
+            # finds out is by going looking for a workshop they know exists and not finding it on any
+            # page of the walk. This read bypasses ``count_and_page`` — it also needs the raw ``rows``
+            # for ``_attach_deleted_by``, which that helper has nowhere to hand back — so it appends
+            # the tiebreak itself, exactly as ``access.py`` and ``designers.py`` already do for their
+            # own hand-rolled ``asyncio.gather`` reads. See ``records.with_id_tiebreak`` for the full
+            # argument, including why the ties here are not a theoretical risk.
+            order=with_id_tiebreak(order),
+        ),
     )
     items = [workshop_summary(r) for r in rows]
     if includeDeleted or deletedOnly:
@@ -1514,9 +1903,7 @@ async def create_design_workshop(
     # allow-list (only the dataset door does), so an admin suspended after their token was minted
     # still reaches this route, and ticking their own name in the picker would 422 their own create.
     # The two writes land in one table and must not disagree about who is in the set.
-    designer_id, designer_ids = named_designer_team(
-        payload.designerUserId, payload.designerUserIds
-    )
+    designer_id, designer_ids = named_designer_team(payload.designerUserId, payload.designerUserIds)
     wanted = set(designer_ids) - {current_user.id}
     if wanted:
         await assert_every_designer_may_be_named(wanted)
@@ -1527,7 +1914,13 @@ async def create_design_workshop(
         "schemaVersion": registry_version(),
         "status": "DRAFT",
     }
-    for key in ("craftName", "clusterName", "state", "district", "notes", "workshopId"):
+    # THE COLUMN LIST IS SHARED WITH THE EDIT AND THE SEMANTICS ARE NOT; see
+    # `_CREATE_OPTIONAL_COLUMNS`. Nothing about this loop changes: a falsy value is still dropped
+    # (a blank box on a create means "not known yet", and there is no stored value it could
+    # overwrite) and the value is still copied unstripped. What is no longer possible is the two
+    # routes disagreeing about WHICH columns the header consists of, which is how `notes`,
+    # `templateId` and `workshopId` came to be creatable and, in the web client, uneditable for ever.
+    for key in _CREATE_OPTIONAL_COLUMNS:
         value = getattr(payload, key)
         if value:
             data[key] = value
@@ -1647,23 +2040,117 @@ async def get_design_workshop(
 
 @router.patch("/{workshop_id}")
 async def update_design_workshop(
-    workshop_id: str, payload: DesignWorkshopUpdate,
+    workshop_id: str,
+    payload: DesignWorkshopPatch,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
+    """Correct the workshop's own header — its title, its template, its link, its notes, the six
+    cover values the create form also collects, and its status.
+
+    ``PATCH`` WRITES EXACTLY THE COLUMNS ``POST`` WRITES, less ``createdById`` and
+    ``schemaVersion``, which are facts about the create rather than fields. The whole list, what a
+    key means, and what happens to a key that is not on it are at ``_HEADER_TEXT_COLUMNS`` and
+    ``_NEVER_PATCHABLE`` above; this docstring is about the four things a caller has to know that
+    the tables cannot say.
+
+    ── 1. PARTIAL MEANS PARTIAL, AND ``null`` IS NOT ``absent`` ──────────────────────────────────
+
+    The body is dumped with ``exclude_unset=True``, so a key is in it because THE CLIENT SENT IT.
+    A field the client did not mention is not touched. A field sent as ``null`` — or as ``""``, or
+    as whitespace, because a text box sends ``""`` for "emptied" and never JSON null — is CLEARED
+    to NULL. Those are different requests and this route used to answer both of them identically:
+    it read ``getattr(payload, key) is not None`` and dropped everything falsy, so a designer who
+    emptied the notes box and pressed Save got a 200 saying the workshop was saved and the old note
+    back on the next load, with nothing on any screen to read. ``_header_patch_data`` carries the
+    full argument, including why a ``null`` on ``title``, ``templateId`` or ``status`` is a 422
+    naming the field rather than the ``MissingRequiredValueError`` Prisma would have answered.
+
+    A body with no writable key at all is a 200 and the unchanged summary, not an error. An empty
+    save is what a form does when the user pressed Save without typing, and refusing it would only
+    teach them to distrust the button.
+
+    ── 2. **THE DESIGNER PREFILL DOES NOT RUN HERE. NOT ONCE, NOT CONDITIONALLY, NOT "ONLY WHEN THE
+    FIELD IS BLANK".** ─────────────────────────────────────────────────────────────────────────
+
+    ``seed_designer_prefill`` — and ``designers.prefill_from_profile`` underneath it — is called by
+    the CREATE route and by nothing else, and that is a contract rather than an accident of where
+    the call happens to sit. Its own docstring states it: *"a report is a HISTORICAL DOCUMENT …
+    every value below is read once, at creation, and never consulted again."*
+
+    WHAT A SECOND RUN WOULD DO, concretely. It reads TODAY's ``DesignerProfile`` and writes it over
+    ``workshopSetup.designerName``, ``designerInstitution`` and nineteen stage-3 fields. So a
+    designer who moved from NIFT to NID in 2027 would, by somebody merely renaming a 2026 workshop,
+    have that workshop's report re-attributed to an institution that had nothing to do with it and
+    had never sponsored it — on the cover, in the certification block and in the .docx's own
+    ``dc:creator``. Any correction the designer typed by hand for THIS workshop would revert under
+    a 200, on every save, and go on reverting. And the stamp would compound it: the seed stamps the
+    ACTOR, so an admin's routine title fix would put the admin's name and today's date under
+    twenty-one fields on a ministry document the admin has never read.
+
+    THE WIRE ENFORCES IT AS WELL AS THIS PARAGRAPH. ``designerUserId`` and ``designerUserIds`` are
+    in ``_NEVER_PATCHABLE``, so there is no way to ask this route to reconsider whose profile was
+    copied; changing WHO MAY OPEN the workshop is ``PUT /{workshop_id}/viewers``, a different route
+    that writes viewer rows and re-seeds nothing. If the designer's details are wrong for this
+    workshop, they are stage data now and stage 1 and stage 3 are where they are corrected — per
+    workshop, which is the entire point of them being copies.
+
+    ── 3. TWO GATES, IN THIS ORDER, AND THE ORDER IS THE RULE ───────────────────────────────────
+
+    ``_require_designer`` first — the SET ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a rank floor —
+    and ``load_workshop_or_404(..., for_edit=True)`` second. Neither is new and neither may move.
+
+    THE ORDER IS WHAT KEEPS A VIEWER FROM WRITING. ``load_workshop_or_404`` performs NO role check
+    at all: it admits the creator, an admin, or the holder of any ``DesignWorkshopViewer`` row, and
+    a grant can be held by a RESEARCHER or a PROFESSOR. Run second, the role gate refuses them
+    before the row test can admit them. Swap the two lines and every viewer-grantee becomes an
+    editor of the header — silently, because the swap does not break a single test that exists
+    about reading. An INSPECTOR is refused by the same clause and has never been anything else: an
+    inspection grant is a READ relation, and ``prisma/schema.prisma`` says in so many words that no
+    read which decides a WRITE may consult it.
+
+    A designer's access to a workshop is always a GRANT, never ``createdById``: the create gate is
+    strictly narrower than this one and admits admins alone, so ``createdById`` can never match a
+    designer and "their own workshop" means "a workshop an admin put them on". ``for_edit=True`` is
+    also what turns a soft-deleted workshop into 409 "This workshop is deleted. Restore it before
+    editing." rather than a 404 — a sentence the clients rethrow rather than swallow, so do not
+    catch it here.
+
+    TWO NAMES ARE DELIBERATELY NOT SPELLED IN THE THREE PARAGRAPHS ABOVE — the inspector relation and
+    the create-only gate — and their absence is load-bearing rather than stylistic. Two tests read
+    this module AS TEXT: ``tests/test_dw_inspector_scope_gate.py`` sweeps every file under ``app/``
+    for the inspection scope's identifiers, on the argument that "the drift being defended against is
+    somebody reaching for an autocompleted symbol, and text is where that happens", and
+    ``tests/test_design_workshop_gate.py`` reads THIS handler's source to prove the admin-only create
+    rule has not crept onto it. A name written in a docstring reads to both of them exactly like a
+    call. The create route carries the same warning above its own gate for the same reason.
+
+    ── 4. WHAT COMES BACK ───────────────────────────────────────────────────────────────────────
+
+    ``workshop_summary`` — the same header dict ``GET /design-workshops`` serialises per row and
+    ``GET /design-workshops/{id}`` returns before it adds stages, completeness and transcripts.
+    Unchanged, and deliberately so: a client can replace its stored header with this response
+    wholesale. It carries the six read-only cover columns (``venue``, ``scheme``, ``designerName``,
+    ``implementingAgency``, ``sponsor``, ``workshopCode``) that this route refuses on the way IN,
+    which is not a contradiction — they are the workshop's cover, a form should show them, and the
+    place to change them is the stage that owns them.
+
+    ONE THING THE RESPONSE CANNOT TELL YOU, which belongs on the screen instead: six of the columns
+    this route writes are also stage 1's. A craft corrected here stands until stage 1 is saved with
+    that box empty, at which point ``_coerce_promoted`` sets it back to NULL under a 200 reading
+    "Stage saved". ``title`` is the mirror image — the create deliberately does not seed
+    ``workshopSetup.workshopTitle``, so a title set here stands until somebody types a different one
+    into stage 1, and then stage 1 wins. Two writers, no arbitration, and the honest thing to do
+    with that is print it beside the boxes rather than hide it.
+    """
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
-    data: dict[str, Any] = {}
-    for key in ("title", "templateId", "craftName", "clusterName", "state", "district",
-                "notes", "workshopId", "status"):
-        value = getattr(payload, key)
-        if value is not None:
-            data[key] = value.strip() if isinstance(value, str) else value
-    for key in ("startDate", "endDate"):
-        raw = getattr(payload, key)
-        if raw is not None:
-            data[key] = _parse_date(raw)
+    data = _header_patch_data(payload.model_dump(exclude_unset=True))
     if not data:
         return workshop_summary(record)
+    # AFTER the emptiness check and before the write, so a body that never mentions the link costs
+    # nothing. A link being CLEARED needs no lookup either — there is no row to find.
+    if data.get("workshopId") is not None:
+        await _assert_linked_workshop_exists(data["workshopId"])
     updated = await db.designworkshop.update(where={"id": workshop_id}, data=data)
     return workshop_summary(updated)
 
@@ -1759,7 +2246,9 @@ async def get_stage(
     entries = await entry_rows(workshop_id, stage_key=stage_key)
     definition = await load_custom_definition_or_empty(workshop_id)
     payload = _stages_payload(entries).get(stage_key) or {
-        "singleton": {}, "collections": {}, "custom": {},
+        "singleton": {},
+        "collections": {},
+        "custom": {},
         # THE EMPTY FALLBACK CARRIES THE BUCKET TOO. A stage nobody has saved yet answers this
         # route, and a client that reads `provenance` unconditionally would have crashed on the
         # one shape that is guaranteed to exist for every workshop on its first day.
@@ -1880,7 +2369,9 @@ def _submit_refusal_message(errors: Mapping[str, Any]) -> str:
 
 @router.put("/{workshop_id}/stages/{stage_key}")
 async def save_stage_data(
-    workshop_id: str, stage_key: str, payload: StageSaveIn,
+    workshop_id: str,
+    stage_key: str,
+    payload: StageSaveIn,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Save a whole stage in one write.
@@ -2001,23 +2492,25 @@ def _spec_from_body(section: Any) -> CustomSectionSpec:
                     ],
                 },
             ) from None
-        fields.append(CustomFieldSpec(
-            key=f.key,
-            label=f.label,
-            type=field_type,
-            tier=tier,
-            required=f.required,
-            help=f.help,
-            unit=f.unit,
-            options=tuple(CustomOption(value=o.value, label=o.label) for o in f.options),
-            max_length=f.maxLength,
-            min_value=f.minValue,
-            max_value=f.maxValue,
-            # The order the designer put them in, defaulted to the order they arrived in. A
-            # definition that left every sortOrder at 0 would otherwise print and score in whatever
-            # order the database handed the rows back, which is stable until it is not.
-            sort_order=f.sortOrder or index,
-        ))
+        fields.append(
+            CustomFieldSpec(
+                key=f.key,
+                label=f.label,
+                type=field_type,
+                tier=tier,
+                required=f.required,
+                help=f.help,
+                unit=f.unit,
+                options=tuple(CustomOption(value=o.value, label=o.label) for o in f.options),
+                max_length=f.maxLength,
+                min_value=f.minValue,
+                max_value=f.maxValue,
+                # The order the designer put them in, defaulted to the order they arrived in. A
+                # definition that left every sortOrder at 0 would otherwise print and score in whatever
+                # order the database handed the rows back, which is stable until it is not.
+                sort_order=f.sortOrder or index,
+            )
+        )
     return CustomSectionSpec(
         key=section.key,
         title=section.title,
@@ -2049,7 +2542,8 @@ async def get_custom_sections(
 
 @router.put("/{workshop_id}/custom-sections")
 async def save_custom_sections(
-    workshop_id: str, payload: CustomSectionsIn,
+    workshop_id: str,
+    payload: CustomSectionsIn,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Replace this workshop's whole custom definition in one write.
@@ -2106,10 +2600,7 @@ async def save_custom_sections(
     # ABSENT IS NOT STALE. A body that omits the field is a client that predates this check, and it
     # keeps the old behaviour rather than being refused; see `CustomSectionsIn.customSchemaVersion`
     # for why that is the trade and not an oversight.
-    if (
-        payload.customSchemaVersion is not None
-        and payload.customSchemaVersion != stored.version
-    ):
+    if payload.customSchemaVersion is not None and payload.customSchemaVersion != stored.version:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             # BOTH DIGESTS, NAMED. "Someone else changed this" with no handles leaves the editor
@@ -2131,9 +2622,7 @@ async def save_custom_sections(
     # completeness scorer's own `_is_filled`, so "answered" means one thing across this system — a
     # field the readiness screen counts as filled is a field whose wording is now evidence.
     answered = {
-        row.stageKey: answered_keys(
-            stored.fields_for(row.stageKey), dict(row.data or {})
-        )
+        row.stageKey: answered_keys(stored.fields_for(row.stageKey), dict(row.data or {}))
         for row in entries
         if row.entityKey == CUSTOM_ENTITY_KEY
     }
@@ -2205,8 +2694,14 @@ async def list_references(
     """
     record = await load_workshop_or_404(workshop_id, current_user)
     return await reference_options(
-        record, model, scope=scope.upper(), filter_by=filterBy, search=search, limit=limit,
-        record_id=recordId, viewer=current_user,
+        record,
+        model,
+        scope=scope.upper(),
+        filter_by=filterBy,
+        search=search,
+        limit=limit,
+        record_id=recordId,
+        viewer=current_user,
     )
 
 
@@ -2423,9 +2918,7 @@ async def list_ai_layers(
             for row in rows
         ],
         "total": len(rows),
-        "accepted": sum(
-            1 for row in rows if row.acceptedAt is not None and row.deletedAt is None
-        ),
+        "accepted": sum(1 for row in rows if row.acceptedAt is not None and row.deletedAt is None),
     }
 
 
@@ -2464,7 +2957,8 @@ async def _readable_media_ids(media_ids: set[str], viewer: Any) -> set[str]:
 
 @router.post("/{workshop_id}/ai-layers", status_code=status.HTTP_201_CREATED)
 async def register_ai_layer(
-    workshop_id: str, payload: AiLayerRegisterIn,
+    workshop_id: str,
+    payload: AiLayerRegisterIn,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Record a transcript this server already produced as a layer, with its provenance.
@@ -3164,9 +3658,7 @@ async def translate_ai_layer(
             source = ai_layers.LayerSource.layer(row.id, _verb_layer_kind(row))
             # The stored language wins over the body's: the row is a record of what the run detected
             # and the body is a client's assertion about somebody else's row.
-            source_language = (
-                str(getattr(row, "language", "") or "").strip() or stated_source
-            )
+            source_language = str(getattr(row, "language", "") or "").strip() or stated_source
         else:
             text = payload.text or ""
             source = ai_layers.LayerSource.supplied_text(text)
@@ -3321,9 +3813,7 @@ async def subtitle_ai_layer(
     )
     # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_SUBTITLE_FETCH_BYTES`. This verb
     # takes VIDEO as well as AUDIO, so it is the one most likely to be pointed at the 668 MiB object.
-    await _refuse_oversize_verb_source(
-        media, MAX_SUBTITLE_FETCH_BYTES, what="spool for subtitling"
-    )
+    await _refuse_oversize_verb_source(media, MAX_SUBTITLE_FETCH_BYTES, what="spool for subtitling")
     answer: Mapping[str, Any] | None = None
     source_path: str | None = None
     try:
@@ -3474,17 +3964,15 @@ async def _layer_text_withheld(workshop_id: str, row: Any, viewer: Any) -> bool:
     # The media query is asked only where there is a recording to ask about: a supplied-text root has
     # none and an unresolved one is withheld without asking anybody. `ChainRoot.withheld_from` is
     # still what decides, so this and the list route cannot answer differently.
-    wanted = (
-        {root.media_id}
-        if root.kind is ai_layers.RootKind.MEDIA and root.media_id
-        else set()
-    )
+    wanted = {root.media_id} if root.kind is ai_layers.RootKind.MEDIA and root.media_id else set()
     return root.withheld_from(await _readable_media_ids(wanted, viewer))
 
 
 @router.post("/{workshop_id}/ai-layers/{layer_id}/accept")
 async def accept_ai_layer(
-    workshop_id: str, layer_id: str, payload: AiLayerDecisionIn | None = None,
+    workshop_id: str,
+    layer_id: str,
+    payload: AiLayerDecisionIn | None = None,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """A person puts their name to this layer, and it becomes printable.
@@ -3552,7 +4040,9 @@ async def accept_ai_layer(
 
 @router.post("/{workshop_id}/ai-layers/{layer_id}/unaccept")
 async def unaccept_ai_layer(
-    workshop_id: str, layer_id: str, payload: AiLayerDecisionIn | None = None,
+    workshop_id: str,
+    layer_id: str,
+    payload: AiLayerDecisionIn | None = None,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """A person takes their name off this layer. The layer itself is untouched and stays readable.
@@ -3710,15 +4200,17 @@ async def workshop_cost_integrity(
         # stored `data`, and it is the only key a `costSheetRef` can be matched against — omit it
         # and every line becomes an orphan of a sheet that is sitting right there. Same injection,
         # under the same `_`-prefixed name, as `_stages_payload` and `_workshop_data`.
-        return [dict(row.data or {}, _entryId=row.id)
-                for row in entries if row.entityKey == entity_key]
+        return [
+            dict(row.data or {}, _entryId=row.id) for row in entries if row.entityKey == entity_key
+        ]
 
     # A cost sheet is labelled by `productRef`, which points at a stage-13 final product. The
     # service is pure and cannot resolve a reference, so the names are looked up here and passed
     # in — a finding headed by a raw cuid is one a designer cannot trace back to a row.
     labels = {
         row.id: str((row.data or {}).get("name") or (row.data or {}).get("productCode") or "")
-        for row in entries if row.entityKey == "finalProduct"
+        for row in entries
+        if row.entityKey == "finalProduct"
     }
 
     findings = analyse_cost_integrity(
@@ -3737,7 +4229,8 @@ async def workshop_cost_integrity(
 
 @router.get("/{workshop_id}/report/preview")
 async def preview_report(
-    workshop_id: str, templateId: str | None = None,
+    workshop_id: str,
+    templateId: str | None = None,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """The report as structured blocks, for the web preview to render as HTML.
@@ -3757,7 +4250,11 @@ async def preview_report(
         workshop_id, record, viewer=current_user, requested_template_id=templateId
     )
     document, warnings = await asyncio.to_thread(
-        _build_only, data, template_id, resolver, record,
+        _build_only,
+        data,
+        template_id,
+        resolver,
+        record,
     )
     warnings = list(warnings) + load_warnings
     return {
@@ -3769,7 +4266,8 @@ async def preview_report(
 
 @router.post("/{workshop_id}/report")
 async def generate_report(
-    workshop_id: str, payload: ReportGenerateIn,
+    workshop_id: str,
+    payload: ReportGenerateIn,
     current_user: Any = Depends(get_current_user),
 ) -> Response:
     """Render and return one report file.
@@ -3802,7 +4300,13 @@ async def generate_report(
         ai_layers=payload.includeAiLayers,
     )
     blob, warnings, page_count = await asyncio.to_thread(
-        render_report, data, template_id, resolver, record, fmt, payload,
+        render_report,
+        data,
+        template_id,
+        resolver,
+        record,
+        fmt,
+        payload,
     )
     warnings = list(warnings) + load_warnings
 
@@ -3821,19 +4325,21 @@ async def generate_report(
     }
 
     if payload.record:
-        await db.dwreportexport.create(data={
-            "designWorkshopId": workshop_id,
-            "format": fmt,
-            "templateId": template_id,
-            "fileName": file_name,
-            "fileSizeBytes": len(blob),
-            "pageCount": page_count,
-            "checksumSha256": hashlib.sha256(blob).hexdigest(),
-            "generatedOnDevice": False,
-            "schemaVersion": registry_version(),
-            "warnings": "\n".join(warnings) if warnings else None,
-            "generatedById": current_user.id,
-        })
+        await db.dwreportexport.create(
+            data={
+                "designWorkshopId": workshop_id,
+                "format": fmt,
+                "templateId": template_id,
+                "fileName": file_name,
+                "fileSizeBytes": len(blob),
+                "pageCount": page_count,
+                "checksumSha256": hashlib.sha256(blob).hexdigest(),
+                "generatedOnDevice": False,
+                "schemaVersion": registry_version(),
+                "warnings": "\n".join(warnings) if warnings else None,
+                "generatedById": current_user.id,
+            }
+        )
 
     return Response(content=blob, media_type=_MIME[fmt], headers=headers)
 
@@ -3848,9 +4354,13 @@ async def list_exports(
     )
     return [
         {
-            "id": r.id, "format": r.format, "templateId": r.templateId,
-            "fileName": r.fileName, "fileSizeBytes": r.fileSizeBytes,
-            "pageCount": r.pageCount, "checksumSha256": r.checksumSha256,
+            "id": r.id,
+            "format": r.format,
+            "templateId": r.templateId,
+            "fileName": r.fileName,
+            "fileSizeBytes": r.fileSizeBytes,
+            "pageCount": r.pageCount,
+            "checksumSha256": r.checksumSha256,
             "generatedOnDevice": r.generatedOnDevice,
             "generatedAt": r.generatedAt.isoformat() if r.generatedAt else None,
             "warnings": r.warnings,
@@ -3861,7 +4371,8 @@ async def list_exports(
 
 @router.post("/{workshop_id}/exports", status_code=status.HTTP_201_CREATED)
 async def record_device_export(
-    workshop_id: str, payload: ExportRecordIn,
+    workshop_id: str,
+    payload: ExportRecordIn,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Record a report the phone generated offline.
@@ -3873,22 +4384,25 @@ async def record_device_export(
     await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     fmt = payload.format.upper()
     if fmt not in _MIME:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="Unknown export format")
-    row = await db.dwreportexport.create(data={
-        "designWorkshopId": workshop_id,
-        "format": fmt,
-        "templateId": payload.templateId,
-        "fileName": payload.fileName,
-        "fileSizeBytes": payload.fileSizeBytes,
-        "pageCount": payload.pageCount,
-        "checksumSha256": payload.checksumSha256,
-        "generatedOnDevice": True,
-        "schemaVersion": registry_version(),
-        "warnings": payload.warnings,
-        "generatedById": current_user.id,
-        "generatedAt": _parse_datetime(payload.generatedAt) or datetime.now(UTC),
-    })
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown export format"
+        )
+    row = await db.dwreportexport.create(
+        data={
+            "designWorkshopId": workshop_id,
+            "format": fmt,
+            "templateId": payload.templateId,
+            "fileName": payload.fileName,
+            "fileSizeBytes": payload.fileSizeBytes,
+            "pageCount": payload.pageCount,
+            "checksumSha256": payload.checksumSha256,
+            "generatedOnDevice": True,
+            "schemaVersion": registry_version(),
+            "warnings": payload.warnings,
+            "generatedById": current_user.id,
+            "generatedAt": _parse_datetime(payload.generatedAt) or datetime.now(UTC),
+        }
+    )
     return {"id": row.id}
 
 
@@ -4039,7 +4553,8 @@ async def report_history(
         # percentage, it is a wrong one that looks exactly like a right one — and the client draws
         # nothing for a stage it has no score for, which is the correct outcome.
         "completeness": (
-            {} if entries_truncated
+            {}
+            if entries_truncated
             else workshop_completeness(
                 [r for r in entries if r.deletedAt is None],
                 # The same definition every other score on every other endpoint is computed
@@ -4245,9 +4760,7 @@ def _stages_payload(entries: list[Any]) -> dict[str, Any]:
     from app.services.entry_provenance import entry_provenance
     from app.services.stage_schema import Cardinality
 
-    entity_cardinality = {
-        e.key: e.cardinality for s in stages() for e in s.entities
-    }
+    entity_cardinality = {e.key: e.cardinality for s in stages() for e in s.entities}
     out: dict[str, Any] = {}
     for row in entries:
         bucket = out.setdefault(
@@ -4469,9 +4982,7 @@ async def _report_inputs(
     # Here rather than inside `apply_report_settings` because that function returns a template and
     # nothing else, and it is pinned by value against the Kotlin port; a warning is a sentence for a
     # designer, and this is the function that already assembles every other one.
-    warnings.extend(
-        inert_section_toggles(base_template, data.singleton("REPORT_GENERATION"))
-    )
+    warnings.extend(inert_section_toggles(base_template, data.singleton("REPORT_GENERATION")))
     return data, resolver, warnings, template_id
 
 
@@ -4510,7 +5021,9 @@ def _build_only(data: Any, template_id: str, resolver: Any, record: Any) -> tupl
         theme = replace(theme, heading_font=fonts[0], body_font=fonts[1])
 
     return build_report(
-        data, template_id, resolver.ref,
+        data,
+        template_id,
+        resolver.ref,
         meta=report_meta(record, template_id, settings),
         theme=theme,
         # The designer's own sections, read off the same data the download reads them off. A preview
@@ -4559,11 +5072,14 @@ def _content_disposition(file_name: str) -> str:
     every browser released this decade prefers. The designer gets the Odia name; the header
     stays latin-1.
     """
-    ascii_name = "".join(
-        c if (c.isascii() and (c.isalnum() or c in " -_.")) else "_" for c in file_name
-    ).strip("_ ") or "workshop-report"
+    ascii_name = (
+        "".join(
+            c if (c.isascii() and (c.isalnum() or c in " -_.")) else "_" for c in file_name
+        ).strip("_ ")
+        or "workshop-report"
+    )
     quoted = quote(file_name, safe="")
-    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quoted}'
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"
 
 
 #: How much of ``X-Report-Warnings`` a response may spend. A cap is not optional — every warning is
@@ -4608,6 +5124,7 @@ def _warnings_header(warnings: list[str]) -> str:
     every ASGI header value is encoded latin-1, so a warning naming a craft in Odia would raise
     inside Starlette after the handler returned and turn a generated report into a bare 500.
     """
+
     def one_piece(value: str) -> str:
         """One warning as exactly ONE piece of this header, whatever text it carries.
 

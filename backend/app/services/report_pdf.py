@@ -87,7 +87,7 @@ logger = logging.getLogger(__name__)
 
 PDF_MIME = "application/pdf"
 
-MM = 72.0 / 25.4   # PDF user space is points; every dimension in the model is relative or mm.
+MM = 72.0 / 25.4  # PDF user space is points; every dimension in the model is relative or mm.
 
 # Where to look, in preference order. Two things about this list are load-bearing:
 #
@@ -108,8 +108,14 @@ class _Face:
 
     __slots__ = ("bold", "bold_index", "family", "regular", "regular_index")
 
-    def __init__(self, family: str, regular: str, bold: str | None = None,
-                 regular_index: int = 0, bold_index: int = 0) -> None:
+    def __init__(
+        self,
+        family: str,
+        regular: str,
+        bold: str | None = None,
+        regular_index: int = 0,
+        bold_index: int = 0,
+    ) -> None:
         self.family = family
         self.regular = regular
         self.bold = bold or regular
@@ -142,15 +148,21 @@ def _candidates() -> list[_Face]:
         _Face("NirmalaUI", "C:/Windows/Fonts/Nirmala.ttc", "C:/Windows/Fonts/NirmalaB.ttf"),
         _Face("NirmalaUI", "C:/Windows/Fonts/Nirmala.ttf", "C:/Windows/Fonts/NirmalaB.ttf"),
         # Debian/Ubuntu containers.
-        _Face("NotoSans",
-              "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-              "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
-        _Face("DejaVuSans",
-              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-        _Face("LiberationSans",
-              "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-              "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+        _Face(
+            "NotoSans",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        ),
+        _Face(
+            "DejaVuSans",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ),
+        _Face(
+            "LiberationSans",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ),
     ]
     vera_regular, vera_bold = _vera_paths()
     faces.append(_Face("Vera", vera_regular, vera_bold))
@@ -201,12 +213,21 @@ def _script_candidates(script: Script) -> list[_Face]:
     if override and script is not Script.OTHER:
         # The escape hatch is addressed to the Indic problem — a deployment pointing it at a
         # Devanagari face must not thereby lose the tick as well.
-        faces.append(_Face("ReportCustomComplex", override,
-                           os.environ.get("REPORT_PDF_FONT_COMPLEX_BOLD") or override))
+        faces.append(
+            _Face(
+                "ReportCustomComplex",
+                override,
+                os.environ.get("REPORT_PDF_FONT_COMPLEX_BOLD") or override,
+            )
+        )
     if script is Script.OTHER:
-        faces.append(_Face("DejaVuSans",
-                           "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                           "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
+        faces.append(
+            _Face(
+                "DejaVuSans",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            )
+        )
         faces.append(_Face("DejaVuSansWin", "C:/Windows/Fonts/DejaVuSans.ttf"))
         faces.append(_Face("SegoeUISymbol", "C:/Windows/Fonts/seguisym.ttf"))
         return faces
@@ -215,13 +236,18 @@ def _script_candidates(script: Script) -> list[_Face]:
         faces.append(_Face("Mangal", "C:/Windows/Fonts/mangal.ttf"))
     stem = _NOTO_STEM.get(script)
     if stem:
-        faces.append(_Face(stem,
-                           f"/usr/share/fonts/truetype/noto/{stem}-Regular.ttf",
-                           f"/usr/share/fonts/truetype/noto/{stem}-Bold.ttf"))
+        faces.append(
+            _Face(
+                stem,
+                f"/usr/share/fonts/truetype/noto/{stem}-Regular.ttf",
+                f"/usr/share/fonts/truetype/noto/{stem}-Bold.ttf",
+            )
+        )
     if script is Script.DEVANAGARI:
         faces.append(
-            _Face("LohitDevanagari",
-                  "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf")
+            _Face(
+                "LohitDevanagari", "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf"
+            )
         )
     return faces
 
@@ -277,8 +303,7 @@ class FontSet:
     with no entry falls back to the Latin pair, which draws it as boxes — visible, and reported.
     """
 
-    def __init__(self, regular: str, bold: str,
-                 by_script: dict[Script, tuple[str, str]]) -> None:
+    def __init__(self, regular: str, bold: str, by_script: dict[Script, tuple[str, str]]) -> None:
         self.regular = regular
         self.bold = bold
         self.by_script = by_script
@@ -301,8 +326,10 @@ class FontSet:
         self.missing_glyphs: list[tuple[str, str]] = [
             (character, purpose)
             for character, script, purpose in _REQUIRED_GLYPHS
-            if any(_drawable(self.pick_for(script, bold=bold), character) is False
-                   for bold in (False, True))
+            if any(
+                _drawable(self.pick_for(script, bold=bold), character) is False
+                for bold in (False, True)
+            )
         ]
 
     def pick_for(self, script: Script, *, bold: bool) -> str:
@@ -374,8 +401,10 @@ def register_fonts(*, force: bool = False) -> FontSet:
 
     latin = next((r for r in (_bind(f) for f in _candidates()) if r), None)
     if latin is None:  # pragma: no cover - Vera ships with ReportLab, so this cannot happen
-        logger.error("report_pdf: no usable font at all, including ReportLab's own Vera; "
-                     "falling back to Helvetica, which cannot render the rupee sign.")
+        logger.error(
+            "report_pdf: no usable font at all, including ReportLab's own Vera; "
+            "falling back to Helvetica, which cannot render the rupee sign."
+        )
         latin = ("Helvetica", "Helvetica-Bold")
 
     # One binding attempt PER SCRIPT. The suffix keeps the registered names distinct while
@@ -412,11 +441,15 @@ def register_fonts(*, force: bool = False) -> FontSet:
             "export is unaffected.",
             ", ".join(f"{character} ({purpose})" for character, purpose in _CACHED.missing_glyphs),
         )
-    logger.info("report_pdf: fonts bound regular=%s scripts=%s missing=%s",
-                _CACHED.regular,
-                ",".join(f"{s.value}:{n[0]}" for s, n in sorted(
-                    by_script.items(), key=lambda kv: kv[0].value)) or "-",
-                "".join(c for c, _ in _CACHED.missing_glyphs) or "-")
+    logger.info(
+        "report_pdf: fonts bound regular=%s scripts=%s missing=%s",
+        _CACHED.regular,
+        ",".join(
+            f"{s.value}:{n[0]}" for s, n in sorted(by_script.items(), key=lambda kv: kv[0].value)
+        )
+        or "-",
+        "".join(c for c, _ in _CACHED.missing_glyphs) or "-",
+    )
     return _CACHED
 
 
@@ -452,9 +485,12 @@ class _Line:
 
     __slots__ = ("height", "pieces", "width")
 
-    def __init__(self,
-                 pieces: list[tuple[str, str, float, str | None, bool, bool, float, bool]],
-                 width: float, height: float) -> None:
+    def __init__(
+        self,
+        pieces: list[tuple[str, str, float, str | None, bool, bool, float, bool]],
+        width: float,
+        height: float,
+    ) -> None:
         # piece = (text, font, size, colour hex, underline, strikethrough, baseline rise, highlight)
         #
         # PDF HAS NO UNDERLINE ATTRIBUTE. Unlike a .docx run, where <w:u/> is a property Word
@@ -513,7 +549,7 @@ class PdfRenderer:
         self.margin = margin * MM
         self.text_w = self.page_w - 2 * self.margin
         self.top = self.page_h - self.margin
-        self.bottom = self.margin + 10 * MM   # room for the running foot
+        self.bottom = self.margin + 10 * MM  # room for the running foot
 
         self.base_size = self.theme.base_size_pt
         #: How many pages the LAST MEASURING PASS produced, which is what the running foot prints
@@ -545,8 +581,9 @@ class PdfRenderer:
         except Exception:  # noqa: BLE001 - an unmapped glyph must not abort the export
             return len(text) * size * 0.5
 
-    def _wrap(self, runs: tuple[Run, ...], width: float, size: float,
-              *, leading_factor: float = 1.32) -> list[_Line]:
+    def _wrap(
+        self, runs: tuple[Run, ...], width: float, size: float, *, leading_factor: float = 1.32
+    ) -> list[_Line]:
         """Greedy word wrap across a run sequence, preserving each run's font and colour.
 
         Wrapping across runs rather than per run is what keeps ``Ikat (ସମ୍ବଲପୁରୀ) weave`` from
@@ -573,8 +610,13 @@ class PdfRenderer:
             # ``PdfWriter.kt`` uses — a phone that raised "m²" by a different amount from the
             # server would print a visibly different line for the same document.
             run_size = size * VERTICAL_SCALE if (run.superscript or run.subscript) else size
-            rise = (size * SUPERSCRIPT_RISE if run.superscript
-                    else -size * SUBSCRIPT_DROP if run.subscript else 0.0)
+            rise = (
+                size * SUPERSCRIPT_RISE
+                if run.superscript
+                else -size * SUBSCRIPT_DROP
+                if run.subscript
+                else 0.0
+            )
             for para_index, segment in enumerate(run.text.split("\n")):
                 if para_index:
                     flush()
@@ -597,20 +639,50 @@ class PdfRenderer:
                         for ch in piece:
                             cw = self._string_width(ch, font, run_size)
                             if buf and buf_w + cw > width:
-                                cur.append((buf, font, run_size, run.color, run.underline,
-                                            run.strike, rise, run.highlight))
+                                cur.append(
+                                    (
+                                        buf,
+                                        font,
+                                        run_size,
+                                        run.color,
+                                        run.underline,
+                                        run.strike,
+                                        rise,
+                                        run.highlight,
+                                    )
+                                )
                                 cur_w += buf_w
                                 flush()
                                 buf, buf_w = "", 0.0
                             buf += ch
                             buf_w += cw
                         if buf:
-                            cur.append((buf, font, run_size, run.color, run.underline,
-                                        run.strike, rise, run.highlight))
+                            cur.append(
+                                (
+                                    buf,
+                                    font,
+                                    run_size,
+                                    run.color,
+                                    run.underline,
+                                    run.strike,
+                                    rise,
+                                    run.highlight,
+                                )
+                            )
                             cur_w += buf_w
                         continue
-                    cur.append((piece, font, run_size, run.color, run.underline, run.strike,
-                                rise, run.highlight))
+                    cur.append(
+                        (
+                            piece,
+                            font,
+                            run_size,
+                            run.color,
+                            run.underline,
+                            run.strike,
+                            rise,
+                            run.highlight,
+                        )
+                    )
                     cur_w += w
         flush()
         return lines or [_Line([], 0.0, leading)]
@@ -659,9 +731,14 @@ class PdfRenderer:
     def _fits(self, height: float) -> bool:
         return self.y - height >= self.bottom
 
-    def _cut_row(self, columns: list[list[_Line]], height: float, padding: float,
-                 *, force: bool = False,
-                 ) -> tuple[list[list[_Line]], float, list[list[_Line]] | None, float] | None:
+    def _cut_row(
+        self,
+        columns: list[list[_Line]],
+        height: float,
+        padding: float,
+        *,
+        force: bool = False,
+    ) -> tuple[list[list[_Line]], float, list[list[_Line]] | None, float] | None:
         """How much of a table row can be drawn here, and what is left over for the next page.
 
         ── A CELL TALLER THAN THE TEXT COLUMN USED TO BE DRAWN OFF THE BOTTOM OF THE SHEET ───
@@ -780,8 +857,12 @@ class PdfRenderer:
             self._note_clipped_furniture("header", len(lines) - len(kept))
             self.c.setStrokeColorRGB(*_rgb(t.rule))
             self.c.setLineWidth(0.5)
-            self.c.line(self.margin, self.page_h - self.margin + 2.6 * MM,
-                        self.page_w - self.margin, self.page_h - self.margin + 2.6 * MM)
+            self.c.line(
+                self.margin,
+                self.page_h - self.margin + 2.6 * MM,
+                self.page_w - self.margin,
+                self.page_h - self.margin + 2.6 * MM,
+            )
         foot_y = self.margin - 4 * MM
         self.c.setStrokeColorRGB(*_rgb(t.rule))
         self.c.setLineWidth(0.5)
@@ -793,8 +874,11 @@ class PdfRenderer:
         # that disagreement is the defect this renderer has shipped three times.
         page_label = ""
         if meta.show_page_numbers:
-            page_label = (f"Page {self._page} of {self._total_pages}"
-                          if self._total_pages else f"Page {self._page}")
+            page_label = (
+                f"Page {self._page} of {self._total_pages}"
+                if self._total_pages
+                else f"Page {self._page}"
+            )
         page_w = self._string_width(page_label, self.fonts.regular, 7.8) if page_label else 0.0
         # The foot shares its first line with the page number, so it gets the column MINUS that.
         foot_w = max(self.text_w - (page_w + 4 * MM if page_label else 0.0), 20 * MM)
@@ -822,13 +906,15 @@ class PdfRenderer:
         logger.warning(
             "report_pdf: the running %s does not fit in the page margin and %d line(s) of it "
             "are not printed. Shorten it in stage 20; the .docx export is unaffected.",
-            which, lines,
+            which,
+            lines,
         )
 
     # -- drawing helpers --------------------------------------------------------------
 
-    def _draw_line(self, line: _Line, x: float, width: float, align: Align,
-                   default_color: str, baseline: float) -> None:
+    def _draw_line(
+        self, line: _Line, x: float, width: float, align: Align, default_color: str, baseline: float
+    ) -> None:
         """Draw ONE laid-out line at an explicit baseline, leaving the cursor alone.
 
         Split out of :meth:`_draw_lines` so the running head and foot can be wrapped like any
@@ -856,8 +942,9 @@ class PdfRenderer:
                 # highlight runs through the spaces inside a highlighted phrase, and a
                 # gapped fill reads as several highlights rather than one.
                 self.c.setFillColorRGB(*_rgb(HIGHLIGHT_FILL))
-                self.c.rect(cursor, piece_baseline - size * 0.24, advance, size * 1.14,
-                            stroke=0, fill=1)
+                self.c.rect(
+                    cursor, piece_baseline - size * 0.24, advance, size * 1.14, stroke=0, fill=1
+                )
             self.c.setFont(font, size)
             self.c.setFillColorRGB(*_rgb(color or default_color))
             self.c.drawString(cursor, piece_baseline, text)
@@ -869,20 +956,28 @@ class PdfRenderer:
                 self.c.setStrokeColorRGB(*_rgb(color or default_color))
                 self.c.setLineWidth(max(0.4, size * 0.05))
                 if underline:
-                    self.c.line(cursor, piece_baseline - size * 0.13,
-                                cursor + advance, piece_baseline - size * 0.13)
+                    self.c.line(
+                        cursor,
+                        piece_baseline - size * 0.13,
+                        cursor + advance,
+                        piece_baseline - size * 0.13,
+                    )
                 if strike:
-                    self.c.line(cursor, piece_baseline + size * 0.26,
-                                cursor + advance, piece_baseline + size * 0.26)
+                    self.c.line(
+                        cursor,
+                        piece_baseline + size * 0.26,
+                        cursor + advance,
+                        piece_baseline + size * 0.26,
+                    )
             cursor += advance
 
-    def _draw_lines(self, lines: list[_Line], x: float, width: float, align: Align,
-                    default_color: str) -> None:
+    def _draw_lines(
+        self, lines: list[_Line], x: float, width: float, align: Align, default_color: str
+    ) -> None:
         for line in lines:
             self._ensure(line.height)
             if self._drawing:
-                self._draw_line(line, x, width, align, default_color,
-                                self.y - line.height * 0.78)
+                self._draw_line(line, x, width, align, default_color, self.y - line.height * 0.78)
             self.y -= line.height
 
     def _image_reader(self, ref: ImageRef) -> ImageReader | None:
@@ -900,8 +995,9 @@ class PdfRenderer:
         self._image_cache[ref.source] = reader
         return reader
 
-    def _image_box(self, ref: ImageRef, width: float,
-                   max_height: float) -> tuple[float, float] | None:
+    def _image_box(
+        self, ref: ImageRef, width: float, max_height: float
+    ) -> tuple[float, float] | None:
         """The box :meth:`_draw_image` will fit ``ref`` into, or ``None`` if it cannot draw it.
 
         Split out so a caller can RESERVE the picture's height before committing to anything —
@@ -926,8 +1022,9 @@ class PdfRenderer:
             w = h * aspect
         return w, h
 
-    def _draw_image(self, ref: ImageRef, x: float, width: float, max_height: float,
-                    align: Align) -> float:
+    def _draw_image(
+        self, ref: ImageRef, x: float, width: float, max_height: float, align: Align
+    ) -> float:
         """Draw ``ref`` fitted into the box and return the height it consumed."""
         box = self._image_box(ref, width, max_height)
         if box is None:
@@ -950,11 +1047,20 @@ class PdfRenderer:
                 self.c.translate(cx, cy)
                 self.c.rotate(-ref.rotation_deg)
                 dw, dh = (h, w) if ref.rotation_deg in (90, 270) else (w, h)
-                self.c.drawImage(reader, -dw / 2, -dh / 2, dw, dh,
-                                 preserveAspectRatio=True, anchor="c", mask="auto")
+                self.c.drawImage(
+                    reader,
+                    -dw / 2,
+                    -dh / 2,
+                    dw,
+                    dh,
+                    preserveAspectRatio=True,
+                    anchor="c",
+                    mask="auto",
+                )
             else:
-                self.c.drawImage(reader, dx, self.y - h, w, h,
-                                 preserveAspectRatio=True, anchor="c", mask="auto")
+                self.c.drawImage(
+                    reader, dx, self.y - h, w, h, preserveAspectRatio=True, anchor="c", mask="auto"
+                )
             self.c.restoreState()
         self.y -= h
         return h
@@ -986,10 +1092,10 @@ class PdfRenderer:
         title_lines = self._wrap(runs_of(block.title, bold=True), self.text_w, 26)
         subtitle_lines = (
             self._wrap(runs_of(block.subtitle, italic=True), self.text_w, 13)
-            if block.subtitle else []
+            if block.subtitle
+            else []
         )
-        footer_lines = [self._wrap(runs_of(line), self.text_w, 8.6)
-                        for line in block.footer_lines]
+        footer_lines = [self._wrap(runs_of(line), self.text_w, 8.6) for line in block.footer_lines]
 
         def total(groups: list[list[_Line]]) -> float:
             return sum(line.height for group in groups for line in group)
@@ -998,17 +1104,21 @@ class PdfRenderer:
         if block.info_rows:
             label_w = self.text_w * 0.32
             for label, value in block.info_rows:
-                lab = self._wrap(runs_of(label, bold=True), label_w - 3 * MM,
-                                 self.base_size - 0.6)
+                lab = self._wrap(runs_of(label, bold=True), label_w - 3 * MM, self.base_size - 0.6)
                 val = self._wrap(runs_of(value), self.text_w - label_w - 3 * MM, self.base_size)
-                info_h += max(sum(ln.height for ln in lab),
-                              sum(ln.height for ln in val)) + 1.8 * MM
+                info_h += max(sum(ln.height for ln in lab), sum(ln.height for ln in val)) + 1.8 * MM
             info_h += 2.4 * MM
 
         gaps = (18 + 8 + 14 + 3 + 8 + 6) * MM
-        fixed = (logo_h + total(org_lines) + sum(line.height for line in title_lines)
-                 + sum(line.height for line in subtitle_lines) + info_h
-                 + total(footer_lines) + gaps)
+        fixed = (
+            logo_h
+            + total(org_lines)
+            + sum(line.height for line in title_lines)
+            + sum(line.height for line in subtitle_lines)
+            + info_h
+            + total(footer_lines)
+            + gaps
+        )
         available = self.top - self.bottom
         hero_h = max(0.0, min(62 * MM, available - fixed - 8 * MM)) if block.hero_image else 0.0
 
@@ -1043,8 +1153,13 @@ class PdfRenderer:
     def _block_toc(self, block: TocBlock) -> None:
         t = self.theme
         x = self.margin
-        self._draw_lines(self._wrap(runs_of(block.title, bold=True), self.text_w, 16),
-                         x, self.text_w, Align.LEFT, t.accent)
+        self._draw_lines(
+            self._wrap(runs_of(block.title, bold=True), self.text_w, 16),
+            x,
+            self.text_w,
+            Align.LEFT,
+            t.accent,
+        )
         self.y -= 4 * MM
         # ── A CONTENTS ENTRY IS WRAPPED LIKE EVERY OTHER PIECE OF TEXT IN THIS FILE ───────────
         #
@@ -1092,8 +1207,7 @@ class PdfRenderer:
             color = t.ink if level == 1 else t.muted
             # 1.6 is the entry leading this block has always used; keeping it as the wrap's
             # leading factor is what makes a one-line entry occupy exactly what it used to.
-            lines = self._wrap(runs_of(label, bold=(level == 1)), avail, size,
-                               leading_factor=1.6)
+            lines = self._wrap(runs_of(label, bold=(level == 1)), avail, size, leading_factor=1.6)
             self._draw_lines(lines, x + indent, avail, Align.LEFT, color)
             if page_label and self._drawing:
                 last = lines[-1]
@@ -1119,9 +1233,9 @@ class PdfRenderer:
 
     def _block_heading(self, block: HeadingBlock) -> None:
         t = self.theme
-        size, color = (
-            (17.0, t.accent), (13.5, t.accent), (11.5, t.accent_soft), (10.5, t.muted)
-        )[block.level - 1]
+        size, color = ((17.0, t.accent), (13.5, t.accent), (11.5, t.accent_soft), (10.5, t.muted))[
+            block.level - 1
+        ]
         label = f"{block.number}. " if block.number else ""
         runs = runs_of(label + runs_text(block.runs), bold=True)
         lines = self._wrap(runs, self.text_w, size)
@@ -1143,8 +1257,7 @@ class PdfRenderer:
         # of keepNext: a heading with nothing under it is still an orphan even if it fits.
         lead = (4.5 if block.level > 1 else 6.5) * MM
         trail = (1.2 * MM if block.level == 1 else 0.0) + 2.4 * MM
-        needed = (lead + sum(line.height for line in lines) + trail
-                  + self.base_size * 1.32)
+        needed = lead + sum(line.height for line in lines) + trail + self.base_size * 1.32
         self._ensure(needed)
         self.y -= lead
         if not self._drawing:
@@ -1154,8 +1267,11 @@ class PdfRenderer:
             )
         elif block.bookmark:
             self.c.bookmarkPage(block.bookmark)
-            self.c.addOutlineEntry(f"{block.number} {runs_text(block.runs)}".strip(),
-                                   block.bookmark, level=block.level - 1)
+            self.c.addOutlineEntry(
+                f"{block.number} {runs_text(block.runs)}".strip(),
+                block.bookmark,
+                level=block.level - 1,
+            )
         self._draw_lines(lines, self.margin, self.text_w, Align.LEFT, color)
         if block.level == 1:
             # ── THE SAME DEFECT AS THE RUNNING-HEAD CLEARANCE IN `_new_page`, SECOND INSTANCE ────
@@ -1239,18 +1355,22 @@ class PdfRenderer:
             self.y -= 1.1 * MM
         self.y -= 1.6 * MM
 
-    def _simple_grid(self, pairs: list[tuple[str, tuple[Run, ...]]], *,
-                     label_pct: float = 30.0) -> None:
+    def _simple_grid(
+        self, pairs: list[tuple[str, tuple[Run, ...]]], *, label_pct: float = 30.0
+    ) -> None:
         """The borderless label/value grid shared by the cover and KeyValueBlock."""
         t = self.theme
         label_w = self.text_w * label_pct / 100
         value_w = self.text_w - label_w
         for i, (label, value) in enumerate(pairs):
-            lab_lines = self._wrap(runs_of(label, bold=True), label_w - 3 * MM,
-                                   self.base_size - 0.6)
+            lab_lines = self._wrap(
+                runs_of(label, bold=True), label_w - 3 * MM, self.base_size - 0.6
+            )
             val_lines = self._wrap(value, value_w - 3 * MM, self.base_size)
-            height = max(sum(line.height for line in lab_lines),
-                         sum(line.height for line in val_lines)) + 1.8 * MM
+            height = (
+                max(sum(line.height for line in lab_lines), sum(line.height for line in val_lines))
+                + 1.8 * MM
+            )
             # A value taller than the page is cut across pages instead of being drawn off the
             # bottom of this one; see `_cut_row`, which is also what keeps the COVER's info grid
             # unbroken (it runs inside `_locked`, and a cut there is refused).
@@ -1268,15 +1388,18 @@ class PdfRenderer:
                 row_top = self.y
                 if self._drawing and i % 2 == 1:
                     self.c.setFillColorRGB(*_rgb(t.zebra_fill))
-                    self.c.rect(self.margin, row_top - head_h, self.text_w, head_h,
-                                stroke=0, fill=1)
+                    self.c.rect(
+                        self.margin, row_top - head_h, self.text_w, head_h, stroke=0, fill=1
+                    )
                 with self._locked():
                     self.y = row_top - 0.9 * MM
-                    self._draw_lines(head[0], self.margin + 1.5 * MM, label_w - 3 * MM,
-                                     Align.LEFT, t.muted)
+                    self._draw_lines(
+                        head[0], self.margin + 1.5 * MM, label_w - 3 * MM, Align.LEFT, t.muted
+                    )
                     self.y = row_top - 0.9 * MM
-                    self._draw_lines(head[1], self.margin + label_w, value_w - 3 * MM,
-                                     Align.LEFT, t.ink)
+                    self._draw_lines(
+                        head[1], self.margin + label_w, value_w - 3 * MM, Align.LEFT, t.ink
+                    )
                 self.y = row_top - head_h
                 if tail is None:
                     break
@@ -1295,8 +1418,9 @@ class PdfRenderer:
         header_size = self.base_size - 1.2
         body_size = self.base_size - 0.8
 
-        def row_lines(cells: tuple[tuple[Run, ...], ...], size: float,
-                      bold: bool) -> tuple[list[list[_Line]], float]:
+        def row_lines(
+            cells: tuple[tuple[Run, ...], ...], size: float, bold: bool
+        ) -> tuple[list[list[_Line]], float]:
             laid: list[list[_Line]] = []
             for j, w in enumerate(widths):
                 value = cells[j] if j < len(cells) else ()
@@ -1315,9 +1439,14 @@ class PdfRenderer:
             height = max((sum(line.height for line in col) for col in laid), default=size)
             return laid, height + 1.8 * MM
 
-        def draw_row(laid: list[list[_Line]], height: float, fill: str | None,
-                     text_color: str, top_rule: bool = False,
-                     bottom_rule: bool = True) -> None:
+        def draw_row(
+            laid: list[list[_Line]],
+            height: float,
+            fill: str | None,
+            text_color: str,
+            top_rule: bool = False,
+            bottom_rule: bool = True,
+        ) -> None:
             """Draw one row at the cursor. The caller guarantees it fits; this never breaks.
 
             ``bottom_rule`` is False for every fragment of a row that `_cut_row` split across a
@@ -1328,13 +1457,11 @@ class PdfRenderer:
             if self._drawing:
                 if fill:
                     self.c.setFillColorRGB(*_rgb(fill))
-                    self.c.rect(self.margin, top - height, self.text_w, height,
-                                stroke=0, fill=1)
+                    self.c.rect(self.margin, top - height, self.text_w, height, stroke=0, fill=1)
                 if bottom_rule:
                     self.c.setStrokeColorRGB(*_rgb(t.rule))
                     self.c.setLineWidth(0.4)
-                    self.c.line(self.margin, top - height,
-                                self.margin + self.text_w, top - height)
+                    self.c.line(self.margin, top - height, self.margin + self.text_w, top - height)
                 if top_rule:
                     self.c.setStrokeColorRGB(*_rgb(t.accent))
                     self.c.setLineWidth(0.9)
@@ -1350,14 +1477,21 @@ class PdfRenderer:
                 for j, col in enumerate(block.columns):
                     align = Align.RIGHT if col.numeric else col.align
                     self.y = top - 0.9 * MM
-                    self._draw_lines(laid[j], cursor_x + pad, widths[j] - 2 * pad, align,
-                                     text_color)
+                    self._draw_lines(
+                        laid[j], cursor_x + pad, widths[j] - 2 * pad, align, text_color
+                    )
                     cursor_x += widths[j]
             self.y = top - height
 
-        def place_row(laid: list[list[_Line]], height: float, fill: str | None,
-                      text_color: str, *, top_rule: bool = False,
-                      repeat_header: bool = True) -> None:
+        def place_row(
+            laid: list[list[_Line]],
+            height: float,
+            fill: str | None,
+            text_color: str,
+            *,
+            top_rule: bool = False,
+            repeat_header: bool = True,
+        ) -> None:
             """Put one row on the page, breaking it across pages when it is taller than one.
 
             THE BREAK IS DECIDED BEFORE ANYTHING IS DRAWN, so a row is never split by accident
@@ -1385,8 +1519,14 @@ class PdfRenderer:
                     continue
                 turned = False
                 head, head_h, tail, tail_h = cut
-                draw_row(head, head_h, fill, text_color,
-                         top_rule=top_rule and first, bottom_rule=tail is None)
+                draw_row(
+                    head,
+                    head_h,
+                    fill,
+                    text_color,
+                    top_rule=top_rule and first,
+                    bottom_rule=tail is None,
+                )
                 first = False
                 if tail is None:
                     return
@@ -1401,8 +1541,13 @@ class PdfRenderer:
             if has_header:
                 # NEVER with `repeat_header`: a header taller than a page would otherwise place
                 # itself above each of its own fragments, for ever.
-                place_row(header_laid, header_h, t.table_header_fill, t.table_header_text,
-                          repeat_header=False)
+                place_row(
+                    header_laid,
+                    header_h,
+                    t.table_header_fill,
+                    t.table_header_text,
+                    repeat_header=False,
+                )
 
         # Reserve the header plus the first body row together: a header stranded at the foot of
         # a page reads as an empty table.
@@ -1420,8 +1565,7 @@ class PdfRenderer:
 
         for i, row in enumerate(block.rows):
             laid, height = row_lines(row, body_size, False)
-            place_row(laid, height,
-                      t.zebra_fill if (block.zebra and i % 2 == 1) else None, t.ink)
+            place_row(laid, height, t.zebra_fill if (block.zebra and i % 2 == 1) else None, t.ink)
 
         if block.total_row:
             laid, height = row_lines(block.total_row, body_size, True)
@@ -1433,8 +1577,9 @@ class PdfRenderer:
 
     def _block_image(self, block: ImageBlock) -> None:
         width = self.text_w * max(5.0, min(100.0, block.width_pct)) / 100
-        drawn = self._draw_image(block.image, self.margin, width,
-                                 (self.top - self.bottom) * 0.62, block.align)
+        drawn = self._draw_image(
+            block.image, self.margin, width, (self.top - self.bottom) * 0.62, block.align
+        )
         if drawn:
             self._caption(block.caption, self.margin, self.text_w)
             self.y -= 1.6 * MM
@@ -1451,7 +1596,7 @@ class PdfRenderer:
 
         max_image_h = (self.top - self.bottom) * 0.30
         for start in range(0, len(block.images), columns):
-            chunk = list(block.images[start:start + columns])
+            chunk = list(block.images[start : start + columns])
             # MEASURED ONCE PER CELL, and the caption is now wrapped in the same italic it is
             # drawn in. The old code measured with an upright run and drew an italic one, which
             # only agreed because ReportLab has no italic face bound; and the split below needs
@@ -1465,8 +1610,11 @@ class PdfRenderer:
                     cells.append((ref, 0.0, []))
                     heights.append(0.0)
                     continue
-                lines = (self._wrap(runs_of(caption, italic=True), cell_w - 4 * MM, cap_size)
-                         if caption else [])
+                lines = (
+                    self._wrap(runs_of(caption, italic=True), cell_w - 4 * MM, cap_size)
+                    if caption
+                    else []
+                )
                 cells.append((ref, box[1], lines))
                 heights.append(box[1] + sum(line.height for line in lines) + 3 * MM)
             row_h = max(heights) if heights else 0.0
@@ -1484,18 +1632,21 @@ class PdfRenderer:
                 for i, (ref, _image_h, lines) in enumerate(cells):
                     x = self.margin + i * cell_w
                     self.y = row_top
-                    drawn = self._draw_image(ref, x + 2 * MM, cell_w - 4 * MM,
-                                             max_image_h, Align.CENTER)
+                    drawn = self._draw_image(
+                        ref, x + 2 * MM, cell_w - 4 * MM, max_image_h, Align.CENTER
+                    )
                     if drawn and lines:
                         self.y -= 1.2 * MM
-                        self._draw_lines(lines, x + 2 * MM, cell_w - 4 * MM,
-                                         Align.CENTER, self.theme.muted)
+                        self._draw_lines(
+                            lines, x + 2 * MM, cell_w - 4 * MM, Align.CENTER, self.theme.muted
+                        )
             self.y = row_top - row_h
         self.y -= 1.6 * MM
         self._caption(block.caption, self.margin, self.text_w)
 
-    def _place_tall_grid_row(self, cells: list[tuple[ImageRef, float, list[_Line]]],
-                             cell_w: float, max_image_h: float) -> None:
+    def _place_tall_grid_row(
+        self, cells: list[tuple[ImageRef, float, list[_Line]]], cell_w: float, max_image_h: float
+    ) -> None:
         """Draw a grid row whose captions run past the page, without losing a word of them.
 
         A photograph is capped at 0.30 of the text column, so the PICTURES always fit and it is a
@@ -1540,12 +1691,14 @@ class PdfRenderer:
                 for i, (ref, _h, _lines) in enumerate(cells):
                     x = self.margin + i * cell_w
                     self.y = row_top
-                    if first and self._draw_image(ref, x + 2 * MM, cell_w - 4 * MM,
-                                                  max_image_h, Align.CENTER):
+                    if first and self._draw_image(
+                        ref, x + 2 * MM, cell_w - 4 * MM, max_image_h, Align.CENTER
+                    ):
                         self.y -= gap
                     if taken[i]:
-                        self._draw_lines(taken[i], x + 2 * MM, cell_w - 4 * MM,
-                                         Align.CENTER, self.theme.muted)
+                        self._draw_lines(
+                            taken[i], x + 2 * MM, cell_w - 4 * MM, Align.CENTER, self.theme.muted
+                        )
             self.y = row_top - part_h
             first = False
             if not any(remaining):
@@ -1627,8 +1780,9 @@ class PdfRenderer:
         max_h = (self.top - self.bottom) * 0.58
         figure_w = self._figure_width(block.width_pct)
         box = self._image_box(ref, figure_w, max_h)
-        title_lines = (self._wrap(runs_of(title, bold=True), self.text_w, self.base_size)
-                       if title else [])
+        title_lines = (
+            self._wrap(runs_of(title, bold=True), self.text_w, self.base_size) if title else []
+        )
         reserve = sum(line.height for line in title_lines) + (1.2 * MM if title_lines else 0.0)
         box_h = box[1] if box else 0.0
         # The text column of a continuation page: `_new_page` drops the cursor 6 mm below the
@@ -1636,16 +1790,18 @@ class PdfRenderer:
         column_h = self.top - 6 * MM - self.bottom
         if reserve + box_h > column_h:
             if title_lines:
-                self._draw_lines(title_lines, self.margin, self.text_w, Align.LEFT,
-                                 self.theme.accent)
+                self._draw_lines(
+                    title_lines, self.margin, self.text_w, Align.LEFT, self.theme.accent
+                )
                 self.y -= 1.2 * MM
             drawn = self._draw_image(ref, self.margin, figure_w, max_h, block.align)
         else:
             self._ensure(reserve + box_h)
             with self._locked():
                 if title_lines:
-                    self._draw_lines(title_lines, self.margin, self.text_w, Align.LEFT,
-                                     self.theme.accent)
+                    self._draw_lines(
+                        title_lines, self.margin, self.text_w, Align.LEFT, self.theme.accent
+                    )
                     self.y -= 1.2 * MM
                 drawn = self._draw_image(ref, self.margin, figure_w, max_h, block.align)
         if drawn:
@@ -1688,15 +1844,23 @@ class PdfRenderer:
     def _block_callout(self, block: CalloutBlock) -> None:
         t = self.theme
         fill = {"INFO": "EAF1FB", "WARNING": "FDF3E2", "SUCCESS": "EAF6EE"}.get(
-            block.kind.upper(), "EAF1FB")
+            block.kind.upper(), "EAF1FB"
+        )
         edge = {"INFO": t.accent_soft, "WARNING": "B7791F", "SUCCESS": "2F855A"}.get(
-            block.kind.upper(), t.accent_soft)
+            block.kind.upper(), t.accent_soft
+        )
         inner_w = self.text_w - 8 * MM
-        title_lines = self._wrap(runs_of(block.title, bold=True), inner_w, self.base_size) \
-            if block.title else []
+        title_lines = (
+            self._wrap(runs_of(block.title, bold=True), inner_w, self.base_size)
+            if block.title
+            else []
+        )
         body_lines = self._wrap(block.runs, inner_w, self.base_size - 0.6)
-        height = (sum(line.height for line in title_lines)
-                  + sum(line.height for line in body_lines) + 6 * MM)
+        height = (
+            sum(line.height for line in title_lines)
+            + sum(line.height for line in body_lines)
+            + 6 * MM
+        )
         # A callout longer than a page is CUT and continued overleaf rather than drawn past the
         # bottom of its own box: the same defect `_cut_row` was written for, in the third of this
         # file's locked regions. Measured before the fix, a page-and-a-bit callout put 72 pieces
@@ -1728,8 +1892,9 @@ class PdfRenderer:
                 head_title = part[:titles_left]
                 if head_title:
                     self._draw_lines(head_title, self.margin + 5 * MM, inner_w, Align.LEFT, edge)
-                self._draw_lines(part[len(head_title):], self.margin + 5 * MM, inner_w,
-                                 Align.LEFT, t.ink)
+                self._draw_lines(
+                    part[len(head_title) :], self.margin + 5 * MM, inner_w, Align.LEFT, t.ink
+                )
             titles_left = max(0, titles_left - len(part))
             self.y = top - head_h
             if tail is None:
@@ -1754,10 +1919,20 @@ class PdfRenderer:
                     self.c.setLineWidth(0.6)
                     self.c.line(x + 3 * MM, top, x + cell_w - 3 * MM, top)
                 self.y = top - 1.5 * MM
-                self._draw_lines(self._wrap(runs_of(name, bold=True), cell_w - 6 * MM, 9.5),
-                                 x + 3 * MM, cell_w - 6 * MM, Align.CENTER, t.ink)
-                self._draw_lines(self._wrap(runs_of(designation), cell_w - 6 * MM, 8),
-                                 x + 3 * MM, cell_w - 6 * MM, Align.CENTER, t.muted)
+                self._draw_lines(
+                    self._wrap(runs_of(name, bold=True), cell_w - 6 * MM, 9.5),
+                    x + 3 * MM,
+                    cell_w - 6 * MM,
+                    Align.CENTER,
+                    t.ink,
+                )
+                self._draw_lines(
+                    self._wrap(runs_of(designation), cell_w - 6 * MM, 8),
+                    x + 3 * MM,
+                    cell_w - 6 * MM,
+                    Align.CENTER,
+                    t.muted,
+                )
         self.y = top - 14 * MM
 
     # -- the pass ---------------------------------------------------------------------
@@ -1949,7 +2124,9 @@ class PdfRenderer:
                 "%d. The contents page numbers and the 'of %d' in the running foot describe a "
                 "layout that was not drawn; something in the layout is applied on one pass and "
                 "not the other.",
-                self._page, self._total_pages, self._total_pages,
+                self._page,
+                self._total_pages,
+                self._total_pages,
             )
         return buffer.getvalue()
 

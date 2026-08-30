@@ -307,11 +307,15 @@ MAX_ANCHOR_ROWS = 5000
 #: the place that had just been rejected. An anchor is a MEAN, which is what makes this quiet: the
 #: district still has a pin, it is simply in the wrong place by an amount nobody can see.
 #:
-#: THE SIX BRANCHES ARE THE SIX BACK-RELATIONS ``Location`` DECLARES, and that is the whole rule:
-#: referenced by anything, from any model, counts. ``tests/test_geography_anchor_scope.py`` reads the
-#: relation list out of ``prisma/schema.prisma`` and fails if a seventh model starts pointing here
-#: without being added — a missing branch would silently stop a whole record type's pins from voting,
-#: which is a worse failure than the one this fixes.
+#: THE SEVEN BRANCHES ARE THE SEVEN BACK-RELATIONS ``Location`` DECLARES, and that is the whole
+#: rule: referenced by anything, from any model, counts. ``tests/test_geography_anchor_scope.py``
+#: reads the relation list out of ``prisma/schema.prisma`` and fails if an eighth model starts
+#: pointing here without being added — a missing branch would silently stop a whole record type's
+#: pins from voting, which is a worse failure than the one this fixes. ``designerProfiles`` joined
+#: the six original record types when the designer's own profile grew a stated address
+#: (``DesignerProfile.locationId``) — a designer's district is exactly as real a pin as an
+#: artisan's, and withholding it from the anchor mean would have been an arbitrary exception with
+#: no argument behind it.
 #:
 #: This narrows what LEARNS an anchor. It does not narrow what is drawn on the map: a pin is drawn
 #: from the record that carries it, and a record's own location is referenced by definition.
@@ -329,6 +333,7 @@ REFERENCED_BY_A_RECORD: dict[str, list[dict[str, dict[str, dict]]]] = {
         {"tools": {"some": {}}},
         {"media": {"some": {}}},
         {"questionnaireInterviews": {"some": {}}},
+        {"designerProfiles": {"some": {}}},
     ]
 }
 
@@ -463,9 +468,7 @@ def stated_point(
     measurement.
     """
     state_name = canonical_state(state)
-    district_name = (
-        canonical_district(state_name, district) if state_name and district else None
-    )
+    district_name = canonical_district(state_name, district) if state_name and district else None
     pin = (
         (float(subject_latitude), float(subject_longitude))
         if subject_latitude is not None and subject_longitude is not None
@@ -619,7 +622,13 @@ def address_completeness(rows: Iterable[Any]) -> dict[str, int]:
     the district, or drop a pin. Without this the reader can see a coarse pin and not know whether it
     is the map's fault or the record's.
     """
-    counts = {"locations": 0, "withState": 0, "withDistrict": 0, "withPincode": 0, "withSubjectPin": 0}
+    counts = {
+        "locations": 0,
+        "withState": 0,
+        "withDistrict": 0,
+        "withPincode": 0,
+        "withSubjectPin": 0,
+    }
     for row in rows:
         counts["locations"] += 1
         state = canonical_state(getattr(row, "state", None))
@@ -629,7 +638,10 @@ def address_completeness(rows: Iterable[Any]) -> dict[str, int]:
                 counts["withDistrict"] += 1
         if (getattr(row, "pincode", None) or "").strip():
             counts["withPincode"] += 1
-        if getattr(row, "subjectLatitude", None) is not None and getattr(row, "subjectLongitude", None) is not None:
+        if (
+            getattr(row, "subjectLatitude", None) is not None
+            and getattr(row, "subjectLongitude", None) is not None
+        ):
             counts["withSubjectPin"] += 1
     return counts
 

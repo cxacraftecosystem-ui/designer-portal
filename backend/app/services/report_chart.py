@@ -253,8 +253,9 @@ def chart_pixel_box(block: ChartBlock, width_px: int, rows: int) -> tuple[int, i
     return width, height
 
 
-def render_chart_png(block: ChartBlock, theme: ReportTheme,
-                     width_px: int) -> tuple[bytes, int, int]:
+def render_chart_png(
+    block: ChartBlock, theme: ReportTheme, width_px: int
+) -> tuple[bytes, int, int]:
     """Rasterise ``block`` and return ``(png_bytes, width_px, height_px)``.
 
     Never returns ``None`` and never raises on the data: unlike the map this needs no asset on
@@ -283,8 +284,9 @@ def render_chart_png(block: ChartBlock, theme: ReportTheme,
         # fault, while an empty one that says why is a statement about the record.
         canvas.rect(0, 0, width, height, mix(paper, rule, 0.18))
         message = ellipsise("No values recorded.", int(width * 0.9), glyph)
-        canvas.draw_text_centred(width // 2, (height - text_height(glyph)) // 2,
-                                 message, muted, glyph)
+        canvas.draw_text_centred(
+            width // 2, (height - text_height(glyph)) // 2, message, muted, glyph
+        )
         return canvas.to_png(), width, height
 
     if block.kind.is_circular:
@@ -297,10 +299,15 @@ def render_chart_png(block: ChartBlock, theme: ReportTheme,
         _draw_cartesian(canvas, block, series, theme, scale, glyph, small, line=False)
 
     for index, note in enumerate(notes):
-        canvas.draw_text(int(4 * scale), int(4 * scale + index * (GLYPH_H + 2) * small),
-                         ellipsise(note, int(width - 8 * scale), small), muted, small)
+        canvas.draw_text(
+            int(4 * scale),
+            int(4 * scale + index * (GLYPH_H + 2) * small),
+            ellipsise(note, int(width - 8 * scale), small),
+            muted,
+            small,
+        )
 
-    del ink, accent   # kept above for symmetry with the helpers; each of them re-reads the theme
+    del ink, accent  # kept above for symmetry with the helpers; each of them re-reads the theme
     return canvas.to_png(), width, height
 
 
@@ -325,9 +332,17 @@ def _axis_bounds(values: list[float]) -> tuple[float, float, float]:
     return low, high, step
 
 
-def _draw_cartesian(canvas: Raster, block: ChartBlock, series: list[tuple[str, float]],
-                    theme: ReportTheme, scale: float, glyph: int, small: int,
-                    *, line: bool) -> None:
+def _draw_cartesian(
+    canvas: Raster,
+    block: ChartBlock,
+    series: list[tuple[str, float]],
+    theme: ReportTheme,
+    scale: float,
+    glyph: int,
+    small: int,
+    *,
+    line: bool,
+) -> None:
     """Vertical bars or a line, sharing one axis, one grid and one category strip."""
     paper = (255, 255, 255)
     ink = rgb_of(theme.ink, (27, 27, 27))
@@ -338,7 +353,7 @@ def _draw_cartesian(canvas: Raster, block: ChartBlock, series: list[tuple[str, f
 
     values = [v for _label, v in series]
     low, high, step = _axis_bounds(values)
-    span = high - low   # positive by construction of _axis_bounds
+    span = high - low  # positive by construction of _axis_bounds
 
     axis_labels = []
     tick = low
@@ -359,14 +374,21 @@ def _draw_cartesian(canvas: Raster, block: ChartBlock, series: list[tuple[str, f
 
     for value, text in axis_labels:
         y = y_of(value)
-        canvas.rect(left, y, right - left, max(1.0, 0.8 * scale), rule,
-                    1.0 if abs(value) < 1e-9 else 0.5)
-        canvas.draw_text_right(left - int(5 * scale), int(y - text_height(small) / 2),
-                               text, muted, small)
+        canvas.rect(
+            left, y, right - left, max(1.0, 0.8 * scale), rule, 1.0 if abs(value) < 1e-9 else 0.5
+        )
+        canvas.draw_text_right(
+            left - int(5 * scale), int(y - text_height(small) / 2), text, muted, small
+        )
 
     if block.unit:
-        canvas.draw_text(int(4 * scale), int(2 * scale),
-                         ellipsise(block.unit, canvas.width // 3, small), muted, small)
+        canvas.draw_text(
+            int(4 * scale),
+            int(2 * scale),
+            ellipsise(block.unit, canvas.width // 3, small),
+            muted,
+            small,
+        )
 
     count = len(series)
     slot = (right - left) / count
@@ -382,8 +404,9 @@ def _draw_cartesian(canvas: Raster, block: ChartBlock, series: list[tuple[str, f
             canvas.disc(x, y, max(2.0, 4.0 * scale), paper)
             canvas.disc(x, y, max(1.4, 2.8 * scale), accent)
             text = format_number(series[index][1])
-            canvas.draw_text_centred(int(x), int(y - text_height(small) - 6 * scale),
-                                     text, ink, small)
+            canvas.draw_text_centred(
+                int(x), int(y - text_height(small) - 6 * scale), text, ink, small
+            )
     else:
         bar_w = slot * 0.62
         for index, (_label, value) in enumerate(series):
@@ -396,15 +419,24 @@ def _draw_cartesian(canvas: Raster, block: ChartBlock, series: list[tuple[str, f
                 top_y, bar_h = zero_y - max(1.0, scale), max(1.0, scale)
             canvas.rect(x, top_y, bar_w, bar_h, soft if value >= 0 else mix(soft, ink, 0.35))
             text = format_number(value)
-            label_y = top_y - text_height(small) - 3 * scale if value >= 0 \
-                else top_y + bar_h + 3 * scale
+            label_y = (
+                top_y - text_height(small) - 3 * scale if value >= 0 else top_y + bar_h + 3 * scale
+            )
             canvas.draw_text_centred(int(x + bar_w / 2), int(label_y), text, ink, small)
 
     _draw_category_strip(canvas, series, left, right, bottom, scale, small, muted)
 
 
-def _draw_category_strip(canvas: Raster, series: list[tuple[str, float]], left: int, right: int,
-                         bottom: int, scale: float, small: int, muted: RGB) -> None:
+def _draw_category_strip(
+    canvas: Raster,
+    series: list[tuple[str, float]],
+    left: int,
+    right: int,
+    bottom: int,
+    scale: float,
+    small: int,
+    muted: RGB,
+) -> None:
     """The category names under a cartesian plot, each ellipsised into its own slot.
 
     Ellipsising rather than rotating: there is no glyph rotation in the raster, and a rotated
@@ -419,8 +451,15 @@ def _draw_category_strip(canvas: Raster, series: list[tuple[str, float]], left: 
             canvas.draw_text_centred(int(left + slot * (index + 0.5)), y, text, muted, small)
 
 
-def _draw_horizontal_bars(canvas: Raster, block: ChartBlock, series: list[tuple[str, float]],
-                          theme: ReportTheme, scale: float, glyph: int, small: int) -> None:
+def _draw_horizontal_bars(
+    canvas: Raster,
+    block: ChartBlock,
+    series: list[tuple[str, float]],
+    theme: ReportTheme,
+    scale: float,
+    glyph: int,
+    small: int,
+) -> None:
     """Bars running right, with the category name in a left-hand gutter.
 
     The form to use whenever the categories are words rather than a sequence — cost heads, price
@@ -432,10 +471,17 @@ def _draw_horizontal_bars(canvas: Raster, block: ChartBlock, series: list[tuple[
     rule = rgb_of(theme.rule, (184, 196, 217))
     soft = rgb_of(theme.accent_soft, (47, 84, 150))
 
-    gutter = min(int(canvas.width * 0.34), max(
-        [text_width(ellipsise(label, int(canvas.width * 0.34), small), small)
-         for label, _v in series] + [int(40 * scale)]
-    ) + int(8 * scale))
+    gutter = min(
+        int(canvas.width * 0.34),
+        max(
+            [
+                text_width(ellipsise(label, int(canvas.width * 0.34), small), small)
+                for label, _v in series
+            ]
+            + [int(40 * scale)]
+        )
+        + int(8 * scale),
+    )
     left = gutter
     right = canvas.width - int(10 * scale)
     # The unit sits above the rows rather than beside them, so the first row has to start below
@@ -457,23 +503,46 @@ def _draw_horizontal_bars(canvas: Raster, block: ChartBlock, series: list[tuple[
     for index, (label, value) in enumerate(series):
         centre = top + row * (index + 0.5)
         y = centre - bar_h / 2
-        canvas.rect(left, centre - max(0.5, 0.4 * scale), right - left,
-                    max(1.0, 0.8 * scale), rule, 0.45)
+        canvas.rect(
+            left, centre - max(0.5, 0.4 * scale), right - left, max(1.0, 0.8 * scale), rule, 0.45
+        )
         length = max(1.0, abs(value) * unit)
         canvas.rect(left, y, length, bar_h, soft if value >= 0 else mix(soft, ink, 0.35))
-        canvas.draw_text_right(left - int(6 * scale), int(centre - text_height(small) / 2),
-                               ellipsise(label, gutter - int(8 * scale), small), muted, small)
-        canvas.draw_text(int(left + length + 5 * scale), int(centre - text_height(small) / 2),
-                         format_number(value), ink, small)
+        canvas.draw_text_right(
+            left - int(6 * scale),
+            int(centre - text_height(small) / 2),
+            ellipsise(label, gutter - int(8 * scale), small),
+            muted,
+            small,
+        )
+        canvas.draw_text(
+            int(left + length + 5 * scale),
+            int(centre - text_height(small) / 2),
+            format_number(value),
+            ink,
+            small,
+        )
 
     if block.unit:
-        canvas.draw_text(int(4 * scale), int(1 * scale),
-                         ellipsise(block.unit, canvas.width // 3, small), muted, small)
+        canvas.draw_text(
+            int(4 * scale),
+            int(1 * scale),
+            ellipsise(block.unit, canvas.width // 3, small),
+            muted,
+            small,
+        )
     del glyph
 
 
-def _draw_circular(canvas: Raster, block: ChartBlock, series: list[tuple[str, float]],
-                   theme: ReportTheme, scale: float, glyph: int, small: int) -> None:
+def _draw_circular(
+    canvas: Raster,
+    block: ChartBlock,
+    series: list[tuple[str, float]],
+    theme: ReportTheme,
+    scale: float,
+    glyph: int,
+    small: int,
+) -> None:
     """A pie or a donut, with a legend naming every slice and its value.
 
     THE LEGEND IS NOT OPTIONAL. Labels placed on the slices themselves need a leader line for
@@ -495,11 +564,16 @@ def _draw_circular(canvas: Raster, block: ChartBlock, series: list[tuple[str, fl
     # Measured the same way the horizontal-bar chart already measures its label gutter, and capped
     # so the ring cannot be squeezed out by one long category name.
     swatch_room = int(max(6.0, 10.0 * scale)) + int(11 * scale)
-    wanted = max(
-        (text_width(f"{label} — {format_number(value)} (100%)", small)
-         for label, value in series),
-        default=0,
-    ) + swatch_room
+    wanted = (
+        max(
+            (
+                text_width(f"{label} — {format_number(value)} (100%)", small)
+                for label, value in series
+            ),
+            default=0,
+        )
+        + swatch_room
+    )
     # A label longer than the cap still elides, and the ellipsis falls at the END — so the
     # category NAME, which is what a reader matches to a slice, survives and the count beside it
     # is the first thing to go. It is also in the table this figure sits under.
@@ -517,10 +591,8 @@ def _draw_circular(canvas: Raster, block: ChartBlock, series: list[tuple[str, fl
         # NOTHING IS DIVIDED BY THE TOTAL BELOW THIS LINE unless it is positive. An empty ring
         # with the categories still listed says "these heads exist and all of them are zero",
         # which is a real state of a cost sheet at the start of a workshop.
-        canvas.ring(cx, cy, radius, max(inner, radius * 0.55),
-                    mix(paper, muted, 0.22))
-        canvas.draw_text_centred(int(cx), int(cy - text_height(small) / 2),
-                                 "0", muted, small)
+        canvas.ring(cx, cy, radius, max(inner, radius * 0.55), mix(paper, muted, 0.22))
+        canvas.draw_text_centred(int(cx), int(cy - text_height(small) / 2), "0", muted, small)
     else:
         # Start at twelve o'clock and run clockwise, which is how every reader of a printed pie
         # expects to find the first category. Screen angles grow anticlockwise from three
@@ -536,8 +608,13 @@ def _draw_circular(canvas: Raster, block: ChartBlock, series: list[tuple[str, fl
         if block.kind is ChartKind.DONUT:
             canvas.disc(cx, cy, inner, paper)
             headline = format_number(total)
-            canvas.draw_text_centred(int(cx), int(cy - text_height(glyph) / 2),
-                                     ellipsise(headline, int(inner * 1.7), glyph), ink, glyph)
+            canvas.draw_text_centred(
+                int(cx),
+                int(cy - text_height(glyph) / 2),
+                ellipsise(headline, int(inner * 1.7), glyph),
+                ink,
+                glyph,
+            )
 
     swatch = max(6.0, 10.0 * scale)
     line_h = max(text_height(small) + 6 * scale, 16 * scale)
@@ -551,6 +628,11 @@ def _draw_circular(canvas: Raster, block: ChartBlock, series: list[tuple[str, fl
         share = f" ({value / total * 100:.0f}%)" if total > 0 else ""
         text = f"{label} — {format_number(value)}{share}"
         text = ellipsise(text, int(canvas.width - x - swatch - 10 * scale), small)
-        canvas.draw_text(int(x + swatch + 5 * scale), int(y + (line_h - text_height(small)) / 2),
-                         text, muted, small)
+        canvas.draw_text(
+            int(x + swatch + 5 * scale),
+            int(y + (line_h - text_height(small)) / 2),
+            text,
+            muted,
+            small,
+        )
         y += line_h

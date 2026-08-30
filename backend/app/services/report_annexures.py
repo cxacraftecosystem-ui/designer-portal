@@ -316,13 +316,15 @@ def transcript_body_blocks(text: str) -> list[Block]:
         if runs:
             blocks.append(ParagraphBlock(runs=runs, style=ParaStyle.BODY, align=Align.LEFT))
     if truncated:
-        blocks.append(ParagraphBlock(
-            runs=runs_of(
-                f"[Transcript truncated after {MAX_PARAGRAPHS_PER_TRANSCRIPT} paragraphs. The "
-                f"full text is held against the recording in the repository.]"
-            ),
-            style=ParaStyle.NOTE,
-        ))
+        blocks.append(
+            ParagraphBlock(
+                runs=runs_of(
+                    f"[Transcript truncated after {MAX_PARAGRAPHS_PER_TRANSCRIPT} paragraphs. The "
+                    f"full text is held against the recording in the repository.]"
+                ),
+                style=ParaStyle.NOTE,
+            )
+        )
     return blocks
 
 
@@ -400,8 +402,11 @@ def transcript_index_block(items: tuple[TranscriptItem, ...]) -> TableBlock:
         ),
         rows=tuple(
             (
-                runs_of(f"{item.stage_number}. {item.stage_title}" if item.stage_number
-                        else item.stage_title),
+                runs_of(
+                    f"{item.stage_number}. {item.stage_title}"
+                    if item.stage_number
+                    else item.stage_title
+                ),
                 runs_of(item.label),
                 runs_of(duration_text(item.duration_seconds) or "—"),
                 runs_of(str(item.speaker_count)),
@@ -424,13 +429,18 @@ def _provenance(item: TranscriptItem) -> str:
     id, the length, the number of voices and the date are printed together, in the NOTE style that
     every other caveat in this report uses.
     """
-    parts = [p for p in (
-        duration_text(item.duration_seconds),
-        f"{item.speaker_count} speaker{'s' if item.speaker_count != 1 else ''}"
-        if item.speaker_count else "",
-        item.recorded_at[:10] if item.recorded_at else "",
-        f"recording {item.media_id}",
-    ) if p]
+    parts = [
+        p
+        for p in (
+            duration_text(item.duration_seconds),
+            f"{item.speaker_count} speaker{'s' if item.speaker_count != 1 else ''}"
+            if item.speaker_count
+            else "",
+            item.recorded_at[:10] if item.recorded_at else "",
+            f"recording {item.media_id}",
+        )
+        if p
+    ]
     return "Transcribed automatically from the workshop recording · " + " · ".join(parts)
 
 
@@ -510,7 +520,10 @@ def transcript_annexure_blocks(
     """
     scratch = DocumentBuilder(meta=ReportMeta(title=""))
     append_transcript_annexure(
-        scratch, items, heading=heading, numbered=numbered,
+        scratch,
+        items,
+        heading=heading,
+        numbered=numbered,
         page_break_before=page_break_before,
     )
     return scratch.build().blocks

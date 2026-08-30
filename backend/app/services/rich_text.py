@@ -223,8 +223,7 @@ class RichBlock:
         # would be told they had left it blank.
         if self.kind is BlockKind.TABLE:
             return "\n".join(
-                "\t".join("".join(span.text for span in cell) for cell in row)
-                for row in self.rows
+                "\t".join("".join(span.text for span in cell) for cell in row) for row in self.rows
             )
         return "".join(span.text for span in self.spans)
 
@@ -384,15 +383,17 @@ def from_json(raw: Any) -> RichDoc:
             # 3x3 of blank cells would otherwise be "filled" and pass the completeness gate.
             if not rows:
                 continue
-        blocks.append(RichBlock(
-            kind=kind,
-            spans=tuple(spans),
-            align=_coerce_align(entry.get("align")),
-            level=level,
-            rows=rows,
-            media=media,
-            width_pct=width_pct,
-        ))
+        blocks.append(
+            RichBlock(
+                kind=kind,
+                spans=tuple(spans),
+                align=_coerce_align(entry.get("align")),
+                level=level,
+                rows=rows,
+                media=media,
+                width_pct=width_pct,
+            )
+        )
         if budget <= 0:
             break
     return RichDoc(blocks=tuple(blocks))
@@ -459,9 +460,7 @@ def from_plain(text: Any) -> RichDoc:
     if not cleaned.strip():
         return EMPTY
     blocks = [
-        RichBlock(spans=(RichSpan(line.strip()),))
-        for line in cleaned.split("\n")
-        if line.strip()
+        RichBlock(spans=(RichSpan(line.strip()),)) for line in cleaned.split("\n") if line.strip()
     ]
     return RichDoc(blocks=tuple(blocks[:MAX_BLOCKS]))
 
@@ -473,9 +472,13 @@ def from_plain(text: Any) -> RichDoc:
 
 def to_json(doc: RichDoc) -> dict[str, Any]:
     """The canonical storage form. Defaults are omitted to keep the JSON column small."""
+
     def span_json(span: RichSpan) -> dict[str, Any]:
-        return ({"text": span.text, "marks": sorted(m.value for m in span.marks)}
-                if span.marks else {"text": span.text})
+        return (
+            {"text": span.text, "marks": sorted(m.value for m in span.marks)}
+            if span.marks
+            else {"text": span.text}
+        )
 
     blocks: list[dict[str, Any]] = []
     for block in doc.blocks:
@@ -491,8 +494,9 @@ def to_json(doc: RichDoc) -> dict[str, Any]:
             # `spans` stays present and empty for a table rather than being omitted, because the
             # Kotlin port's oracle compares these dicts key for key and an absent key and an empty
             # list are different documents to it.
-            entry["rows"] = [[[span_json(span) for span in cell] for cell in row]
-                             for row in block.rows]
+            entry["rows"] = [
+                [[span_json(span) for span in cell] for cell in row] for row in block.rows
+            ]
         if block.kind is BlockKind.IMAGE:
             entry["media"] = block.media
             # Written only when it differs from the default, like `align` and `level` above — the
@@ -527,9 +531,9 @@ def to_plain(doc: Any) -> str:
             # and would make two adjacent cells read as one word in a CSV export.
             ordinal = 0
             for row in block.rows:
-                lines.append(" | ".join(
-                    "".join(span.text for span in cell).strip() for cell in row
-                ))
+                lines.append(
+                    " | ".join("".join(span.text for span in cell).strip() for cell in row)
+                )
             continue
         text = block.text.strip()
         if block.kind is BlockKind.ORDERED_ITEM:
@@ -825,8 +829,9 @@ def _runs_for(span: RichSpan) -> list[Run]:
     ]
 
 
-def to_report_blocks(raw: Any, *, base_style: ParaStyle = ParaStyle.BODY,
-                     resolve_media: Any = None) -> list[Any]:
+def to_report_blocks(
+    raw: Any, *, base_style: ParaStyle = ParaStyle.BODY, resolve_media: Any = None
+) -> list[Any]:
     """Render a stored rich-text value into report-model blocks.
 
     Consecutive list items of the same kind are merged into ONE ``BulletListBlock``, because that
@@ -875,12 +880,14 @@ def to_report_blocks(raw: Any, *, base_style: ParaStyle = ParaStyle.BODY,
                 continue
             from app.services.report_model import ImageBlock
 
-            out.append(ImageBlock(
-                image=ref,
-                width_pct=block.width_pct,
-                align=block.align if block.align is not Align.LEFT else Align.CENTER,
-                caption=block.text.strip(),
-            ))
+            out.append(
+                ImageBlock(
+                    image=ref,
+                    width_pct=block.width_pct,
+                    align=block.align if block.align is not Align.LEFT else Align.CENTER,
+                    caption=block.text.strip(),
+                )
+            )
             continue
 
         runs = tuple(run for span in block.spans for run in _runs_for(span))
@@ -900,19 +907,23 @@ def to_report_blocks(raw: Any, *, base_style: ParaStyle = ParaStyle.BODY,
             from app.services.report_model import HeadingBlock, _bookmark_id
 
             text = block.text.strip()
-            out.append(HeadingBlock(
-                level=max(1, min(MAX_HEADING_LEVEL, block.level or 1)),
-                runs=runs,
-                number="",
-                bookmark=_bookmark_id("", text, len(out)),
-            ))
+            out.append(
+                HeadingBlock(
+                    level=max(1, min(MAX_HEADING_LEVEL, block.level or 1)),
+                    runs=runs,
+                    number="",
+                    bookmark=_bookmark_id("", text, len(out)),
+                )
+            )
             continue
 
-        out.append(ParagraphBlock(
-            runs=runs,
-            style=_STYLE_FOR_KIND.get(block.kind, base_style),
-            align=block.align,
-        ))
+        out.append(
+            ParagraphBlock(
+                runs=runs,
+                style=_STYLE_FOR_KIND.get(block.kind, base_style),
+                align=block.align,
+            )
+        )
 
     flush()
     return out
@@ -1014,8 +1025,9 @@ def to_preview_json(raw: Any) -> list[dict[str, Any]]:
             # reading `_table_block` gives it. Sent even though `spans` is empty, because a table
             # whose content the browser cannot see would be a preview that disagrees with the file
             # about what is in the document, which is the one thing the preview must never do.
-            entry["rows"] = [[[span_json(span) for span in cell] for cell in row]
-                             for row in block.rows]
+            entry["rows"] = [
+                [[span_json(span) for span in cell] for cell in row] for row in block.rows
+            ]
         if block.kind is BlockKind.IMAGE:
             # The id, not a URL. The browser mints its own media URLs (`useReportMediaUrls`), and
             # a URL baked in here would expire on a signed bucket while the document did not.

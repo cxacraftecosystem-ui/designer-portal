@@ -418,6 +418,22 @@ MIRRORS: tuple[Mirror, ...] = (
             "from creating somebody who can lock the institution out."
         ),
     ),
+    Mirror(
+        path=f"{_ANDROID_UI}/ui/RosterFilters.kt",
+        binding="ROSTER_ROLE_LADDER",
+        kind="closed",
+        pattern=r"val ROSTER_ROLE_LADDER: List<String> = listOf\(([\s\S]*?)\n\)",
+        why=(
+            "The role multi-select on BOTH roster screens — access and designer — is built from "
+            "this one list, in the order it names. A tier absent from it is not merely unlabelled "
+            "the way `ROLE_LABELS`' fallback would leave it: it is unfilterable, so an admin "
+            "narrowing the roster to that tier gets rows for every tier EXCEPT the one that was "
+            "just added — the exact shape of 'able to filter for rows carrying a tier they could "
+            "not grant' the file's own header warns about, except silent: nothing errors, the list "
+            "just quietly stops being a complete answer for the person most likely to be auditing "
+            "it."
+        ),
+    ),
     # ── android: hand-kept tuples inside tests ──────────────────────────────────────────────────
     Mirror(
         path=f"{_ANDROID_TEST}/ui/FieldPermissionsTest.kt",
@@ -500,6 +516,20 @@ MIRRORS: tuple[Mirror, ...] = (
             "One `assertFalse` per tier, written out rather than looped, so there is no binding to "
             "read. Coverage only for the same reason: the file also passes 'SUPERUSER' on purpose, to "
             "prove an unknown role is never a creator."
+        ),
+    ),
+    Mirror(
+        path=f"{_ANDROID_TEST}/ui/WalkthroughSurfaceTest.kt",
+        binding="the inline `listOf(...)` in `the menu row into the walkthrough is ungated for every role there is`",
+        kind="covers",
+        pattern=None,
+        why=(
+            "The walkthrough's nav entry is the one row this repository has decided must NEVER be "
+            "gated — a crowdsource volunteer on day one needs it more than an admin does, per the "
+            "test's own comment — so this walks every tier and asserts the menu item's `can` "
+            "predicate admits each one. Coverage only: a tier absent from the literal is not a false "
+            "claim about the ladder, it is a tier this test forgot to prove is still let in, which a "
+            "future `can` predicate tightened elsewhere could then take away from silently."
         ),
     ),
     # ── the repository's front door ─────────────────────────────────────────────────────────────

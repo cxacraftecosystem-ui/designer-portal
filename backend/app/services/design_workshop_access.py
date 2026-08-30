@@ -324,8 +324,7 @@ def code_check(prefix: str) -> str:
         value = (value * 16777619) & 0xFFFFFFFF
     low = value & 0xFFFFF
     return "".join(
-        _CHECK_ALPHABET[(low >> shift) & 31]
-        for shift in range((_CHECK_LENGTH - 1) * 5, -1, -5)
+        _CHECK_ALPHABET[(low >> shift) & 31] for shift in range((_CHECK_LENGTH - 1) * 5, -1, -5)
     )
 
 
@@ -507,11 +506,7 @@ async def file_request(
     user_id = getattr(user, "id", "")
     if not user_id:
         return
-    if (
-        workshop.createdById == user_id
-        or is_admin(user)
-        or await has_viewer_grant(wanted, user_id)
-    ):
+    if workshop.createdById == user_id or is_admin(user) or await has_viewer_grant(wanted, user_id):
         # NOTHING IS FILED FOR SOMEBODY WHO IS ALREADY IN. The ordinary way this happens is a race
         # rather than a mistake: a designer asks by scanning while the admin is granting them from
         # the viewers screen, or an offline ask syncs a week after it was answered in person. An
@@ -598,9 +593,7 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def request_payload(
-    row: Any, *, has_access: bool, is_provisional: bool = False
-) -> dict[str, Any]:
+def request_payload(row: Any, *, has_access: bool, is_provisional: bool = False) -> dict[str, Any]:
     """One queue row as the admin screen reads it.
 
     HAND-PROJECTED rather than ``public_encode``d over the row and its relations, and the narrowness
@@ -872,9 +865,7 @@ async def add_one_viewer(
 # --------------------------------------------------------------------------------------
 
 
-async def decide(
-    request_id: str, *, decision: str, note: str | None, admin: Any
-) -> dict[str, Any]:
+async def decide(request_id: str, *, decision: str, note: str | None, admin: Any) -> dict[str, Any]:
     """Grant or refuse one request, and answer with the row as it now stands.
 
     404 AND NOT 403 for a request id that does not exist, with ``require_record``'s own detail

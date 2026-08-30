@@ -54,14 +54,7 @@ from typing import Any
 # XML 1.0 §2.2. Everything outside these ranges — the C0 controls other than tab/LF/CR, the
 # surrogate block D800-DFFF, and the two noncharacters FFFE/FFFF — makes the part not
 # well-formed. Python strings can hold all of them; a document part cannot carry any.
-_XML_ILLEGAL = re.compile(
-    "[^"
-    "\u0009\u000a\u000d"
-    "\u0020-\ud7ff"
-    "\ue000-\ufffd"
-    "\U00010000-\U0010ffff"
-    "]"
-)
+_XML_ILLEGAL = re.compile("[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
 # Word renders a lone CR and a CRLF differently inside a run; normalising here means the two
 # renderers never have to agree on which one they were handed. U+2028/U+2029 arrive in pasted
@@ -92,6 +85,7 @@ def clean_text(value: Any) -> str:
 # --------------------------------------------------------------------------------------
 # Script detection — the reason craft names are not boxes
 # --------------------------------------------------------------------------------------
+
 
 class Script(str, Enum):
     """Which writing system a run of text needs a font for.
@@ -136,14 +130,30 @@ _SCRIPT_RANGES: tuple[tuple[int, int, Script], ...] = (
 # because Devanagari digits (U+0966-096F, category Nd) and Indic vowel signs (Mn/Mc) live
 # inside their script's block and belong to it — resolving those as neutral would hand them to
 # a neighbouring Latin run and print them as tofu.
-_NEUTRAL_CATEGORIES = frozenset({
-    "Mn", "Mc", "Me",              # combining marks
-    "Zs", "Zl", "Zp",              # separators
-    "Cc", "Cf",                    # controls and format characters
-    "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Pc",   # punctuation
-    "Sm", "Sk", "Sc",              # symbols, incl. the rupee sign
-    "Nd", "No",                    # digits outside a scripted block
-})
+_NEUTRAL_CATEGORIES = frozenset(
+    {
+        "Mn",
+        "Mc",
+        "Me",  # combining marks
+        "Zs",
+        "Zl",
+        "Zp",  # separators
+        "Cc",
+        "Cf",  # controls and format characters
+        "Pd",
+        "Ps",
+        "Pe",
+        "Pi",
+        "Pf",
+        "Po",
+        "Pc",  # punctuation
+        "Sm",
+        "Sk",
+        "Sc",  # symbols, incl. the rupee sign
+        "Nd",
+        "No",  # digits outside a scripted block
+    }
+)
 
 
 def _script_or_neutral(ch: str) -> Script | None:
@@ -225,6 +235,7 @@ def dominant_script(text: str) -> Script:
 # Inline content
 # --------------------------------------------------------------------------------------
 
+
 class Align(str, Enum):
     LEFT = "LEFT"
     CENTER = "CENTER"
@@ -236,10 +247,10 @@ class ParaStyle(str, Enum):
     """Named paragraph roles. A renderer maps each to its own concrete typography."""
 
     BODY = "BODY"
-    LEAD = "LEAD"              # opening paragraph of a section, slightly larger
-    NOTE = "NOTE"              # smaller, muted — provenance and caveats
-    QUOTE = "QUOTE"            # indented, italic — artisan and buyer verbatims
-    CAPTION = "CAPTION"        # under an image
+    LEAD = "LEAD"  # opening paragraph of a section, slightly larger
+    NOTE = "NOTE"  # smaller, muted — provenance and caveats
+    QUOTE = "QUOTE"  # indented, italic — artisan and buyer verbatims
+    CAPTION = "CAPTION"  # under an image
     COVER_LINE = "COVER_LINE"  # centred cover-page furniture
 
 
@@ -287,18 +298,35 @@ class Run:
 HIGHLIGHT_FILL = "FFFF00"
 
 
-def runs_of(text: Any, *, bold: bool = False, italic: bool = False,
-            underline: bool = False, strike: bool = False,
-            color: str | None = None, superscript: bool = False,
-            subscript: bool = False, highlight: bool = False) -> tuple[Run, ...]:
+def runs_of(
+    text: Any,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+    underline: bool = False,
+    strike: bool = False,
+    color: str | None = None,
+    superscript: bool = False,
+    subscript: bool = False,
+    highlight: bool = False,
+) -> tuple[Run, ...]:
     """Build the runs for a string, cleaned and split at every script boundary."""
     cleaned = clean_text(text)
     if not cleaned:
         return ()
     return tuple(
-        Run(text=span, bold=bold, italic=italic, underline=underline, strike=strike,
-            script=script, color=color, superscript=superscript, subscript=subscript,
-            highlight=highlight)
+        Run(
+            text=span,
+            bold=bold,
+            italic=italic,
+            underline=underline,
+            strike=strike,
+            script=script,
+            color=color,
+            superscript=superscript,
+            subscript=subscript,
+            highlight=highlight,
+        )
         for span, script in split_by_script(cleaned)
     )
 
@@ -311,6 +339,7 @@ def runs_text(runs: tuple[Run, ...]) -> str:
 # --------------------------------------------------------------------------------------
 # Images
 # --------------------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class ImageRef:
@@ -360,16 +389,17 @@ class ImageRef:
 # Blocks
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class CoverBlock:
     """The report's first page. Rendered by both writers as a full page followed by a break."""
 
     title: str
     subtitle: str = ""
-    org_lines: tuple[str, ...] = ()          # ministry / department, above the title
+    org_lines: tuple[str, ...] = ()  # ministry / department, above the title
     logo: ImageRef | None = None
     hero_image: ImageRef | None = None
-    info_rows: tuple[tuple[str, str], ...] = ()   # label / value pairs in the cover table
+    info_rows: tuple[tuple[str, str], ...] = ()  # label / value pairs in the cover table
     footer_lines: tuple[str, ...] = ()
 
 
@@ -388,10 +418,10 @@ class TocBlock:
 
 @dataclass(frozen=True, slots=True)
 class HeadingBlock:
-    level: int                # 1-4
+    level: int  # 1-4
     runs: tuple[Run, ...]
-    number: str = ""          # "3.2" — precomputed by the builder, never by a renderer
-    bookmark: str = ""        # stable anchor id, for the TOC and cross references
+    number: str = ""  # "3.2" — precomputed by the builder, never by a renderer
+    bookmark: str = ""  # stable anchor id, for the TOC and cross references
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,7 +446,7 @@ class KeyValueBlock:
     """
 
     pairs: tuple[tuple[str, tuple[Run, ...]], ...]
-    columns: int = 1          # 1 or 2 pairs side by side
+    columns: int = 1  # 1 or 2 pairs side by side
     label_width_pct: float = 30.0
 
 
@@ -425,7 +455,7 @@ class TableColumn:
     header: str
     width_pct: float
     align: Align = Align.LEFT
-    numeric: bool = False     # right-aligns the body and lets the renderer group digits
+    numeric: bool = False  # right-aligns the body and lets the renderer group digits
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,7 +483,7 @@ class TableBlock:
 @dataclass(frozen=True, slots=True)
 class ImageBlock:
     image: ImageRef
-    width_pct: float = 70.0   # of the text column
+    width_pct: float = 70.0  # of the text column
     align: Align = Align.CENTER
     caption: str = ""
 
@@ -466,7 +496,7 @@ class ImageGridBlock:
     would fall below a legible width, so the same grid stays readable on A4 and on Letter.
     """
 
-    images: tuple[tuple[ImageRef, str], ...]   # (image, caption)
+    images: tuple[tuple[ImageRef, str], ...]  # (image, caption)
     columns: int = 2
     caption: str = ""
 
@@ -475,7 +505,7 @@ class ImageGridBlock:
 class MetricRowBlock:
     """A row of headline numbers — "12 designs · 7 prototypes · 4 adopted"."""
 
-    metrics: tuple[tuple[str, str, str], ...]   # (label, value, unit)
+    metrics: tuple[tuple[str, str, str], ...]  # (label, value, unit)
 
 
 # --------------------------------------------------------------------------------------
@@ -491,6 +521,7 @@ class MetricRowBlock:
 # Nothing here carries pixels. ``width_pct`` is a fraction of the text column exactly as
 # ``ImageBlock``'s is; how many pixels that becomes is the rasteriser's business and the
 # rasteriser's alone.
+
 
 class MapPointKind(str, Enum):
     """What a pin on the report's map of India stands for.
@@ -535,7 +566,7 @@ class MapBlock:
     caption: str = ""
     points: tuple[MapPoint, ...] = ()
     highlight: frozenset[str] = frozenset()
-    width_pct: float = 66.0        # of the text column, exactly like ImageBlock
+    width_pct: float = 66.0  # of the text column, exactly like ImageBlock
     align: Align = Align.CENTER
 
 
@@ -579,7 +610,7 @@ class ChartBlock:
 
 @dataclass(frozen=True, slots=True)
 class CalloutBlock:
-    kind: str                 # INFO | WARNING | SUCCESS
+    kind: str  # INFO | WARNING | SUCCESS
     title: str
     runs: tuple[Run, ...]
 
@@ -588,12 +619,12 @@ class CalloutBlock:
 class SignatureBlock:
     """Sign-off lines for the designer, the implementing agency and the inspecting official."""
 
-    signatories: tuple[tuple[str, str], ...]   # (name, designation)
+    signatories: tuple[tuple[str, str], ...]  # (name, designation)
 
 
 @dataclass(frozen=True, slots=True)
 class SpacerBlock:
-    height_pct: float = 5.0   # of the text column height
+    height_pct: float = 5.0  # of the text column height
 
 
 @dataclass(frozen=True, slots=True)
@@ -602,15 +633,29 @@ class PageBreakBlock:
 
 
 Block = (
-    CoverBlock | TocBlock | HeadingBlock | ParagraphBlock | BulletListBlock | KeyValueBlock
-    | TableBlock | ImageBlock | ImageGridBlock | MetricRowBlock | CalloutBlock
-    | SignatureBlock | SpacerBlock | PageBreakBlock | MapBlock | ChartBlock
+    CoverBlock
+    | TocBlock
+    | HeadingBlock
+    | ParagraphBlock
+    | BulletListBlock
+    | KeyValueBlock
+    | TableBlock
+    | ImageBlock
+    | ImageGridBlock
+    | MetricRowBlock
+    | CalloutBlock
+    | SignatureBlock
+    | SpacerBlock
+    | PageBreakBlock
+    | MapBlock
+    | ChartBlock
 )
 
 
 # --------------------------------------------------------------------------------------
 # Document
 # --------------------------------------------------------------------------------------
+
 
 class PageSize(str, Enum):
     A4 = "A4"
@@ -640,7 +685,7 @@ class ReportTheme:
     zebra_fill: str = "F2F5FA"
     heading_font: str = "Calibri Light"
     body_font: str = "Calibri"
-    complex_font: str = "Nirmala UI"   # the w:cs face for Indic runs in DOCX
+    complex_font: str = "Nirmala UI"  # the w:cs face for Indic runs in DOCX
     base_size_pt: float = 10.5
 
 
@@ -653,7 +698,7 @@ class ReportMeta:
     template_id: str = ""
     template_name: str = ""
     workshop_id: str = ""
-    generated_at: str = ""        # ISO-8601 UTC, supplied by the caller, never clock-read here
+    generated_at: str = ""  # ISO-8601 UTC, supplied by the caller, never clock-read here
     page_size: PageSize = PageSize.A4
     margin_mm: float = 25.0
     header_text: str = ""
@@ -671,7 +716,7 @@ class ReportDocument:
     # used on both the prototype page and the annexure was embedded twice before this existed,
     # which doubled a 60-photo report's size for no visible difference.
     images: tuple[ImageRef, ...] = ()
-    warnings: tuple[str, ...] = ()   # completeness-check output, surfaced in the UI not the file
+    warnings: tuple[str, ...] = ()  # completeness-check output, surfaced in the UI not the file
 
 
 def collect_images(blocks: tuple[Block, ...]) -> tuple[ImageRef, ...]:
@@ -702,6 +747,7 @@ def _images_of(block: Block) -> list[ImageRef]:
 # --------------------------------------------------------------------------------------
 # Builder helpers — the shorthand the template interpreter is written in
 # --------------------------------------------------------------------------------------
+
 
 @dataclass
 class DocumentBuilder:
@@ -742,11 +788,13 @@ class DocumentBuilder:
             number = ".".join(str(self._heading_counters[i]) for i in range(level))
         cleaned = clean_text(text)
         bookmark = _bookmark_id(number, cleaned, len(self._blocks))
-        return self.add(HeadingBlock(level=level, runs=runs_of(cleaned), number=number,
-                                     bookmark=bookmark))
+        return self.add(
+            HeadingBlock(level=level, runs=runs_of(cleaned), number=number, bookmark=bookmark)
+        )
 
-    def para(self, text: Any, *, style: ParaStyle = ParaStyle.BODY,
-             align: Align = Align.LEFT) -> DocumentBuilder:
+    def para(
+        self, text: Any, *, style: ParaStyle = ParaStyle.BODY, align: Align = Align.LEFT
+    ) -> DocumentBuilder:
         """Append a paragraph. A blank value appends nothing at all.
 
         Skipping empties here is what keeps an optional Standard-tier field from leaving a run
@@ -767,8 +815,9 @@ class DocumentBuilder:
             return self
         return self.add(BulletListBlock(items=kept, ordered=ordered))
 
-    def key_values(self, pairs: list[tuple[str, Any]], *, columns: int = 1,
-                   skip_empty: bool = True) -> DocumentBuilder:
+    def key_values(
+        self, pairs: list[tuple[str, Any]], *, columns: int = 1, skip_empty: bool = True
+    ) -> DocumentBuilder:
         kept = tuple(
             (clean_text(label), runs_of(value))
             for label, value in pairs

@@ -23,6 +23,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.DarkMode
+// The walkthrough's own glyph, and it must stay this one: `FIELD_NAV_ITEMS` gives the Walkthrough
+// row `Icons.Filled.Explore`, and a settings row that led to the same place behind a different
+// picture would be a second sign on one door.
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Palette
@@ -365,6 +369,11 @@ fun AppearanceScreen(
      */
     onOpenSpeechAndAi: () -> Unit,
     onOpenMyAiKeys: () -> Unit,
+    /**
+     * Re-open the first-run walkthrough. See the row at the bottom of this screen for why a settings
+     * page carries it at all.
+     */
+    onOpenWalkthrough: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -539,6 +548,43 @@ fun AppearanceScreen(
             title = "My AI keys",
             summary = "Use your own OpenAI, Gemini or Claude key for AI work, billed to you",
             onClick = onOpenMyAiKeys,
+        )
+
+        /*
+         * ---- READ THE WALKTHROUGH AGAIN ---------------------------------------------------------
+         *
+         * The walkthrough opens itself once, on the first launch after signing in, and then never
+         * again on this handset — a device-local flag, on purpose, so it is not a wall a returning
+         * designer has to dismiss every morning. The cost of that decision is that the ONE surface
+         * which teaches the order the work happens in is, by design, the one surface a person cannot
+         * get back to by waiting. So it has to be reachable on demand, permanently, and this is the
+         * second of the two places it is.
+         *
+         * NOT A SECOND WALKTHROUGH AND NOT A SECOND DESTINATION. This row hands back the same
+         * `NavDestination.WALKTHROUGH` the menu's own ungated root chip does; it is one more door
+         * onto one room. The web reaches its `/guide` from five places for the same reason, and
+         * `NavEntry.label` already fixes what both clients call it. A row here that opened anything
+         * else — a second "Getting started", a "Tour" — would be the two-answers-to-one-question
+         * failure this codebase deletes in writing.
+         *
+         * WHY SETTINGS AND NOT A DASHBOARD TILE. The dashboard's only route into the walkthrough is a
+         * text button inside the `if (!canCreateRecords)` block, so a Researcher and everybody above
+         * them has no dashboard route at all — which is the gap this row closes. A tile would have
+         * been the more visible fix and it is not available: `DashboardTileParityTest` reads the web
+         * dashboard off disk and asserts the two grids tile for tile, so a tile added to one client
+         * alone fails the build. Settings is where this app already keeps the rows that lead
+         * somewhere rather than toggle something, and it is where somebody looking for help looks.
+         *
+         * The summary says what the walkthrough IS rather than that it exists, because a row reading
+         * "Walkthrough >" makes a designer open it to find out whether they wanted it — the same
+         * argument `SettingsRow` makes for itself, and the reason the Speech & AI row above carries a
+         * measured state summary instead of a chevron and a hope.
+         */
+        SettingsRow(
+            icon = Icons.Filled.Explore,
+            title = "Walkthrough",
+            summary = "The order the work happens in, step by step — the same journey as on the web",
+            onClick = onOpenWalkthrough,
         )
     }
 }

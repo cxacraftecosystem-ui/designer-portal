@@ -43,7 +43,17 @@ import type { Artisan, PageResult } from "@/lib/types";
  * defect is that a table grew past a number, and a fixture is a list somebody chose the length of.
  */
 
-const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
+/**
+ * Read a repository file with its line endings normalised.
+ *
+ * `core.autocrlf` is on for the Windows machines this is developed on, so a source file can be CRLF
+ * in the working tree and LF in the repository and on CI. `between()` below is handed markers that
+ * embed literal `\n`s (`"async function loadEntryOptions"` to `"\n}\n"`), and that marker would then
+ * match in one place and not the other — a spec that passes or fails on a checkout setting is worse
+ * than no spec, because the failure looks like the code. See `stage-ref-multiselect-unit.spec.ts` for
+ * the fuller account of this.
+ */
+const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8").replace(/\r\n/g, "\n");
 
 /** The text between two markers, so an assertion cannot drift into a neighbouring call. */
 function between(source: string, from: string, to: string): string {

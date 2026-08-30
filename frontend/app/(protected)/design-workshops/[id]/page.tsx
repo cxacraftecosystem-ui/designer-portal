@@ -42,7 +42,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { BadgeCheck, DraftingCompass, FileClock, FileText, Images, Layers, ListChecks, ListPlus, Loader2, QrCode, Send, Undo2, GitCompareArrows} from "lucide-react";
+import { BadgeCheck, DraftingCompass, FileClock, FileText, Images, Layers, ListChecks, ListPlus, Loader2, QrCode, Send, SquarePen, Undo2, GitCompareArrows} from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { DictationConsentCard } from "@/components/designworkshop/DictationConsentCard";
@@ -1121,6 +1121,45 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
         actions={
           <>
+            {/*
+              THE WORKSHOP'S OWN RECORD — requirement 27, and the only action in this row that edits
+              the WORKSHOP rather than something inside it.
+
+              ── WHY IT IS FIRST, AND WHY IT IS CALLED THIS ────────────────────────────────────────
+              Every other link here opens a child: the tags, the sketches, the photographs, the AI
+              layers, this workshop's own questions, the readiness list, the report. A row of nine
+              controls that all open something INSIDE the workshop is exactly the row in which a bare
+              "Edit" answers nothing, which is why the label names what it edits. It is first because it is the
+              shortest question a reader arrives with — "this title is wrong" — and the one they
+              would otherwise go looking for in stage 1, where three of the fields it reaches
+              (`notes`, the report template and the linked workshop record) do not exist at all.
+
+              ── WHICH PREDICATE, AND WHY NOT THE OBVIOUS ONE ──────────────────────────────────────
+              `canRunDesignWorkshops` — the SET {DESIGNER, ADMIN, MASTER_ADMIN} — because that is
+              what the server enforces: `PATCH /design-workshops/{id}` runs `_require_designer` and
+              then `load_workshop_or_404(..., for_edit=True)`, in that order. It is NOT
+              `canCreateDesignWorkshops`: creating a workshop is admin-only and editing one is not,
+              and gating this on the create predicate would lock every designer out of a route the
+              repository admits them to — their whole fortnight of corrections, on the tier the
+              feature exists for.
+
+              HIDDEN RATHER THAN GREYED, like the provenance link below and the create control on the
+              list page: a disabled button says "no" and answers nothing. The row-level half of the
+              rule (creator, admin, or a viewer grant) cannot be evaluated here at all — it is a
+              database question — so the edit screen answers a 403 and a 404 in words of their own
+              rather than this link pretending to know.
+
+              AND NOT WHILE THE WORKSHOP IS ONLY ON THIS DEVICE. `neverSent` means there is no
+              repository row to PATCH, so the link would lead to a screen whose Save cannot work.
+              That screen says so plainly if the URL is reached another way; the affordance simply is
+              not offered, for the same reason the Submission card withdraws its buttons.
+            */}
+            {canRunDesignWorkshops(user) && !neverSent ? (
+              <Link href={`/design-workshops/${id}/edit`} className="field-button-secondary">
+                <SquarePen className="h-4 w-4" aria-hidden />
+                Edit details
+              </Link>
+            ) : null}
             {/* Tags are printed once, early, for the whole workshop, so the control belongs to the
                 workshop and not to stage 13: a designer looking for them is looking for "this
                 workshop", not for the stage that happens to hold the prototype rows. */}

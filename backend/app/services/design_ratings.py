@@ -686,9 +686,7 @@ def is_own_record(subject: RatingSubject, user: Any) -> bool:
     if not user_id:
         return False
     return user_id in {
-        identifier
-        for identifier in (subject.author_id, subject.workshop_author_id)
-        if identifier
+        identifier for identifier in (subject.author_id, subject.workshop_author_id) if identifier
     }
 
 
@@ -816,13 +814,9 @@ async def is_workshop_member(workshop_id: str, creator_id: str | None, user: Any
     return await has_viewer_grant(workshop_id, user_id)
 
 
-async def resolve_access(
-    subject: RatingSubject, user: Any, round_: RatingRound
-) -> RatingAccess:
+async def resolve_access(subject: RatingSubject, user: Any, round_: RatingRound) -> RatingAccess:
     """:func:`access_for` with the one database fact it needs looked up."""
-    member = await is_workshop_member(
-        subject.workshop_id, subject.workshop_author_id, user
-    )
+    member = await is_workshop_member(subject.workshop_id, subject.workshop_author_id, user)
     return access_for(subject, user, round_, is_member=member)
 
 
@@ -850,9 +844,7 @@ async def load_ratable_workshop_or_404(
     """
     from fastapi import HTTPException, status  # local: keeps this module framework-free to import
 
-    not_found = HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND, detail="Record not found"
-    )
+    not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     if not workshop_id:
         raise not_found
     workshop = await db.designworkshop.find_unique(where={"id": workshop_id})
@@ -861,9 +853,7 @@ async def load_ratable_workshop_or_404(
     if not can_run_design_workshops(user):
         raise not_found
 
-    member = await is_workshop_member(
-        workshop_id, getattr(workshop, "createdById", None), user
-    )
+    member = await is_workshop_member(workshop_id, getattr(workshop, "createdById", None), user)
     if is_admin(user) or member:
         return workshop, member
     if round_ is RatingRound.POOL:
@@ -958,9 +948,7 @@ async def subject_ratings(subject: RatingSubject, round_: RatingRound) -> list[A
     )
 
 
-async def workshop_ratings(
-    workshop_id: str, entity_key: str, round_: RatingRound
-) -> list[Any]:
+async def workshop_ratings(workshop_id: str, entity_key: str, round_: RatingRound) -> list[Any]:
     """Every ledger row behind one round listing: one workshop, one entity, one round.
 
     One query for the whole page rather than one per subject. A workshop holds a few dozen sketches
@@ -1254,9 +1242,7 @@ def rating_plan(
     if not reviewer_id:
         raise RatingRuleViolation("A rating must name the account that made it.")
     if not isinstance(score, int) or isinstance(score, bool):
-        raise RatingRuleViolation(
-            f"A score is a whole number from {MIN_SCORE} to {MAX_SCORE}."
-        )
+        raise RatingRuleViolation(f"A score is a whole number from {MIN_SCORE} to {MAX_SCORE}.")
     if not MIN_SCORE <= score <= MAX_SCORE:
         # Also a CHECK constraint on the column, deliberately in both places: the constraint is what
         # protects the average from a row written by anything that is not this function, and this is

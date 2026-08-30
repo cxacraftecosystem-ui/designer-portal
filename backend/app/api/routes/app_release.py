@@ -95,7 +95,9 @@ def _download_filename(release: Any) -> str:
     ``frontend/components/settings/GetTheAppPanel.tsx`` — that panel promises this exact pattern,
     and a promise that no longer matches the download is how a user concludes the button is broken.
     """
-    version = str(getattr(release, "versionName", "") or getattr(release, "versionCode", "") or "latest")
+    version = str(
+        getattr(release, "versionName", "") or getattr(release, "versionCode", "") or "latest"
+    )
     return f"design-workshop-v{version}.apk"
 
 
@@ -199,11 +201,15 @@ async def download_latest_apk() -> RedirectResponse:
         try:
             # Signed, so S3 will honour the filename and content type we ask for; an anonymous GET
             # carrying those overrides is refused outright.
-            target = presign_get_url(key, filename=_download_filename(release), mime_type=APK_MEDIA_TYPE)
+            target = presign_get_url(
+                key, filename=_download_filename(release), mime_type=APK_MEDIA_TYPE
+            )
         except Exception:
             # Misconfigured storage credentials must cost the visitor a tidy filename, not the
             # download itself — the unsigned URL still serves the same bytes.
-            logger.exception("Could not sign a download URL for release %s", getattr(release, "id", "?"))
+            logger.exception(
+                "Could not sign a download URL for release %s", getattr(release, "id", "?")
+            )
     target = target or _durable_url(release)
 
     if not target:

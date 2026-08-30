@@ -175,20 +175,22 @@ CUSTOM_ENTITY_KEY = "_custom"
 #:
 #: Twelve tokens. The brief's rule table says "the fifteen v1 tokens" in one row and lists twelve in
 #: its own §8; the plan §4 names exactly these twelve, and the plan wins.
-V1_FIELD_TYPES: frozenset[FieldType] = frozenset({
-    FieldType.TEXT,
-    FieldType.LONG_TEXT,
-    FieldType.INT,
-    FieldType.DECIMAL,
-    FieldType.MONEY,
-    FieldType.PERCENT,
-    FieldType.DATE,
-    FieldType.TIME,
-    FieldType.BOOL,
-    FieldType.ENUM,
-    FieldType.MULTI_ENUM,
-    FieldType.TAGS,
-})
+V1_FIELD_TYPES: frozenset[FieldType] = frozenset(
+    {
+        FieldType.TEXT,
+        FieldType.LONG_TEXT,
+        FieldType.INT,
+        FieldType.DECIMAL,
+        FieldType.MONEY,
+        FieldType.PERCENT,
+        FieldType.DATE,
+        FieldType.TIME,
+        FieldType.BOOL,
+        FieldType.ENUM,
+        FieldType.MULTI_ENUM,
+        FieldType.TAGS,
+    }
+)
 
 #: Types whose stored value is a list of scalars, so a blank one is ``[]`` rather than ``None``.
 _LIST_TYPES: frozenset[FieldType] = frozenset({FieldType.MULTI_ENUM, FieldType.TAGS})
@@ -199,9 +201,14 @@ _OPTION_TYPES: frozenset[FieldType] = frozenset({FieldType.ENUM, FieldType.MULTI
 #: Types a numeric bound means anything for. ``_range_checked`` is only reached from the numeric
 #: branches of ``coerce_value``, so a ``minValue`` on a TEXT field is an inert control — exactly the
 #: stored-and-ignored setting this repository has already had to go back and fix seven of.
-_BOUNDED_TYPES: frozenset[FieldType] = frozenset({
-    FieldType.INT, FieldType.DECIMAL, FieldType.MONEY, FieldType.PERCENT,
-})
+_BOUNDED_TYPES: frozenset[FieldType] = frozenset(
+    {
+        FieldType.INT,
+        FieldType.DECIMAL,
+        FieldType.MONEY,
+        FieldType.PERCENT,
+    }
+)
 
 #: Types ``coerce_value`` applies ``max_length`` to. Same reasoning as :data:`_BOUNDED_TYPES`.
 _LENGTH_TYPES: frozenset[FieldType] = frozenset({FieldType.TEXT, FieldType.LONG_TEXT})
@@ -511,9 +518,7 @@ def custom_schema_version(sections: Sequence[CustomSectionSpec]) -> str:
             # ``§`` cannot occur in a field key (``validate_definition`` admits ASCII identifiers
             # only), so a section part can never be mistaken for a field part when the two are
             # sorted together into one string.
-            parts.append(
-                f"{s.stage_key}.{s.key}:§:{s.title}:{s.sort_order}:{int(s.retired)}"
-            )
+            parts.append(f"{s.stage_key}.{s.key}:§:{s.title}:{s.sort_order}:{int(s.retired)}")
         for f in s.fields:
             options = ",".join(f"{o.value}={o.display}" for o in f.options)
             parts.append(
@@ -588,7 +593,9 @@ def validate_definition(sections: Sequence[CustomSectionSpec]) -> list[str]:
             seen_section_keys[section.key] = section.title
 
         if not (section.title or "").strip():
-            problems.append(f"Section {where} has no title. Give it the heading it should print under.")
+            problems.append(
+                f"Section {where} has no title. Give it the heading it should print under."
+            )
         elif len(section.title) > MAX_CUSTOM_TITLE_CHARS:
             problems.append(
                 f"Section {where}'s title is longer than {MAX_CUSTOM_TITLE_CHARS} characters."
@@ -661,14 +668,18 @@ def _field_problems(
         seen_field_keys[f.key] = where
 
     if not (f.label or "").strip():
-        problems.append(f"Field {where} has no label. The label is the question the designer reads.")
+        problems.append(
+            f"Field {where} has no label. The label is the question the designer reads."
+        )
     elif len(f.label) > MAX_CUSTOM_LABEL_CHARS:
         problems.append(
             f"Field {where}'s label is longer than {MAX_CUSTOM_LABEL_CHARS} characters. A label is "
             f"a question, not a paragraph — put the explanation in the help text."
         )
     if len(f.help or "") > MAX_CUSTOM_HELP_CHARS:
-        problems.append(f"Field {where}'s help text is longer than {MAX_CUSTOM_HELP_CHARS} characters.")
+        problems.append(
+            f"Field {where}'s help text is longer than {MAX_CUSTOM_HELP_CHARS} characters."
+        )
     if len(f.unit or "") > MAX_CUSTOM_UNIT_CHARS:
         problems.append(f"Field {where}'s unit is longer than {MAX_CUSTOM_UNIT_CHARS} characters.")
 
@@ -775,8 +786,12 @@ def _field_problems(
     singleton = stage.singleton
     if singleton is not None:
         clash = next(
-            (c for c in singleton.fields
-             if not c.deprecated and c.label.strip().casefold() == (f.label or "").strip().casefold()),
+            (
+                c
+                for c in singleton.fields
+                if not c.deprecated
+                and c.label.strip().casefold() == (f.label or "").strip().casefold()
+            ),
             None,
         )
         if clash is not None:
@@ -932,13 +947,16 @@ def validate_custom_entry(
             continue
         clean[f.key] = value
 
-    dropped = tuple(sorted(
-        key for key in data
-        # The `_`-prefixed keys are the sync protocol's own — `_clientKey`, `_entryId`, `_ordinal`
-        # — and reporting them would put a line in every response for something working exactly as
-        # designed, which is the same reason `save_stage` skips them for the registry entities.
-        if key not in by_key and not str(key).startswith("_")
-    ))
+    dropped = tuple(
+        sorted(
+            key
+            for key in data
+            # The `_`-prefixed keys are the sync protocol's own — `_clientKey`, `_entryId`, `_ordinal`
+            # — and reporting them would put a line in every response for something working exactly as
+            # designed, which is the same reason `save_stage` skips them for the registry entities.
+            if key not in by_key and not str(key).startswith("_")
+        )
+    )
     return CustomEntryResult(clean=clean, errors=errors, dropped=dropped)
 
 
@@ -1104,7 +1122,7 @@ class FieldPlan:
 class SectionPlan:
     """What is to happen to one section and to every field under it."""
 
-    action: str                    # CREATE | EDIT | RETIRE | DELETE
+    action: str  # CREATE | EDIT | RETIRE | DELETE
     section_id: str = ""
     spec: CustomSectionSpec | None = None
     fields: tuple[FieldPlan, ...] = ()
@@ -1184,7 +1202,7 @@ def _mint_key(base: str, taken: Iterable[str]) -> str:
     designer key from ever colliding with the ``_``-prefixed protocol ones.
     """
     used = set(taken)
-    stem = (base or "field")[:MAX_CUSTOM_KEY_CHARS - 4]
+    stem = (base or "field")[: MAX_CUSTOM_KEY_CHARS - 4]
     for n in range(2, 1000):
         candidate = f"{stem}R{n}"
         if candidate not in used:
@@ -1297,13 +1315,15 @@ def plan_definition(
         if previous is None:
             for f in section.fields:
                 _refuse_answered_key(f, section, answered_target, held_target)
-            plans.append(SectionPlan(
-                action="CREATE",
-                spec=section,
-                fields=tuple(
-                    FieldPlan(action="CREATE", key=f.key, spec=f) for f in section.fields
-                ),
-            ))
+            plans.append(
+                SectionPlan(
+                    action="CREATE",
+                    spec=section,
+                    fields=tuple(
+                        FieldPlan(action="CREATE", key=f.key, spec=f) for f in section.fields
+                    ),
+                )
+            )
             continue
 
         answered_here = set(answered.get(previous.stage_key, set()))
@@ -1320,13 +1340,15 @@ def plan_definition(
         field_plans, bumped = _plan_fields(
             previous, section, answered_here, taken_keys, answered_target, held_target
         )
-        plans.append(SectionPlan(
-            action="EDIT",
-            section_id=previous.id,
-            spec=section,
-            fields=field_plans,
-            bumps_revision=bumped,
-        ))
+        plans.append(
+            SectionPlan(
+                action="EDIT",
+                section_id=previous.id,
+                spec=section,
+                fields=field_plans,
+                bumps_revision=bumped,
+            )
+        )
 
     incoming_keys = {s.key for s in incoming}
     for previous in stored:
@@ -1340,16 +1362,19 @@ def plan_definition(
         answered_here = set(answered.get(previous.stage_key, set()))
         touched = answered_here & {f.key for f in previous.fields}
         if touched:
-            plans.append(SectionPlan(
-                action="RETIRE",
-                section_id=previous.id,
-                spec=previous,
-                bumps_revision=True,
-                fields=tuple(
-                    FieldPlan(action="RETIRE", field_id=f.id, key=f.key, spec=f)
-                    for f in previous.fields if not f.retired
-                ),
-            ))
+            plans.append(
+                SectionPlan(
+                    action="RETIRE",
+                    section_id=previous.id,
+                    spec=previous,
+                    bumps_revision=True,
+                    fields=tuple(
+                        FieldPlan(action="RETIRE", field_id=f.id, key=f.key, spec=f)
+                        for f in previous.fields
+                        if not f.retired
+                    ),
+                )
+            )
         else:
             plans.append(SectionPlan(action="DELETE", section_id=previous.id, spec=previous))
 
@@ -1521,13 +1546,15 @@ def _plan_fields(
             # makes an answer given under an old wording explicable a year later.
             minted = _mint_key(target.key, taken_keys)
             taken_keys.add(minted)
-            plans.append(FieldPlan(
-                action="SUPERSEDE",
-                field_id=target.id,
-                key=target.key,
-                spec=replace(f, key=minted, id=""),
-                supersedes_id=target.id,
-            ))
+            plans.append(
+                FieldPlan(
+                    action="SUPERSEDE",
+                    field_id=target.id,
+                    key=target.key,
+                    spec=replace(f, key=minted, id=""),
+                    supersedes_id=target.id,
+                )
+            )
             bumped = True
             continue
         # RULE 2. Everything else about an answered field is free to change: help, required, unit,
@@ -1541,14 +1568,24 @@ def _plan_fields(
             # RULE 4. Retired, not deleted: it stops being asked and its answer stays readable and
             # printable. There is no foreign key underneath this — see the module docstring — so
             # this branch IS the enforcement.
-            plans.append(FieldPlan(
-                action="RETIRE", field_id=stored_field.id, key=stored_field.key, spec=stored_field
-            ))
+            plans.append(
+                FieldPlan(
+                    action="RETIRE",
+                    field_id=stored_field.id,
+                    key=stored_field.key,
+                    spec=stored_field,
+                )
+            )
             bumped = True
         else:
-            plans.append(FieldPlan(
-                action="DELETE", field_id=stored_field.id, key=stored_field.key, spec=stored_field
-            ))
+            plans.append(
+                FieldPlan(
+                    action="DELETE",
+                    field_id=stored_field.id,
+                    key=stored_field.key,
+                    spec=stored_field,
+                )
+            )
     return tuple(plans), bumped
 
 
@@ -1721,9 +1758,7 @@ async def load_definition(workshop_id: str) -> CustomDefinition:
     grouped: dict[str, list[CustomFieldSpec]] = {}
     for row in field_rows:
         grouped.setdefault(str(row.sectionId), []).append(_field_from_row(row))
-    specs = tuple(
-        _section_from_row(row, grouped.get(str(row.id), [])) for row in sections
-    )
+    specs = tuple(_section_from_row(row, grouped.get(str(row.id), [])) for row in sections)
     return CustomDefinition(sections=specs, version=custom_schema_version(specs))
 
 
@@ -1833,15 +1868,17 @@ async def apply_definition_plan(
             section_id = section_plan.section_id
 
             if section_plan.action == "CREATE" and section is not None:
-                created = await tx.dwcustomsection.create(data={
-                    "designWorkshopId": workshop_id,
-                    "key": section.key,
-                    "stageKey": section.stage_key,
-                    "title": section.title,
-                    "description": section.description,
-                    "sortOrder": section.sort_order,
-                    "createdById": actor_id,
-                })
+                created = await tx.dwcustomsection.create(
+                    data={
+                        "designWorkshopId": workshop_id,
+                        "key": section.key,
+                        "stageKey": section.stage_key,
+                        "title": section.title,
+                        "description": section.description,
+                        "sortOrder": section.sort_order,
+                        "createdById": actor_id,
+                    }
+                )
                 section_id = created.id
             elif section_plan.action == "EDIT" and section is not None:
                 await tx.dwcustomsection.update(
@@ -1879,10 +1916,12 @@ async def apply_definition_plan(
             for field_plan in section_plan.fields:
                 spec = field_plan.spec
                 if field_plan.action == "CREATE" and spec is not None:
-                    await tx.dwcustomfield.create(data={
-                        "sectionId": section_id,
-                        **_field_columns(spec),
-                    })
+                    await tx.dwcustomfield.create(
+                        data={
+                            "sectionId": section_id,
+                            **_field_columns(spec),
+                        }
+                    )
                 elif field_plan.action == "EDIT" and spec is not None:
                     await tx.dwcustomfield.update(
                         where={"id": field_plan.field_id},
@@ -1895,10 +1934,12 @@ async def apply_definition_plan(
                         },
                     )
                 elif field_plan.action == "SUPERSEDE" and spec is not None:
-                    replacement = await tx.dwcustomfield.create(data={
-                        "sectionId": section_id,
-                        **_field_columns(spec),
-                    })
+                    replacement = await tx.dwcustomfield.create(
+                        data={
+                            "sectionId": section_id,
+                            **_field_columns(spec),
+                        }
+                    )
                     await tx.dwcustomfield.update(
                         where={"id": field_plan.supersedes_id},
                         data={

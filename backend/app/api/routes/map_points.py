@@ -465,9 +465,7 @@ def _origin_points(
             point["total"] += count
             point["counts"][bucket] += count
             placed_total += count
-            positions.setdefault(placed.key, []).append(
-                (placed.latitude, placed.longitude, count)
-            )
+            positions.setdefault(placed.key, []).append((placed.latitude, placed.longitude, count))
             if placed.source == SOURCE_SUBJECT_PIN:
                 point["pinnedRecords"] += count
             if source_kind == "ATLAS":
@@ -640,7 +638,9 @@ def _capture_points(
             # cover. Without these a pin reading "317 records" looks like a single measurement.
             "fixes": len(fixes),
             "spreadMetres": _metres_across(fixes),
-            "medianAccuracy": round(sorted(accuracies)[len(accuracies) // 2], 1) if accuracies else None,
+            "medianAccuracy": round(sorted(accuracies)[len(accuracies) // 2], 1)
+            if accuracies
+            else None,
         }
 
         # The finer clusters inside this pin, each keyed as it WOULD be keyed at the child level — the
@@ -719,9 +719,7 @@ async def _focus_keys(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     # Whether the drawn map actually contains it. One cheap count against the same clause the pins were
     # built from, so "outside your filters" is a fact rather than an inference from a missing ring.
-    in_scope = bool(
-        await delegate.count(where={"AND": [wheres[focus_type], {"id": focus_id}]})
-    )
+    in_scope = bool(await delegate.count(where={"AND": [wheres[focus_type], {"id": focus_id}]}))
 
     keys: list[str] = []
     place = getattr(row, "place", None)
@@ -848,7 +846,9 @@ async def map_points(
     # attachment; without `REFERENCED_BY_A_RECORD` a pin a researcher corrected went on pulling its
     # district's mean toward the place they had just rejected, and every re-save deepened it.
     location_rows, anchor_rows = await gather_reads(
-        db.location.find_many(where={"id": {"in": wanted_location_ids}}) if wanted_location_ids else _none(),
+        db.location.find_many(where={"id": {"in": wanted_location_ids}})
+        if wanted_location_ids
+        else _none(),
         db.location.find_many(
             where={
                 "AND": [
@@ -896,7 +896,9 @@ async def map_points(
         if focus
         else (
             "filtered"
-            if _is_filtered(q, craftId, place, artisanId, mediaType, types, dateFrom, dateTo, workshopIds)
+            if _is_filtered(
+                q, craftId, place, artisanId, mediaType, types, dateFrom, dateTo, workshopIds
+            )
             else "all"
         ),
         "level": admin_level.value,

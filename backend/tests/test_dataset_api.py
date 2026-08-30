@@ -52,7 +52,7 @@ from fastapi import Depends, FastAPI
 from app.api.routes import datasets
 from app.core import deps
 from app.core.security import create_access_token
-from app.services import access_roster
+from app.services import access_roster, designers
 
 # =================================================================================================
 # Harness
@@ -114,7 +114,11 @@ class _AllowRows:
     """``AccessRoster`` in memory: ``lower-cased email -> status``, and nothing else.
 
     THE MINT ROUTE RUNS THE REAL SIGN-IN GATE, ``auth.assert_access_admits``, so these four calls
-    are the ones it makes. Stubbing the table rather than the gate is deliberate: replacing the gate
+    are the ones it makes: ``find_many`` (not ``find_unique`` — the gate's own ``access_row`` reads
+    the row over an ``IN`` on every Gmail-equivalent spelling of the address, not a single exact
+    key, so a stub answering only the literal string would refuse an admitted account the moment a
+    real caller signed in through the canonical form of their own mailbox), ``count``, ``update``
+    and ``upsert``. Stubbing the table rather than the gate is deliberate: replacing the gate
     with a no-op would leave every test below green while deleting the very check that stops a
     SUSPENDED admin — an admin an administrator has already revoked — minting a fresh thirty-day
     read credential over the whole repository. The point of a stub here is to make that check
@@ -134,8 +138,22 @@ class _AllowRows:
         status = self.statuses.get(email)
         return SimpleNamespace(id=email, email=email, status=status) if status else None
 
-    async def find_unique(self, where: dict, **_: Any) -> Any:
-        return self._row(where["email"])
+    async def find_many(self, where: dict, **_: Any) -> list[Any]:
+        """The one shape ``access_row`` actually sends: ``{"email": {"in": [...]}}``.
+
+        Every key in the list is a spelling of ONE mailbox — the literal address and, for Gmail,
+        its canonical form — so this dedupes by the row rather than by the key: two keys that both
+        resolve to the same stored status must not hand ``access_row`` two copies of one row to
+        pick between, which is exactly the ambiguity its own ``_the_row_that_decides`` exists to
+        resolve for the real table and must never have to resolve here.
+        """
+        keys = where["email"]["in"]
+        rows: dict[str, Any] = {}
+        for key in keys:
+            row = self._row(key)
+            if row is not None:
+                rows[row.email] = row
+        return list(rows.values())
 
     async def count(self, where: Any = None, **_: Any) -> int:
         return sum(1 for status in self.statuses.values() if status == "PENDING")
@@ -157,6 +175,13 @@ class _NoEmpanelments:
 
     async def find_first(self, where: Any = None, **_: Any) -> Any:
         return None
+
+    async def find_many(self, where: Any = None, **_: Any) -> list[Any]:
+        """``services.designers.roster_allows`` reads the row this way now (the Gmail-alias fix:
+        one ``IN`` over the literal and canonical spellings, never a ``find_first`` on either
+        alone). Empty for the identical reason ``find_first`` above is: nobody in this module is a
+        designer, so there is nothing for either spelling to find."""
+        return []
 
 
 class _AccessDb:
@@ -248,6 +273,18 @@ def api(monkeypatch: pytest.MonkeyPatch):
     # `services/access_roster` holds its own reference to `db`, so the mint route's gate reads
     # through this one rather than through `datasets.db` above.
     monkeypatch.setattr(access_roster, "db", stack.access)
+    # AND SO DOES `services/designers` — a THIRD reference, not a second. The mint gate's "waiting"
+    # branch (no allow-list row, or one still PENDING) asks whether the address is empanelled as a
+    # designer instead, and that question is answered by `designers.roster_allows`, which this
+    # module calls into rather than reading `DesignerRoster` itself — `access_roster.
+    # designer_empanelment_admits` is a one-line passthrough to it. Patching only `access_roster.db`
+    # left `designers.py`'s own module-level `db` name bound to the real, unconnected Prisma
+    # singleton, so any test whose account has no allow-list row reached this passthrough and died
+    # on `ClientNotConnectedError` — a failure that names a live database rather than the missing
+    # stub, which is what made it easy to misread as an environment problem instead of a second
+    # `from app.core.db import db` this fixture never patched. Same stub object as `access_roster`
+    # above: one empty roster, asked about through either door, must answer the same "nobody".
+    monkeypatch.setattr(designers, "db", stack.access)
     deps.clear_user_cache()
     yield stack
     deps.clear_user_cache()

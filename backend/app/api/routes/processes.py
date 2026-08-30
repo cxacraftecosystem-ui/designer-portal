@@ -227,7 +227,15 @@ def _plan_steps(process_id: str, existing: list[Any], steps: list[ProcessStepInp
             )
             if not unchanged:
                 plan.to_update.append(
-                    (step.id, {"name": step.name, "stepType": step.stepType, "sortOrder": order, "notes": notes})
+                    (
+                        step.id,
+                        {
+                            "name": step.name,
+                            "stepType": step.stepType,
+                            "sortOrder": order,
+                            "notes": notes,
+                        },
+                    )
                 )
             continue
         plan.to_create.append(
@@ -323,10 +331,14 @@ async def list_processes(
     if workshopId:
         # Either reading counts: the process's own workshopId column, or its parent product's — which
         # is how every process recorded before the column got its workshop.
-        and_filters.append({"OR": [
-            {"workshopId": workshopId},
-            {"product": {"is": {"workshopId": workshopId}}},
-        ]})
+        and_filters.append(
+            {
+                "OR": [
+                    {"workshopId": workshopId},
+                    {"product": {"is": {"workshopId": workshopId}}},
+                ]
+            }
+        )
     if statusFilter:
         where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
     if createdBy:
@@ -386,7 +398,9 @@ async def create_process(
 
 
 @router.get("/{process_id}")
-async def get_process(process_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def get_process(
+    process_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     process = await require_record(db.process, process_id)
     await hydrate_relations([process], RELATIONS)
     return await _hydrate(process, current_user)

@@ -166,6 +166,14 @@ _CLEARABLE_COLUMNS = (
     # ``REFERENCE_MODELS["Artisan"].data`` is for.
     "craftStartDate",
     "experienceYears",
+    # THE MONTHS BESIDE THE YEARS, AND CLEARABLE FOR THE SAME REASON THE YEARS ARE. The two boxes are
+    # answered and un-answered together on the form, so a pair where one can be blanked and the other
+    # cannot would leave an artisan reading "and 6 months" under an empty years box, with no way back
+    # from the screen that typed it. NULL and 0 are different answers here — see
+    # ``ArtisanUpdate.experienceMonths`` — and this entry is what makes the NULL half reachable:
+    # without it ``clean_data`` drops the explicit null and the PATCH answers 200 having changed
+    # nothing at all.
+    "experienceMonths",
     "dos",
     "donts",
 )
@@ -239,7 +247,9 @@ def _may_read_full_aadhaar(user: Any, artisan: Any) -> bool:
 
     if has_rank(user, "PROFESSOR"):
         return True
-    return bool(get_value(user, "id")) and get_value(artisan, "createdById") == get_value(user, "id")
+    return bool(get_value(user, "id")) and get_value(artisan, "createdById") == get_value(
+        user, "id"
+    )
 
 
 def _mask_artisan_identity(payload: Any, user: Any, artisan: Any) -> Any:
@@ -360,10 +370,14 @@ async def list_artisans(
     if workshopId:
         # Either reading counts: the artisan's own workshopId column, or the WorkshopArtisan join
         # (relation named ``workshops``) that carried the link before the column existed.
-        and_filters.append({"OR": [
-            {"workshopId": workshopId},
-            {"workshops": {"some": {"workshopId": workshopId}}},
-        ]})
+        and_filters.append(
+            {
+                "OR": [
+                    {"workshopId": workshopId},
+                    {"workshops": {"some": {"workshopId": workshopId}}},
+                ]
+            }
+        )
     if designWorkshopId:
         # THE DESIGN & PROTOTYPE WORKSHOP filter. A plain equality on the column and never an OR
         # like `workshopId` above, because there is no second reading of this link: `workshopId`
@@ -443,7 +457,9 @@ async def create_artisan(
 
 
 @router.get("/{artisan_id}")
-async def get_artisan(artisan_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def get_artisan(
+    artisan_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     artisan = await require_record(db.artisan, artisan_id)
     await hydrate_relations([artisan], RELATIONS)
     # Masked unless this caller is entitled to the raw number (creator, or professor+) — decided
@@ -565,7 +581,9 @@ async def lookup_artisan_by_aadhaar(
 
 
 @router.get("/{artisan_id}/questionnaire")
-async def get_artisan_questionnaire(artisan_id: str, _: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def get_artisan_questionnaire(
+    artisan_id: str, _: Any = Depends(get_current_user)
+) -> dict[str, Any]:
     """Everything recorded against this artisan in the questionnaire, gathered per artisan.
 
     Because one interview is shared across an exact set of artisans, a recording/note/answer made for

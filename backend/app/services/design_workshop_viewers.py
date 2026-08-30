@@ -310,9 +310,7 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
         exemptions: list[dict[str, Any]] = [{"role": "MASTER_ADMIN"}]
         if configured:
             exemptions.append({"email": {"equals": configured, "mode": "insensitive"}})
-        clauses.append(
-            {"OR": [*exemptions, {"email": {"not_in": barred, "mode": "insensitive"}}]}
-        )
+        clauses.append({"OR": [*exemptions, {"email": {"not_in": barred, "mode": "insensitive"}}]})
     term = (search or "").strip()
     if term:
         clauses.append({"OR": [{"name": contains(term)}, {"email": contains(term)}]})

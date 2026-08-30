@@ -117,9 +117,7 @@ def _ledger_or_503(exc: RatingLedgerUnavailable) -> HTTPException:
     a restart does not fix and a migration does, and an opaque 500 sends whoever is on call reading
     tracebacks for a schema that is simply not there yet.
     """
-    return HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-    )
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
 # --------------------------------------------------------------------------------------
@@ -204,9 +202,7 @@ async def submit_rating(
         ) from exc
 
     return {
-        "rating": design_ratings.rating_payload(
-            row, viewer_id=current_user.id, access=access
-        ),
+        "rating": design_ratings.rating_payload(row, viewer_id=current_user.id, access=access),
         "replayed": outcome.replayed,
     }
 
@@ -380,9 +376,7 @@ async def round_ranking(
                 # they were given.
                 show_ordinal=is_member or is_admin(current_user),
                 mine=(
-                    design_ratings.rating_payload(
-                        mine, viewer_id=current_user.id, access=access
-                    )
+                    design_ratings.rating_payload(mine, viewer_id=current_user.id, access=access)
                     if mine is not None
                     else None
                 ),

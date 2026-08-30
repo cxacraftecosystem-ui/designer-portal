@@ -20,10 +20,20 @@ import {
   type DwEligibleViewer,
   type DwViewer
 } from "@/lib/designWorkshopViewers";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { roleLabel } from "@/lib/permissions";
 import { WORKSHOP_TYPE_LABELS, type Workshop, type WorkshopType } from "@/lib/types";
+import {
+  designWorkshopOptions,
+  deviceLooksOffline,
+  WORKSHOP_OPTION_PAGE_SIZE,
+  workshopCutSentence,
+  workshopEmptyLabel,
+  workshopListNotice,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 
 /**
  * Who may open one design & prototype workshop, administered beside the workshop-access console.
@@ -55,14 +65,20 @@ import { WORKSHOP_TYPE_LABELS, type Workshop, type WorkshopType } from "@/lib/ty
  *   mis-clicked name has already revoked it for however long the round trip takes, and on a rural
  *   link that is seconds. So the picker edits a PENDING set, the panel says what is unsaved, and
  *   one button sends it.
- * - **The type dropdown NARROWS, it does not set.** See {@link TYPE_OPTIONS}.
- * - **THE PEOPLE SEARCH IS THE SERVER'S, and the picker's own filter box is turned OFF so that there
- *   is exactly one of them.** `eligible-viewers` answers at most 2000 accounts ordered by name and
- *   that cut is being hit on this repository — see point 4 of `lib/designWorkshopViewers.ts` — so a
- *   box that filtered the options already in the browser would search only the part of the alphabet
- *   that fitted and answer "no matches" for a colleague who is eligible, present and simply sorts
- *   late. The same box, wired to the server, reaches them. See {@link SEARCH_DEBOUNCE_MS} and the
- *   `searchable={false}` on the picker.
+ * - **The type dropdown NARROWS, it does not set.** See {@link TYPE_OPTIONS}. It also stands down
+ *   while the workshop box holds a term, with a sentence saying so — the argument is at
+ *   `typeNarrowingSuspended`, and the short version is that a local map built from one capped read
+ *   of a different table may not narrow an answer the repository gave.
+ * - **BOTH SEARCHES ARE THE SERVER'S, and each control has exactly one box.** `eligible-viewers`
+ *   answers at most 2000 accounts ordered by name and that cut is being hit on this repository —
+ *   see point 4 of `lib/designWorkshopViewers.ts` — so a box that filtered the options already in
+ *   the browser would search only the part of the alphabet that fitted and answer "no matches" for a
+ *   colleague who is eligible, present and simply sorts late. The workshop picker had the same fault
+ *   over one page of `GET /design-workshops` and it is fixed the other way round, because the
+ *   primitive can now hand a term out: the PEOPLE box stays a `SearchInput` above a picker with
+ *   `searchable={false}` (its options are assembled from three sources and pinned, so the panel's own
+ *   box has never been the thing to point at the server), and the WORKSHOP box is the panel's own,
+ *   wired through `serverQuery`. See {@link SEARCH_DEBOUNCE_MS}.
  */
 
 /**
@@ -93,11 +109,23 @@ const TYPE_OPTIONS: DropdownOption[] = [
  * can say when it is showing less than there is — a selector that quietly stops at a hundred is
  * indistinguishable from a repository with a hundred workshops in it.
  */
-const DESIGN_WORKSHOP_PAGE = 100;
+/*
+  THE DESIGN-WORKSHOP PAGE IS NO LONGER 100, AND THE OLD NUMBER WAS A DEAD BAND RATHER THAN A
+  GENEROUS ONE. `SearchableSelect` draws at most `RENDER_CAP` (80) rows, so a hundred-row page put
+  twenty workshops into this control that it silently would not draw, under a notice — "Showing the
+  100 most recent design workshops of N" — describing a list nobody was looking at. Between 81 and
+  100 workshops the panel below said nothing at all while dropping rows. `WORKSHOP_OPTION_PAGE_SIZE`
+  is `RENDER_CAP`, reached through `lib/workshopOptions` so that one number governs the fetch and
+  the render on every workshop picker in the app.
+
+  The 200 below is untouched: that request feeds the type MAP, not a list of options, so its ceiling
+  is about how many workshops can be typed rather than how many can be drawn.
+*/
+const DESIGN_WORKSHOP_PAGE = WORKSHOP_OPTION_PAGE_SIZE;
 const WORKSHOP_PAGE = 200;
 
 /**
- * How long after the last keystroke the people search goes out.
+ * How long after the last keystroke either search on this panel goes out.
  *
  * 300 ms, the same number and for the same measured reason as `StageReferenceField`: the server
  * matches `name` OR `email` with an `ILIKE '%term%'` that no index can answer, so every keystroke
@@ -105,17 +133,28 @@ const WORKSHOP_PAGE = 200;
  * and only ever more. Shorter and a fast typist fires six scans for one surname; longer and the list
  * visibly lags the box.
  *
- * Clearing the box does NOT wait: an empty term is the unnarrowed list, which is the one request that
- * is always about to be needed and never about to be superseded by the next letter.
+ * ONE NUMBER FOR BOTH BOXES, and it is worth saying why rather than leaving two constants to drift.
+ * The workshop search reaches `GET /design-workshops?search=`, which is the same shape of query over
+ * a smaller table — an unindexable `ILIKE` across `title, craftName, clusterName, workshopCode` — so
+ * the measurement that produced this number applies unchanged, and two boxes on one panel that
+ * answered at visibly different speeds would read as one of them being broken.
+ *
+ * Clearing either box does NOT wait: an empty term is the unnarrowed list, which is the one request
+ * that is always about to be needed and never about to be superseded by the next letter. It is also
+ * the request each effect makes on mount, where a pause before asking for anything at all would be a
+ * pause nobody asked for.
  */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** Title plus the day it ran, never an id — the same shape `workshopLabel` gives ordinary workshops. */
-function designWorkshopLabel(summary: DwSummary): string {
-  const title = summary.title?.trim() || "Untitled design workshop";
-  const when = formatDate(summary.startDate ?? summary.createdAt ?? null);
-  return when === "-" ? title : `${title} · ${when}`;
-}
+/*
+  THE LOCAL `designWorkshopLabel` IS GONE. It built `title · date`, which was one of six label shapes
+  the app shipped for one question and one of THREE copies of this exact function — this panel's, the
+  inspectors panel's, and `/design-review`'s, each module-private, each with a comment saying it was
+  deliberately not shared and that a fourth caller would be the moment to lift it. There were seven.
+  `lib/workshopOptions::designWorkshopOptions` is that home: the label is the title alone, and the
+  craft, the cluster and the day it ran go in the `hint`, which `SearchableSelect` searches as well as
+  draws.
+*/
 
 /** Name a person without ever leaking an id: their name, else their email, else a neutral fallback. */
 function personLabel(person: { name?: string | null; email?: string | null } | null | undefined): string {
@@ -150,8 +189,52 @@ function describeFailure(error: unknown, fallback: string): string {
 export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: number }) {
   const { toast } = useToast();
 
-  const [summaries, setSummaries] = useState<DwSummary[] | null>(null);
-  const [summariesTotal, setSummariesTotal] = useState(0);
+  /**
+   * What the design-workshop read answered — three states, and the middle one is the whole point.
+   *
+   * `DwSummary[] | null` could not tell a read that FAILED from a read that answered NOTHING, and
+   * this panel resolved that ambiguity in the wrong direction: the catch below set `[]` and then
+   * raised a red banner beside a picker that read "No design workshops of this type" — two claims,
+   * one of them about a filter that had not been applied.
+   */
+  const [workshops, setWorkshops] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
+  /** Was the device reachable when that read FAILED? Captured in the catch, for the reason
+   *  `components/forms/DesignWorkshopSelect.tsx` gives at length: it is a fact about the moment the
+   *  request died, and re-reading it at render time swaps one of §3.5's sentences for another under
+   *  a reader who has not moved. */
+  const [workshopsOnline, setWorkshopsOnline] = useState(true);
+  /**
+   * What the admin has typed to find a WORKSHOP. Sent to the server; never used to filter locally.
+   *
+   * IT LIVES INSIDE THE PICKER'S OWN BOX, which is the whole of this change. Until the primitive
+   * could hand a term out, the only box available to this control filtered the array it was handed
+   * — one page of `GET /design-workshops` — so typing the title of a workshop that happened to sit
+   * on page two answered "No matches" about a workshop that exists, on an access console, where
+   * "there is no such workshop" is a sentence an admin acts on. `serverQuery` points the same box
+   * at `?search=`, which matches `title, craftName, clusterName, workshopCode` across the whole
+   * table. There is still exactly one box; it simply reaches past the page now.
+   */
+  const [workshopSearch, setWorkshopSearch] = useState("");
+  /** A workshop search is in flight, so an empty panel mid-flight reads as "wait" and never as
+   *  "there are none" — R3, in the one state the control genuinely cannot know. */
+  const [workshopsSearching, setWorkshopsSearching] = useState(true);
+  /**
+   * Every design workshop this panel has seen, across every search it has run.
+   *
+   * NEEDED BECAUSE THE OPTION LIST IS NOW A MOVING WINDOW over the table rather than one fixed page
+   * of it, and three separate things on this panel read the CHOSEN workshop's row rather than its
+   * id. The load-bearing one is `creatorId`: it is derived from the selected summary, it decides
+   * which account is held out of the editable set, and it is a dependency of `loadViewers`. Read
+   * off the current answer, an admin who picked a workshop and then typed a colleague's surname
+   * into the box below would have watched the selected workshop fall out of the answer, `creatorId`
+   * become `""`, and the creator's row turn into an ordinary tickable one that the next Save could
+   * delete — the one row this panel is least entitled to touch. Remembering the summary is what
+   * makes the search a narrowing of the OPTIONS and not of the administration.
+   *
+   * State and not a ref, for the reason the people-side `known` map gives: `selectedWorkshop`
+   * memoises on it, and a ref mutated inside a fetch is not a dependency anything recomputes from.
+   */
+  const [knownWorkshops, setKnownWorkshops] = useState<Map<string, DwSummary>>(() => new Map());
   const [typeByWorkshopId, setTypeByWorkshopId] = useState<Map<string, WorkshopType>>(new Map());
   const [typeMapPartial, setTypeMapPartial] = useState(false);
 
@@ -202,24 +285,59 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
 
   /* ── The two lists the selector is built from ───────────────────────────── */
 
+  /**
+   * A generation counter rather than a `cancelled` flag, for the reason the people search beside it
+   * gives and which only became true of this read when the read became re-runnable: `apiFetch`
+   * takes no `AbortSignal`, so two searches can be in flight at once, and a slow answer for "bag"
+   * landing after the fast one for "bagru" would draw the wrong list under the typed word — which is
+   * precisely the moment an admin picks the first row without reading it.
+   */
+  const workshopGeneration = useRef(0);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await listDesignWorkshops({ page: 1, pageSize: DESIGN_WORKSHOP_PAGE });
-        if (cancelled) return;
-        setSummaries(result.items);
-        setSummariesTotal(result.total);
-      } catch (err) {
-        if (cancelled) return;
-        setSummaries([]);
-        setLoadError(describeFailure(err, "Unable to load the design workshops"));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshToken]);
+    const term = workshopSearch.trim();
+    const current = workshopGeneration.current + 1;
+    workshopGeneration.current = current;
+    setWorkshopsSearching(true);
+    const timer = window.setTimeout(
+      () => {
+        listDesignWorkshops({ page: 1, pageSize: DESIGN_WORKSHOP_PAGE, search: term || undefined })
+          .then((result) => {
+            if (workshopGeneration.current !== current) return;
+            setWorkshops({ kind: "ok", rows: result.items, total: result.total });
+            // Remembered before anything reads it, so the chosen workshop survives the next answer.
+            // See `knownWorkshops` for the row of this panel that would otherwise go missing.
+            setKnownWorkshops((previous) => {
+              const next = new Map(previous);
+              for (const summary of result.items) next.set(summary.id, summary);
+              return next;
+            });
+            setWorkshopsSearching(false);
+          })
+          .catch(() => {
+            if (workshopGeneration.current !== current) return;
+            setWorkshopsSearching(false);
+            /*
+              NOT `setSummaries([])` AND NOT A RED BANNER. The empty array was the failed-list-reads-as-
+              empty-list bug in its second-most-damaging place: on an access console, where "there are no
+              design workshops" is an answer an admin acts on. The banner is not the remedy either — the
+              sentence belongs on the control it is about, in the four words §3.5 gives every workshop
+              picker on both clients, and a banner saying one thing above a picker saying another teaches
+              a reader that neither is worth reading. `loadError` still carries the other two reads on
+              this panel, neither of which has a control of its own to speak through.
+            */
+            setWorkshopsOnline(!deviceLooksOffline());
+            setWorkshops({ kind: "failed" });
+          });
+      },
+      // Clearing the box does NOT wait. An empty term is the unnarrowed list — the one request that
+      // is always about to be wanted and never about to be superseded by the next letter — and it is
+      // also the request this effect makes on mount, where a 300 ms pause before asking for anything
+      // at all would be a pause nobody asked for.
+      term ? SEARCH_DEBOUNCE_MS : 0
+    );
+    return () => window.clearTimeout(timer);
+  }, [refreshToken, workshopSearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -304,9 +422,19 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
 
   /* ── The chosen workshop's current viewers ──────────────────────────────── */
 
+  /**
+   * The chosen workshop's row, read from what this panel HAS SEEN and not from the current answer.
+   *
+   * It used to be `workshops.rows.find(…)`, which was exactly right while the list was one fixed
+   * page and is a defect the moment the box goes to the server: the answer is a moving window, the
+   * chosen workshop is very often not in the next one, and `creatorId` below is derived from this.
+   * Read off the current answer, typing a surname into the people box would blank `creatorId`, drop
+   * the creator out of the held-back set, and hand the next Save a payload that deletes their row.
+   * See {@link knownWorkshops}.
+   */
   const selectedWorkshop = useMemo(
-    () => (summaries ?? []).find((summary) => summary.id === workshopId) ?? null,
-    [summaries, workshopId]
+    () => knownWorkshops.get(workshopId) ?? null,
+    [knownWorkshops, workshopId]
   );
   const creatorId = selectedWorkshop?.createdById ?? "";
 
@@ -353,6 +481,32 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
   /* ── The type filter ────────────────────────────────────────────────────── */
 
   const typeKnown = typeByWorkshopId.size > 0;
+  /** What the server was actually asked for, which is also what decides the two rules below. */
+  const workshopSearchTerm = workshopSearch.trim();
+
+  /**
+   * WHILE A TERM IS TYPED, THE TYPE FILTER STANDS DOWN — and this is the one judgement in this
+   * change that is not a straight copy of the inspectors panel, because that panel has no second
+   * narrowing to reconcile.
+   *
+   * The two controls answer questions of different sizes. The box asks the REPOSITORY, over every
+   * design workshop there is. The type filter asks a MAP built here in the browser out of one capped
+   * read of a different table (`GET /workshops?pageSize=200`), and a design workshop whose linked
+   * workshop is not in that page has no type at all as far as this panel is concerned — which is
+   * what the `untyped` sentence below has always been about. Letting the second narrow the first
+   * would drop rows the server matched, on the strength of a local map that cannot say whether it
+   * knows about them, and hand the picker an empty options array. The panel would then draw its
+   * own strongest sentence — *"No matches for “bagru”. This box searches the whole list, not only
+   * the rows drawn here"* — about a search that DID match. That is absence reading as
+   * non-existence, arriving through the fix for it, on the console where an admin decides who can
+   * open a workshop.
+   *
+   * So: search or filter, never both at once, and the control that stands down says so rather than
+   * quietly doing nothing. The filter keeps its VALUE — clearing the box restores it — and it is
+   * disabled with a sentence, which is the shape this same control already takes when the type map
+   * could not be read at all.
+   */
+  const typeNarrowingSuspended = workshopSearchTerm !== "";
 
   /**
    * The workshops the selector offers, and — separately — how many the filter had to leave out.
@@ -363,8 +517,8 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
    * indistinguishable from having no workshops and is this codebase's most repeated bug class.
    */
   const { offered, untyped } = useMemo(() => {
-    const all = summaries ?? [];
-    if (!typeFilter) return { offered: all, untyped: 0 };
+    const all: readonly DwSummary[] = workshops.kind === "ok" ? workshops.rows : [];
+    if (!typeFilter || typeNarrowingSuspended) return { offered: all, untyped: 0 };
     const matching: DwSummary[] = [];
     let withoutType = 0;
     for (const summary of all) {
@@ -373,18 +527,141 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       else if (type === typeFilter) matching.push(summary);
     }
     return { offered: matching, untyped: withoutType };
-  }, [summaries, typeFilter, typeByWorkshopId]);
+  }, [workshops, typeFilter, typeByWorkshopId, typeNarrowingSuspended]);
 
-  // A workshop the filter no longer offers must not stay selected: the roster below it would be
-  // administering a record that is not on screen anywhere.
+  /**
+   * A workshop the TYPE FILTER no longer offers must not stay selected: the roster below it would be
+   * administering a record that is not on screen anywhere.
+   *
+   * ── IT ASKS THE SELECTED ROW, NOT THE LIST, AND THAT IS THE WHOLE OF THE CHANGE ────────────────
+   *
+   * It used to be `!offered.some(id)`, which was the same question while `offered` could only shrink
+   * for one reason. With the box on the server there are now two reasons a workshop can be missing
+   * from the answer, and only one of them is a decision about the workshop: typing a colleague's
+   * name would have cleared the admin's selection and torn down the roster they were in the middle
+   * of editing, silently, several keystrokes in. The type of the row this panel is administering is
+   * a fact about that row and is available from `selectedWorkshop` whether or not the current answer
+   * happens to contain it, so that is what is asked.
+   */
   useEffect(() => {
-    if (workshopId && !offered.some((summary) => summary.id === workshopId)) setWorkshopId("");
-  }, [offered, workshopId]);
+    if (!workshopId || !typeFilter || typeNarrowingSuspended) return;
+    // `null` for a row this panel has never seen as well as for one carrying no type at all, and
+    // both must clear: an untyped workshop is not offered under a type filter either, which is what
+    // the `untyped` sentence below exists to explain.
+    const type = selectedWorkshop ? designWorkshopType(selectedWorkshop, typeByWorkshopId) : null;
+    if (type !== typeFilter) setWorkshopId("");
+  }, [workshopId, typeFilter, typeNarrowingSuspended, selectedWorkshop, typeByWorkshopId]);
 
-  const workshopOptions = useMemo(
-    () => offered.map((summary) => ({ value: summary.id, label: designWorkshopLabel(summary) })),
-    [offered]
+  /**
+   * The rows, in the one vocabulary — and `offPage: "recover"`, which is a claim about this control
+   * and not a preference.
+   *
+   * ── IT WAS `"refuse"`, AND THE THING THAT MADE IT SO IS GONE ────────────────────────────────────
+   *
+   * The old note here said that `workshopId` could only ever have come from a row this picker DREW,
+   * so there was no such thing as an off-page value and nothing for `"recover"` to recover — and
+   * that "stops being true the day this picker's box goes to the server". This is that day. A search
+   * answer is a moving window: the workshop being administered falls out of the next one, and with
+   * `"refuse"` the trigger would go blank over a roster the admin is in the middle of editing, which
+   * is the "converts a read-only fact into a wrong write" failure `WorkshopSelect` names — a blank
+   * box over an administered workshop invites somebody to point the panel somewhere else.
+   *
+   * `"recover"` is right here and `"refuse"` is not, on the test §2.9 sets: this control describes an
+   * administration that is ALREADY TRUE — the roster underneath it belongs to that workshop — rather
+   * than authorising a one-way write. The row comes from {@link knownWorkshops} rather than from a
+   * by-id read, because the panel has already seen it; `null` there means "not yet", never "gone".
+   *
+   * MEMOISED, AND ON A `serverQuery` CONTROL THAT IS LOAD-BEARING RATHER THAN AN OPTIMISATION.
+   * `SearchableSelect` re-takes its pin snapshot on `options` IDENTITY — that is how it knows a new
+   * answer landed — so a fresh array every render would set state on every render. See
+   * `components/forms/DesignWorkshopSelect.tsx` for the full note.
+   *
+   * `group: true`: the difference between a workshop still being worked on and one already submitted
+   * is something an admin granting access must act on, and the heading is what stops them picking a
+   * closed one by mistake. Nothing is `disabled` — a submitted workshop legitimately gains a viewer.
+   */
+  const workshopSet = useMemo(
+    () => designWorkshopOptions(workshops.kind === "ok" ? { ...workshops, rows: offered } : workshops, {
+      group: true,
+      offPage: { mode: "recover", row: selectedWorkshop }
+    }),
+    [workshops, offered, selectedWorkshop]
   );
+
+  /**
+   * SCOPED — `list_design_workshops` narrows by `visible_to_clause` for everybody but an admin, and
+   * "No design workshops are open to this account" is the weaker of the two empty claims. See
+   * `WorkshopListVoice.scoped` for why the two must never be collapsed.
+   */
+  const workshopVoice = useMemo<WorkshopListVoice>(
+    () => ({ table: "design", scoped: true, online: workshopsOnline }),
+    [workshopsOnline]
+  );
+
+  /**
+   * DID THE TYPE FILTER EMPTY THE PICKER, rather than the repository or the read?
+   *
+   * A third fact that neither §3.5's sentences nor the builder can know, because the narrowing
+   * happens in this browser after the answer arrived. Without the distinction a type filter that
+   * matched nothing would print "No design workshops are open to this account. An administrator can
+   * give you access to one." over a repository full of them, and send an admin to ask themselves for
+   * access. The `untyped` paragraph below already explains what the filter left out; this only has
+   * to stop the other sentence claiming the filter's work as its own.
+   *
+   * It cannot fire while a term is typed, because the filter is suspended there and `offered` is the
+   * whole answer — see {@link typeNarrowingSuspended}. That is what keeps this and the panel's own
+   * "No matches for …" from ever being on screen about the same emptiness.
+   */
+  const filteredAway = workshops.kind === "ok" && workshops.rows.length > 0 && offered.length === 0;
+
+  /**
+   * WHAT THE READER IS NOT SEEING, WITH THE NUMBER — the same sentence, from the same place, as
+   * every other workshop picker in the app.
+   *
+   * ── THE HINT IS FINALLY TRUE, WHICH IS THE POINT OF THE WHOLE CHANGE ────────────────────────────
+   *
+   * This used to be `cappedListNotice`'s no-reach arm — *"the other N are not on this list, and
+   * typing here searches only the M shown"* — because that was the only honest thing to say about a
+   * box that filtered one fetched page. The box now goes to the repository, so `searchable: true`
+   * and the shared "Keep typing to narrow the list" is true of this control for the first time.
+   *
+   * ── IT IS ASKED OF `workshopSet` AND NOT OF THE ANSWER, WHICH IS NOT THE OBVIOUS CHOICE ────────
+   *
+   * The tempting alternative is to count the FETCH — 80 rows out of 196 — and leave the type
+   * filter's exclusions to the `untyped` paragraph, on the grounds that the two narrowings have two
+   * different remedies. It is rejected on the rule this whole module is built to keep: **the
+   * arithmetic in this sentence has to be checkable against the rows in front of the reader**, which
+   * is the only reason anybody reads one. A filter narrowing the list to twelve rows above a line
+   * that says "Showing the first 80" is a sentence about a list nobody is looking at — the exact
+   * failure the old "Showing the 100 most recent" line was, in the other direction. `drawn` is
+   * counted off the built options for the same reason, so a recovered row that pushed the array past
+   * `RENDER_CAP` and got trimmed cannot leave this line one ahead of the panel.
+   *
+   * What the reader loses by that choice is nothing they cannot see: the control that narrowed the
+   * list is on screen, holding the value that narrowed it, with its own paragraph beneath it, and
+   * the remedy this sentence names — type, which suspends the filter and says so — genuinely does
+   * reach the rest.
+   */
+  const workshopCut = workshopCutSentence(workshopSet, {
+    term: workshopSearch,
+    searchable: true
+  });
+
+  /**
+   * WHICH OF §3.5's SENTENCES IS TRUE OF THIS LIST, asked of the UNNARROWED read.
+   *
+   * The three guards a server-searched picker needs are written out in full on
+   * `components/forms/DesignWorkshopSelect.tsx` and these are the same three. In short: once a term
+   * is typed an empty answer is a fact about the TERM, so printing "No design workshops are open to
+   * this account. An administrator can give you access to one." under a box somebody has just typed
+   * into would be a claim about a grant table produced by a filtered read — the panel says the true
+   * thing in the server's own stronger words. A FAILED read still speaks through the term, because
+   * that failure is not about the term at all.
+   */
+  const workshopNotice =
+    filteredAway || (workshops.kind === "ok" && workshopSearchTerm)
+      ? ""
+      : workshopListNotice(workshops, workshopVoice);
 
   /* ── The picker's options ───────────────────────────────────────────────── */
 
@@ -599,7 +876,14 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                 // than jumping to the next field.
                 advanceOnSelect={false}
                 ariaLabel="Workshop type"
-                disabled={!typeKnown}
+                /*
+                  TWO REASONS TO STAND DOWN, AND EACH HAS ITS OWN SENTENCE BELOW. The type map could
+                  not be read, so there is nothing to filter BY; or a search term is in the box beside
+                  it, so filtering would narrow the repository's answer with a local map that cannot
+                  say what it does not know about. See `typeNarrowingSuspended` for the second and
+                  why it is a stand-down with words rather than a filter that quietly does nothing.
+                */
+                disabled={!typeKnown || typeNarrowingSuspended}
                 onChange={setTypeFilter}
                 options={TYPE_OPTIONS}
                 value={typeFilter}
@@ -609,16 +893,69 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               <Dropdown
                 advanceOnSelect={false}
                 ariaLabel="Design workshop"
-                onChange={setWorkshopId}
-                options={workshopOptions}
-                placeholder={
-                  summaries === null
-                    ? "Loading design workshops…"
-                    : workshopOptions.length
-                      ? "Select or type to search"
-                      : "No design workshops of this type"
+                /*
+                  THE TERM IS CLEARED ON THE PICK, AND THIS PANEL IS THE ONE PLACE THAT MUST DO IT.
+                  `SearchableSelect` deliberately never writes "" into a caller's term — closing the
+                  menu would otherwise re-fetch the unnarrowed list and throw away the narrowing the
+                  reader had just done — so clearing is the caller's decision, and here the decision
+                  is forced by what the term does to the control BESIDE this one. A term suspends the
+                  type filter (see `typeNarrowingSuspended`); a term that outlived the pick would
+                  leave that filter disabled for as long as nobody thought to go back and empty a box
+                  they had finished with, which is a control disabled by a cause the reader can no
+                  longer see. The other three server-searched pickers keep their term because nothing
+                  on their screens depends on it.
+
+                  The empty term re-asks immediately (no debounce on a clear), and the workshop just
+                  picked is held by `knownWorkshops` and drawn back by `offPage: "recover"` whether or
+                  not the unnarrowed page happens to contain it.
+                */
+                onChange={(id) => {
+                  setWorkshopId(id);
+                  setWorkshopSearch("");
+                }}
+                options={workshopSet.options}
+                /*
+                  THE BOX IS THE SERVER'S NOW, AND IT IS STILL ONLY ONE BOX. It was `searchable` over
+                  the array this panel had fetched — one page of `GET /design-workshops` — so an
+                  admin who typed the title of a workshop sitting on page two was told "No matches"
+                  about a workshop that exists, on the console where that reads as "there is no such
+                  workshop". `serverQuery` forces the box on, BYPASSES the local filter pass —
+                  `options` already IS the answer to this term, and filtering it again would drop rows
+                  the server matched on `workshopCode`, which the label deliberately does not show —
+                  and makes the empty line three-way: pending, matched-nothing-on-the-server,
+                  nothing-here-at-all.
+
+                  THE LENGTH CAP IS BORROWED AND IS SAID TO BE BORROWED. `list_design_workshops`
+                  declares a bare `search: str | None` with no `max_length`, so nothing would refuse a
+                  long paste — it would simply run a very long `ILIKE` that matches nothing. Reusing
+                  this panel's own eligible-viewer bound keeps one number on this screen rather than
+                  two, and nobody should read it as a rule the server enforces.
+
+                  `truncated` is deliberately absent — see the note beside `workshopCut`: this route
+                  reports a real total, so the cut is stated once, underneath, with its number.
+                */
+                serverQuery={{
+                  value: workshopSearch,
+                  onChange: (next) => setWorkshopSearch(next.slice(0, ELIGIBLE_VIEWER_SEARCH_MAX)),
+                  pending: workshopsSearching
+                }}
+                /*
+                  THE FOUR EMPTY STATES ARE FOUR SENTENCES, PLUS THIS SCREEN'S OWN FIFTH. The
+                  placeholder used to carry them all: "Loading design workshops…" while the read was
+                  in flight and "No design workshops of this type" for every other reason, including
+                  a read that had failed. `workshopEmptyLabel` answers the four §3.5 states — still
+                  asking, could-not-be-listed, empty-because-offline, genuinely-empty — and the guard
+                  in front of it answers the fifth, which is the only one that is about the filter
+                  above rather than about the repository. A sixth — "your term matched nothing" — is
+                  the panel's own and is drawn in this slot's place whenever a term is typed, in the
+                  stronger words a server-backed box has earned.
+                */
+                emptyLabel={
+                  filteredAway
+                    ? "No design workshop of this type is on this page."
+                    : workshopEmptyLabel(workshops, workshopVoice)
                 }
-                searchable
+                placeholder="Select or type to search"
                 value={workshopId}
               />
             </FieldBlock>
@@ -639,15 +976,37 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               off. Every design workshop is offered.
             </p>
           ) : null}
+          {/* THE OTHER STAND-DOWN, SAID RATHER THAN PERFORMED. A control that keeps its value and
+              quietly stops narrowing is a control an admin reads as broken; one that says which of
+              the two questions is being answered is a control they can use. The remedy is named,
+              because it is one keystroke away. */}
+          {typeKnown && typeNarrowingSuspended ? (
+            <p className="mt-2 text-xs leading-5 text-ink-500" aria-live="polite">
+              The type filter is off while you are searching. A workshop type comes from a separate list of at most{" "}
+              {WORKSHOP_PAGE} workshops, so applying it to a search of the whole archive would hide workshops the search
+              found without being able to say which. Empty the search box inside the design workshop picker to filter by
+              type again.
+            </p>
+          ) : null}
           {typeKnown && typeMapPartial ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
               Only the first {WORKSHOP_PAGE} workshops were read, so a design workshop linked to an older one may show
               no type and be left out of a filtered list.
             </p>
           ) : null}
-          {summaries !== null && summariesTotal > summaries.length ? (
-            <p className="mt-2 text-xs leading-5 text-ink-500">
-              Showing the {summaries.length} most recent design workshops of {summariesTotal}.
+          {/* THE CAP, WITH THE NUMBER, AND NOW POINTING AT SOMETHING. It used to read "Showing the
+              100 most recent design workshops of N" while the panel drew 80 of them — one sentence
+              describing a list nobody was looking at, and complete silence between 81 and 100. It is
+              `selectFilter.ts`'s sentence, through `workshopCutSentence`, so this line and the
+              panel's own footer cannot describe one cut in two wordings — and its last clause names
+              the box in the panel, which now genuinely reaches the rest. */}
+          {workshopCut ? <p className="mt-2 text-xs leading-5 text-ink-500">{workshopCut}</p> : null}
+          {/* WHICH OF THE FOUR EMPTY STATES THIS IS. Four different next moves — wait, connect, ask
+              an administrator, create one — and until now one sentence for all of them. `aria-live`
+              because the trigger is not somewhere a reader can land in three of the four. */}
+          {workshopNotice ? (
+            <p className="mt-2 text-xs leading-5 text-ink-500" aria-live="polite">
+              {workshopNotice}
             </p>
           ) : null}
 

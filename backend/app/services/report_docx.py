@@ -129,6 +129,7 @@ def _esc(text: str) -> str:
 # Image probing — intrinsic size when the model was not told one
 # --------------------------------------------------------------------------------------
 
+
 def _png_size(data: bytes) -> tuple[int, int] | None:
     if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
@@ -159,13 +160,12 @@ def _jpeg_size(data: bytes) -> tuple[int, int] | None:
             return None
         if i + 4 > n:
             return None
-        seg_len = struct.unpack(">H", data[i + 2:i + 4])[0]
+        seg_len = struct.unpack(">H", data[i + 2 : i + 4])[0]
         # SOF0-SOF15, excluding DHT (C4), DAC (CC) and the restart markers.
-        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
-                      0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
             if i + 9 > n:
                 return None
-            height, width = struct.unpack(">HH", data[i + 5:i + 9])
+            height, width = struct.unpack(">HH", data[i + 5 : i + 9])
             return width, height
         if seg_len < 2:
             return None
@@ -182,7 +182,7 @@ _MIME_TO_EXT = {
     "image/png": "png",
     "image/jpeg": "jpeg",
     "image/jpg": "jpeg",
-    "image/webp": "png",   # never emitted; see _normalise_mime
+    "image/webp": "png",  # never emitted; see _normalise_mime
 }
 
 
@@ -202,8 +202,10 @@ def _normalise_mime(mime: str) -> str:
 # Runs and paragraphs
 # --------------------------------------------------------------------------------------
 
-def _rpr(run: Run, theme: ReportTheme, *, size_pt: float | None = None,
-         color: str | None = None) -> str:
+
+def _rpr(
+    run: Run, theme: ReportTheme, *, size_pt: float | None = None, color: str | None = None
+) -> str:
     """The ``w:rPr`` for one run, including the complex-script font for Indic text.
 
     ``w:cs`` is the only lever a .docx has over shaping: Word picks the complex-script face for
@@ -211,7 +213,7 @@ def _rpr(run: Run, theme: ReportTheme, *, size_pt: float | None = None,
     covers every Indic block this app captures. A Latin run must NOT carry it, or Word uses
     Nirmala's Latin glyphs and the report changes typeface mid-sentence.
     """
-    parts = ['<w:rPr>']
+    parts = ["<w:rPr>"]
     if run.script is not Script.LATIN:
         parts.append(
             f'<w:rFonts w:ascii="{_esc(theme.body_font)}" w:hAnsi="{_esc(theme.body_font)}"'
@@ -232,9 +234,7 @@ def _rpr(run: Run, theme: ReportTheme, *, size_pt: float | None = None,
         # takes baseline|superscript|subscript and emitting the element twice is schema-invalid.
         # `Run` is already single-valued here — `rich_text._runs_for` resolves a span carrying both in
         # favour of superscript — so this reads the flags rather than deciding between them.
-        parts.append(
-            f'<w:vertAlign w:val="{"superscript" if run.superscript else "subscript"}"/>'
-        )
+        parts.append(f'<w:vertAlign w:val="{"superscript" if run.superscript else "subscript"}"/>')
     if run.highlight:
         # A NAME, not a colour: ST_HighlightColor is a closed enumeration and Word refuses an RGB
         # value here — which is exactly why `Run.highlight` is a boolean and why the two PDF
@@ -250,8 +250,9 @@ def _rpr(run: Run, theme: ReportTheme, *, size_pt: float | None = None,
     return "".join(parts)
 
 
-def _run_xml(run: Run, theme: ReportTheme, *, size_pt: float | None = None,
-             color: str | None = None) -> str:
+def _run_xml(
+    run: Run, theme: ReportTheme, *, size_pt: float | None = None, color: str | None = None
+) -> str:
     """One ``w:r``. A run's internal newlines become ``w:br`` so soft wraps survive."""
     if not run.text:
         return ""
@@ -265,16 +266,31 @@ def _run_xml(run: Run, theme: ReportTheme, *, size_pt: float | None = None,
     return f"<w:r>{rpr}{''.join(pieces)}</w:r>"
 
 
-def _runs_xml(runs: tuple[Run, ...], theme: ReportTheme, *, size_pt: float | None = None,
-              color: str | None = None) -> str:
+def _runs_xml(
+    runs: tuple[Run, ...],
+    theme: ReportTheme,
+    *,
+    size_pt: float | None = None,
+    color: str | None = None,
+) -> str:
     return "".join(_run_xml(r, theme, size_pt=size_pt, color=color) for r in runs)
 
 
-def _para(content: str, *, style: str | None = None, align: Align | None = None,
-          after: int = 120, before: int = 0, keep_next: bool = False,
-          numbered: int | None = None, indent: int = 0, outline: int | None = None,
-          shading: str | None = None, border_bottom: str | None = None,
-          line: int | None = None) -> str:
+def _para(
+    content: str,
+    *,
+    style: str | None = None,
+    align: Align | None = None,
+    after: int = 120,
+    before: int = 0,
+    keep_next: bool = False,
+    numbered: int | None = None,
+    indent: int = 0,
+    outline: int | None = None,
+    shading: str | None = None,
+    border_bottom: str | None = None,
+    line: int | None = None,
+) -> str:
     """Assemble one ``w:p``. Every paragraph in this module is built here.
 
     ``w:pPr`` children are order-sensitive in the schema — ``pStyle``, ``keepNext``, ``numPr``,
@@ -337,7 +353,7 @@ class DocxWriter:
         self.theme = document.theme
         self.load_image = load_image
         self._body: list[str] = []
-        self._media: list[tuple[str, bytes, str, int]] = []   # (part name, bytes, mime, rId)
+        self._media: list[tuple[str, bytes, str, int]] = []  # (part name, bytes, mime, rId)
         self._rid_by_source: dict[str, int] = {}
         # Pictures this writer MADE rather than loaded: the rasterised map and every chart.
         #
@@ -459,7 +475,7 @@ class DocxWriter:
         # to the wrong box, which looks like a broken image rather than a wrong transform.
         rotation = image.rotation_deg % 360 if image.rotation_deg else 0
         if rotation in (90, 270):
-            ext_cx, ext_cy = cy, cx        # unrotated: the swap of the displayed box
+            ext_cx, ext_cy = cy, cx  # unrotated: the swap of the displayed box
         else:
             ext_cx, ext_cy = cx, cy
         # DrawingML angles are in sixtieth-thousandths of a degree, clockwise.
@@ -492,62 +508,84 @@ class DocxWriter:
     def _emit_cover(self, block: CoverBlock) -> None:
         t = self.theme
         if block.logo:
-            drawing = self._drawing(block.logo, width_mm=self.text_w_mm * 0.22,
-                                    max_height_mm=28)
+            drawing = self._drawing(block.logo, width_mm=self.text_w_mm * 0.22, max_height_mm=28)
             if drawing:
                 self._body.append(_para(drawing, align=Align.CENTER, after=240))
         else:
             self._body.append(_para("", after=1200))
 
         for line in block.org_lines:
-            self._body.append(_para(
-                _runs_xml(runs_of(line), t, size_pt=11, color=t.muted),
-                align=Align.CENTER, after=60,
-            ))
+            self._body.append(
+                _para(
+                    _runs_xml(runs_of(line), t, size_pt=11, color=t.muted),
+                    align=Align.CENTER,
+                    after=60,
+                )
+            )
 
         self._body.append(_para("", after=380))
-        self._body.append(_para(
-            _runs_xml(runs_of(block.title, bold=True), t, size_pt=27, color=t.accent),
-            align=Align.CENTER, after=140,
-        ))
+        self._body.append(
+            _para(
+                _runs_xml(runs_of(block.title, bold=True), t, size_pt=27, color=t.accent),
+                align=Align.CENTER,
+                after=140,
+            )
+        )
         if block.subtitle:
-            self._body.append(_para(
-                _runs_xml(runs_of(block.subtitle, italic=True), t, size_pt=13, color=t.accent_soft),
-                align=Align.CENTER, after=260,
-            ))
+            self._body.append(
+                _para(
+                    _runs_xml(
+                        runs_of(block.subtitle, italic=True), t, size_pt=13, color=t.accent_soft
+                    ),
+                    align=Align.CENTER,
+                    after=260,
+                )
+            )
 
         if block.hero_image:
-            drawing = self._drawing(block.hero_image, width_mm=self.text_w_mm * 0.78,
-                                    max_height_mm=self.text_h_mm * 0.34)
+            drawing = self._drawing(
+                block.hero_image,
+                width_mm=self.text_w_mm * 0.78,
+                max_height_mm=self.text_h_mm * 0.34,
+            )
             if drawing:
                 self._body.append(_para(drawing, align=Align.CENTER, after=260))
 
         if block.info_rows:
-            self._emit_table(TableBlock(
-                columns=(
-                    _col("", 32.0),
-                    _col("", 68.0),
+            self._emit_table(
+                TableBlock(
+                    columns=(
+                        _col("", 32.0),
+                        _col("", 68.0),
+                    ),
+                    rows=tuple(
+                        (runs_of(label, bold=True), runs_of(value))
+                        for label, value in block.info_rows
+                    ),
+                    zebra=True,
                 ),
-                rows=tuple(
-                    (runs_of(label, bold=True), runs_of(value))
-                    for label, value in block.info_rows
-                ),
-                zebra=True,
-            ), headerless=True)
+                headerless=True,
+            )
 
         for line in block.footer_lines:
-            self._body.append(_para(
-                _runs_xml(runs_of(line), t, size_pt=9.5, color=t.muted),
-                align=Align.CENTER, after=60,
-            ))
+            self._body.append(
+                _para(
+                    _runs_xml(runs_of(line), t, size_pt=9.5, color=t.muted),
+                    align=Align.CENTER,
+                    after=60,
+                )
+            )
         self._body.append(_page_break())
 
     def _emit_toc(self, block: TocBlock) -> None:
         t = self.theme
-        self._body.append(_para(
-            _runs_xml(runs_of(block.title, bold=True), t, size_pt=16, color=t.accent),
-            style="TOCHeading", after=180,
-        ))
+        self._body.append(
+            _para(
+                _runs_xml(runs_of(block.title, bold=True), t, size_pt=16, color=t.accent),
+                style="TOCHeading",
+                after=180,
+            )
+        )
         depth = max(1, min(4, block.depth))
         # A TOC field, not a rendered list. Word paginates it on open because settings.xml
         # carries w:updateFields; the literal run between separate/end is the placeholder a
@@ -575,12 +613,16 @@ class DocxWriter:
         if label:
             content += _run_xml(Run(text=label, bold=True), self.theme)
         content += _runs_xml(block.runs, self.theme) + end
-        self._body.append(_para(
-            content, style=f"Heading{block.level}", keep_next=True,
-            outline=block.level - 1,
-            before=(320, 260, 220, 180)[block.level - 1],
-            after=120,
-        ))
+        self._body.append(
+            _para(
+                content,
+                style=f"Heading{block.level}",
+                keep_next=True,
+                outline=block.level - 1,
+                before=(320, 260, 220, 180)[block.level - 1],
+                after=120,
+            )
+        )
 
     def _emit_paragraph(self, block: ParagraphBlock) -> None:
         t = self.theme
@@ -611,17 +653,28 @@ class DocxWriter:
             # underlined in the office's download and not on the phone. ``replace`` is Kotlin's
             # ``copy`` — it names the one field it changes and cannot be reached by a new one.
             runs = tuple(replace(r, italic=True) for r in runs)
-        self._body.append(_para(
-            _runs_xml(runs, t, size_pt=size, color=color),
-            style=style, align=block.align, indent=indent, after=140, line=276,
-        ))
+        self._body.append(
+            _para(
+                _runs_xml(runs, t, size_pt=size, color=color),
+                style=style,
+                align=block.align,
+                indent=indent,
+                after=140,
+                line=276,
+            )
+        )
 
     def _emit_bullets(self, block: BulletListBlock) -> None:
         num_id = 2 if block.ordered else 1
         for item in block.items:
-            self._body.append(_para(
-                _runs_xml(item, self.theme), numbered=num_id, after=60, line=276,
-            ))
+            self._body.append(
+                _para(
+                    _runs_xml(item, self.theme),
+                    numbered=num_id,
+                    after=60,
+                    line=276,
+                )
+            )
 
     def _emit_key_values(self, block: KeyValueBlock) -> None:
         """A borderless two- (or four-) column grid.
@@ -637,18 +690,24 @@ class DocxWriter:
         rows: list[str] = []
         pairs = list(block.pairs)
         for i in range(0, len(pairs), per_row):
-            chunk = pairs[i:i + per_row]
+            chunk = pairs[i : i + per_row]
             cells: list[str] = []
             for label, value in chunk:
-                cells.append(_cell(
-                    _para(_run_xml(Run(text=label, bold=True), t, color=t.muted, size_pt=9.5),
-                          after=40),
-                    width_twip=int(self.text_w_twip * label_pct / 100),
-                ))
-                cells.append(_cell(
-                    _para(_runs_xml(value, t), after=40),
-                    width_twip=int(self.text_w_twip * value_pct / 100),
-                ))
+                cells.append(
+                    _cell(
+                        _para(
+                            _run_xml(Run(text=label, bold=True), t, color=t.muted, size_pt=9.5),
+                            after=40,
+                        ),
+                        width_twip=int(self.text_w_twip * label_pct / 100),
+                    )
+                )
+                cells.append(
+                    _cell(
+                        _para(_runs_xml(value, t), after=40),
+                        width_twip=int(self.text_w_twip * value_pct / 100),
+                    )
+                )
             while len(cells) < per_row * 2:
                 cells.append(_cell(_para(""), width_twip=int(self.text_w_twip * label_pct / 100)))
             rows.append(f"<w:tr>{''.join(cells)}</w:tr>")
@@ -669,11 +728,17 @@ class DocxWriter:
             header_cells = [
                 _cell(
                     _para(
-                        _run_xml(Run(text=col.header, bold=True), t,
-                                 color=t.table_header_text, size_pt=9.0),
-                        align=col.align, after=0,
+                        _run_xml(
+                            Run(text=col.header, bold=True),
+                            t,
+                            color=t.table_header_text,
+                            size_pt=9.0,
+                        ),
+                        align=col.align,
+                        after=0,
                     ),
-                    width_twip=w, fill=t.table_header_fill,
+                    width_twip=w,
+                    fill=t.table_header_fill,
                 )
                 for col, w in zip(block.columns, widths)
             ]
@@ -682,8 +747,7 @@ class DocxWriter:
             # cantSplit BEFORE tblHeader: CT_TrPr is a sequence, not a set. Reversed, the part
             # is schema-invalid even though Word has historically tolerated it.
             rows.append(
-                "<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>"
-                f"{''.join(header_cells)}</w:tr>"
+                f"<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>{''.join(header_cells)}</w:tr>"
             )
 
         for i, row in enumerate(block.rows):
@@ -692,10 +756,13 @@ class DocxWriter:
             for j, col in enumerate(block.columns):
                 value = row[j] if j < len(row) else ()
                 align = Align.RIGHT if col.numeric else col.align
-                cells.append(_cell(
-                    _para(_runs_xml(value, t, size_pt=9.5), align=align, after=0),
-                    width_twip=widths[j], fill=fill,
-                ))
+                cells.append(
+                    _cell(
+                        _para(_runs_xml(value, t, size_pt=9.5), align=align, after=0),
+                        width_twip=widths[j],
+                        fill=fill,
+                    )
+                )
             rows.append(f"<w:tr>{''.join(cells)}</w:tr>")
 
         if block.total_row:
@@ -708,21 +775,28 @@ class DocxWriter:
                 # through — on the one line of the one table an officer sanctions money from.
                 bolded = tuple(replace(r, bold=True) for r in value)
                 align = Align.RIGHT if col.numeric else col.align
-                cells.append(_cell(
-                    _para(_runs_xml(bolded, t, size_pt=9.5), align=align, after=0),
-                    width_twip=widths[j], fill=t.zebra_fill, top_border=t.accent,
-                ))
+                cells.append(
+                    _cell(
+                        _para(_runs_xml(bolded, t, size_pt=9.5), align=align, after=0),
+                        width_twip=widths[j],
+                        fill=t.zebra_fill,
+                        top_border=t.accent,
+                    )
+                )
             rows.append(f"<w:tr>{''.join(cells)}</w:tr>")
 
-        self._body.append(_tbl(rows, widths, self.text_w_twip, borders=True,
-                               rule_color=t.rule))
+        self._body.append(_tbl(rows, widths, self.text_w_twip, borders=True, rule_color=t.rule))
         # Mandatory: two adjacent w:tbl merge silently.
         self._body.append(_para("", after=100))
         if block.caption:
-            self._body.append(_para(
-                _runs_xml(runs_of(block.caption, italic=True), t, size_pt=9.0, color=t.muted),
-                style="Caption", align=Align.CENTER, after=180,
-            ))
+            self._body.append(
+                _para(
+                    _runs_xml(runs_of(block.caption, italic=True), t, size_pt=9.0, color=t.muted),
+                    style="Caption",
+                    align=Align.CENTER,
+                    after=180,
+                )
+            )
 
     def _emit_image(self, block: ImageBlock) -> None:
         drawing = self._drawing(
@@ -732,14 +806,23 @@ class DocxWriter:
         )
         if not drawing:
             return
-        self._body.append(_para(drawing, align=block.align, after=60,
-                                keep_next=bool(block.caption)))
+        self._body.append(
+            _para(drawing, align=block.align, after=60, keep_next=bool(block.caption))
+        )
         if block.caption:
-            self._body.append(_para(
-                _runs_xml(runs_of(block.caption, italic=True), self.theme,
-                          size_pt=9.0, color=self.theme.muted),
-                style="Caption", align=Align.CENTER, after=200,
-            ))
+            self._body.append(
+                _para(
+                    _runs_xml(
+                        runs_of(block.caption, italic=True),
+                        self.theme,
+                        size_pt=9.0,
+                        color=self.theme.muted,
+                    ),
+                    style="Caption",
+                    align=Align.CENTER,
+                    after=200,
+                )
+            )
 
     def _emit_image_grid(self, block: ImageGridBlock) -> None:
         """A photo grid laid out as a borderless table, one picture + caption per cell."""
@@ -758,20 +841,25 @@ class DocxWriter:
         rows: list[str] = []
 
         for start in range(0, len(block.images), columns):
-            chunk = list(block.images[start:start + columns])
+            chunk = list(block.images[start : start + columns])
             cells: list[str] = []
             for image, caption in chunk:
                 inner: list[str] = []
-                drawing = self._drawing(image, width_mm=cell_w_mm - 6,
-                                        max_height_mm=self.text_h_mm * 0.30)
+                drawing = self._drawing(
+                    image, width_mm=cell_w_mm - 6, max_height_mm=self.text_h_mm * 0.30
+                )
                 if drawing:
-                    inner.append(_para(drawing, align=Align.CENTER, after=40,
-                                       keep_next=bool(caption)))
+                    inner.append(
+                        _para(drawing, align=Align.CENTER, after=40, keep_next=bool(caption))
+                    )
                 if caption:
-                    inner.append(_para(
-                        _runs_xml(runs_of(caption, italic=True), t, size_pt=8.5, color=t.muted),
-                        align=Align.CENTER, after=60,
-                    ))
+                    inner.append(
+                        _para(
+                            _runs_xml(runs_of(caption, italic=True), t, size_pt=8.5, color=t.muted),
+                            align=Align.CENTER,
+                            after=60,
+                        )
+                    )
                 if not inner:
                     inner.append(_para("", after=0))
                 cells.append(_cell("".join(inner), width_twip=cell_w_twip))
@@ -782,18 +870,31 @@ class DocxWriter:
         self._body.append(_tbl(rows, widths, self.text_w_twip, borders=False))
         self._body.append(_para("", after=100))
         if block.caption:
-            self._body.append(_para(
-                _runs_xml(runs_of(block.caption, italic=True), t, size_pt=9.0, color=t.muted),
-                style="Caption", align=Align.CENTER, after=180,
-            ))
+            self._body.append(
+                _para(
+                    _runs_xml(runs_of(block.caption, italic=True), t, size_pt=9.0, color=t.muted),
+                    style="Caption",
+                    align=Align.CENTER,
+                    after=180,
+                )
+            )
 
     # -- figures: the map and the infographics ----------------------------------------
 
     def _figure_width_mm(self, width_pct: float) -> float:
         return self.text_w_mm * max(20.0, min(100.0, width_pct)) / 100
 
-    def _emit_figure(self, png: bytes, px_w: int, px_h: int, *, width_pct: float,
-                     align: Align, title: str, caption: str) -> None:
+    def _emit_figure(
+        self,
+        png: bytes,
+        px_w: int,
+        px_h: int,
+        *,
+        width_pct: float,
+        align: Align,
+        title: str,
+        caption: str,
+    ) -> None:
         """Place a rasterised figure through the ORDINARY picture path.
 
         Title and caption are emitted as REAL TEXT rather than drawn into the bitmap, and that is
@@ -808,8 +909,9 @@ class DocxWriter:
         ref = ImageRef(source=source, width_px=px_w, height_px=px_h, mime_type="image/png")
 
         self._emit_figure_title(title)
-        drawing = self._drawing(ref, width_mm=self._figure_width_mm(width_pct),
-                                max_height_mm=self.text_h_mm * 0.58)
+        drawing = self._drawing(
+            ref, width_mm=self._figure_width_mm(width_pct), max_height_mm=self.text_h_mm * 0.58
+        )
         if not drawing:
             return
         self._body.append(_para(drawing, align=align, after=60, keep_next=bool(caption)))
@@ -824,20 +926,29 @@ class DocxWriter:
         """
         if not title:
             return
-        self._body.append(_para(
-            _run_xml(Run(text=title, bold=True), self.theme, size_pt=10.5,
-                     color=self.theme.accent),
-            after=60, keep_next=True,
-        ))
+        self._body.append(
+            _para(
+                _run_xml(
+                    Run(text=title, bold=True), self.theme, size_pt=10.5, color=self.theme.accent
+                ),
+                after=60,
+                keep_next=True,
+            )
+        )
 
     def _emit_figure_caption(self, caption: str) -> None:
         if not caption:
             return
-        self._body.append(_para(
-            _runs_xml(runs_of(caption, italic=True), self.theme, size_pt=9.0,
-                      color=self.theme.muted),
-            style="Caption", align=Align.CENTER, after=200,
-        ))
+        self._body.append(
+            _para(
+                _runs_xml(
+                    runs_of(caption, italic=True), self.theme, size_pt=9.0, color=self.theme.muted
+                ),
+                style="Caption",
+                align=Align.CENTER,
+                after=200,
+            )
+        )
 
     def _emit_map(self, block: MapBlock) -> None:
         from app.services.report_map import render_map_png
@@ -852,8 +963,15 @@ class DocxWriter:
             self.dropped_images.append("map:india")
             return
         png, px_w, px_h = rendered
-        self._emit_figure(png, px_w, px_h, width_pct=block.width_pct, align=block.align,
-                          title=block.title, caption=block.caption)
+        self._emit_figure(
+            png,
+            px_w,
+            px_h,
+            width_pct=block.width_pct,
+            align=block.align,
+            title=block.title,
+            caption=block.caption,
+        )
 
     def _emit_chart(self, block: ChartBlock) -> None:
         """A statistical figure, natively if Word has a form for it and as a picture if not.
@@ -872,10 +990,13 @@ class DocxWriter:
             # The rasteriser prints these inside the PNG. A native chart has no such corner, and a
             # dropped category that goes unmentioned is a figure quietly missing a cost head.
             for note in notes:
-                self._body.append(_para(
-                    _runs_xml(runs_of(note), self.theme, size_pt=8.0, color=self.theme.muted),
-                    align=Align.CENTER, after=40,
-                ))
+                self._body.append(
+                    _para(
+                        _runs_xml(runs_of(note), self.theme, size_pt=8.0, color=self.theme.muted),
+                        align=Align.CENTER,
+                        after=40,
+                    )
+                )
             self._emit_figure_caption(block.caption)
             return
 
@@ -884,8 +1005,15 @@ class DocxWriter:
         png, px_w, px_h = render_chart_png(
             block, self.theme, pixels_for_mm(self._figure_width_mm(block.width_pct))
         )
-        self._emit_figure(png, px_w, px_h, width_pct=block.width_pct, align=block.align,
-                          title=block.title, caption=block.caption)
+        self._emit_figure(
+            png,
+            px_w,
+            px_h,
+            width_pct=block.width_pct,
+            align=block.align,
+            title=block.title,
+            caption=block.caption,
+        )
 
     def _emit_native_chart(self, block: ChartBlock, series: list[tuple[str, float]]) -> bool:
         """Emit ``block`` as a real ``c:chart``. Returns False when it must stay a raster.
@@ -917,17 +1045,23 @@ class DocxWriter:
             w_mm *= max_h_mm / h_mm
             h_mm = max_h_mm
 
-        self._charts.append((
-            chart_space_xml(block, series, self.theme),
-            chart_workbook_xlsx(block, series),
-        ))
+        self._charts.append(
+            (
+                chart_space_xml(block, series, self.theme),
+                chart_workbook_xlsx(block, series),
+            )
+        )
         rid = f"{_CHART_RID_PREFIX}{len(self._charts)}"
 
         self._emit_figure_title(block.title)
-        self._body.append(_para(
-            self._chart_drawing(rid, w_mm, h_mm), align=block.align, after=60,
-            keep_next=bool(block.caption),
-        ))
+        self._body.append(
+            _para(
+                self._chart_drawing(rid, w_mm, h_mm),
+                align=block.align,
+                after=60,
+                keep_next=bool(block.caption),
+            )
+        )
         return True
 
     def _chart_drawing(self, rid: str, width_mm: float, height_mm: float) -> str:
@@ -967,14 +1101,17 @@ class DocxWriter:
             body = _para(
                 _run_xml(Run(text=value, bold=True), t, size_pt=18, color=t.accent)
                 + (_run_xml(Run(text=f" {unit}"), t, size_pt=9.5, color=t.muted) if unit else ""),
-                align=Align.CENTER, after=20,
+                align=Align.CENTER,
+                after=20,
             ) + _para(
                 _run_xml(Run(text=label), t, size_pt=8.5, color=t.muted),
-                align=Align.CENTER, after=0,
+                align=Align.CENTER,
+                after=0,
             )
             cells.append(_cell(body, width_twip=width, fill=t.zebra_fill))
-        self._body.append(_tbl([f"<w:tr>{''.join(cells)}</w:tr>"], [width] * n,
-                               self.text_w_twip, borders=False))
+        self._body.append(
+            _tbl([f"<w:tr>{''.join(cells)}</w:tr>"], [width] * n, self.text_w_twip, borders=False)
+        )
         self._body.append(_para("", after=140))
 
     def _emit_callout(self, block: CalloutBlock) -> None:
@@ -987,12 +1124,14 @@ class DocxWriter:
         )
         inner = ""
         if block.title:
-            inner += _para(_run_xml(Run(text=block.title, bold=True), t, color=edge, size_pt=10),
-                           after=40)
+            inner += _para(
+                _run_xml(Run(text=block.title, bold=True), t, color=edge, size_pt=10), after=40
+            )
         inner += _para(_runs_xml(block.runs, t, size_pt=9.5), after=0)
         cell = _cell(inner, width_twip=self.text_w_twip, fill=fill, left_border=edge)
-        self._body.append(_tbl([f"<w:tr>{cell}</w:tr>"], [self.text_w_twip],
-                               self.text_w_twip, borders=False))
+        self._body.append(
+            _tbl([f"<w:tr>{cell}</w:tr>"], [self.text_w_twip], self.text_w_twip, borders=False)
+        )
         self._body.append(_para("", after=140))
 
     def _emit_signatures(self, block: SignatureBlock) -> None:
@@ -1005,13 +1144,18 @@ class DocxWriter:
         cells = []
         for name, designation in block.signatories:
             body = _para("", after=0, border_bottom=t.ink)
-            body += _para(_run_xml(Run(text=name, bold=True), t, size_pt=10),
-                          align=Align.CENTER, after=20)
-            body += _para(_run_xml(Run(text=designation), t, size_pt=8.5, color=t.muted),
-                          align=Align.CENTER, after=0)
+            body += _para(
+                _run_xml(Run(text=name, bold=True), t, size_pt=10), align=Align.CENTER, after=20
+            )
+            body += _para(
+                _run_xml(Run(text=designation), t, size_pt=8.5, color=t.muted),
+                align=Align.CENTER,
+                after=0,
+            )
             cells.append(_cell(body, width_twip=width))
-        self._body.append(_tbl([f"<w:tr>{''.join(cells)}</w:tr>"], [width] * n,
-                               self.text_w_twip, borders=False))
+        self._body.append(
+            _tbl([f"<w:tr>{''.join(cells)}</w:tr>"], [width] * n, self.text_w_twip, borders=False)
+        )
         self._body.append(_para("", after=100))
 
     # -- assembly --------------------------------------------------------------------
@@ -1091,14 +1235,18 @@ class DocxWriter:
             # chart part is dead weight the reader never sees.
             for index, (chart_xml, workbook) in enumerate(self._charts, start=1):
                 z.writestr(f"word/charts/chart{index}.xml", chart_xml)
-                z.writestr(f"word/charts/_rels/chart{index}.xml.rels",
-                           chart_part_rels(f"chart{index}.xlsx"))
+                z.writestr(
+                    f"word/charts/_rels/chart{index}.xml.rels",
+                    chart_part_rels(f"chart{index}.xlsx"),
+                )
                 z.writestr(f"word/embeddings/chart{index}.xlsx", workbook)
         return buffer.getvalue()
 
     def _content_types(self) -> str:
-        extensions = {"rels": "application/vnd.openxmlformats-package.relationships+xml",
-                      "xml": "application/xml"}
+        extensions = {
+            "rels": "application/vnd.openxmlformats-package.relationships+xml",
+            "xml": "application/xml",
+        }
         for _name, _data, mime, _rid in self._media:
             extensions[_MIME_TO_EXT[mime]] = mime
         if self._charts:
@@ -1110,46 +1258,59 @@ class DocxWriter:
             for ext, ct in sorted(extensions.items())
         )
         wml = "application/vnd.openxmlformats-officedocument.wordprocessingml"
-        overrides = "".join([
-            # NOT DOCX_MIME. That is the content type of the .docx *file*; the main document
-            # *part* inside it is ".document.main+xml". Declaring the package type here
-            # produces a package that passes every structural check — all parts parse, all
-            # relationships resolve — and that Word refuses with a bare "the file appears to
-            # be corrupted". Every part below is likewise the part type, not a file type.
-            f'<Override PartName="/word/document.xml" ContentType="{wml}.document.main+xml"/>',
-            f'<Override PartName="/word/styles.xml" ContentType="{wml}.styles+xml"/>',
-            f'<Override PartName="/word/numbering.xml" ContentType="{wml}.numbering+xml"/>',
-            f'<Override PartName="/word/settings.xml" ContentType="{wml}.settings+xml"/>',
-            f'<Override PartName="/word/header1.xml" ContentType="{wml}.header+xml"/>',
-            f'<Override PartName="/word/footer1.xml" ContentType="{wml}.footer+xml"/>',
-            ('<Override PartName="/docProps/core.xml" ContentType="application/vnd.'
-             'openxmlformats-package.core-properties+xml"/>'),
-            ('<Override PartName="/docProps/app.xml" ContentType="application/vnd.'
-             'openxmlformats-officedocument.extended-properties+xml"/>'),
-        ] + [
-            # A chart part ends in .xml, so the Default above already gives it "application/xml"
-            # — and a chart declared as generic XML is one Word ignores completely, leaving a
-            # correctly sized blank rectangle where the figure should be. The Override is what
-            # names it a chart.
-            f'<Override PartName="/word/charts/chart{i}.xml" ContentType="{_CHART_PART_TYPE}"/>'
-            for i in range(1, len(self._charts) + 1)
-        ])
+        overrides = "".join(
+            [
+                # NOT DOCX_MIME. That is the content type of the .docx *file*; the main document
+                # *part* inside it is ".document.main+xml". Declaring the package type here
+                # produces a package that passes every structural check — all parts parse, all
+                # relationships resolve — and that Word refuses with a bare "the file appears to
+                # be corrupted". Every part below is likewise the part type, not a file type.
+                f'<Override PartName="/word/document.xml" ContentType="{wml}.document.main+xml"/>',
+                f'<Override PartName="/word/styles.xml" ContentType="{wml}.styles+xml"/>',
+                f'<Override PartName="/word/numbering.xml" ContentType="{wml}.numbering+xml"/>',
+                f'<Override PartName="/word/settings.xml" ContentType="{wml}.settings+xml"/>',
+                f'<Override PartName="/word/header1.xml" ContentType="{wml}.header+xml"/>',
+                f'<Override PartName="/word/footer1.xml" ContentType="{wml}.footer+xml"/>',
+                (
+                    '<Override PartName="/docProps/core.xml" ContentType="application/vnd.'
+                    'openxmlformats-package.core-properties+xml"/>'
+                ),
+                (
+                    '<Override PartName="/docProps/app.xml" ContentType="application/vnd.'
+                    'openxmlformats-officedocument.extended-properties+xml"/>'
+                ),
+            ]
+            + [
+                # A chart part ends in .xml, so the Default above already gives it "application/xml"
+                # — and a chart declared as generic XML is one Word ignores completely, leaving a
+                # correctly sized blank rectangle where the figure should be. The Override is what
+                # names it a chart.
+                f'<Override PartName="/word/charts/chart{i}.xml" ContentType="{_CHART_PART_TYPE}"/>'
+                for i in range(1, len(self._charts) + 1)
+            ]
+        )
         return (
-            f"{_XML_DECL}<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/"
+            f'{_XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
             f'content-types">{defaults}{overrides}</Types>'
         )
 
     def _document_rels(self) -> str:
         base = f"{_NS_R}/"
-        fixed = "".join([
-            f'<Relationship Id="rId{_RID_STYLES}" Type="{base}styles" Target="styles.xml"/>',
-            (f'<Relationship Id="rId{_RID_NUMBERING}" Type="{base}numbering" '
-             'Target="numbering.xml"/>'),
-            (f'<Relationship Id="rId{_RID_SETTINGS}" Type="{base}settings" '
-             'Target="settings.xml"/>'),
-            f'<Relationship Id="rId{_RID_HEADER}" Type="{base}header" Target="header1.xml"/>',
-            f'<Relationship Id="rId{_RID_FOOTER}" Type="{base}footer" Target="footer1.xml"/>',
-        ])
+        fixed = "".join(
+            [
+                f'<Relationship Id="rId{_RID_STYLES}" Type="{base}styles" Target="styles.xml"/>',
+                (
+                    f'<Relationship Id="rId{_RID_NUMBERING}" Type="{base}numbering" '
+                    'Target="numbering.xml"/>'
+                ),
+                (
+                    f'<Relationship Id="rId{_RID_SETTINGS}" Type="{base}settings" '
+                    'Target="settings.xml"/>'
+                ),
+                f'<Relationship Id="rId{_RID_HEADER}" Type="{base}header" Target="header1.xml"/>',
+                f'<Relationship Id="rId{_RID_FOOTER}" Type="{base}footer" Target="footer1.xml"/>',
+            ]
+        )
         media = "".join(
             f'<Relationship Id="rId{rid}" Type="{base}image" Target="media/{name}"/>'
             for name, _data, _mime, rid in self._media
@@ -1190,9 +1351,7 @@ class DocxWriter:
     def _header_xml(self) -> str:
         t = self.theme
         text = self.doc.meta.header_text
-        content = (
-            _run_xml(Run(text=text), t, size_pt=8.5, color=t.muted) if text else ""
-        )
+        content = _run_xml(Run(text=text), t, size_pt=8.5, color=t.muted) if text else ""
         return (
             f'{_XML_DECL}<w:hdr xmlns:w="{_NS_W}" xmlns:r="{_NS_R}">'
             + _para(content, align=Align.RIGHT, after=0, border_bottom=t.rule)
@@ -1202,8 +1361,11 @@ class DocxWriter:
     def _footer_xml(self) -> str:
         t = self.theme
         meta = self.doc.meta
-        left = _run_xml(Run(text=meta.footer_text), t, size_pt=8.5, color=t.muted) \
-            if meta.footer_text else ""
+        left = (
+            _run_xml(Run(text=meta.footer_text), t, size_pt=8.5, color=t.muted)
+            if meta.footer_text
+            else ""
+        )
         pages = ""
         if meta.show_page_numbers:
             pages = (
@@ -1254,8 +1416,10 @@ class DocxWriter:
 # Small XML builders shared by the emitters
 # --------------------------------------------------------------------------------------
 
-def _col(header: str, width_pct: float, *, numeric: bool = False,
-         align: Align = Align.LEFT) -> TableColumn:
+
+def _col(
+    header: str, width_pct: float, *, numeric: bool = False, align: Align = Align.LEFT
+) -> TableColumn:
     return TableColumn(header=header, width_pct=width_pct, align=align, numeric=numeric)
 
 
@@ -1274,8 +1438,14 @@ def _field(instruction: str) -> str:
     )
 
 
-def _cell(content: str, *, width_twip: int, fill: str | None = None,
-          left_border: str | None = None, top_border: str | None = None) -> str:
+def _cell(
+    content: str,
+    *,
+    width_twip: int,
+    fill: str | None = None,
+    left_border: str | None = None,
+    top_border: str | None = None,
+) -> str:
     tc_pr = [f'<w:tcPr><w:tcW w:w="{width_twip}" w:type="dxa"/>']
     if left_border or top_border:
         borders = ["<w:tcBorders>"]
@@ -1297,15 +1467,25 @@ def _cell(content: str, *, width_twip: int, fill: str | None = None,
     return f"<w:tc>{''.join(tc_pr)}{content or _para('')}</w:tc>"
 
 
-def _tbl(rows: list[str], widths: list[int], total_twip: int, *, borders: bool,
-         rule_color: str = "B8C4D9") -> str:
+def _tbl(
+    rows: list[str],
+    widths: list[int],
+    total_twip: int,
+    *,
+    borders: bool,
+    rule_color: str = "B8C4D9",
+) -> str:
     grid = "".join(f'<w:gridCol w:w="{w}"/>' for w in widths)
     border_xml = ""
     if borders:
-        border_xml = "<w:tblBorders>" + "".join(
-            f'<w:{edge} w:val="single" w:sz="4" w:space="0" w:color="{_esc(rule_color)}"/>'
-            for edge in ("top", "left", "bottom", "right", "insideH", "insideV")
-        ) + "</w:tblBorders>"
+        border_xml = (
+            "<w:tblBorders>"
+            + "".join(
+                f'<w:{edge} w:val="single" w:sz="4" w:space="0" w:color="{_esc(rule_color)}"/>'
+                for edge in ("top", "left", "bottom", "right", "insideH", "insideV")
+            )
+            + "</w:tblBorders>"
+        )
     # CT_TblPr sequence order: tblW, jc, tblCellSpacing, tblInd, tblBorders, shd, tblLayout,
     # tblCellMar, tblLook. Borders must precede layout.
     return (
@@ -1313,7 +1493,7 @@ def _tbl(rows: list[str], widths: list[int], total_twip: int, *, borders: bool,
         f'<w:tblW w:w="{total_twip}" w:type="dxa"/>'
         f"{border_xml}"
         '<w:tblLayout w:type="fixed"/>'
-        '<w:tblCellMar>'
+        "<w:tblCellMar>"
         '<w:top w:w="70" w:type="dxa"/><w:left w:w="100" w:type="dxa"/>'
         '<w:bottom w:w="70" w:type="dxa"/><w:right w:w="100" w:type="dxa"/>'
         "</w:tblCellMar>"
@@ -1384,14 +1564,19 @@ def _styles_xml(theme: ReportTheme) -> str:
 
     headings = []
     for level, (size, color, before) in enumerate(
-        [(18.0, theme.accent, 320), (14.0, theme.accent, 280),
-         (12.0, theme.accent_soft, 240), (11.0, theme.muted, 200)], start=1
+        [
+            (18.0, theme.accent, 320),
+            (14.0, theme.accent, 280),
+            (12.0, theme.accent_soft, 240),
+            (11.0, theme.muted, 200),
+        ],
+        start=1,
     ):
         headings.append(
             f'<w:style w:type="paragraph" w:styleId="Heading{level}">'
             f'<w:name w:val="heading {level}"/><w:basedOn w:val="Normal"/>'
             f'<w:next w:val="Normal"/><w:qFormat/>'
-            f'<w:pPr><w:keepNext/><w:keepLines/>'
+            f"<w:pPr><w:keepNext/><w:keepLines/>"
             f'<w:spacing w:before="{before}" w:after="120"/>'
             f'<w:outlineLvl w:val="{level - 1}"/></w:pPr>'
             f'<w:rPr><w:rFonts w:ascii="{head}" w:hAnsi="{head}" w:cs="{cs}"/><w:b/><w:bCs/>'
@@ -1415,24 +1600,37 @@ def _styles_xml(theme: ReportTheme) -> str:
         f'<w:sz w:val="{half}"/><w:szCs w:val="{half}"/>'
         '<w:lang w:val="en-IN" w:bidi="hi-IN"/>'
         "</w:rPr></w:rPrDefault>"
-        '<w:pPrDefault><w:pPr>'
+        "<w:pPrDefault><w:pPr>"
         '<w:spacing w:after="120" w:line="276" w:lineRule="auto"/>'
         "</w:pPr></w:pPrDefault></w:docDefaults>"
         '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
         '<w:name w:val="Normal"/><w:qFormat/></w:style>'
         + "".join(headings)
-        + simple("Caption", "caption", '<w:spacing w:before="0" w:after="200"/>'
-                 '<w:jc w:val="center"/>',
-                 f'<w:i/><w:iCs/><w:color w:val="{_esc(theme.muted)}"/><w:sz w:val="17"/>')
-        + simple("ReportNote", "Report Note", '<w:spacing w:after="120"/>',
-                 f'<w:color w:val="{_esc(theme.muted)}"/><w:sz w:val="18"/>')
-        + simple("ReportQuote", "Report Quote",
-                 '<w:ind w:left="420"/><w:spacing w:after="140"/>',
-                 f'<w:i/><w:iCs/><w:color w:val="{_esc(theme.accent_soft)}"/>')
-        + simple("TOCHeading", "TOC Heading",
-                 '<w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="9"/>',
-                 f'<w:rFonts w:ascii="{head}" w:hAnsi="{head}"/><w:b/>'
-                 f'<w:color w:val="{_esc(theme.accent)}"/><w:sz w:val="32"/>')
+        + simple(
+            "Caption",
+            "caption",
+            '<w:spacing w:before="0" w:after="200"/><w:jc w:val="center"/>',
+            f'<w:i/><w:iCs/><w:color w:val="{_esc(theme.muted)}"/><w:sz w:val="17"/>',
+        )
+        + simple(
+            "ReportNote",
+            "Report Note",
+            '<w:spacing w:after="120"/>',
+            f'<w:color w:val="{_esc(theme.muted)}"/><w:sz w:val="18"/>',
+        )
+        + simple(
+            "ReportQuote",
+            "Report Quote",
+            '<w:ind w:left="420"/><w:spacing w:after="140"/>',
+            f'<w:i/><w:iCs/><w:color w:val="{_esc(theme.accent_soft)}"/>',
+        )
+        + simple(
+            "TOCHeading",
+            "TOC Heading",
+            '<w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="9"/>',
+            f'<w:rFonts w:ascii="{head}" w:hAnsi="{head}"/><w:b/>'
+            f'<w:color w:val="{_esc(theme.accent)}"/><w:sz w:val="32"/>',
+        )
         + "</w:styles>"
     )
 
@@ -1506,9 +1704,7 @@ _WORKBOOK_RID = "rId1"
 #: table that groups it — and an officer reconciling the two has to count characters. Three
 #: conditional sections because Excel has no Indian grouping primitive: crore, lakh, and
 #: everything else (which is also where negatives land, keeping their sign).
-_INDIAN_NUMBER_FORMAT = (
-    "[>=10000000]##\\,##\\,##\\,##0.##;[>=100000]##\\,##\\,##0.##;##\\,##0.##"
-)
+_INDIAN_NUMBER_FORMAT = "[>=10000000]##\\,##\\,##\\,##0.##;[>=100000]##\\,##\\,##0.##;##\\,##0.##"
 
 #: Vertical room a native horizontal-bar chart needs PER CATEGORY, and for its axis, in mm.
 #:
@@ -1588,8 +1784,7 @@ def _solid_fill(colour_hex: str) -> str:
 def _str_ref(formula: str, values: list[str]) -> str:
     """A ``c:strRef`` — the workbook range AND the literal cache Word actually renders from."""
     points = "".join(
-        f'<c:pt idx="{i}"><c:v>{_esc(clean_text(v))}</c:v></c:pt>'
-        for i, v in enumerate(values)
+        f'<c:pt idx="{i}"><c:v>{_esc(clean_text(v))}</c:v></c:pt>' for i, v in enumerate(values)
     )
     return (
         f"<c:strRef><c:f>{_esc(formula)}</c:f><c:strCache>"
@@ -1599,8 +1794,7 @@ def _str_ref(formula: str, values: list[str]) -> str:
 
 def _num_ref(formula: str, values: list[float]) -> str:
     points = "".join(
-        f'<c:pt idx="{i}"><c:v>{_cell_number(v)}</c:v></c:pt>'
-        for i, v in enumerate(values)
+        f'<c:pt idx="{i}"><c:v>{_cell_number(v)}</c:v></c:pt>' for i, v in enumerate(values)
     )
     return (
         f"<c:numRef><c:f>{_esc(formula)}</c:f><c:numCache>"
@@ -1609,8 +1803,14 @@ def _num_ref(formula: str, values: list[float]) -> str:
     )
 
 
-def _data_labels(theme: ReportTheme, *, position: str | None, show_value: bool,
-                 show_percent: bool, number_format: str) -> str:
+def _data_labels(
+    theme: ReportTheme,
+    *,
+    position: str | None,
+    show_value: bool,
+    show_percent: bool,
+    number_format: str,
+) -> str:
     """One ``c:dLbls``.
 
     CT_DLbls is a SEQUENCE and Word rejects the part outright if it is shuffled: numFmt, spPr,
@@ -1651,7 +1851,7 @@ def _axis_title(theme: ReportTheme, text: str, *, vertical: bool) -> str:
         f'<a:defRPr sz="900" b="0" i="0">{_solid_fill(theme.muted)}'
         f'<a:latin typeface="{_esc(theme.body_font)}"/>'
         f'<a:cs typeface="{_esc(theme.complex_font)}"/></a:defRPr></a:pPr>'
-        f'<a:r><a:t>{_esc(clean_text(text))}</a:t></a:r></a:p>'
+        f"<a:r><a:t>{_esc(clean_text(text))}</a:t></a:r></a:p>"
         '</c:rich></c:tx><c:overlay val="0"/></c:title>'
     )
 
@@ -1708,8 +1908,14 @@ def _cartesian_axes(block: ChartBlock, theme: ReportTheme) -> str:
     )
 
 
-def _bar_group(block: ChartBlock, series: list[tuple[str, float]], theme: ReportTheme,
-               tx: str, cat: str, val: str) -> str:
+def _bar_group(
+    block: ChartBlock,
+    series: list[tuple[str, float]],
+    theme: ReportTheme,
+    tx: str,
+    cat: str,
+    val: str,
+) -> str:
     """``c:barChart`` — vertical when the categories are a sequence, horizontal when they are words.
 
     CT_BarSer sequence: idx, order, tx, spPr, invertIfNegative, dPt*, dLbls, cat, val.
@@ -1724,7 +1930,8 @@ def _bar_group(block: ChartBlock, series: list[tuple[str, float]], theme: Report
     points = "".join(
         f'<c:dPt><c:idx val="{i}"/><c:invertIfNegative val="0"/><c:bubble3D val="0"/>'
         f"<c:spPr>{_solid_fill(negative)}<a:ln><a:noFill/></a:ln></c:spPr></c:dPt>"
-        for i, (_label, value) in enumerate(series) if value < 0
+        for i, (_label, value) in enumerate(series)
+        if value < 0
     )
     direction = "bar" if block.kind is ChartKind.HORIZONTAL_BAR else "col"
     return (
@@ -1735,8 +1942,13 @@ def _bar_group(block: ChartBlock, series: list[tuple[str, float]], theme: Report
         f"<c:spPr>{_solid_fill(_srgb(soft))}<a:ln><a:noFill/></a:ln></c:spPr>"
         '<c:invertIfNegative val="0"/>'
         f"{points}"
-        + _data_labels(theme, position="outEnd", show_value=True, show_percent=False,
-                       number_format=_INDIAN_NUMBER_FORMAT)
+        + _data_labels(
+            theme,
+            position="outEnd",
+            show_value=True,
+            show_percent=False,
+            number_format=_INDIAN_NUMBER_FORMAT,
+        )
         + f"{cat}{val}</c:ser>"
         # 61%: the rasteriser draws a bar at 0.62 of its slot, so the gap is the other 0.38 —
         # 0.38/0.62 as a percentage of bar width, which is what gapWidth means.
@@ -1750,7 +1962,7 @@ def _line_group(theme: ReportTheme, tx: str, cat: str, val: str) -> str:
     """``c:lineChart``. CT_LineSer: idx, order, tx, spPr, marker, dPt*, dLbls, cat, val, smooth."""
     accent = _srgb(rgb_of(theme.accent, (31, 56, 100)))
     return (
-        "<c:lineChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>"
+        '<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>'
         f'<c:ser><c:idx val="0"/><c:order val="0"/>{tx}'
         # 12700 EMU = 1 pt, which is what the rasteriser's 2.4 px at 200 dpi comes to. A hairline
         # default would disappear on the photocopy every one of these reports takes.
@@ -1758,8 +1970,13 @@ def _line_group(theme: ReportTheme, tx: str, cat: str, val: str) -> str:
         '<c:marker><c:symbol val="circle"/><c:size val="6"/>'
         f"<c:spPr>{_solid_fill(accent)}"
         f'<a:ln w="9525">{_solid_fill("FFFFFF")}</a:ln></c:spPr></c:marker>'
-        + _data_labels(theme, position="t", show_value=True, show_percent=False,
-                       number_format=_INDIAN_NUMBER_FORMAT)
+        + _data_labels(
+            theme,
+            position="t",
+            show_value=True,
+            show_percent=False,
+            number_format=_INDIAN_NUMBER_FORMAT,
+        )
         + f'{cat}{val}<c:smooth val="0"/></c:ser>'
         # A line of three follow-up points with no markers is a line nobody can read a value off.
         '<c:marker val="1"/>'
@@ -1768,8 +1985,14 @@ def _line_group(theme: ReportTheme, tx: str, cat: str, val: str) -> str:
     )
 
 
-def _circular_group(block: ChartBlock, series: list[tuple[str, float]], theme: ReportTheme,
-                    tx: str, cat: str, val: str) -> str:
+def _circular_group(
+    block: ChartBlock,
+    series: list[tuple[str, float]],
+    theme: ReportTheme,
+    tx: str,
+    cat: str,
+    val: str,
+) -> str:
     """``c:pieChart`` or ``c:doughnutChart``, one ``c:dPt`` per slice.
 
     Every slice is coloured explicitly from ``report_chart.slice_colours`` rather than left to
@@ -1798,14 +2021,14 @@ def _circular_group(block: ChartBlock, series: list[tuple[str, float]], theme: R
         f'<c:ser><c:idx val="0"/><c:order val="0"/>{tx}{points}'
         # The share, not the count: the count is in the legend and in the table this figure sits
         # beside, and a slice labelled with both is unreadable at a quarter of a page.
-        + _data_labels(theme, position=None, show_value=False, show_percent=True,
-                       number_format="0%")
+        + _data_labels(
+            theme, position=None, show_value=False, show_percent=True, number_format="0%"
+        )
         + f"{cat}{val}</c:ser>{tail}</c:{tag}>"
     )
 
 
-def chart_space_xml(block: ChartBlock, series: list[tuple[str, float]],
-                    theme: ReportTheme) -> str:
+def chart_space_xml(block: ChartBlock, series: list[tuple[str, float]], theme: ReportTheme) -> str:
     """The whole ``word/charts/chartN.xml`` for one block.
 
     CT_ChartSpace is a sequence: roundedCorners, chart, spPr, txPr, externalData. CT_Chart is a
@@ -1817,14 +2040,10 @@ def chart_space_xml(block: ChartBlock, series: list[tuple[str, float]],
     rows = len(series)
     labels = [label for label, _value in series]
     values = [value for _label, value in series]
-    last = rows + 1              # row 1 is the header, so n categories end on row n+1
+    last = rows + 1  # row 1 is the header, so n categories end on row n+1
     name = clean_text(block.title) or "Value"
 
-    tx = (
-        "<c:tx>"
-        + _str_ref("Sheet1!$B$1", [name])
-        + "</c:tx>"
-    )
+    tx = "<c:tx>" + _str_ref("Sheet1!$B$1", [name]) + "</c:tx>"
     cat = "<c:cat>" + _str_ref(f"Sheet1!$A$2:$A${last}", labels) + "</c:cat>"
     val = "<c:val>" + _num_ref(f"Sheet1!$B$2:$B${last}", values) + "</c:val>"
 
@@ -1984,6 +2203,7 @@ def chart_part_rels(workbook_name: str) -> str:
 # --------------------------------------------------------------------------------------
 # Public entry point
 # --------------------------------------------------------------------------------------
+
 
 def render_docx(document: ReportDocument, load_image: ImageLoader) -> tuple[bytes, list[str]]:
     """Render ``document`` to .docx bytes.

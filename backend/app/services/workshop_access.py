@@ -59,6 +59,7 @@ and approving it clears the flag. Clients can ask what a submission would mean b
 Nothing here fires when a record carries no ``workshopId``: an omitted workshop behaves exactly as it
 always has.
 """
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -181,7 +182,11 @@ async def resolve_workshop_access(user: Any, workshop_id: str) -> WorkshopAccess
         level = granted
     else:
         # Open workshop: the implicit level applies, and an explicit grant can only raise it.
-        level = granted if level_rank(granted) > level_rank(OPEN_WORKSHOP_LEVEL) else OPEN_WORKSHOP_LEVEL
+        level = (
+            granted
+            if level_rank(granted) > level_rank(OPEN_WORKSHOP_LEVEL)
+            else OPEN_WORKSHOP_LEVEL
+        )
     return WorkshopAccess(level, restricted, row_status, row_level)
 
 
@@ -190,7 +195,9 @@ async def workshop_assignee_ids(workshop_id: str) -> set[str]:
 
     Status-aware on purpose: a pending, denied, or revoked row must never read as membership.
     """
-    rows = await db.workshopassignment.find_many(where={"workshopId": workshop_id, "status": "GRANTED"})
+    rows = await db.workshopassignment.find_many(
+        where={"workshopId": workshop_id, "status": "GRANTED"}
+    )
     return {r.userId for r in rows}
 
 
@@ -277,7 +284,9 @@ async def unreachable_workshop_ids(user: Any, minimum: str = DEFAULT_GRANT_LEVEL
     )
 
 
-async def accessible_workshops_where(user: Any, minimum: str = DEFAULT_GRANT_LEVEL) -> dict[str, Any] | None:
+async def accessible_workshops_where(
+    user: Any, minimum: str = DEFAULT_GRANT_LEVEL
+) -> dict[str, Any] | None:
     """A Prisma ``where`` fragment narrowing a workshop list to the ones ``user`` may actually use at
     ``minimum`` — CONTRIBUTE by default, the level a save into a workshop demands.
 
@@ -320,7 +329,9 @@ async def workshop_edit_privilege(user: Any, workshop_id: str | None) -> bool:
     return access.at_least("EDIT")
 
 
-async def assert_workshop_access(user: Any, workshop_id: str | None, minimum: str = "CONTRIBUTE") -> WorkshopAccess:
+async def assert_workshop_access(
+    user: Any, workshop_id: str | None, minimum: str = "CONTRIBUTE"
+) -> WorkshopAccess:
     """Require at least ``minimum`` in ``workshop_id``, raising 403 with a reason that names the state.
 
     A no-op for a missing ``workshop_id`` — a record with no workshop link is unconstrained, exactly
@@ -330,7 +341,9 @@ async def assert_workshop_access(user: Any, workshop_id: str | None, minimum: st
         return WorkshopAccess()
     access = await resolve_workshop_access(user, workshop_id)
     if not access.at_least(minimum):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_denied_detail(access, minimum))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=access_denied_detail(access, minimum)
+        )
     return access
 
 

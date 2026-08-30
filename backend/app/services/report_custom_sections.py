@@ -197,7 +197,8 @@ class CustomSectionItem:
         submitted document for every wording the designer ever corrected.
         """
         return tuple(
-            f for f in self.fields_at(max_tier_rank)
+            f
+            for f in self.fields_at(max_tier_rank)
             if not f.retired or _has_answer(self.values.get(f.key))
         )
 
@@ -238,9 +239,7 @@ class CustomSectionItem:
         return self.has_content_at()
 
     def answered_count_at(self, max_tier_rank: int = ALL_TIERS) -> int:
-        return sum(
-            1 for f in self.fields_at(max_tier_rank) if _has_answer(self.values.get(f.key))
-        )
+        return sum(1 for f in self.fields_at(max_tier_rank) if _has_answer(self.values.get(f.key)))
 
     @property
     def answered_count(self) -> int:
@@ -296,7 +295,9 @@ def custom_sections_of(data: Any) -> tuple[CustomSectionItem, ...]:
     return tuple(getattr(data, _ATTR, ()) or ())
 
 
-def custom_scoring(data: Any, stage_key: str) -> tuple[tuple[CustomReportField, ...], dict[str, Any]]:
+def custom_scoring(
+    data: Any, stage_key: str
+) -> tuple[tuple[CustomReportField, ...], dict[str, Any]]:
     """The custom fields and answers of one stage, in the shape ``stage_completeness`` scores.
 
     THE REPORT MUST NOT COUNT FOR ITSELF, which is the whole reason this returns arguments for that
@@ -385,7 +386,8 @@ def sections_hidden_by_tier(
     outcome, not something to warn a designer about.
     """
     return tuple(
-        item for item in items
+        item
+        for item in items
         if section_prints(item, ALL_TIERS) and not section_prints(item, max_tier_rank)
     )
 
@@ -498,22 +500,27 @@ def custom_section_blocks(
 
     blocks: list[Block] = []
     if pairs:
-        blocks.append(KeyValueBlock(
-            pairs=tuple((clean_text(label), runs_of(value)) for label, value in pairs)
-        ))
+        blocks.append(
+            KeyValueBlock(
+                pairs=tuple((clean_text(label), runs_of(value)) for label, value in pairs)
+            )
+        )
     for label, text in prose:
-        blocks.append(ParagraphBlock(runs=runs_of(label, bold=True), style=ParaStyle.BODY,
-                                     align=Align.LEFT))
+        blocks.append(
+            ParagraphBlock(runs=runs_of(label, bold=True), style=ParaStyle.BODY, align=Align.LEFT)
+        )
         for chunk in (c for c in clean_text(text).split("\n\n") if c.strip()):
             blocks.append(ParagraphBlock(runs=runs_of(chunk.strip()), style=ParaStyle.BODY))
     if truncated:
-        blocks.append(ParagraphBlock(
-            runs=runs_of(
-                f"[Answers truncated after {MAX_ROWS_PER_SECTION} questions. The full set is held "
-                f"against the workshop in the repository.]"
-            ),
-            style=ParaStyle.NOTE,
-        ))
+        blocks.append(
+            ParagraphBlock(
+                runs=runs_of(
+                    f"[Answers truncated after {MAX_ROWS_PER_SECTION} questions. The full set is held "
+                    f"against the workshop in the repository.]"
+                ),
+                style=ParaStyle.NOTE,
+            )
+        )
     return blocks
 
 
@@ -569,8 +576,9 @@ def custom_section_blocks_standalone(
     report goes through :func:`append_custom_section` instead.
     """
     scratch = DocumentBuilder(meta=ReportMeta(title=""))
-    append_custom_section(scratch, item, heading=heading, numbered=numbered,
-                          page_break_before=False)
+    append_custom_section(
+        scratch, item, heading=heading, numbered=numbered, page_break_before=False
+    )
     return scratch.build().blocks
 
 

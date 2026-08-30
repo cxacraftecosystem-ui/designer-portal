@@ -31,7 +31,9 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 # Hosts where a plaintext object-storage endpoint is expected and harmless (local MinIO).
-_LOCAL_ENDPOINT_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "minio", "host.docker.internal"})
+_LOCAL_ENDPOINT_HOSTS = frozenset(
+    {"localhost", "127.0.0.1", "::1", "minio", "host.docker.internal"}
+)
 _insecure_endpoint_warned = False
 
 
@@ -204,7 +206,9 @@ def presign_put_url(object_key: str, mime_type: str) -> str:
     )
 
 
-def presign_get_url(object_key: str, *, filename: str, mime_type: str, expires_in: int = 900) -> str:
+def presign_get_url(
+    object_key: str, *, filename: str, mime_type: str, expires_in: int = 900
+) -> str:
     """Presigned GET URL that also dictates how the browser receives the object.
 
     ``public_url_for_key`` cannot do this job. S3 honours the ``response-content-*`` overrides only
@@ -437,9 +441,7 @@ class _BoundedWriter:
         return getattr(self._handle, name)
 
 
-def download_to_temp(
-    object_key: str, *, suffix: str = "", max_bytes: int | None = None
-) -> str:
+def download_to_temp(object_key: str, *, suffix: str = "", max_bytes: int | None = None) -> str:
     """Stream one stored object to a temp file and return its path. **The caller owns that file.**
 
     THE POINT OF THIS FUNCTION IS THAT THE OBJECT NEVER BECOMES A ``bytes``. ``get_object_bytes``

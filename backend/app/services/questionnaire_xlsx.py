@@ -171,11 +171,44 @@ def _norm_header(value: Any) -> str:
 # the order of this dict, so the more specific ones ("section title") are matched before the looser
 # ones ("section") could swallow them.
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    "sectionCode": ("section code", "sectioncode", "section ref", "section id", "code", "s no section"),
-    "sectionTitle": ("section title", "section name", "sectiontitle", "section heading", "section", "part", "theme"),
-    "questionId": ("question id", "questionid", "id", "q id", "qid", "ref", "reference", "question ref"),
+    "sectionCode": (
+        "section code",
+        "sectioncode",
+        "section ref",
+        "section id",
+        "code",
+        "s no section",
+    ),
+    "sectionTitle": (
+        "section title",
+        "section name",
+        "sectiontitle",
+        "section heading",
+        "section",
+        "part",
+        "theme",
+    ),
+    "questionId": (
+        "question id",
+        "questionid",
+        "id",
+        "q id",
+        "qid",
+        "ref",
+        "reference",
+        "question ref",
+    ),
     "prompt": ("question", "questions", "prompt", "question text", "the question", "item", "q"),
-    "help": ("help", "help text", "helptext", "guidance", "hint", "instruction", "instructions", "description"),
+    "help": (
+        "help",
+        "help text",
+        "helptext",
+        "guidance",
+        "hint",
+        "instruction",
+        "instructions",
+        "description",
+    ),
     "required": ("required", "mandatory", "is required", "compulsory", "must answer"),
 }
 # Answer and note columns are matched by PREFIX, not exact name, because an exported questionnaire
@@ -359,7 +392,9 @@ def _label_after(header: str, prefix: str) -> str | None:
     return rest.title() if rest else None
 
 
-def _scan_header(rows: list[tuple[int, list[str]]]) -> tuple[int, dict[int, tuple[str, str | None]]] | None:
+def _scan_header(
+    rows: list[tuple[int, list[str]]],
+) -> tuple[int, dict[int, tuple[str, str | None]]] | None:
     """Find the header row and what each of its columns means.
 
     A row qualifies only if it names a QUESTION column. Nothing else is sufficient: a sheet whose
@@ -493,7 +528,9 @@ def _unreadable_file_message(data: bytes) -> str:
     )
 
 
-def parse_questionnaire_workbook(data: bytes, *, filename: str | None = None) -> ParsedQuestionnaire:
+def parse_questionnaire_workbook(
+    data: bytes, *, filename: str | None = None
+) -> ParsedQuestionnaire:
     """Read an uploaded workbook into sections + questions (+ any answers it already carried).
 
     Raises :class:`QuestionnaireXlsxError` only when the FILE is unusable. Anything wrong with a row
@@ -529,9 +566,17 @@ def parse_questionnaire_workbook(data: bytes, *, filename: str | None = None) ->
     # Details, if there is a sheet that looks like one. Missing is normal — a designer who built the
     # form from scratch has no Details sheet, and the title then comes from the filename.
     for name, rows in sheets.items():
-        if _norm_header(name) in ("details", "about", "questionnaire details", "info", "information"):
+        if _norm_header(name) in (
+            "details",
+            "about",
+            "questionnaire details",
+            "info",
+            "information",
+        ):
             details = _read_details(rows)
-            result.title = _clip(details["title"], MAX_TITLE_CHARS) if details.get("title") else None
+            result.title = (
+                _clip(details["title"], MAX_TITLE_CHARS) if details.get("title") else None
+            )
             result.description = details.get("description") or None
             result.questionnaireId = details.get("questionnaireId") or None
             break
@@ -907,22 +952,58 @@ def _details_sheet(
 _HELP_LINES = [
     ("h", "How to fill this in"),
     ("p", "Type your questions on the 'Questionnaire' sheet, one per row, then upload the file."),
-    ("b", "Sections — put the section's name in 'Section Title'. Fill it in on the first question of the section and leave it blank on the rest, or repeat it on every row; both work. Leave 'Section Code' blank and the app will create one for you."),
-    ("b", "Questions — 'Question' is the only column you must fill in. Every other column is optional."),
+    (
+        "b",
+        "Sections — put the section's name in 'Section Title'. Fill it in on the first question of the section and leave it blank on the rest, or repeat it on every row; both work. Leave 'Section Code' blank and the app will create one for you.",
+    ),
+    (
+        "b",
+        "Questions — 'Question' is the only column you must fill in. Every other column is optional.",
+    ),
     ("b", "Required — type Yes or No. Anything else is read as No and reported back to you."),
-    ("b", "Answers — you can leave the 'Answer' column empty and record answers in the app, or type answers you already collected on paper straight into it. Both work, and you can do both: answers typed here become the first set of answers, and you can add more in the app afterwards."),
-    ("b", "Question ID — leave it blank for a new question. On a questionnaire you downloaded back out of the app it is already filled in; DO NOT EDIT OR DELETE IT. It is how the app knows that row is the same question you have already collected answers against."),
-    ("b", "You can add columns of your own, move columns around, and put a title above the headings. The app finds the columns by their headings, not by where they are."),
+    (
+        "b",
+        "Answers — you can leave the 'Answer' column empty and record answers in the app, or type answers you already collected on paper straight into it. Both work, and you can do both: answers typed here become the first set of answers, and you can add more in the app afterwards.",
+    ),
+    (
+        "b",
+        "Question ID — leave it blank for a new question. On a questionnaire you downloaded back out of the app it is already filled in; DO NOT EDIT OR DELETE IT. It is how the app knows that row is the same question you have already collected answers against.",
+    ),
+    (
+        "b",
+        "You can add columns of your own, move columns around, and put a title above the headings. The app finds the columns by their headings, not by where they are.",
+    ),
     ("h", "Editing a questionnaire people have already answered"),
-    ("p", "Once an answer has been recorded against a question, that question stops being editable — an answer only means anything next to the words it was given under."),
-    ("b", "Change the wording of an answered question and the app keeps the old question and its answers, and adds your new wording as a new question underneath. Nothing is lost and no recorded answer changes meaning."),
-    ("b", "Delete a row for an answered question and the app retires it instead: it stops being asked, and its answers stay in the record."),
+    (
+        "p",
+        "Once an answer has been recorded against a question, that question stops being editable — an answer only means anything next to the words it was given under.",
+    ),
+    (
+        "b",
+        "Change the wording of an answered question and the app keeps the old question and its answers, and adds your new wording as a new question underneath. Nothing is lost and no recorded answer changes meaning.",
+    ),
+    (
+        "b",
+        "Delete a row for an answered question and the app retires it instead: it stops being asked, and its answers stay in the record.",
+    ),
     ("b", "Questions nobody has answered yet can be reworded, reordered and deleted freely."),
     ("h", "Sending your questions to another designer"),
-    ("p", "Two different files come out of a questionnaire, and only one of them is meant to be passed on."),
-    ("b", "QUESTION SET — the questions, their order, their help text and their Required flags, and nothing else: no answers, no respondents' names, no sittings. This is the one to send. Whoever receives it uploads it and gets their own empty questionnaire with your questions in it, to run their own fieldwork against."),
-    ("b", "FULL WORKBOOK — the same questions PLUS every sitting recorded against them: each respondent's name, their notes and every answer they gave. That is your fieldwork rather than your instrument, and only you, a designer working on the same design workshop, and an admin can download it."),
-    ("b", "A workbook that came out of the app and still has answers in it imports its QUESTIONS ONLY. Those answers are already recorded in the platform under the names of the people who recorded them, and copying them into a second questionnaire under your name would duplicate the fieldwork and misattribute it. Answers you typed into a blank pro-forma yourself are imported as normal — that file has no Question IDs in it, which is how the app tells the two apart."),
+    (
+        "p",
+        "Two different files come out of a questionnaire, and only one of them is meant to be passed on.",
+    ),
+    (
+        "b",
+        "QUESTION SET — the questions, their order, their help text and their Required flags, and nothing else: no answers, no respondents' names, no sittings. This is the one to send. Whoever receives it uploads it and gets their own empty questionnaire with your questions in it, to run their own fieldwork against.",
+    ),
+    (
+        "b",
+        "FULL WORKBOOK — the same questions PLUS every sitting recorded against them: each respondent's name, their notes and every answer they gave. That is your fieldwork rather than your instrument, and only you, a designer working on the same design workshop, and an admin can download it.",
+    ),
+    (
+        "b",
+        "A workbook that came out of the app and still has answers in it imports its QUESTIONS ONLY. Those answers are already recorded in the platform under the names of the people who recorded them, and copying them into a second questionnaire under your name would duplicate the fieldwork and misattribute it. Answers you typed into a blank pro-forma yourself are imported as normal — that file has no Question IDs in it, which is how the app tells the two apart.",
+    ),
     ("h", "An example"),
 ]
 _HELP_EXAMPLE = [

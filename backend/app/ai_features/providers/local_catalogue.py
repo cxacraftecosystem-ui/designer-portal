@@ -109,18 +109,20 @@ class LocalCatalogueProvider(MarketResearchProvider):
             bucket = buckets.setdefault(overlap, [])
             if len(bucket) >= budget:
                 continue
-            bucket.append(RawListing(
-                name=name,
-                seller=first_string(row, *_SELLER_KEYS),
-                price_text=first_string(row, *_PRICE_KEYS),
-                url=first_string(row, *_URL_KEYS) or f"{uri}?row={number}",
-                provider=self.provider_id,
-                query=best_query,
-                # The row's own date if it has one. See the module docstring: a catalogue price
-                # was true when the catalogue was written, not when this call happened.
-                retrieved_at=first_string(row, *_UPDATED_KEYS) or fallback_stamp,
-                currency_hint=first_string(row, *_CURRENCY_KEYS),
-            ))
+            bucket.append(
+                RawListing(
+                    name=name,
+                    seller=first_string(row, *_SELLER_KEYS),
+                    price_text=first_string(row, *_PRICE_KEYS),
+                    url=first_string(row, *_URL_KEYS) or f"{uri}?row={number}",
+                    provider=self.provider_id,
+                    query=best_query,
+                    # The row's own date if it has one. See the module docstring: a catalogue price
+                    # was true when the catalogue was written, not when this call happened.
+                    retrieved_at=first_string(row, *_UPDATED_KEYS) or fallback_stamp,
+                    currency_hint=first_string(row, *_CURRENCY_KEYS),
+                )
+            )
 
         # Best overlap first, then file order — which is what the buckets already hold. File order
         # rather than price, so two runs over the same catalogue return the same rows in the same
@@ -179,11 +181,7 @@ class LocalCatalogueProvider(MarketResearchProvider):
 
 
 def _iso(epoch_seconds: float) -> str:
-    return (
-        datetime.fromtimestamp(epoch_seconds, tz=UTC)
-        .replace(microsecond=0)
-        .isoformat()
-    )
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).replace(microsecond=0).isoformat()
 
 
 def _uri(path: Path) -> str:

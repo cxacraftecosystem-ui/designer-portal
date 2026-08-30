@@ -263,7 +263,9 @@ async def replace_interview_artisans(interview_id: str, artisan_ids: list[str]) 
             where={"id": interview_id}, data={"artisanSetKey": set_key}
         )
     except UniqueViolationError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DUPLICATE_SET_DETAIL) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=_DUPLICATE_SET_DETAIL
+        ) from exc
     await db.questionnaireinterviewartisan.delete_many(where={"interviewId": interview_id})
     if unique_ids:
         await db.questionnaireinterviewartisan.create_many(
@@ -452,7 +454,9 @@ async def delete_section(
     questions = await db.questionnairequestion.find_many(where={"sectionId": section_id})
     answered = await answered_question_ids([q.id for q in questions])
     await db.questionnairesection.update(where={"id": section_id}, data={"isActive": False})
-    await db.questionnairequestion.update_many(where={"sectionId": section_id}, data={"isActive": False})
+    await db.questionnairequestion.update_many(
+        where={"sectionId": section_id}, data={"isActive": False}
+    )
     if answered:
         await db.questionnairequestion.update_many(
             where={"id": {"in": sorted(answered)}, "retiredAt": None},
@@ -467,9 +471,13 @@ async def reorder_sections(
 ) -> list[dict[str, Any]]:
     for index, section_id in enumerate(payload.sectionIds):
         await require_section(section_id)
-        await db.questionnairesection.update(where={"id": section_id}, data={"sortOrder": -(index + 1)})
+        await db.questionnairesection.update(
+            where={"id": section_id}, data={"sortOrder": -(index + 1)}
+        )
     for index, section_id in enumerate(payload.sectionIds):
-        await db.questionnairesection.update(where={"id": section_id}, data={"sortOrder": index + 1})
+        await db.questionnairesection.update(
+            where={"id": section_id}, data={"sortOrder": index + 1}
+        )
     return await section_payloads(active_only=False)
 
 
@@ -691,7 +699,11 @@ async def list_interviews(
         and_filters.append(vis)
 
     if search:
-        where["OR"] = [{"title": contains(search)}, {"place": contains(search)}, {"notes": contains(search)}]
+        where["OR"] = [
+            {"title": contains(search)},
+            {"place": contains(search)},
+            {"notes": contains(search)},
+        ]
     if artisanId:
         where["artisans"] = {"some": {"artisanId": artisanId}}
     if designWorkshopId:
@@ -997,9 +1009,7 @@ async def completion_matrix(
     # empty matrix while its interviews sat right there.
     resolved_workshops = resolve_workshop_ids(workshopIds)
     if resolved_workshops is not None:
-        artisan_where.setdefault("AND", []).append(
-            artisan_workshop_clause(*resolved_workshops)
-        )
+        artisan_where.setdefault("AND", []).append(artisan_workshop_clause(*resolved_workshops))
 
     # HOW MANY INTERVIEWS THIS SCOPE CANNOT SEE, asked in the same wave so it costs no round trip.
     #
@@ -1154,7 +1164,9 @@ async def update_interview(
     if data:
         await db.questionnaireinterview.update(where={"id": interview_id}, data=data)
     if payload.artisanIds is not None:
-        link_count = await db.questionnaireinterviewartisan.count(where={"interviewId": interview_id})
+        link_count = await db.questionnaireinterviewartisan.count(
+            where={"interviewId": interview_id}
+        )
         if not privileged:
             assert_can_contribute_relation(interview, current_user, link_count > 0, "artisanIds")
         await replace_interview_artisans(interview_id, payload.artisanIds)
@@ -1261,7 +1273,9 @@ async def consolidated_questionnaire_csv(
 
 
 @router.delete("/interviews/{interview_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_interview(interview_id: str, current_user: Any = Depends(get_current_user)) -> None:
+async def delete_interview(
+    interview_id: str, current_user: Any = Depends(get_current_user)
+) -> None:
     assert_can_delete(current_user)
     await require_record(db.questionnaireinterview, interview_id)
     await db.questionnaireinterview.delete(where={"id": interview_id})

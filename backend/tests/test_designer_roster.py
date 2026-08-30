@@ -1,6 +1,6 @@
 """The sign-in gate, the profile's ownership rules, and the prefill a new workshop starts with.
 
-Four things are pinned here, and every one of them is a way somebody loses their access or loses
+Five things are pinned here, and every one of them is a way somebody loses their access or loses
 their work.
 
 **A SUSPENDED DESIGNER MUST BE TOLD THEY ARE SUSPENDED.** The refusal is a 403 carrying a sentence
@@ -22,6 +22,16 @@ belongs to a real account and let a designer enumerate the staff.
 **PREFILL IS A COPY.** A report is a historical document. A designer who moves from NIFT to NID in
 2027 must not retroactively rewrite the 2026 workshop, so the last test here creates a workshop,
 moves the profile, and asserts the earlier workshop still names the institution it was run from.
+
+**ONE GMAIL MAILBOX IS ONE PERSON, HOWEVER IT IS SPELLED.** Google is the only sign-in path a
+designer has and it treats the dots and the ``+tag`` in a Gmail local part as decoration, so an
+admin who types ``sandy.craft3@gmail.com`` off a business card and a person whose token says
+``sandycraft3@gmail.com`` were, for the whole life of this table, two different people to it — a row
+on the admin's screen showing the right person, admitting nobody, with the four refusals above
+unable to explain the difference because none of them was what had happened. Section 6 pins the
+canonicalisation itself, and then pins the three cases that matter around it: an aliased sign-in
+reaching a row stored as the mailbox, a row stored the OLD way still admitting its own spelling, and
+a suspended row that a second spelling must not be able to walk around.
 
 Postgres is required — the behaviour under test is a row in ``DesignerRoster`` deciding an HTTP
 status, and a ``DWStageEntry`` appearing on a workshop nobody typed into — so the module skips
@@ -47,6 +57,7 @@ import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.api.routes import auth as auth_routes
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
+from app.services.designers import canonical_email, email_match_keys
 from app.services.rich_text import to_plain
 
 _URL = os.environ.get("DATABASE_URL", "")
@@ -87,9 +98,11 @@ ADMIN_PROFILE_BIOGRAPHY = "Twenty years administering cluster development progra
 ADMIN_PROFILE_YEARS = 20
 
 # Accounts the module needs, and the roster standing each of them is meant to have. Suspended and
-# unlisted are two distinct ways of being refused and both are tested: one designer had access
-# ended, the other never had a row at all (an account that predates the roster), and the person
-# reading the refusal has to be told the same actionable thing either way.
+# unlisted are two distinct states and both are tested, but they are no longer two ways of being
+# REFUSED: since requirement 28 an allow-listed designer with no row at all is empanelled on the way
+# in, and only a suspended row — an administrator's deliberate revocation — still refuses. See
+# ``test_a_designer_who_was_never_empanelled_is_empanelled_by_the_allow_list`` for why that swap is
+# the fix to a reported bug and not a weakening of the gate.
 ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("admin", "ADMIN", "Roster Admin"),
     # OUTRANKS A DESIGNER AND STILL CANNOT RUN A WORKSHOP. Here so the directory has a professor
@@ -161,6 +174,26 @@ async def world():
         # accident the first time this fixture ran.
         return f"roster-{slug}-{stamp}@example.org".lower()
 
+    def mailbox(slug: str) -> str:
+        """The CANONICAL spelling of a Gmail address for this run — no dots, no tag, gmail.com.
+
+        Deliberately free of dots and of ``+``, so that ``canonical_email`` is the identity on it
+        and :func:`alias` below is the only string in the pair that has anything to strip. A stamp
+        that happened to contain a dot would make every section-6 assertion pass for the wrong
+        reason — the two spellings would be equal before canonicalisation ever ran — so the run
+        stamp is folded in without one, exactly as ``address`` does.
+        """
+        return f"roster{slug}{stamp}@gmail.com".lower()
+
+    def alias(slug: str) -> str:
+        """The SAME MAILBOX as :func:`mailbox`, spelled the way Google also accepts it.
+
+        Dots through the local part and the ``googlemail.com`` domain — the two halves of the
+        reported failure in one string. ``canonical_email(alias(x)) == mailbox(x)`` is the whole
+        premise of section 6, and it is asserted outright there rather than assumed here.
+        """
+        return f"roster.{slug}.{stamp}@googlemail.com".lower()
+
     people: dict[str, Any] = {}
     await db.connect()
     try:
@@ -209,6 +242,52 @@ async def world():
                 "revokedAt": None if is_active else datetime.now(UTC),
                 "addedById": people["admin"].id,
             })
+        # ── THE GMAIL WORLD, FOR SECTION 6 ────────────────────────────────────────────────────
+        #
+        # THREE MAILBOXES AND NOT ONE ACCOUNT BETWEEN THEM, WHICH IS THE POINT. Every person here
+        # signs in through Google for the first time inside the test that uses them, because that
+        # is how an aliased address actually reaches these gates in production: an admin types a
+        # spelling off a business card, and months later the person arrives with whatever spelling
+        # Google puts in the token. Creating `User` rows for them in advance would test the
+        # password path, which cannot reach this at all — it looks an account up by the exact
+        # string typed into the form, so an alias never gets as far as the roster.
+        #
+        # `gCanonical` — rows stored as the MAILBOX, signed in to under the ALIAS. The case the
+        #   canonicalisation is FOR, and the shape every row written from now on will have.
+        # `gLegacy` — rows stored under the ALIAS, exactly as an admin's typing left them before
+        #   this existed, signed in to under that same alias. The BACKWARDS-COMPATIBILITY case:
+        #   these two rows are the ones that go dark if anybody ever "simplifies" the match keys
+        #   down to the canonical form alone.
+        # `gCollision` — one mailbox with TWO roster rows that disagree: an active one under the
+        #   canonical spelling and an administrator's revocation under the alias. The pair cannot
+        #   be created by any current write path — `ensure_empanelled` and `admit` both search both
+        #   spellings — and exists precisely because the table may already be holding one, written
+        #   before there was anything to stop it.
+        for slug, email in (("gCanonical", mailbox), ("gLegacy", alias), ("gCollision", mailbox)):
+            await db.accessroster.create(data={
+                "email": email(slug),
+                "status": "ACTIVE",
+                # DESIGNER, so the account the Google path provisions is a DESIGNER and the
+                # EMPANELMENT gate is the one deciding these tests. Admitted at any lower tier the
+                # account would sail past `assert_roster_admits` without it being consulted, and
+                # every assertion below would pass with the roster read deleted.
+                "admitRole": "DESIGNER",
+                "joinedAt": datetime.now(UTC),
+                "notes": "Seeded by tests/test_designer_roster.py section 6 (Gmail aliasing).",
+            })
+        for slug, email, is_active in (
+            ("gCanonical", mailbox, True),
+            ("gLegacy", alias, True),
+            ("gCollision", mailbox, True),
+            ("gCollision", alias, False),
+        ):
+            await db.designerroster.create(data={
+                "email": email(slug),
+                "fullName": f"Gmail roster row for {slug}",
+                "isActive": is_active,
+                "revokedAt": None if is_active else datetime.now(UTC),
+                "addedById": people["admin"].id,
+            })
         await db.designerprofile.create(data={
             "user": {"connect": {"id": people["active"].id}},
             "displayName": PROFILE_NAME,
@@ -243,7 +322,14 @@ async def world():
         await db.disconnect()
 
     with TestClient(app) as client:
-        yield {"client": client, "people": people, "address": address, "stamp": stamp}
+        yield {
+            "client": client,
+            "people": people,
+            "address": address,
+            "mailbox": mailbox,
+            "alias": alias,
+            "stamp": stamp,
+        }
 
 
 @pytest.fixture
@@ -337,15 +423,39 @@ async def test_a_suspended_designer_is_told_they_are_suspended(world, client):
     assert response.json()["detail"] == SUSPENDED_DETAIL
 
 
-async def test_a_designer_who_was_never_empanelled_is_refused_the_same_way(world, client):
-    """No row at all gets the same answer as a suspended row.
+async def test_a_designer_who_was_never_empanelled_is_empanelled_by_the_allow_list(world, client):
+    """**CHANGED BY REQUIREMENT 28, AND THE OLD ASSERTION WAS THE REPORTED BUG.**
 
-    This is the account that predates the roster, or the one an admin created by hand and forgot
-    to empanel. Two different internal states, one thing the designer can usefully be told.
+    This test used to assert that a DESIGNER with no roster row read the same refusal as a suspended
+    one — "two different internal states, one thing the designer can usefully be told". The states
+    are still different and the sentence was never the problem; what was wrong is that this state
+    was a refusal at all. An account the platform allow-list admits AS A DESIGNER has been approved
+    by an administrator, and answering it with a sentence about a suspended empanelment describes a
+    revocation that never happened, on a screen (``/admin/designers``) showing no row at all to
+    explain it. ``sandycraft3@gmail.com`` hit exactly this in production.
+
+    So the empanelment is created on the way through, by ``ensure_empanelled`` in ``auth.login``,
+    and the account signs in. THE REFUSAL HAS NOT GONE ANYWHERE — it now belongs solely to a
+    SUSPENDED row, which is an administrator's deliberate act, and that is pinned by the test above
+    this one and by ``test_the_allow_list_never_revives_a_suspended_empanelment`` in
+    ``tests/test_platform_access_gate.py``.
     """
-    response = _login(client, world["address"]("unlisted"))
-    assert response.status_code == 403, response.text
-    assert response.json()["detail"] == SUSPENDED_DETAIL
+    email = world["address"]("unlisted")
+    assert email not in _roster_rows(client, world), (
+        "the fixture must NOT have empanelled this account, or this test proves nothing"
+    )
+
+    response = _login(client, email)
+    assert response.status_code == 200, response.text
+    assert response.json()["user"]["role"] == "DESIGNER"
+
+    row = _roster_rows(client, world)[email]
+    assert row["isActive"] is True
+    # Nobody administered this one, so ``addedById`` must not name anybody — and because that column
+    # is also NULL on a hand-made row whose admin was since deleted, the note is what actually tells
+    # the two apart on the roster screen.
+    assert row["addedById"] is None
+    assert "automatically" in (row["notes"] or ""), row["notes"]
 
 
 async def test_a_wrong_password_is_still_a_401_on_an_empanelled_account(world, client):
@@ -1174,3 +1284,287 @@ async def test_the_prefill_is_a_copy_and_a_later_profile_edit_never_reaches_it(
     assert _singleton(client, world, "active", earlier, STAGE_1)["designerInstitution"] == (
         ADMIN_PROFILE_INSTITUTION
     ), "the earlier workshop must still name the institution it was actually run from"
+
+
+# --------------------------------------------------------------------------------------
+# 6. One Gmail mailbox is one person, however it is spelled
+# --------------------------------------------------------------------------------------
+#
+# THE PURE-FUNCTION TESTS IN THIS SECTION NEED NO DATABASE AND ARE SKIPPED WITHOUT ONE ANYWAY,
+# because the module-level `pytestmark` at the top of this file skips everything here when
+# `DATABASE_URL` does not point at a local Postgres. That is a real cost and it is accepted
+# deliberately: `canonical_email` exists only to decide what the four tests below it do, and a
+# reader who finds a sign-in refused needs the rule and the consequence in one place rather than in
+# two files that have to be read together. If these ever need to run on a machine with no database
+# — in a lint-only CI job, say — move them out WITH the behavioural tests, never on their own.
+
+
+def test_gmail_dots_are_not_part_of_the_address():
+    """THE REPORTED FAILURE, reduced to the one line that caused it.
+
+    ``sandy.craft3@gmail.com`` and ``sandycraft3@gmail.com`` are one inbox to Google, so an admin
+    reading either of them off a business card has typed the same person. Until this function
+    existed they were two keys in two rosters, and the person was refused by a row that named them.
+    """
+    assert canonical_email("sandy.craft3@gmail.com") == "sandycraft3@gmail.com"
+    assert canonical_email("s.a.n.d.y.c.r.a.f.t.3@gmail.com") == "sandycraft3@gmail.com"
+    # Already canonical: the function is the identity here, which is what makes it safe to run over
+    # every address on the way into the table rather than only over the ones that look aliased.
+    assert canonical_email("sandycraft3@gmail.com") == "sandycraft3@gmail.com"
+
+
+def test_a_plus_tag_is_not_part_of_the_address():
+    """A ``+suffix`` is a filing label the person invented, not a second mailbox.
+
+    It is cut at the FIRST ``+``, and the whole tag goes — including any dots inside it, which is
+    why the tag is removed before the dots are and not after. A designer who signs up as
+    ``sandycraft3+ministry@gmail.com`` and is then empanelled as ``sandycraft3@gmail.com`` must not
+    be two people, in either order.
+    """
+    assert canonical_email("sandycraft3+ministry@gmail.com") == "sandycraft3@gmail.com"
+    assert canonical_email("sandy.craft3+dpw.2026@gmail.com") == "sandycraft3@gmail.com"
+    assert canonical_email("sandycraft3+a+b@gmail.com") == "sandycraft3@gmail.com"
+
+
+def test_googlemail_is_gmail():
+    """``googlemail.com`` is the name Gmail was sold under in Germany, Russia and the UK.
+
+    Google still accepts it and still delivers it to the same inbox, so a roster row carrying the
+    older domain has to be the same key as one carrying the newer. Both halves of the fold are
+    asserted together, because the address that actually turns up is usually spelled the old way
+    AND with dots — that combination is one string, and it has to reduce to one mailbox.
+    """
+    assert canonical_email("sandycraft3@googlemail.com") == "sandycraft3@gmail.com"
+    assert canonical_email("sandy.craft3+work@googlemail.com") == "sandycraft3@gmail.com"
+
+
+def test_a_non_gmail_address_keeps_every_dot_and_every_tag_it_was_given():
+    """**THE ASSERTION THAT STOPS THIS FUNCTION MERGING TWO COLLEAGUES.**
+
+    Dots are significant everywhere except at the two domains Google has told us they are not.
+    ``a.sharma@nift.ac.in`` and ``asharma@nift.ac.in`` may be two different members of staff, and a
+    canonicaliser that folded them would hand one of them the other's sign-in, empanelment and
+    workshop authorship — in the table whose entire job is deciding who is who. The ``+`` is left
+    alone for the same reason: sub-addressing is a per-site convention (Postfix's
+    ``recipient_delimiter`` is configurable and often is not ``+`` at all), so ``accounts+billing@``
+    may be a real, distinct mailbox at a domain that never switched it on.
+
+    ``normalise_email``'s work still happens — this is a refinement of it and not a replacement, so
+    the case folding and the trimming are asserted here too.
+    """
+    assert canonical_email("a.sharma@nift.ac.in") == "a.sharma@nift.ac.in"
+    billing = "accounts+billing@handicrafts.nic.in"
+    assert canonical_email(billing) == billing
+    assert canonical_email("  A.Sharma@NIFT.ac.in  ") == "a.sharma@nift.ac.in"
+    # Not a Gmail domain merely because it ends in one. `partition` splits on the FIRST `@`, so a
+    # string with two of them has a domain that is not in the set and is returned untouched rather
+    # than folded into somebody's real mailbox.
+    assert canonical_email("a.b@notgmail.com") == "a.b@notgmail.com"
+    assert canonical_email("a.b@c@gmail.com") == "a.b@c@gmail.com"
+
+
+def test_nothing_canonicalises_to_nothing():
+    """An absent address answers the empty string, and produces NO match keys at all.
+
+    Every caller tests the keys for emptiness before querying, and the reason is the shape of the
+    query rather than tidiness: ``{"email": {"in": []}}`` matches no rows on Postgres but
+    ``{"email": ""}`` is a real lookup for a real value, and a roster row that somehow held an empty
+    string would then be matched by every caller with no email at all. The refusal happens before
+    the query, not in it.
+    """
+    assert canonical_email(None) == ""
+    assert canonical_email("") == ""
+    assert canonical_email("   ") == ""
+    assert email_match_keys(None) == []
+    assert email_match_keys("  ") == []
+    # An address whose local part is nothing BUT dots and a tag would reduce to a bare "@gmail.com",
+    # which is not a mailbox and which two different unusable strings would then share. It is handed
+    # back unchanged instead — one dead key in an IN list that matches nothing is harmless; a shared
+    # one is the merge the domain restriction above exists to prevent, arrived at from the far end.
+    assert canonical_email("...@gmail.com") == "...@gmail.com"
+    assert canonical_email("+tag@gmail.com") == "+tag@gmail.com"
+
+
+def test_the_match_keys_are_the_literal_first_and_the_mailbox_second():
+    """ONE INDEXED ``IN``, AND THE LITERAL SPELLING IS ALWAYS IN IT.
+
+    Every roster row written before this change is stored under whatever an admin typed. A gate
+    that canonicalised only the incoming address would look up ``sandycraft3@gmail.com`` and stop
+    finding the ``sandy.craft3@gmail.com`` row that admits that person TODAY — turning a fix for one
+    lock-out into a fresh lock-out for everybody the old spelling was quietly working for. The
+    literal form is not belt-and-braces; deleting it as redundant breaks sign-in for exactly the
+    people this feature was written for.
+
+    One key where there is nothing to canonicalise, so the ordinary address plans as an equality
+    test and the query does not get wider for the 99% of rows that were never aliased.
+    """
+    assert email_match_keys("sandy.craft3@gmail.com") == [
+        "sandy.craft3@gmail.com",
+        "sandycraft3@gmail.com",
+    ]
+    assert email_match_keys("sandycraft3@gmail.com") == ["sandycraft3@gmail.com"]
+    assert email_match_keys("a.sharma@nift.ac.in") == ["a.sharma@nift.ac.in"]
+    # At most two keys, ever — which is what bounds the collision every caller has to resolve to a
+    # choice between two rows, given that `email` is UNIQUE on both roster tables.
+    assert len(email_match_keys("s.a.n.d.y+x@googlemail.com")) == 2
+
+
+async def test_an_aliased_sign_in_reaches_the_row_stored_as_the_mailbox(world, client, monkeypatch):
+    """**THE CASE THE WHOLE FIX IS FOR**, end to end, through the only door a designer has.
+
+    The rows say ``rostergCanonical…@gmail.com``. The token says
+    ``roster.gCanonical.…@googlemail.com``. Before the canonicalisation those were two people: the
+    allow-list answered "never seen" and the person was queued as a stranger, or — once an admin had
+    promoted them — told their designer access was suspended, about an empanelment sitting active on
+    the very screen the admin was looking at.
+
+    THE ``firstSeenAt`` ASSERTION IS THE HALF THAT IS EASY TO LEAVE OUT AND IS NOT DECORATION. A
+    match on the canonical key has to behave IDENTICALLY to a match on the literal one, and "let
+    them in" is only the first half of that: ``mark_roster_seen`` runs a moment later and writes
+    against the same key. Had it kept matching the literal address only, this designer would sign in
+    perfectly well for ever while the admin who empanelled them read a permanently blank "first
+    seen", concluded the invitation never arrived, and chased them about it.
+    """
+    response = _google(client, monkeypatch, world["alias"]("gCanonical"))
+    assert response.status_code == 200, response.text
+    assert response.json()["user"]["role"] == "DESIGNER"
+
+    row = _roster_rows(client, world)[world["mailbox"]("gCanonical")]
+    assert row["firstSeenAt"] is not None, (
+        "the gate admitted this designer on the canonical key and then stamped nothing, so the "
+        "roster screen will report an invitation that never arrived for somebody who is using the "
+        "app right now"
+    )
+    # NOT A SECOND ROSTER ROW. `ensure_empanelled` runs on every DESIGNER sign-in and searches both
+    # spellings, so it finds the one above and writes nothing — the alternative being that every
+    # aliased sign-in quietly manufactures the duplicate this whole change exists to prevent.
+    assert world["alias"]("gCanonical") not in _roster_rows(client, world)
+    # OBSERVED, NOT ENDORSED: the `User` row is created under the address GOOGLE SENT, because
+    # account identity is deliberately outside this change. See the note at the
+    # `db.user.find_unique` in `login_with_google` for the one case in which that still bites.
+    assert response.json()["user"]["email"] == world["alias"]("gCanonical")
+
+
+async def test_a_row_written_before_canonicalisation_still_admits_its_own_spelling(
+    world, client, monkeypatch
+):
+    """**THE BACKWARDS-COMPATIBILITY CASE, AND THE ONE A "SIMPLIFICATION" WOULD BREAK.**
+
+    ``gLegacy``'s two rows are stored under the DOTTED, ``googlemail.com`` spelling — which is
+    exactly how every row an admin typed before this change is stored, because nothing rewrote them.
+    The person signs in with that same spelling and must be admitted, and what admits them is the
+    LITERAL form in the match keys, not the canonical one.
+
+    Delete the literal key as redundant — it is the obvious tidy-up, since the canonical form "is"
+    the address — and this designer, along with everybody else whose row predates the fix, stops
+    being able to sign in. That failure would arrive with no schema change and no error anywhere: a
+    lookup that simply returns None.
+    """
+    response = _google(client, monkeypatch, world["alias"]("gLegacy"))
+    assert response.status_code == 200, response.text
+    assert response.json()["user"]["role"] == "DESIGNER"
+
+    rows = _roster_rows(client, world)
+    assert rows[world["alias"]("gLegacy")]["firstSeenAt"] is not None
+    assert world["mailbox"]("gLegacy") not in rows, (
+        "signing in created a canonical twin of a row that was already admitting this person, so "
+        "the roster screen now shows one designer twice and a later suspension can miss one of them"
+    )
+
+
+async def test_a_revocation_is_not_walked_around_by_a_second_spelling(world, client, monkeypatch):
+    """**WHERE TWO SPELLINGS OF ONE MAILBOX DISAGREE, THE REFUSAL WINS.**
+
+    ``gCollision`` has an ACTIVE roster row under the canonical spelling and an administrator's
+    SUSPENSION under the alias — a pair no current write path can produce, and one the table may
+    already be holding from before there was anything to stop it. Now that both rows answer one
+    lookup, something has to decide, and the two possible answers are not symmetrical mistakes:
+
+    * refusing somebody who is entitled to be here is visible, complainable, and fixed in five
+      minutes by the same admin on the same screen;
+    * admitting somebody an admin revoked is silent, and the only trace of it is a row nobody has
+      a reason to open.
+
+    So ``roster_allows`` requires EVERY matched row to be active, and the suspension sentence is the
+    one this person reads — which is also the correct sentence, because a suspension is precisely
+    what happened to them.
+    """
+    response = _google(client, monkeypatch, world["alias"]("gCollision"))
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == SUSPENDED_DETAIL
+    # The EMPANELMENT's refusal and not the allow-list's. The allow-list admits this address (its
+    # row is ACTIVE), so a `SUSPENDED` here would mean the two gates had been collapsed into one and
+    # the person was being told to ask about the wrong thing.
+    assert response.headers.get("X-Access-Status") == "DESIGNER_SUSPENDED"
+
+    rows = _roster_rows(client, world)
+    assert rows[world["alias"]("gCollision")]["isActive"] is False, (
+        "the refused sign-in revived the revocation it was refused by"
+    )
+    assert rows[world["mailbox"]("gCollision")]["isActive"] is True
+
+
+async def test_admitting_an_aliased_address_stores_the_mailbox_on_both_rosters(world, client):
+    """A ROW WRITTEN THROUGH THE ADMIN SCREEN IS STORED AS THE MAILBOX, ON BOTH TABLES AT ONCE.
+
+    This is the write half of the fix, and it is what stops the problem being re-created daily.
+    Matching on lookup rescues the rows that are already there; storing the canonical form is what
+    means the next row an admin types cannot be unmatchable in the first place — whichever of the
+    two spellings the person's Google account turns out to use.
+
+    BOTH ROSTERS, from ONE request, which is the part worth pinning: ``POST /access/roster`` admits
+    the address and ``_empanel_an_admitted_designer`` empanels them on the strength of it, so an
+    admin who typed one aliased address into one box could otherwise end up with a canonical
+    allow-list row and a dotted roster row — the two gates keyed differently for one person, which
+    is a worse state than the one this started from.
+    """
+    typed = f"new.admit.{world['stamp']}@googlemail.com"
+    stored = f"newadmit{world['stamp']}@gmail.com"
+    assert canonical_email(typed) == stored
+
+    response = client.post(
+        "/api/access/roster",
+        json={"email": typed, "role": "DESIGNER"},
+        headers=_headers(world, "admin"),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["email"] == stored
+
+    rows = _roster_rows(client, world)
+    assert stored in rows, "the approval empanelled nobody under the address the gate will read"
+    assert typed not in rows
+
+
+async def test_adding_a_gmail_equivalent_address_is_a_409_that_says_so(world, client):
+    """THE DUPLICATE THAT DOES NOT LOOK LIKE ONE, AND A REFUSAL AN ADMIN CAN ACT ON.
+
+    The admin is looking at their own screen, searching for the address they just typed, and not
+    finding it — so "already on the access roster" reads as the server being wrong. The sentence
+    therefore names BOTH spellings and says why they are one address. Without the 409 the write
+    below would reach ``admit``, which searches both spellings, find the existing row and OVERWRITE
+    it: a pending request silently replaced by an ACTIVE grant, or an admin's notes replaced by
+    nothing, through the one door that exists to prevent exactly that.
+    """
+    first = f"clash{world['stamp']}@gmail.com"
+    # The stamp sits BEFORE the `+` deliberately: a tag is cut at the first `+`, so a stamp inside
+    # the tag would be thrown away and this address would collide with every other run's.
+    again = f"cl.ash{world['stamp']}+desk@googlemail.com"
+    assert canonical_email(again) == first
+
+    created = client.post(
+        "/api/access/roster",
+        json={"email": first, "role": "DESIGNER"},
+        headers=_headers(world, "admin"),
+    )
+    assert created.status_code == 201, created.text
+
+    clash = client.post(
+        "/api/access/roster",
+        json={"email": again, "role": "DESIGNER"},
+        headers=_headers(world, "admin"),
+    )
+    assert clash.status_code == 409, clash.text
+    detail = clash.json()["detail"]
+    assert first in detail and again in detail, (
+        f"the refusal named neither what the admin typed nor what is stored: {detail}"
+    )

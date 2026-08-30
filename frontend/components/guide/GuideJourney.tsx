@@ -42,9 +42,15 @@ export function GuideJourney() {
 
   // "start 65%" → progress begins when the list's top passes 65% down the viewport;
   // "end 65%"   → it completes when the list's bottom reaches the same line. Measured: the fill
-  // reads 100% with the tenth step's bottom edge still on screen (~58vh at 1280, ~43vh at 360),
+  // reads 100% with the LAST step's bottom edge still on screen (~58vh at 1280, ~43vh at 360),
   // i.e. the spine completes while you are looking at the last step, not after you have scrolled
   // past it into the outro — and it does reach 100% at every width, with room to spare.
+  //
+  // It said "the tenth step's" until 2026-08-29, which was this measurement's own subject when there
+  // were ten of them and a contradiction with the very next clause once there were not. The offsets
+  // are anchored to the LIST — `target: listRef` — so they are indifferent to how many children it
+  // has, and the measurement re-derives itself as the array grows. Nothing here needs a number; a
+  // number here only records how long ago somebody last looked.
   const { scrollYProgress } = useScroll({ target: listRef, offset: ["start 65%", "end 65%"] });
   const smoothed = useSpring(scrollYProgress, { stiffness: 140, damping: 30, mass: 0.4 });
   const progress = reduce ? scrollYProgress : smoothed;

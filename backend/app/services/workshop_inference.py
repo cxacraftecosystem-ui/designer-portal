@@ -277,7 +277,9 @@ def build_windows(workshops: Iterable[Any]) -> list[WorkshopWindow]:
     """
     windows: list[WorkshopWindow] = []
     for workshop in workshops:
-        start = _aware(getattr(workshop, "startDate", None)) or _aware(getattr(workshop, "date", None))
+        start = _aware(getattr(workshop, "startDate", None)) or _aware(
+            getattr(workshop, "date", None)
+        )
         if start is None:
             continue
         last_day = _aware(getattr(workshop, "endDate", None)) or start
@@ -466,7 +468,9 @@ async def run_ladder() -> LadderRun:
         parent_crafts,
         tagged_processes,
     ) = await gather_reads(
-        db.artisan.find_many(where={"id": {"in": sorted(artisan_ids)}}) if artisan_ids else _empty(),
+        db.artisan.find_many(where={"id": {"in": sorted(artisan_ids)}})
+        if artisan_ids
+        else _empty(),
         db.workshopartisan.find_many(where={"artisanId": {"in": sorted(artisan_ids)}})
         if artisan_ids
         else _empty(),
@@ -576,7 +580,10 @@ async def run_ladder() -> LadderRun:
             row.id,
             title_of(row, *BUCKET_TITLE_COLUMNS["artisans"]),
             [
-                (RUNG_PARENT, [link.workshopId for link in (getattr(row, "workshops", None) or [])]),
+                (
+                    RUNG_PARENT,
+                    [link.workshopId for link in (getattr(row, "workshops", None) or [])],
+                ),
                 rung_window(row, "recordedAt", "createdAt"),
             ],
         ),
@@ -752,7 +759,8 @@ def payload_for(run: LadderRun, applied: dict[str, int] | None = None) -> dict[s
                         "reason": row.reason,
                         "reasonCopy": REASON_COPY.get(row.reason or ""),
                         "candidateTitles": [
-                            titles.get(candidate, "Unknown workshop") for candidate in row.candidates
+                            titles.get(candidate, "Unknown workshop")
+                            for candidate in row.candidates
                         ],
                     }
                     for row in (*unresolved, *resolved)[:_MAX_ROWS_PER_BUCKET]

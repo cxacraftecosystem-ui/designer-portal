@@ -311,7 +311,9 @@ async def update_transcription_provider_order(
     return _provider_order_state(stored, verification, normalised=bool(sank), note=note)
 
 
-@router.post("/transcription-providers/{provider}/test", response_model=TranscriptionProviderOrderDto)
+@router.post(
+    "/transcription-providers/{provider}/test", response_model=TranscriptionProviderOrderDto
+)
 async def test_transcription_provider(
     provider: str,
     current_user: Any = Depends(require_admin),

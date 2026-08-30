@@ -254,7 +254,11 @@ fun RequestAccessFields(
             options = options,
             selected = selected,
             placeholder = "Select researchers",
-            emptyMessage = "No other researchers to ask.",
+            // The repository-level sentence from `WorkshopOptions.kt`, in place of a hand-rolled
+            // claim that asserted the same "there are none" fact regardless of whether `directory`
+            // arrived from a read that actually succeeded — the bug class DROPDOWN_DESIGN.md's own
+            // survey of this file names by quoting this exact string.
+            emptyMessage = unscopedEmptyLine("researchers"),
             enabled = !busy,
             onSelectedChange = { selected = it }
         )
@@ -414,7 +418,8 @@ fun GrantAccessFields(
             options = options,
             selected = selected,
             placeholder = "Select colleagues",
-            emptyMessage = "No colleagues to share with.",
+            // Same fix, same reason as the researchers picker above.
+            emptyMessage = unscopedEmptyLine("colleagues"),
             enabled = !busy,
             onSelectedChange = { selected = it }
         )

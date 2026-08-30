@@ -168,11 +168,10 @@ import Link from "next/link";
 
 import { useAuth } from "@/components/AuthProvider";
 import { PageHeader } from "@/components/PageHeader";
-import { SearchInput } from "@/components/SearchInput";
 import { refusalText } from "@/components/sketches/ratingsApi";
 import { ReviewPanel } from "@/components/sketches/ReviewPanel";
 import type { RateableEntityKey } from "@/components/sketches/reviewRanking";
-import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
+import { Dropdown } from "@/components/ui/Dropdown";
 import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 /*
@@ -184,8 +183,15 @@ import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
   out by name.
 */
 import { isUnreachable } from "@/lib/failureTriage";
-import { formatDate } from "@/lib/format";
 import { canRunDesignWorkshops, roleLabel } from "@/lib/permissions";
+import {
+  designWorkshopOptions,
+  UNTITLED_WORKSHOP,
+  workshopCutSentence,
+  workshopEmptyLabel,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 
 /**
  * The two kinds of piece a pool round can be read over.
@@ -265,23 +271,29 @@ const SEARCH_DEBOUNCE_MS = 300;
  */
 type ListFailure = { unreachable: boolean; note: string | null };
 
-/**
- * Title plus the day it ran, never an id.
- *
- * The same shape `/sketches-and-prototypes` builds and `DesignWorkshopViewersPanel` builds, and
- * deliberately not imported from either: both are module-private helpers, one in a hub page and one
- * in a settings panel, and lifting either would make another screen's formatting a shared contract.
- * If a fourth caller wants it, that is the moment it moves to `lib/designWorkshops.ts`.
- *
- * The fallback title matters more than it looks: everything below `title` on a summary row is
- * denormalised from stage 1 by `promoted_values()`, so a workshop created this morning legitimately
- * has a title and nulls everywhere else.
- */
-function workshopLabel(summary: DwSummary): string {
-  const title = summary.title?.trim() || "Untitled design workshop";
-  const when = formatDate(summary.startDate ?? summary.createdAt ?? null);
-  return when === "-" ? title : `${title} · ${when}`;
-}
+/*
+  ── `workshopLabel` HAS MOVED, AND ITS OWN COMMENT NAMED THE TRIGGER ────────────────────────────
+
+  It read: *"deliberately not imported from either… if a fourth caller wants it, that is the moment
+  it moves to `lib/designWorkshops.ts`."* There were SEVEN callers, each with a copy, and between
+  them they shipped six different label shapes for one question — this file's `title · date` with a
+  `workshopCode` hint, the viewers panel's and the inspectors panel's bare `title · date`, the record
+  picker's `title` with a `craft · cluster · date` hint, the questionnaires' `title` alone, and two
+  more on the other table. An admin walking between three of those screens in one sitting met three
+  spellings of the same workshop.
+
+  The home is `lib/workshopOptions.ts` rather than `lib/designWorkshops.ts`, because the thing being
+  shared is not an API concern: it is the LABEL, the grouping, the sort, the "none" row and the four
+  empty sentences, for both workshop tables at once, and it is a pure module a spec can test without
+  a DOM. Its ruling is that the label is the title ALONE and everything that tells two workshops
+  apart goes in the `hint` — which `SearchableSelect` searches as well as draws, so the date and the
+  craft stayed reachable when they stopped being in the label.
+
+  `UNTITLED_WORKSHOP` is imported for the one place this file still names a workshop in prose. The
+  fallback matters more than it looks: everything below `title` on a summary row is denormalised from
+  stage 1 by `promoted_values()`, so a workshop created this morning legitimately has a title and
+  nulls everywhere else.
+*/
 
 export default function DesignReviewPage() {
   return (
@@ -442,30 +454,75 @@ function DesignReview() {
   }, []);
 
   /**
-   * The rows, with the workshop CODE beside each one.
+   * WHAT THE READ ANSWERED, as one value with the three states inside it.
    *
-   * ── WHY A SECOND COLUMN, WHEN "title plus the day it ran, never an id" WAS THE WHOLE RULE ────────
-   * Because two workshops that share a title and a date rendered as two identical options, and an
-   * identical option is a choice a reader cannot make. `workshopCode` is already on `DwSummary`, is
-   * printed on the workshop's own page, and carries no disclosure risk here — every row in this list
-   * is one the account already holds, so it discloses nothing the account cannot already read. (The
-   * `workshop_summary` objection recorded in this file's header is about a HYPOTHETICAL pool endpoint
-   * serving strangers, which is a different list and still does not exist.)
-   *
-   * It rides in `hint`, not appended to the label, for two reasons: `SearchableSelect` prints the
-   * label in the collapsed trigger, where a code after a title and a date is the third thing
-   * competing for one line; and the hint is SEARCHED — an admin sent a code in a message can paste it
-   * into the box and land on the row. `undefined` rather than an empty string where there is no code:
-   * an empty hint would draw an empty second column on every legacy row.
+   * The page already held the distinction — `workshops === null` for "not answered", `listFailure`
+   * for "the read failed", and this file's own comment calls collapsing them "the single most
+   * repeated bug class in this repository". This assembles the same three facts into the shape
+   * `lib/workshopOptions` reads, so that the sentences under the control are chosen once, by the
+   * module that owns them, rather than re-derived here in ternaries that can disagree with each
+   * other. Nothing about the page's own five-state machinery moves.
    */
-  const options = useMemo<DropdownOption[]>(
+  const listState = useMemo<WorkshopListState<DwSummary>>(
     () =>
-      (workshops ?? []).map((summary) => ({
-        value: summary.id,
-        label: workshopLabel(summary),
-        hint: summary.workshopCode?.trim() || undefined
-      })),
-    [workshops]
+      listFailure
+        ? { kind: "failed" }
+        : workshops === null
+          ? { kind: "loading" }
+          : { kind: "ok", rows: workshops, total },
+    [listFailure, workshops, total]
+  );
+
+  /**
+   * THE OFFLINE SPLIT IS THIS PAGE'S OWN, AND IT IS BETTER THAN THE SHARED FALLBACK.
+   *
+   * `deviceLooksOffline()` reads `navigator.onLine`, which is a cheap stand-in for the split the
+   * outbox actually makes. This page already makes that split properly — `isUnreachable(error)`
+   * distinguishes "nobody answered" from "the repository answered and refused" — so `online` is fed
+   * from the verdict rather than from the browser's guess, and the picker's sentence agrees with the
+   * failure panel three inches below it instead of being derived from a different question.
+   *
+   * SCOPED, because `list_design_workshops` narrows by `visible_to_clause` for everybody but an
+   * admin: an empty answer here is about this account's grants and its next move is an administrator,
+   * which is not the same sentence as "no design workshops have been recorded yet".
+   */
+  const voice = useMemo<WorkshopListVoice>(
+    () => ({ table: "design", scoped: true, online: !listFailure?.unreachable }),
+    [listFailure]
+  );
+
+  /**
+   * The rows, in the one vocabulary — and `offPage: "refuse"`, decided rather than defaulted.
+   *
+   * ── WHY NOT `"recover"`, WHICH IS WHAT EVERY RECORD FORM PASSES ─────────────────────────────────
+   *
+   * `"recover"` merges the value being described in from outside the list's scope, under the heading
+   * "Already on this record", because the record IS in that workshop and hiding the row would turn a
+   * read-only fact into a wrong write. Neither half of that holds here. The id in the URL is not a
+   * value stored on a record — it is a DESTINATION somebody pasted, and this page's whole argument is
+   * that a workshop missing from this shortcut is not a workshop you cannot read: the id may well
+   * belong to a pool round in a workshop this account is not in, where the by-id read would 404 and
+   * "recovering" it would mean the shortcut silently offering a row it cannot describe.
+   *
+   * So the list stays exactly what it says it is — the workshops this account can open — and what is
+   * being read is stated underneath in words that cannot go stale, which is what this control already
+   * did and is the better answer for a chooser that navigates rather than files.
+   *
+   * ── AND `workshopCode` IS NO LONGER IN THE HINT ─────────────────────────────────────────────────
+   *
+   * It went there because two workshops sharing a title and a date drew as two identical options.
+   * That reasoning is answered rather than overruled: the hint is now `craft · cluster · the day it
+   * ran`, which tells those two apart with facts a reader recognises, while a workshop code is
+   * something an admin reads off a join card and cannot place on sight. The code stays REACHABLE —
+   * the server's `search` matches `workshopCode` (`design_workshops.py`), and this control's box is
+   * the server's — so an admin sent a code in a message can still paste it in and land on the row.
+   *
+   * MEMOISED, WHICH IS LOAD-BEARING ON A `serverQuery` CONTROL: `SearchableSelect` re-takes its pin
+   * snapshot on `options` identity, so a fresh array every render would set state on every render.
+   */
+  const set = useMemo(
+    () => designWorkshopOptions(listState, { group: true, offPage: { mode: "refuse" } }),
+    [listState]
   );
 
   /**
@@ -590,7 +647,16 @@ function DesignReview() {
   */
   const asking = workshops === null && !listFailure;
   const ready = workshops !== null && !listFailure;
-  const truncated = ready && total > (workshops?.length ?? 0);
+  /**
+   * WHAT THE LIST LEFT OUT, in `selectFilter.ts`'s words rather than this page's own.
+   *
+   * The arithmetic used to be assembled here and worded three inches below. It is now
+   * `workshopCutSentence`, which is the same sentence the panel's own footer would draw and the same
+   * one every other workshop picker in the app now prints — so a reader who meets two of these
+   * controls in a sitting meets one wording. The paragraph below adds the fact this sentence cannot
+   * carry: WHICH eighty they are, which is not the same question as how many there are.
+   */
+  const workshopCut = workshopCutSentence(set, { term: titleQuery, searchable: true });
 
   return (
     <div>
@@ -634,28 +700,27 @@ function DesignReview() {
               workshops list page and the viewers panel. */}
           <span className="field-label">A workshop you can open yourself</span>
           {/*
-            THE ONE SEARCH BOX, AND IT IS THE REPOSITORY'S. See `titleQuery` for what this replaced
-            and why the panel's own filter box could not do it: it filters the options already in the
-            browser, which is one page of an archive, so on the audience this control was built for —
-            an admin holding everything — typing a real title answered "No matches". This box sends
-            `search` to `GET /design-workshops`, which is the only thing that can see past the page.
+            ── THE SEARCH BOX HAS MOVED INSIDE THE PICKER, AND IT IS STILL THE REPOSITORY'S ────────
 
-            ABOVE THE PICKER, NOT INSIDE IT, and there is deliberately no second box: two search
-            boxes over two different scopes are two boxes, and the narrower one always looks broken.
-            The same arrangement and the same argument as `DesignWorkshopViewersPanel`.
+            It was a `SearchInput` mounted here, above the control, with `searchable={false}`
+            underneath it — the only arrangement available before the primitive could hand a term
+            out, and the note beside it said so: "two search boxes over two different scopes are two
+            boxes, and the narrower one always looks broken", so the narrower one was switched off.
+            The cost was paid by everything that lives in the box that was off: the panel's diacritic
+            folding (`fold`, so "Ahmedabad" finds "Ahmedābād"), its ranking, its `role="status"` live
+            region, and its distinct "your query matched nothing" sentence.
+
+            `serverQuery` is the arrangement that has neither cost. There is still exactly ONE box,
+            the term still goes to `GET /design-workshops?search=`, and this control still never
+            filters the array it was handed — `options` already IS the answer to the term, and
+            filtering it again would drop rows the server matched on `workshopCode`, which the label
+            deliberately no longer shows.
+
+            The page's own "Asking the repository for workshops matching…" line went with it: the
+            panel draws `Searching…` in the empty slot and announces it into its live region, in the
+            same words every other server-searched picker in the app uses, and the reader is by
+            definition looking at the panel while typing into it.
           */}
-          <SearchInput
-            onChange={setTitleQuery}
-            placeholder="Search your design workshops by title"
-            value={titleQuery}
-          />
-          {/* At most one line, and only when there is something true to say: what the search is
-              doing, or nothing at all. A permanently-present status line is furniture. */}
-          {searching && titleQuery.trim() ? (
-            <p className="text-xs leading-5 text-ink-500" aria-live="polite">
-              Asking the repository for workshops matching “{titleQuery.trim()}”…
-            </p>
-          ) : null}
           <Dropdown
             /*
               EMPTY WHEN THE OPEN ROUND IS NOT ON THIS LIST, rather than a value with no matching
@@ -666,25 +731,39 @@ function DesignReview() {
             */
             value={listedRow ? workshopId : ""}
             onChange={chooseListed}
-            options={options}
+            options={set.options}
+            /*
+              THE BOX IS THE SERVER'S. The caller owns the term, the 300 ms debounce and the
+              generation counter — all three already existed here and are unchanged; what is new is
+              that the box drawing them is the panel's own.
+
+              `truncated` is deliberately NOT passed. `GET /design-workshops` reports a real `total`,
+              so the paragraph below prints the honest "Showing the first 80 of 350"; setting the flag
+              as well would draw the panel's vaguer "there are more and the server did not say how
+              many" under the same list. Two sentences about one cut, in two wordings, is how a reader
+              learns that neither is worth reading. The flag arm belongs to a route that cannot count.
+            */
+            serverQuery={{ value: titleQuery, onChange: setTitleQuery, pending: searching }}
+            /*
+              THE PLACEHOLDER IS THE TRIGGER'S, AND THE FOUR EMPTY STATES ARE THE PANEL'S. It used to
+              carry both, in a five-way ternary that had to re-derive "did a search do this?" — a
+              question the panel now answers with a stronger sentence than this page could write,
+              because the box goes to the repository and "No matches" is finally a claim about the
+              whole list rather than about one page of it.
+            */
             placeholder={
-              asking
-                ? "Looking for your workshops…"
-                : listFailure
-                  ? "This list could not be loaded"
-                  : options.length === 0
-                    ? // Told apart, because they are two different facts and the second one is not
-                      // about this account at all: a search that matched nothing says something about
-                      // the term, and reporting it as "none are listed for this account" is the
-                      // absence-reads-as-refusal mistake this whole screen is written against.
-                      titleQuery.trim()
-                      ? "Nothing matches that search"
-                      : "No workshops are listed for this account"
-                    : titleQuery.trim()
-                      ? "Choose one of the matching workshops"
-                      : "Choose one of your design workshops"
+              asking ? "Looking for your workshops…" : listFailure ? "This list could not be loaded" : "Choose one of your design workshops"
             }
-            disabled={!ready || options.length === 0}
+            emptyLabel={workshopEmptyLabel(listState, voice)}
+            /*
+              NOT DISABLED WHILE A TERM IS TYPED, even with nothing matching it. Standing the control
+              down would take away the box holding the very term that emptied it, leaving the reader
+              looking at a dead control with no way back to the list they could see a moment ago —
+              which is the failure this page's own copy is written against, arriving through the fix
+              for it. With no term, an empty list means the answer is empty and the trigger has
+              nothing to open.
+            */
+            disabled={!ready || (!titleQuery.trim() && set.options.length === 0)}
             ariaLabel="A design workshop you can open yourself"
             /*
               ── ALL THREE PARAGRAPHS, NOT JUST THE SCOPE ONE ────────────────────────────────────────
@@ -697,30 +776,17 @@ function DesignReview() {
             */
             describedBy="design-review-scope design-review-empty design-review-truncation"
             /*
-              ── EXPLICITLY OFF, WHICH IS THE OPPOSITE OF WHAT THIS SAID AND FOR THE SAME REASON ────
-
-              It passed `searchable` and argued the case well: an admin's list here is the whole
-              archive, which is the strongest case for a filter box anywhere in the app. Both halves
-              of that are still true and the conclusion was still wrong, because `SearchableSelect`
-              filters CLIENT-SIDE — over the one page of rows this component fetched. So the control
-              with the strongest case for a search box had the one search box that could not answer:
-              type a title from page 4 of 350 and it says "No matches", two paragraphs below a
-              sentence promising that a workshop missing from this list is not a workshop you cannot
-              read. Absence reading as non-existence, in the control whose surrounding copy exists to
-              forbid that reading.
-
-              So the search moved UP and OUT to the box above, which asks the repository. This is the
-              second call site in the app to overrule the count deliberately, and it now stands beside
-              the first — `DesignWorkshopViewersPanel`, whose header sets out the rule both follow.
+              NO `searchable` AND NO `capHint`, AND BOTH ABSENCES ARE THE SAME CHANGE. This control
+              passed `searchable={false}` because the only box available filtered CLIENT-SIDE, over
+              the one page of rows this component fetched — so the control with the strongest case for
+              a search box anywhere in the app (an admin's list here is the whole archive) had the one
+              box that could not answer: type a title from page 4 of 350 and it said "No matches", two
+              paragraphs below a sentence promising that a workshop missing from this list is not a
+              workshop you cannot read. `serverQuery` forces the box ON and points it at the
+              repository, which is what that argument wanted all along. `capHint` went with it: its
+              whole job was to name the control that DID reach the rest, and that control is now this
+              one, so the default clause ("Keep typing to narrow the list") is true for the first time.
             */
-            searchable={false}
-            /*
-              The cap notice's last clause. Unreachable in practice, because `CHOOSER_PAGE` is
-              `RENDER_CAP` — the panel is never handed more rows than it can draw — but the default
-              sentence for a non-searchable list ("narrow the list to reach them") would be advice
-              with no instrument if that ever stopped being true, and this control has one.
-            */
-            capHint="Use the search box above to reach the rest — it asks the repository, not this page."
             /*
               A dropdown that changes the screen it sits on must NOT advance focus on select: jumping
               away from the control you are adjusting is wrong when the control IS the adjustment.
@@ -784,7 +850,7 @@ function DesignReview() {
               </button>
             </div>
           ) : null}
-          {ready && options.length === 0 ? (
+          {ready && set.options.length === 0 ? (
             /*
               ANSWERED, AND THE ANSWER IS NONE — the ordinary state of a newly onboarded designer
               rather than an edge case, since `assert_can_create_design_workshops` is admin-only and
@@ -801,26 +867,34 @@ function DesignReview() {
                 : "No design workshop is listed for this account yet — an admin creates them and grants access. That does not stop you reading a pool round: a link or an id in the box below goes straight to one."}
             </p>
           ) : null}
-          {truncated ? (
+          {workshopCut ? (
             // Said rather than left as an absence, so "not in this list" cannot be read as "not
             // readable". The cap is the size of a control and nothing else.
             /*
-              ── "NEWEST FIRST" WAS A CLAIM ABOUT A DIFFERENT DATE FROM THE ONE ON THE ROWS ──────────
-              The server orders `createdAt: "desc"` (`api/routes/design_workshops.py`), while
-              `workshopLabel` prints `startDate ?? createdAt` — and `startDate` is a stage-1 promoted
-              field typed in by hand. So the visible column is not monotonic: a workshop created
-              yesterday whose start date reads Jan 2025 sorts above one created last week reading Jun
-              2026. A reader told "newest first" and scanning eighty rows for the newest was being
-              pointed at the wrong end of the list. The sentence now says which date does the sorting
-              and admits it is not the one printed — and, with the search box above, the ordering
-              matters far less than it did.
+              ── "NEWEST FIRST" WAS A CLAIM ABOUT A DIFFERENT DATE FROM THE ONE ON THE ROWS, AND THE
+                 TWO DATES HAVE NOW COME APART FURTHER RATHER THAN CLOSER ──────────────────────────
+
+              The server orders `createdAt: "desc"` (`api/routes/design_workshops.py`) while the rows
+              print the day the workshop RAN, which is a stage-1 promoted field typed in by hand — so
+              the visible column was never monotonic and a reader told "newest first" was being
+              pointed at the wrong end of eighty rows.
+
+              `designWorkshopOptions` now SORTS by that second date, newest first, on the ruling that
+              "a workshop entered into the system last is not the workshop that ran last". That fixes
+              the reading order and it does not touch the cut: the eighty rows this page holds are
+              still whichever eighty the server chose by entry date, and no client-side re-sort can
+              recover a row the server already dropped. Which is why this paragraph says both things.
+              The first sentence is `selectFilter.ts`'s, so it is the same wording every other
+              workshop picker in the app prints; the rest is the part only this list can say.
             */
             <p id="design-review-truncation" className="text-xs leading-5 text-ink-500">
-              Showing the first {workshops?.length ?? 0} of {total}
-              {titleQuery.trim() ? " matching workshops" : " you can open"}, most recently added to the repository
-              first — which is not the order the dates on the rows read, those being the days the workshops ran. Search
-              above to bring another one into the list, or open any of the rest from its link or its id below, or from
-              its own page under{" "}
+              {workshopCut} Those {set.drawn} are the ones most recently added to the repository.
+              That is not the order the dates on the rows read, and it is not the order they are drawn in
+              either: the rows are sorted by the day each workshop ran, while the cut was made by the day it
+              was entered. So a workshop that ran two years ago and was entered last week is in this list, and
+              one that ran last month and was entered last year may not be. Type in the picker&apos;s box to
+              bring another into it — that box asks the repository, not this page — or open any of the rest
+              from its link or its id below, or from its own page under{" "}
               <Link href="/design-workshops" className="underline">
                 Design workshops
               </Link>
@@ -885,7 +959,13 @@ function DesignReview() {
           <p className="text-xs leading-5 text-ink-500" aria-live="polite">
             {listedRow ? (
               <>
-                Now reading <span className="font-medium text-ink-700">{workshopLabel(listedRow)}</span>.
+                {/* The title alone, which is §2.3's label — a date after it would read as part of
+                    the name in a sentence, and the row it came from is on screen above with the day
+                    it ran in its hint. `UNTITLED_WORKSHOP` is the shared fallback: everything below
+                    `title` on a summary row is denormalised from stage 1, so a workshop created this
+                    morning legitimately has a title and nulls everywhere else. */}
+                Now reading{" "}
+                <span className="font-medium text-ink-700">{listedRow.title.trim() || UNTITLED_WORKSHOP}</span>.
               </>
             ) : ready ? (
               <>

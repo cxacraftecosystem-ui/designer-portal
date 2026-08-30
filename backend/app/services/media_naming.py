@@ -75,7 +75,14 @@ UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 KEEP_FORMAT = frozenset({"‌", "‍"})
 # Windows refuses these device names in any case, with or without an extension.
 RESERVED_NAMES = frozenset(
-    {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
 )
 # Combining marks are not alphanumeric to Python but they are part of the letter they sit on, so a
 # word splitter that treats "not alphanumeric" as a separator would shatter every Indic syllable.
@@ -438,7 +445,9 @@ def _grid_axis(media: Any) -> str | None:
     """
     filename = _text(getattr(media, "originalFilename", None))
     caption = _text(getattr(media, "caption", None))
-    if _FILE_GRID_LB.search(filename) or re.match(r"^length\s*breadth\s+grid", caption, re.IGNORECASE):
+    if _FILE_GRID_LB.search(filename) or re.match(
+        r"^length\s*breadth\s+grid", caption, re.IGNORECASE
+    ):
         return "Grid-Measurement-Length-Breadth"
     if _FILE_GRID_H.search(filename) or re.match(r"^height\s+grid", caption, re.IGNORECASE):
         return "Grid-Measurement-Height"
@@ -506,7 +515,9 @@ def _descriptor(
         name_part = clip_words(hyphenate(name), MAX_STEP_NAME_CHARS, MAX_STEP_NAME_CHARS * 3)
         return "-".join(p for p in (head, name_part, kind) if p)
 
-    if re.match(r"^pre-process\s+media", caption, re.IGNORECASE) or re.search(r"_PRE_", filename, re.IGNORECASE):
+    if re.match(r"^pre-process\s+media", caption, re.IGNORECASE) or re.search(
+        r"_PRE_", filename, re.IGNORECASE
+    ):
         return f"Pre-Process-{kind}"
 
     return kind
@@ -627,11 +638,14 @@ def display_filename(
     # free to be longer than a filesystem will accept. The number is charged to the budget for the
     # same reason it is in _assemble — clipped off, it stops separating the two files it is for.
     original = safe_chars(_text(getattr(media, "originalFilename", None))).strip(" .")
-    base = clip(
-        original or _text(fallback) or "file",
-        MAX_NAME_CHARS - len(text),
-        MAX_NAME_BYTES - len(text.encode("utf-8")),
-    ).strip(" .") or "file"
+    base = (
+        clip(
+            original or _text(fallback) or "file",
+            MAX_NAME_CHARS - len(text),
+            MAX_NAME_BYTES - len(text.encode("utf-8")),
+        ).strip(" .")
+        or "file"
+    )
     stem, dot, ext = base.rpartition(".")
     return numbered(stem, f".{ext}", suffix) if dot and stem else numbered(base, "", suffix)
 

@@ -31,17 +31,23 @@
  * records" is one click away and says so.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CalendarRange, Layers } from "lucide-react";
 
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { listCut, type ListCut } from "@/components/data/cappedList";
 import { MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { listResource } from "@/lib/api";
-import { formatDate } from "@/lib/format";
 import type { Workshop } from "@/lib/types";
 import {
-  sortWorkshopsByOccurrence,
-  workshopOccurrenceDate
-} from "@/components/forms/WorkshopSelect";
+  WORKSHOP_OPTION_PAGE_SIZE,
+  deviceLooksOffline,
+  fieldWorkshopOptions,
+  workshopEmptyLabel,
+  workshopListNotice,
+  type WorkshopListState
+} from "@/lib/workshopOptions";
+import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
 
 /**
  * The reserved id meaning "records not linked to any workshop". Byte-for-byte
@@ -51,8 +57,38 @@ import {
  */
 export const UNASSIGNED_WORKSHOP = "none";
 
-/** How many workshops the picker loads. The list route caps `pageSize` at 100. */
-const WORKSHOP_PAGE_SIZE = 100;
+/**
+ * The heading the sentinel row sits under, and the reason it needs one at all.
+ *
+ * `groupRows` draws UNGROUPED rows FIRST — deliberately, so a caller's ordering governs — so an
+ * ungrouped sentinel under a grouped list would be lifted to the very top of the panel, above
+ * "Open", where it reads as the first and most obvious workshop to pick. §2.4's all-or-nothing rule
+ * is the general form of this: if any row needs a heading, every row gets one, or the bare ones
+ * render as a category nobody named. One heading over one synthetic row is exactly right here —
+ * what it distinguishes is that this row is not a workshop.
+ */
+const UNASSIGNED_GROUP = "Records with no workshop";
+
+/**
+ * WHAT THE READ FAILED TO SAY, IN A FILTER'S VOICE RATHER THAN A FORM FIELD'S.
+ *
+ * The first sentence of each is `workshopListNotice`'s, byte for byte, so a researcher who has met
+ * the record form's picker recognises this one. The last clause is not, and could not be: that
+ * module's sentences end *"Nothing you have entered is at risk — this record can be saved without
+ * it"* and *"a stored copy of who may file where reads a revoked grant as a grant"*, both of which
+ * are about SAVING A RECORD against a workshop. Nothing is saved here. This control narrows a
+ * screen, and the fact a reader needs when its list did not arrive is what the screen is therefore
+ * showing — which is everything, because "no workshop chosen" is spelled as an absence and an
+ * absence is what a failed load leaves behind.
+ *
+ * Saying nothing was the shipping behaviour and is the one unacceptable option: the scope silently
+ * widened from "the most recent workshop" to "the whole repository", on five screens, with the
+ * picker looking merely short.
+ */
+const SCOPE_READ_FAILED =
+  "The workshops list could not be loaded, so this is not showing what exists. Nothing is hidden by it — with no workshop chosen, this screen is showing every record.";
+const SCOPE_READ_OFFLINE =
+  "This device has not received the workshops list yet, so there is nothing to pick here. That is not a claim that there are none. With no workshop chosen, this screen is showing every record.";
 
 export type WorkshopScope = {
   /** The selected ids; `[]` means every workshop. May contain {@link UNASSIGNED_WORKSHOP}. */
@@ -60,6 +96,24 @@ export type WorkshopScope = {
   setWorkshopIds: (next: string[]) => void;
   /** Every workshop, most recent occurrence first. */
   workshops: Workshop[];
+  /**
+   * WHAT THE READ ANSWERED — three states, because a failed read and an empty table are different
+   * facts with different next moves and this control used to spell both `setWorkshops([])`.
+   *
+   * The screen behind still falls through to every record on a failure, which is a complete and
+   * honest answer to "what am I looking at"; what was missing is that nobody was told the narrowing
+   * they asked for never happened. See {@link SCOPE_READ_FAILED}.
+   */
+  list: WorkshopListState<Workshop>;
+  /**
+   * What the picker is NOT showing, or null when it holds every workshop.
+   *
+   * 196 workshop rows against a page of {@link WORKSHOP_OPTION_PAGE_SIZE}, drawn on five screens
+   * including `/search` and `/map`, and until this pass it said nothing of any kind — the sharpest
+   * single instance of R4 in the app. The panel's box filters what it was handed, so the sentence
+   * has to say that too; `cappedListNotice` words it.
+   */
+  cut: ListCut | null;
   loading: boolean;
   /** True until the default selection has been applied, so a screen can hold its first fetch. */
   settling: boolean;
@@ -83,7 +137,8 @@ export function useWorkshopScope({
   /** Seeds the selection from a URL, which then wins over the most-recent default. */
   initialWorkshopIds?: string[];
 } = {}): WorkshopScope {
-  const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  const [list, setList] = useState<WorkshopListState<Workshop>>({ kind: "loading" });
+  const [cut, setCut] = useState<ListCut | null>(null);
   const [loading, setLoading] = useState(true);
   const [workshopIds, setWorkshopIdsState] = useState<string[]>(initialWorkshopIds ?? []);
   // The default is applied ONCE, and only if the user has not already chosen. Without the ref a
@@ -94,22 +149,33 @@ export function useWorkshopScope({
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Workshop>("/workshops", { pageSize: WORKSHOP_PAGE_SIZE })
+    // ONE NUMBER FOR THE FETCH AND THE RENDER. This asked for 100 into a control that draws 80, so
+    // twenty rows were dropped in a band where nothing on screen said anything at all: the page
+    // thought it held a hundred, the panel drew eighty, and neither number reached the reader.
+    listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE })
       .then((result) => {
         if (cancelled) return;
         // The list route already orders by occurrence, but it is re-sorted here for the same reason
         // WorkshopSelect re-sorts: the client must not depend on the server's order to decide which
         // workshop is "the most recent", because getting that wrong picks the wrong default silently.
         const ordered = sortWorkshopsByOccurrence(result.items);
-        setWorkshops(ordered);
+        setList({ kind: "ok", rows: ordered, total: result.total });
+        setCut(listCut(result, "workshops"));
         if (defaultToMostRecent && !touched.current && ordered.length > 0) {
           setWorkshopIdsState([ordered[0].id]);
         }
       })
       .catch(() => {
-        // A picker that could not load its options must not also silence the screen behind it: fall
-        // through to "all workshops", which is a complete and honest answer.
-        if (!cancelled) setWorkshops([]);
+        // A picker that could not load its options must not also silence the screen behind it: the
+        // selection stays `[]` and the screen falls through to every record, which is a complete and
+        // honest answer to what is on it.
+        //
+        // WHAT CHANGED IS THAT IT NO LONGER DOES SO SILENTLY, and the distinction is the whole
+        // defect. `setWorkshops([])` made a failed read indistinguishable from an empty table, so a
+        // screen that was asked to open on last week's workshop opened on the entire repository with
+        // a picker that looked merely short — and "all workshops" over `[]` is the widest scope this
+        // control can express, reached by accident, on the map and the search page.
+        if (!cancelled) setList({ kind: "failed" });
       })
       .finally(() => {
         if (cancelled) return;
@@ -125,6 +191,10 @@ export function useWorkshopScope({
     touched.current = true;
     setWorkshopIdsState(next);
   }, []);
+
+  // The rows, for the callers that name a workshop rather than list one. Derived from `list` so
+  // there is one answer on the page and not two that can disagree about whether the read succeeded.
+  const workshops = useMemo(() => (list.kind === "ok" ? [...list.rows] : []), [list]);
 
   const queryValue = useMemo(
     // Comma-joined, which `resolve_workshop_ids` accepts alongside repeated parameters. Undefined
@@ -145,23 +215,28 @@ export function useWorkshopScope({
     return `${list}${includesUnassigned ? ", plus records not linked to a workshop" : ""}.`;
   }, [workshopIds, workshops]);
 
-  return { workshopIds, setWorkshopIds, workshops, loading, settling, queryValue, summary };
+  return { workshopIds, setWorkshopIds, workshops, list, cut, loading, settling, queryValue, summary };
 }
 
-/** Title plus the day it ran — the same label `WorkshopSelect` uses, so one workshop reads one way. */
-function optionLabel(workshop: Workshop): string {
-  const title = workshop.title?.trim() || "Untitled workshop";
-  const when = formatDate(workshopOccurrenceDate(workshop) || null);
-  return when === "-" ? title : `${title} · ${when}`;
-}
+/*
+  `optionLabel` USED TO LIVE HERE — a second copy of `WorkshopSelect`'s `title · date`, kept in step
+  by hand and by a comment asking the next reader to keep it that way. Both are now
+  `fieldWorkshopOptions`: the title alone in `label`, and the place, the day and "Ended" in `hint`,
+  which `selectFilter` searches as well as draws. One workshop reads one way because one function
+  writes it, rather than because two functions were asked to agree.
+*/
 
 /**
  * The control. A multi-select over the workshops, an "All records" shortcut, and a line of text saying
  * what is currently in scope.
  *
  * `MultiSelectDropdown` is reused rather than reimplemented — it already floats its panel out of an
- * `overflow-hidden` ancestor, grows a search box past eight options, offers a filter-aware "Select
- * all", and is what every other multi-select in the app looks like.
+ * `overflow-hidden` ancestor, grows a search box past eight options, and is what every other
+ * multi-select in the app looks like.
+ *
+ * The one thing it offers that this control refuses is its bulk button: this sentence used to end
+ * "…offers a filter-aware Select all", which was true of the primitive and wrong for this control.
+ * See `bulk={false}` below for why a FILTER may not have one.
  */
 export function WorkshopScopeSelect({
   scope,
@@ -175,18 +250,58 @@ export function WorkshopScopeSelect({
   className?: string;
   showSummary?: boolean;
 }) {
-  const { workshopIds, setWorkshopIds, workshops, loading } = scope;
+  const { workshopIds, setWorkshopIds, workshops, list, cut, loading } = scope;
+  // Both sentences are named on the control rather than left to be found underneath it: an
+  // incomplete list and a read that failed are facts a screen-reader user needs AT the picker.
+  const baseId = useId();
+  const cutNoteId = `${baseId}-cut`;
+  const stateNoteId = `${baseId}-state`;
 
   const options = useMemo(
     () => [
-      ...workshops.map((workshop) => ({ value: workshop.id, label: optionLabel(workshop) })),
+      /*
+        `group: true` so an ended workshop is drawn under "Ended" with the word in its hint — the
+        heading is what stops one being picked by accident, and on a screen that reports numbers
+        that matters as much as it does on a form. `offPage: "refuse"` because a filter has no
+        "the record's own workshop" to recover: nothing here describes a record, and a multi-select
+        can hold several off-page ids anyway, which a single-row parameter cannot express.
+      */
+      ...fieldWorkshopOptions(list, { group: true, offPage: { mode: "refuse" } }).options,
       // Last, and named as what it is. It is not a workshop, so it does not belong among them in the
       // reading order — but it has to be selectable, or a scope of "every workshop" silently drops
-      // every record filed before workshops existed.
-      { value: UNASSIGNED_WORKSHOP, label: "Not linked to a workshop" }
+      // every record filed before workshops existed. See UNASSIGNED_GROUP for what keeps it last.
+      //
+      // The label is byte-identical to `NO_FIELD_WORKSHOP` on purpose — a record with no workshop
+      // should read the same way wherever a designer meets it — and is deliberately NOT that
+      // constant: this is a filter VALUE, `UNASSIGNED_WORKSHOP`, and the constant is what "" means
+      // on a form field. R1 is the reason they must not be wired together: a filter says
+      // "everything" by ABSENCE, so it may never grow a none row, and importing the none row's
+      // string here is the first step towards somebody importing the row.
+      { value: UNASSIGNED_WORKSHOP, label: "Not linked to a workshop", group: UNASSIGNED_GROUP }
     ],
-    [workshops]
+    [list]
   );
+
+  /**
+   * WHY THIS CONTROL SAYS NOTHING ABOUT ITS OWN FAILURE IN THE PANEL, and everything about it
+   * underneath.
+   *
+   * `emptyLabel` is unreachable here: the sentinel row is always in `options`, so the list is never
+   * empty and the panel's empty arm never draws. It is still passed correctly rather than left as
+   * the literal "No options", because the day somebody makes the sentinel conditional is not the day
+   * to discover that the fallback was a claim about the repository.
+   */
+  const online = !deviceLooksOffline();
+  const notice =
+    list.kind === "failed"
+      ? online
+        ? SCOPE_READ_FAILED
+        : SCOPE_READ_OFFLINE
+      : // The genuinely-empty and still-loading arms are the shared ones. `scoped: false` because
+        // this request carries no `accessibleOnly`: it is a READ scope over the whole repository, so
+        // an empty answer means "nothing has been recorded", never "nothing is open to you", and
+        // sending a reader to an administrator over an empty table wastes a day.
+        workshopListNotice(list, { table: "field", scoped: false, online });
 
   const all = workshopIds.length === 0;
 
@@ -234,10 +349,48 @@ export function WorkshopScopeSelect({
         onChange={setWorkshopIds}
         options={options}
         searchable
+        /*
+          NO "Select all N" BUTTON, AND THIS IS THE FILE THE RULE COMES FROM.
+
+          `MultiSelectDropdown` builds that button unconditionally, and wired to a filter it produces
+          the one state R1 forbids: every row ticked and no row ticked, both meaning "everything",
+          with no way left to tell a default from a deliberate choice — and no way to tell either of
+          them from a scope somebody assembled by hand that happens to be complete. It would also be
+          a lie about the corpus: "all" is 80 of 196 rows, so a ticked-everything scope EXCLUDES the
+          116 the page never held, which is the opposite of what the words say. Everything is said
+          here by the "All records" button above, which sets `[]` — an absence, sent as no parameter
+          at all, which `resolve_workshop_ids` reads as "do not filter".
+        */
+        bulk={false}
         ariaLabel="Choose which workshops to include"
         placeholder={loading ? "Loading workshops…" : all ? "All workshops" : "Select workshops"}
-        emptyLabel="No workshops recorded yet"
+        emptyLabel={workshopEmptyLabel(list, { table: "field", scoped: false, online })}
+        describedBy={`${cutNoteId} ${stateNoteId}`}
       />
+
+      {/*
+        WHAT THIS LIST LEFT OUT — the sentence this control has never drawn, on 196 workshop rows
+        over a page of 80, on five screens.
+
+        `cappedListNotice`'s wording and not the panel vocabulary's, and the difference is which box
+        each names. This control's filter box has NOT been pointed at the server's `search`: the
+        options also feed a summary line that names the chosen workshops, and a narrowed answer would
+        blank those names while a selection that fell out of it could no longer be unticked. So the
+        box sifts the 80 rows in hand, and the sentence says exactly that rather than telling
+        somebody to keep typing at rows the request never fetched.
+      */}
+      <CappedListNotice cuts={[cut]} id={cutNoteId} />
+      {/*
+        …AND WHAT HAPPENED TO THE READ. A separate paragraph rather than a second `cuts` entry:
+        `CappedListNotice` accepts a pre-worded string only for a sentence one of `cappedList.ts`'s
+        own deciders wrote, and it drops its `id` when it is handed more than one line — which would
+        take the truncation sentence off `aria-describedby` to make room for this one.
+      */}
+      {notice ? (
+        <p id={stateNoteId} className="text-xs leading-5 text-ink-500">
+          {notice}
+        </p>
+      ) : null}
 
       {showSummary ? (
         <p className="flex items-start gap-1.5 text-[11px] leading-4 text-ink-500">

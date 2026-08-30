@@ -58,7 +58,9 @@ async def _cache_checks() -> None:
     calls["n"] -= 1  # the assertion above called the loader itself; do not count it
 
     if enabled:
-        _check("a repeated read is served from the cache", calls["n"] == 1, f"loader ran {calls['n']}x")
+        _check(
+            "a repeated read is served from the cache", calls["n"] == 1, f"loader ran {calls['n']}x"
+        )
     else:
         _check("every read runs the query", calls["n"] == 2, f"loader ran {calls['n']}x")
 
@@ -119,14 +121,18 @@ async def _cache_checks() -> None:
 def _keyset_checks() -> None:
     on = flags.keyset_enabled()
     print(f"\nkeyset pagination  [{'ON' if on else 'off'}]")
-    token = keyset.encode_cursor(sort_field="createdAt", value="2026-07-26T10:00:00", record_id="c1")
+    token = keyset.encode_cursor(
+        sort_field="createdAt", value="2026-07-26T10:00:00", record_id="c1"
+    )
     decoded = keyset.decode_cursor(token, sort_field="createdAt")
     if on:
         _check("a cursor round-trips", decoded is not None and decoded.record_id == "c1")
         _check(
             "a tampered cursor is refused",
-            keyset.decode_cursor(token[:-1] + ("0" if token[-1] != "0" else "1"),
-                                 sort_field="createdAt") is None,
+            keyset.decode_cursor(
+                token[:-1] + ("0" if token[-1] != "0" else "1"), sort_field="createdAt"
+            )
+            is None,
         )
         _check(
             "a cursor for another ordering is refused",
@@ -160,7 +166,10 @@ def _rate_limit_checks() -> None:
     # middleware is installed in this environment.
     buckets = rate_limit._TokenBuckets(capacity=3, refill_per_second=3 / 60)
     verdicts = [buckets.take("t:selfcheck")[0] for _ in range(5)]
-    _check("a burst is allowed up to the limit, then refused", verdicts == [True, True, True, False, False])
+    _check(
+        "a burst is allowed up to the limit, then refused",
+        verdicts == [True, True, True, False, False],
+    )
 
     # The refund is what makes the credential budget safe to set as low as it is, so it is worth
     # proving on the box rather than only in the suite: a bucket that is spent and immediately

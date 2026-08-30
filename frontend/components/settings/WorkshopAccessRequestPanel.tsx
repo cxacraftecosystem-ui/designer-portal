@@ -174,6 +174,18 @@ export function WorkshopAccessRequestPanel() {
                 // not this control. A designer asking for access is looking for one workshop by
                 // name, which is what typing answers.
                 searchable
+                // `bulk={false}`: `/workshops/requestable` returns the whole, unpaginated list (see
+                // this file's header), so the server-truncation hazard `bulk`'s own doc warns about
+                // does not apply here — but a "Select all N" button is still the wrong shape for
+                // THIS field. Submitting is not a display change to undo with another click; it
+                // files one `WorkshopAccessRow` per ticked workshop, and one press of a button that
+                // reads "Select all 196" turns "I need into one workshop" into a request against
+                // every workshop the repository holds, each of which then needs an admin's explicit
+                // denial to undo. `WorkshopScopeSelect`, a genuine filter over this same corpus,
+                // already passes `false` for the reason its own header gives; this control has no
+                // filter's excuse to keep the button and a request-generating control's reason not
+                // to.
+                bulk={false}
                 values={selected}
               />
             </Field>

@@ -129,9 +129,16 @@ _FALSE = frozenset({"0", "false", "no", "off", "n", "f", ""})
 PROVIDERS: tuple[str, ...] = ("gemini", "openai")
 PROVIDER_KEYS: dict[str, str] = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY"}
 
-SUPPORTED_MIME_TYPES = frozenset({
-    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
-})
+SUPPORTED_MIME_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+        "image/heic",
+        "image/heif",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -193,18 +200,25 @@ def build_settings(env: Mapping[str, str]) -> IdentityOcrSettings:
     notes: list[str] = []
     provider = (env.get(PROVIDER_VAR) or "").strip().lower() or "auto"
     if provider not in ("auto", *PROVIDERS):
-        notes.append(f"{PROVIDER_VAR}={provider!r} is not one of {['auto', *PROVIDERS]}; using auto")
+        notes.append(
+            f"{PROVIDER_VAR}={provider!r} is not one of {['auto', *PROVIDERS]}; using auto"
+        )
         provider = "auto"
     return IdentityOcrSettings(
         enabled=_as_bool(env.get(ENABLE_VAR), False, ENABLE_VAR, notes),
         provider=provider,
         max_image_bytes=_as_int(
-            env.get("IDENTITY_OCR_MAX_IMAGE_BYTES"), _DEFAULT_MAX_BYTES,
-            "IDENTITY_OCR_MAX_IMAGE_BYTES", notes, minimum=64 * 1024,
+            env.get("IDENTITY_OCR_MAX_IMAGE_BYTES"),
+            _DEFAULT_MAX_BYTES,
+            "IDENTITY_OCR_MAX_IMAGE_BYTES",
+            notes,
+            minimum=64 * 1024,
         ),
         timeout_seconds=_as_float(
-            env.get("IDENTITY_OCR_TIMEOUT_SECONDS"), _DEFAULT_TIMEOUT_SECONDS,
-            "IDENTITY_OCR_TIMEOUT_SECONDS", notes,
+            env.get("IDENTITY_OCR_TIMEOUT_SECONDS"),
+            _DEFAULT_TIMEOUT_SECONDS,
+            "IDENTITY_OCR_TIMEOUT_SECONDS",
+            notes,
         ),
         notes=tuple(notes),
     )
@@ -290,9 +304,9 @@ class IdentityCandidate:
     """One number the model claims to have read, after this module has checked it."""
 
     value: str
-    kind: str            # AADHAAR | PEHCHAN
+    kind: str  # AADHAAR | PEHCHAN
     confidence: float
-    masked: str = ""     # AADHAAR only: what any surface other than the form field may print
+    masked: str = ""  # AADHAAR only: what any surface other than the form field may print
 
     def payload(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -562,14 +576,16 @@ def result_from_reply(payload: dict[str, Any], provider: str) -> IdentityOcrResu
     confidence = _confidence(payload.get("confidence"))
     return IdentityOcrResult(
         aadhaar=tuple(
-            IdentityCandidate(value=n, kind="AADHAAR", confidence=confidence,
-                              masked=mask_aadhaar(n) or "")
+            IdentityCandidate(
+                value=n, kind="AADHAAR", confidence=confidence, masked=mask_aadhaar(n) or ""
+            )
             for n in numbers
         ),
         pehchan=tuple(
             IdentityCandidate(value=p, kind="PEHCHAN", confidence=confidence)
             for p in pehchan_candidates(
-                payload.get("pehchan") or payload.get("pehchanNumber")
+                payload.get("pehchan")
+                or payload.get("pehchanNumber")
                 or payload.get("pehchanCandidates")
             )
         ),
@@ -597,8 +613,8 @@ _PROMPT = (
     "no gender, no parent's name.\n"
     "3. An Aadhaar number is 12 digits, usually printed as three groups of four.\n"
     "4. A Pehchan / PM Vishwakarma number is an alphanumeric reference code.\n"
-    "Reply with JSON only: {\"aadhaar\": [\"<12 digits or empty>\"], \"pehchan\": [\"<code>\"], "
-    "\"confidence\": <0 to 1 for how clearly you could read them>}"
+    'Reply with JSON only: {"aadhaar": ["<12 digits or empty>"], "pehchan": ["<code>"], '
+    '"confidence": <0 to 1 for how clearly you could read them>}'
 )
 
 
@@ -607,15 +623,19 @@ def _gemini_ocr(content: bytes, mime_type: str, timeout: float) -> dict[str, Any
     if not keys:
         raise RuntimeError("No Gemini API key configured")
     body = {
-        "contents": [{
-            "parts": [
-                {"text": _PROMPT},
-                {"inlineData": {
-                    "mimeType": mime_type or "image/jpeg",
-                    "data": base64.b64encode(content).decode("ascii"),
-                }},
-            ]
-        }],
+        "contents": [
+            {
+                "parts": [
+                    {"text": _PROMPT},
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type or "image/jpeg",
+                            "data": base64.b64encode(content).decode("ascii"),
+                        }
+                    },
+                ]
+            }
+        ],
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0},
     }
     model = get_settings().gemini_measurement_model
@@ -630,18 +650,14 @@ def _gemini_ocr(content: bytes, mime_type: str, timeout: float) -> dict[str, Any
     response.raise_for_status()
     payload = response.json()
     text = (
-        payload.get("candidates", [{}])[0]
-        .get("content", {})
-        .get("parts", [{}])[0]
-        .get("text", "")
+        payload.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
     )
     return _parse_json_reply(text)
 
 
 def _openai_ocr(content: bytes, mime_type: str, timeout: float) -> dict[str, Any]:
     data_uri = (
-        f"data:{mime_type or 'image/jpeg'};base64,"
-        f"{base64.b64encode(content).decode('ascii')}"
+        f"data:{mime_type or 'image/jpeg'};base64,{base64.b64encode(content).decode('ascii')}"
     )
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -653,13 +669,15 @@ def _openai_ocr(content: bytes, mime_type: str, timeout: float) -> dict[str, Any
             "model": get_settings().openai_chat_model,
             "temperature": 0.0,
             "response_format": {"type": "json_object"},
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _PROMPT},
-                    {"type": "image_url", "image_url": {"url": data_uri, "detail": "high"}},
-                ],
-            }],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _PROMPT},
+                        {"type": "image_url", "image_url": {"url": data_uri, "detail": "high"}},
+                    ],
+                }
+            ],
         },
         timeout=timeout,
     )
@@ -693,7 +711,9 @@ class IdentityOcrUnavailable(RuntimeError):
     """No vision provider could be used. Carries the message the route turns into a 503 body."""
 
 
-def _sync_read(content: bytes, mime_type: str, providers: list[str], timeout: float) -> IdentityOcrResult:
+def _sync_read(
+    content: bytes, mime_type: str, providers: list[str], timeout: float
+) -> IdentityOcrResult:
     errors: list[str] = []
     for provider in providers:
         try:

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A designer's profile, read only — the same twenty-one columns, the same eight groups and the same
+ * A designer's profile, read only — the same twenty-two columns, the same eight groups and the same
  * labels as the editor, because they are one record seen twice.
  *
  * EVERY FIELD IS DRAWN, INCLUDING THE EMPTY ONES, and that is the point of the screen rather than an
@@ -22,7 +22,7 @@ import {
   type DesignerProfileGroup
 } from "@/components/designers/profileCopy";
 import { formatDate } from "@/lib/format";
-import type { DesignerProfile, DesignerProfileField } from "@/lib/designers";
+import type { DesignerProfile, DesignerProfileField, DesignerProfileLocation } from "@/lib/designers";
 
 /** The one wording for "there is nothing in this box", so no group can invent a second one. */
 const BLANK = "Not filled in";
@@ -43,7 +43,22 @@ function GroupPanel({ group, profile }: { group: DesignerProfileGroup; profile: 
       <h2 className="font-display text-lg font-bold text-ink-900">{group.title}</h2>
       {group.blurb ? <p className="mt-1 text-sm leading-6 text-ink-muted">{group.blurb}</p> : null}
       <dl className="mt-3 grid gap-4 md:grid-cols-2">
-        {group.fields.map((field) => (
+        {/*
+          THE MONTHS HALF OF THE EXPERIENCE PAIR IS DRAWN BY ITS YEARS ROW, NOT BY ONE OF ITS OWN.
+
+          `experienceMonths` is listed in this group’s fields because it is a real writable column and
+          every one of them belongs to exactly one group — that is what lets a reader check this
+          screen against the editor. It is filtered out HERE, and only here, because the two columns
+          are one answer: the editor draws them as two dropdowns under a single heading, and this
+          screen prints them as “12 years 6 months” on the row above. A second row reading “Months: 6”
+          under it would be the same fact stated twice, in two places that could then disagree.
+
+          It is a FILTER and not a `return null` inside `FieldValue`, because the `<dt>` is drawn by
+          this map: returning nothing from the value would leave a labelled row with no value in it.
+        */}
+        {group.fields
+          .filter((field) => field !== "experienceMonths")
+          .map((field) => (
           <div key={field} className={wide(field) ? "min-w-0 md:col-span-2" : "min-w-0"}>
             {/*
               THE SAME ASTERISK THE EDITOR DRAWS, FROM THE SAME BOOLEAN. This screen exists to answer
@@ -64,8 +79,91 @@ function GroupPanel({ group, profile }: { group: DesignerProfileGroup; profile: 
           </div>
         ))}
       </dl>
+      {/*
+        THE SECOND ADDRESS, UNDER THE FIRST — and both are drawn because either alone is wrong.
+
+        The four rows above are `DesignerProfile`’s own flat columns, which is where every live
+        designer’s address actually is. The block below is the related `Location` row, which is the
+        only place a DISTRICT, a village or a map point has ever been able to live (requirement 29).
+        Nothing was backfilled from one into the other and nothing could be — `Location.latitude`
+        and `longitude` are NOT NULL, so a row cannot be made for a profile that has an address and
+        no coordinate without inventing the coordinate — so until the retiring migration happens a
+        profile may carry its address in either place. A page that drew only one of the two would
+        show some designers a blank where their address is.
+      */}
+      {group.key === "address" ? <LocationRecord location={profile.location} /> : null}
     </section>
   );
+}
+
+/**
+ * The related `Location` row, read only — the stated address first, then where the device was.
+ *
+ * THE TWO GROUPS ARE KEPT APART ON SCREEN BECAUSE THEY ANSWER DIFFERENT QUESTIONS, and merging them
+ * is the failure the model exists to prevent: fifteen live artisan records carry Kharagpur
+ * coordinates for artisans in Bagru, Kutch and Rudraprayag, because a fix of the desk the record was
+ * typed at was read as the subject’s address. So the stated answers say who said them, and the
+ * device fix is labelled as a device fix and shown with the moment it was taken.
+ *
+ * EVERY ROW IS DRAWN EVEN WHEN THERE IS NO `Location` ROW AT ALL, which is this screen’s whole
+ * contract: a blank reads as “nobody has answered this”, and a skipped row reads as nothing.
+ */
+function LocationRecord({ location }: { location: DesignerProfileLocation | null }) {
+  return (
+    <div className="mt-5 border-t border-line-200 pt-4">
+      <h3 className="field-label">Location record</h3>
+      <p className="mt-1 text-xs leading-5 text-ink-500">
+        The district, the village and the map point are held on the same location record every other record page uses.
+        The four boxes above are this profile’s own address columns, and an address may still be in either place — so
+        both are shown rather than one of them being chosen for you.
+      </p>
+      <dl className="mt-3 grid gap-4 md:grid-cols-2">
+        <Row label="State">{location?.state}</Row>
+        <Row label="District">{location?.district}</Row>
+        <Row label="Village">{location?.village}</Row>
+        <Row label="Pincode">{location?.pincode}</Row>
+        {/* The researcher’s pin on the SUBJECT’S place — an answer a person gave. */}
+        <Row label="Map point">{coordinateText(location?.subjectLatitude, location?.subjectLongitude)}</Row>
+        {/*
+          PROVENANCE, NAMED AS PROVENANCE. “Where the device was” is not “where the designer is”, and
+          the timestamp is what makes it judgeable at all — a coordinate with no moment attached
+          cannot be weighed against anything.
+        */}
+        <Row label="Device fix, and when it was taken">
+          {coordinateText(location?.latitude, location?.longitude, location?.capturedAt)}
+        </Row>
+      </dl>
+    </div>
+  );
+}
+
+/** One `<dt>`/`<dd>` pair with this screen’s single wording for an unanswered box. */
+function Row({ label, children }: { label: string; children?: string | null }) {
+  return (
+    <div className="min-w-0">
+      <dt className="field-label">{label}</dt>
+      <dd className="mt-1 text-sm leading-6 text-ink-900">
+        {children && children.trim() ? <span className="break-words">{children}</span> : <Blank />}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * A coordinate pair as text, or null when it is not a pair.
+ *
+ * BOTH OR NEITHER, deliberately: half a coordinate is not a place, and printing one number would
+ * invite a reader to believe the record holds a location it does not. Five decimals is about a
+ * metre, which is finer than any of these fixes and coarse enough to read.
+ */
+function coordinateText(
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+  capturedAt?: string | null
+): string | null {
+  if (typeof latitude !== "number" || typeof longitude !== "number") return null;
+  const point = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+  return capturedAt ? `${point} · ${formatDate(capturedAt)}` : point;
 }
 
 /**
@@ -110,14 +208,17 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
     return <DocumentPreview mediaId={typeof raw === "string" ? raw : null} noun="CV" className="h-[26rem]" />;
   }
 
-  if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) return <Blank />;
+  /*
+    THE EXPERIENCE PAIR IS TESTED BEFORE THE BLANK TEST BELOW, AND THAT ORDER IS THE BUG IT AVOIDS.
 
-  if (field === "experienceYears") {
-    const years = Number(raw);
-    // `unit="years"` on the registry field it is copied into — said in words here for the same
-    // reason the registry says it there: a bare number in a list of names reads as an id.
-    return <span>{Number.isFinite(years) ? `${years} year${years === 1 ? "" : "s"}` : String(raw)}</span>;
-  }
+    This branch used to sit under `if (raw === null …) return <Blank />`, which was correct while
+    there was one column. With two, a designer who recorded 6 months and no whole years has a null
+    `experienceYears` — so the blank test would fire on the years, print “Not filled in”, and the
+    months they did answer would appear nowhere on this page at all.
+  */
+  if (field === "experienceYears") return <ExperienceValue profile={profile} />;
+
+  if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) return <Blank />;
 
   if (field === "empanelmentDate") return <span>{formatDate(String(raw))}</span>;
 
@@ -151,6 +252,32 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
   }
 
   return <span className="break-words">{String(raw)}</span>;
+}
+
+/**
+ * The experience pair as one phrase — “12 years 6 months”, “6 months”, “0 years”, or a blank.
+ *
+ * ── NULL AND 0 ARE DIFFERENT ANSWERS HERE TOO, WHICH IS WHY THE TEST IS `=== null` ────────────
+ *
+ * A falsy test would print nothing for a stored 0 and this screen would report “Not filled in” over
+ * an answer somebody deliberately gave — an artisan or designer in their first year has 0 years of
+ * experience, and that is a fact about them, not an empty box. The editor keeps the two apart with a
+ * blank-first option and the encoder keeps them apart with `wholeNumberOrNull`; this is the third
+ * place the same rule has to hold, because it is the one a reader actually looks at.
+ *
+ * The words are said rather than the numbers left bare for the reason the registry gives for its own
+ * `unit="years"`: a bare number in a list of names reads as an identifier.
+ */
+function ExperienceValue({ profile }: { profile: DesignerProfile }) {
+  const parts: string[] = [];
+  if (profile.experienceYears !== null && profile.experienceYears !== undefined) {
+    parts.push(`${profile.experienceYears} year${profile.experienceYears === 1 ? "" : "s"}`);
+  }
+  if (profile.experienceMonths !== null && profile.experienceMonths !== undefined) {
+    parts.push(`${profile.experienceMonths} month${profile.experienceMonths === 1 ? "" : "s"}`);
+  }
+  if (!parts.length) return <Blank />;
+  return <span>{parts.join(" ")}</span>;
 }
 
 function Blank() {

@@ -17,6 +17,7 @@ from app.services.record_filters import (
     PLACED_TYPES,
     RECORD_TYPES,
     build_record_wheres,
+    enum_filter_list_or_422,
     resolve_types,
 )
 
@@ -273,6 +274,273 @@ def test_the_field_name_travels_into_the_message():
     with pytest.raises(HTTPException) as raised:
         enum_filter_or_422("image", MEDIA_TYPES, field="mediaType")
     assert raised.value.detail.startswith("mediaType must be one of")
+
+
+# --------------------------------------------------------------------------------------
+# The plural of that filter — a multi-select on the wire
+#
+# `enum_filter_list_or_422` is the grammar `resolve_types` and `resolve_workshop_ids` already
+# speak, applied to an enum column: two spellings, three ways to say "everything", and a 422 that
+# names the vocabulary. It is a WAVE-1 PRIMITIVE — the roster filters and every other multi-select
+# that reaches an enum column are written against exactly this behaviour, at around twenty call
+# sites — so what is pinned below is the CONTRACT rather than the implementation, and a test here
+# going red means those callers' assumptions have moved, not that a line needs updating.
+# --------------------------------------------------------------------------------------
+
+#: The shape the access roster passes it: an upper-case ladder beside one lower-case reserved token.
+#: Spelled out here rather than imported from the route that owns the real constant, because that
+#: route is a separate parcel and what this file has to pin is that a MIXED-CASE vocabulary — the
+#: thing that rules out `resolve_types`' literal `.lower()` — survives the fold intact.
+MIXED_VOCABULARY = frozenset({"ADMIN", "DESIGNER", "MASTER_ADMIN", "default"})
+
+
+def test_the_list_filter_accepts_both_spellings_clients_use():
+    """The web and Android build query strings differently and neither may be the wrong one.
+
+    A filter that quietly covered everything because it was spelled the other way would look
+    exactly like the filter not working — `resolve_types`' sentence, one column over.
+    """
+    assert enum_filter_list_or_422(["ADMIN", "DESIGNER"], MIXED_VOCABULARY, field="roles") == {
+        "ADMIN",
+        "DESIGNER",
+    }
+    assert enum_filter_list_or_422(["ADMIN,DESIGNER"], MIXED_VOCABULARY, field="roles") == {
+        "ADMIN",
+        "DESIGNER",
+    }
+    # And both at once, which is what a URL assembled by two pieces of code looks like.
+    assert enum_filter_list_or_422(
+        ["ADMIN", "DESIGNER,default"], MIXED_VOCABULARY, field="roles"
+    ) == {"ADMIN", "DESIGNER", "default"}
+
+
+def test_absent_empty_and_all_blank_are_all_do_not_filter():
+    """Empty means everything BY ABSENCE, and never by an all-ticked state.
+
+    `None` is not `set()`. A caller that means "no roles at all" has nothing to ask for, while the
+    resting state of a multi-select is "everything" — and if a cleared control and a fully ticked
+    one were both spelled as the whole vocabulary, the filter would have two states that cannot be
+    told apart on the wire and no reader of a request log could tell a default from a deliberate
+    choice. The forms below are the ways a client actually sends nothing: the parameter omitted
+    (`buildQuery` drops undefined, null AND "" — frontend/lib/api.ts:323-330), the parameter present
+    and empty (`?roles=`), and a comma-joined value that is nothing but separators (`?roles=,,`).
+    """
+    for absent in (None, [], [""], ["   "], [","], [",,"], ["", " , "]):
+        assert enum_filter_list_or_422(absent, MIXED_VOCABULARY, field="roles") is None, absent
+
+    # `None` and `set()` are both falsy, so a caller writing `if roles:` would treat them alike and
+    # never notice. The contract is `is not None`, and what makes that safe to write is that an
+    # empty set is a value this function CANNOT return: every path is either None or non-empty.
+    for raw in (None, [], [",,"], ["ADMIN"], ["ADMIN,ADMIN"], ["default"]):
+        resolved = enum_filter_list_or_422(raw, MIXED_VOCABULARY, field="roles")
+        assert resolved is None or resolved, raw
+
+
+def test_an_unknown_token_is_a_422_that_names_the_valid_values():
+    """A plausible typo must not come back as a well-formed result over the tokens beside it.
+
+    `?roles=ADMIN,DESIGNR` with the second token dropped answers with every admin and no designers
+    and looks exactly like a correct answer; dropping the only token widens the request to the whole
+    table. Both are `resolve_types`' finding — a wrong answer dressed as a correct one — and the
+    422 is what makes a client typo answerable instead.
+    """
+    with pytest.raises(HTTPException) as raised:
+        enum_filter_list_or_422(["ADMIN", "DESIGNR"], MIXED_VOCABULARY, field="roles")
+    assert raised.value.status_code == 422
+    # The token they typed, so they can go and find it in their own query string...
+    assert "DESIGNR" in raised.value.detail
+    # ...and the vocabulary, which is the part a client can act on. Deliberately the SAME phrase as
+    # the single-value sibling's message, so a developer who has read one has read both.
+    assert "roles must be one of" in raised.value.detail
+    for member in MIXED_VOCABULARY:
+        assert member in raised.value.detail, member
+
+    # A good token beside a bad one does not survive: the check is over the whole list.
+    assert "Unknown roles value: DESIGNR." in raised.value.detail
+
+    # Two bad ones are reported together and pluralised, in a fixed order — a message that follows
+    # set iteration order would read differently on identical requests.
+    with pytest.raises(HTTPException) as raised:
+        enum_filter_list_or_422(["ZZZ,AAA"], MIXED_VOCABULARY, field="roles")
+    assert "Unknown roles values: AAA, ZZZ." in raised.value.detail
+
+
+def test_the_field_name_travels_into_the_plural_message_too():
+    """`status`, `roles` and `institutions` are three parameters on ONE route, which is why `field`
+    is required here where the single-value sibling may default it to "status": a message naming the
+    wrong box sends a developer to the wrong control.
+
+    "ALL" is not a hypothetical bad value. It is the one `enum_filter_or_422`'s docstring names —
+    a client whose dropdown labels its empty option — and it is exactly the state this grammar
+    spells as absence instead.
+    """
+    from app.services.records import RECORD_STATUSES
+
+    with pytest.raises(HTTPException) as raised:
+        enum_filter_list_or_422(["ALL"], RECORD_STATUSES, field="status")
+    assert raised.value.detail.startswith("Unknown status value: ALL.")
+    assert "status must be one of" in raised.value.detail
+
+
+def test_a_token_repeated_across_the_two_spellings_narrows_once():
+    """A hand-edited URL repeats things, and `?roles=ADMIN&roles=ADMIN,admin` is one filter rather
+    than three. It must not reach Prisma as `{"in": ["ADMIN", "ADMIN", "ADMIN"]}` — the same query,
+    an unreadable log, and a `total` that invites the reader to wonder whether it double-counted."""
+    assert enum_filter_list_or_422(["ADMIN", "ADMIN,admin"], MIXED_VOCABULARY, field="roles") == {
+        "ADMIN"
+    }
+    assert enum_filter_list_or_422(
+        ["ADMIN,DESIGNER", "DESIGNER,ADMIN"], MIXED_VOCABULARY, field="roles"
+    ) == {"ADMIN", "DESIGNER"}
+
+
+def test_surrounding_whitespace_does_not_make_a_second_token():
+    """`?roles=ADMIN, DESIGNER` is what a person types, and the space after the comma belongs to the
+    separator rather than to the value. Without the strip it is an unknown token, so a URL that
+    reads correctly to everyone who looks at it is a 422 — and the message would name a token
+    differing from a real one only by a character nobody can see."""
+    assert enum_filter_list_or_422([" ADMIN "], MIXED_VOCABULARY, field="roles") == {"ADMIN"}
+    assert enum_filter_list_or_422(["ADMIN, DESIGNER"], MIXED_VOCABULARY, field="roles") == {
+        "ADMIN",
+        "DESIGNER",
+    }
+    # A token differing from its twin ONLY by the whitespace around it collapses onto it rather than
+    # arriving as a second member of the set.
+    assert enum_filter_list_or_422(["ADMIN", " ADMIN"], MIXED_VOCABULARY, field="roles") == {
+        "ADMIN"
+    }
+    # Whitespace INSIDE a token is not a separator and is not stripped: only the ends are trimmed,
+    # so a vocabulary whose members hold spaces (an institution name, §4.5) still matches exactly.
+    assert enum_filter_list_or_422(["  MASTER_ADMIN  "], MIXED_VOCABULARY, field="roles") == {
+        "MASTER_ADMIN"
+    }
+    assert enum_filter_list_or_422(
+        [" National Institute of Design "], frozenset({"National Institute of Design"}),
+        field="institutions",
+    ) == {"National Institute of Design"}
+
+
+def test_the_case_handling_is_resolve_types_case_handling():
+    """Stated as an equality against `resolve_types` itself, because "the same grammar" is a claim
+    that rots the moment either function is edited alone.
+
+    Over a vocabulary that is entirely lower-case the two accept and reject exactly the same
+    strings, which is all `resolve_types`' `part.strip().lower()` amounts to: a fold that decides
+    membership. The three absent forms are the one deliberate difference and they are asserted here
+    rather than skipped — `resolve_types` returns all five buckets because its caller then ITERATES
+    the buckets, while this returns `None` because its caller must write no `where` key at all.
+    Same rule, opposite shape, and both mean "everything".
+    """
+    types = frozenset(RECORD_TYPES)
+    for raw in (
+        ["artisans", "media"],
+        ["artisans,media"],
+        ["ARTISANS"],
+        ["Artisans", "MEDIA"],
+        [" artisans , MEDIA "],
+        ["artisans", "artisans"],
+        ["artisans,media,tools,products,workshops"],
+    ):
+        assert enum_filter_list_or_422(raw, types, field="types") == resolve_types(raw), raw
+
+    # Both refuse the same unknown token. Only the message differs, because this one is told which
+    # parameter it is guarding and `resolve_types` is only ever guarding `types`.
+    for bad in (["artisan"], ["artisans", "artisan"]):
+        with pytest.raises(HTTPException):
+            resolve_types(bad)
+        with pytest.raises(HTTPException):
+            enum_filter_list_or_422(bad, types, field="types")
+
+    for absent in (None, [], ["   "]):
+        assert resolve_types(absent) == set(RECORD_TYPES)
+        assert enum_filter_list_or_422(absent, types, field="types") is None
+
+
+def test_the_fold_returns_the_vocabularys_spelling_and_never_the_clients():
+    """Why this cannot simply call `.lower()` the way `resolve_types` literally does.
+
+    The live vocabulary is `frozenset(ROLE_RANK) | {"default"}` — an upper-case ladder beside one
+    lower-case reserved token — so there is no single case to normalise TO. Lowering would put an
+    `admitRole` of "admin" into the Prisma `where`, which is a value the enum does not have and
+    therefore the FieldNotFoundError 500 that `records.enum_filter_or_422` exists to prevent;
+    upper-casing would turn the reserved `default` into a tier nobody holds and silently return an
+    empty page. So the fold decides membership ONLY, and what comes back is always a member of
+    `allowed` — the guarantee `{"in": sorted(...)}` at every call site rides on.
+    """
+    from app.core.deps import ROLE_RANK
+
+    vocabulary = frozenset(ROLE_RANK) | {"default"}
+    assert enum_filter_list_or_422(["admin"], vocabulary, field="roles") == {"ADMIN"}
+    assert enum_filter_list_or_422(["DEFAULT"], vocabulary, field="roles") == {"default"}
+    assert enum_filter_list_or_422(["Master_Admin"], vocabulary, field="roles") == {"MASTER_ADMIN"}
+
+    # The property, over every spelling of every member: whatever the client sent, the result is a
+    # SUBSET of the vocabulary. Nothing a caller writes into a Prisma enum column can be a string
+    # the enum has never heard of, which is the whole reason both siblings exist.
+    for member in vocabulary:
+        for spelling in (member, member.lower(), member.upper(), f"  {member}  "):
+            resolved = enum_filter_list_or_422([spelling], vocabulary, field="roles")
+            assert resolved == {member}, spelling
+            assert resolved <= vocabulary, spelling
+
+
+def test_the_plural_accepts_a_lower_case_enum_value_where_the_singular_refuses_it():
+    """The one deliberate difference between the siblings, pinned so it stays a decision.
+
+    `enum_filter_or_422("draft", …)` is a 422 whose message tells a developer their casing is
+    wrong, and it can afford to be: a single value goes straight into `where["status"] = value`,
+    where the column's spelling IS the enum's and there is nothing else to canonicalise against.
+    The plural cannot afford it — its vocabularies are mixed inside one set, see the test above —
+    so it decides membership by a fold, and once it has, the honest answer for "draft" is the member
+    it matched. What must never happen is the string "draft" reaching Prisma, and it cannot: what
+    comes back is `DRAFT`.
+    """
+    from app.services.records import RECORD_STATUSES, enum_filter_or_422
+
+    with pytest.raises(HTTPException):
+        enum_filter_or_422("draft", RECORD_STATUSES)
+    assert enum_filter_list_or_422(["draft"], RECORD_STATUSES, field="status") == {"DRAFT"}
+    assert enum_filter_list_or_422(["draft,PENDING"], RECORD_STATUSES, field="status") == {
+        "DRAFT",
+        "PENDING",
+    }
+
+
+def test_a_vocabulary_that_folds_onto_itself_is_a_server_error_not_a_silent_winner():
+    """The one way the fold can lie, and it is one commit away from the live vocabulary.
+
+    A `DEFAULT` tier added to `ROLE_RANK` would collide with the reserved `default` in
+    `frozenset(ROLE_RANK) | {"default"}`. A frozenset has no order, so which member won would
+    depend on the hash seed: one picker row would silently become unreachable, or `?roles=default`
+    would start filtering `admitRole = "DEFAULT"` instead of `admitRole IS NULL` — a control
+    answering a different question than the one printed on its label.
+
+    A `ValueError` and not a 422, because nothing the client sent is wrong; it is the server's own
+    token list that cannot be matched. The second half is the assertion that goes red on the day
+    somebody adds the colliding tier, which is the only moment anyone can still cheaply rename it.
+    """
+    from app.core.deps import ROLE_RANK
+
+    broken = frozenset({"DEFAULT", "default", "ADMIN"})
+    with pytest.raises(ValueError, match="differ only by case"):
+        enum_filter_list_or_422(["ADMIN"], broken, field="roles")
+
+    assert enum_filter_list_or_422(
+        ["default"], frozenset(ROLE_RANK) | {"default"}, field="roles"
+    ) == {"default"}
+
+
+def test_the_two_enum_filter_siblings_name_each_other():
+    """The cross-reference is not tidiness. These are the only two functions in the backend that
+    guard an enum filter, they live in different modules, and a reader who lands on one has no way
+    to learn the other exists. The cost of not knowing is specific: a multi-select written against
+    the single-value helper in a loop turns a CLEARED control into `{"in": []}`, which narrows the
+    page to nothing, where the plural's `None` means "everything" and writes no key at all.
+    """
+    from app.services import record_filters, records
+
+    assert "enum_filter_list_or_422" in (records.enum_filter_or_422.__doc__ or "")
+    assert "enum_filter_or_422" in (record_filters.enum_filter_list_or_422.__doc__ or "")
 
 
 def test_a_nul_byte_never_reaches_an_equality_filter():

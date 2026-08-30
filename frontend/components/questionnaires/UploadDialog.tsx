@@ -28,15 +28,30 @@ import { Field, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { reuploadQuestionnaire, uploadQuestionnaire, type QFormUploadResult } from "@/lib/questionnaireForms";
+import { designWorkshopOptions, NO_DESIGN_WORKSHOP, type DesignWorkshopRow } from "@/lib/workshopOptions";
 
-export type WorkshopChoice = { id: string; title: string };
+/**
+ * A design workshop this questionnaire could be attached to.
+ *
+ * ── IT USED TO BE `{ id, title }`, AND THAT WAS THE WHOLE OF THE LABEL BUG ──────────────────────
+ *
+ * Two workshops in the same craft, started a fortnight apart, drew as two identical rows — and an
+ * identical option is a choice a reader cannot make. Meanwhile the record forms' picker had been
+ * showing `craft · cluster · the day it ran` beside every title for a year, so a designer who
+ * attached a questionnaire here and filed a product there met two spellings of the same workshop in
+ * one sitting. `DesignWorkshopRow` is the nine fields `lib/workshopOptions` reads; a `DwSummary`
+ * satisfies it, so the pages hand their rows straight over and this file stays clear of the API
+ * layer — which is also what lets a spec build one of these out of nine fields instead of thirty.
+ */
+export type WorkshopChoice = DesignWorkshopRow;
 
 export function UploadDialog({
   open,
   onClose,
   onUploaded,
   questionnaireId,
-  workshops
+  workshops,
+  workshopsNotice
 }: {
   open: boolean;
   onClose: () => void;
@@ -45,6 +60,20 @@ export function UploadDialog({
   questionnaireId?: string;
   /** Design workshops this questionnaire may be attached to. Ignored on the re-upload path. */
   workshops?: WorkshopChoice[];
+  /**
+   * WHAT THE PAGE HAS TO SAY ABOUT THAT LIST — one string, chosen by the page, drawn here.
+   *
+   * A string rather than the list's state, because this dialog does not do the read and must not be
+   * able to describe it differently from the page that did. The page holds one
+   * `WorkshopListState`, asks `lib/workshopOptions` which of §3.5's four sentences is true — the
+   * read failed, the device never received the list, no workshop is open to this account, the
+   * repository is empty — or, when there ARE rows and some were cut, asks `cappedListNotice` for
+   * the numbered one. The two can never both be non-empty, so one slot holds either.
+   *
+   * Optional, and the fallback below is deliberately the weaker claim: a caller that passes nothing
+   * gets a sentence that does not say why the list is short, which is always true.
+   */
+  workshopsNotice?: string;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
@@ -187,22 +216,69 @@ export function UploadDialog({
           />
         </Field>
 
-        {!editing && workshops?.length ? (
+        {editing ? null : (
+          /*
+            ── THE FIELD IS DRAWN EVEN WHEN THE LIST IS EMPTY, WHICH IS THE CHANGE ─────────────────
+
+            It used to be `{!editing && workshops?.length ? … : null}`: no rows, no field, no words.
+            A designer whose read had failed, or who had not been granted a workshop yet, opened this
+            dialog and simply did not have the control — which is the silent-empty-picker failure in
+            its purest form, because there is not even a greyed box to wonder about. The remedy is
+            R3's: draw it, disable it, and say which of the states it is in. What must NOT come back
+            is the hide, on any of the four grounds.
+
+            THE `editing` GATE IS A DIFFERENT THING AND STAYS. `POST /questionnaires/{id}/upload`
+            accepts a title and nothing else — attaching an existing questionnaire is a PATCH from
+            its own page — so on the re-upload path this is a control whose value the request cannot
+            carry. That is not an empty list; that is a field that does not exist here.
+          */
           // FieldBlock rather than Field: `Field` is a <label>, and a <label> wrapped round a themed
           // dropdown forwards a stray click into the menu and slams it shut after one pick.
-          <FieldBlock label="Attach to a design workshop">
+          <FieldBlock
+            label="Attach to a design workshop"
+            hint={
+              <p className="mt-1 text-xs leading-5 text-ink-500" aria-live="polite">
+                {workshopsNotice ||
+                  // The caller said nothing, so this says the one thing that is true whatever the
+                  // reason: absence from this list is never a refusal. It is the same route out the
+                  // reuse dialog offers, and it asks the server the identical question.
+                  "If the workshop you want is not here, leave this unattached — a questionnaire is attached from its own page afterwards, which asks the server the same question this picker would have."}
+              </p>
+            }
+          >
             <Dropdown
               value={designWorkshopId}
               onChange={setDesignWorkshopId}
-              options={[
-                { value: "", label: "Not attached to a workshop" },
-                ...workshops.map((workshop) => ({ value: workshop.id, label: workshop.title }))
-              ]}
+              /*
+                ONE BUILDER, so this picker and the create form on the page behind it draw the same
+                workshop the same way. `group` is false: this dialog attaches a NEW questionnaire and
+                the list it is handed is one page of one status ordering — a heading over every row
+                says nothing. `offPage: "refuse"` because there is nothing to recover: a questionnaire
+                that does not exist yet has no stored workshop, and the only value this control can
+                hold is one of the rows it drew.
+              */
+              options={
+                designWorkshopOptions(
+                  { kind: "ok", rows: workshops ?? [], total: (workshops ?? []).length },
+                  { group: false, offPage: { mode: "refuse" } }
+                ).options
+              }
+              /*
+                THE UN-FILE ROW IS THE PRIMITIVE'S, and its label is the shared constant rather than
+                this dialog's own "Not attached to a workshop" — one of nine strings the app used to
+                have for four genuinely different meanings.
+              */
+              noneLabel={NO_DESIGN_WORKSHOP}
+              emptyLabel="No design workshop is listed here."
               ariaLabel="Attach to a design workshop"
               searchable
+              // R2: a control with nothing in it may not be the thing standing between a designer
+              // and their upload. It has nothing to offer but the un-file row, which is already the
+              // value, so there is nothing here to open.
+              disabled={!workshops?.length}
             />
           </FieldBlock>
-        ) : null}
+        )}
       </div>
     </FieldDialog>
   );

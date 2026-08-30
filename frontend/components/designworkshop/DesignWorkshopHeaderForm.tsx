@@ -1,0 +1,1131 @@
+"use client";
+
+/**
+ * THE WORKSHOP'S OWN HEADER, CORRECTED — requirement 27's form.
+ *
+ * Everything else reachable from a design workshop edits a CHILD of it: the 22 stages, the
+ * photographs, the tags, the AI layers, the workshop's own questions, the report. This edits the
+ * workshop row itself — the one record in the family that, until this form existed, could be
+ * written exactly once (at create) and never again for three of its columns.
+ *
+ * ── WHY THIS IS NOT `components/forms/DesignWorkshopForm.tsx` WITH AN `initial?:` PROP ───────────
+ *
+ * That IS the house shape — `ToolForm`, `ProductForm` and `ArtisanForm` each take an optional
+ * `initial` and derive `const isEdit = Boolean(initial)` — and it is the right shape for those three
+ * because their create and their edit are the same act against the same body. Here they are not, and
+ * every one of the four differences is load-bearing rather than cosmetic:
+ *
+ *   1. **A BLANK BOX MEANS THE OPPOSITE THING.** On the create, an empty craft box means "not known
+ *      yet" and the key is dropped; there is no stored value for it to fail to overwrite. Here an
+ *      emptied craft box means CLEAR IT, and the server writes NULL. One component holding both
+ *      readings of one box is one `if` away from clearing a column somebody merely left alone.
+ *   2. **THE DESIGNER KEYS ARE REFUSED HERE, BY NAME.** `designerUserId`/`designerUserIds` are on
+ *      the create body and are in the PATCH route's `_NEVER_PATCHABLE` table, so a body that merely
+ *      CARRIES either key is 422'd whole. A shared component would render the picker and strip it,
+ *      which is the shape that eventually ships with the strip removed.
+ *   3. **THE CREATE WORKS OFFLINE AND THIS DOES NOT.** `createWorkshopOrKeepItHere` mints a local
+ *      draft with no connection; there is no outbox arm for a header PATCH (see the save handler),
+ *      so this act is online-only exactly as the status card on the record page is.
+ *   4. **SIX OF THESE BOXES CARRY A WARNING THE CREATE FORM CANNOT.** Craft, cluster, state,
+ *      district and the two dates are stage 1's columns; correcting one here and later saving stage
+ *      1 with that box empty puts it back to NULL. On a create there is no stage 1 yet and nothing
+ *      to warn about.
+ *
+ * Hoisting the create form out of `app/(protected)/design-workshops/page.tsx` so that the two share
+ * a shell is still worth doing; it is a separate change with its own risk (the create path is pinned
+ * by `e2e/design-workshop-create-idempotence-unit.spec.ts`) and it is not this one.
+ *
+ * ── THE ONE RULE THIS FILE EXISTS TO GET RIGHT: UNSET IS NOT NULL ───────────────────────────────
+ *
+ * `PATCH /design-workshops/{id}` reads its body with `model_dump(exclude_unset=True)`. So:
+ *
+ *   * a key that is **absent** leaves the stored value alone;
+ *   * a key sent as **`null`** — or as `""`, or as whitespace — CLEARS the column to NULL;
+ *   * `title`, `templateId` and `status` are NOT NULL columns and answer a clear with a 422 naming
+ *     the field.
+ *
+ * An uncontrolled form reads `""` out of every box the user never touched, so **posting the form**
+ * would blank the workshop's craft, cluster, place, dates, notes and link in one press, under a 200.
+ * That is the single most likely defect in this change and the whole of {@link changedKeys} is the
+ * defence: the body carries a key ONLY when the value on screen DIFFERS from the value the form was
+ * seeded with.
+ *
+ * A DIFF AND NOT A DIRTY-FLAG, deliberately. The obvious alternative is to record which controls the
+ * user touched and send those. It has a silent failure this one cannot have: a themed dropdown, a
+ * date range and a multi-select are all `<button>`s that fire no native input event (SKILL §12.1), so
+ * one missed hand-written `markDirty` means a change the designer made, watched go onto the screen,
+ * and never sent — answered 200. Comparing values needs no control to remember to speak up. The
+ * dirty flag is still kept, because the unsaved-changes guard is allowed to over-report and a missed
+ * hook there costs a prompt rather than a correction.
+ */
+
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+
+import { mergeById } from "@/components/data/cappedList";
+// The pure half of this form: which keys the body carries, and why an untouched box carries
+// none. Extracted so `e2e/design-workshop-header-diff-unit.spec.ts` can call it — a Node spec
+// cannot import a `"use client"` module that pulls in React, `next/navigation` and IndexedDB.
+import { changedKeys, EDITABLE_KEY_SET, type EditableKey } from "@/components/designworkshop/headerDiff";
+import { DateRangePicker, fromIsoDate, toIsoDate } from "@/components/forms/DateTimeField";
+import { useRecordOffPage } from "@/components/forms/recordPickers";
+import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
+import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
+import { Dropdown } from "@/components/ui/Dropdown";
+import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
+import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
+import { ApiError, listResource } from "@/lib/api";
+import {
+  listReportTemplates,
+  patchDesignWorkshop,
+  type DwSummary,
+  type DwTemplate,
+  type DwUpdateBody
+} from "@/lib/designWorkshops";
+import { adoptServerSummaries } from "@/lib/designWorkshopStore";
+import { useUnsavedChanges } from "@/lib/forms";
+import { isUnreachable } from "@/lib/offline";
+import type { Workshop } from "@/lib/types";
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * What this form may write, and what it may only show
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The six columns `workshop_summary` hands this form and `DesignWorkshopPatch` refuses by name.
+ *
+ * SHOWN, NOT HIDDEN. They are the workshop's cover — the strings a ministry reads off the front page
+ * of the report — so a "workshop details" screen that omitted them would look like a screen where
+ * they do not exist, and the designer would go looking for them in the one place they are not: this
+ * form. Each carries the sentence the server would have answered with, so the reader learns where
+ * the value lives rather than that it cannot be changed.
+ *
+ * The wording is the short form of `_NEVER_PATCHABLE`'s in
+ * `backend/app/api/routes/design_workshops.py`; the long form is in that table, and if the two ever
+ * disagree the server's is the true one.
+ */
+const READ_ONLY_COVER: { key: keyof DwSummary; label: string; why: string }[] = [
+  {
+    key: "workshopCode",
+    label: "Workshop ID",
+    why: "prints on the report cover and is what a scanned card resolves to"
+  },
+  { key: "venue", label: "Venue", why: "stage 1 is the only thing that collects it" },
+  { key: "scheme", label: "Scheme", why: "stage 1 is the only thing that collects it" },
+  {
+    key: "designerName",
+    label: "Designer",
+    why: "the authorship line the cover, the certification block and the .docx itself print"
+  },
+  { key: "implementingAgency", label: "Implementing agency", why: "stage 1 is the only thing that collects it" },
+  { key: "sponsor", label: "Sponsor", why: "stage 1 is the only thing that collects it" }
+];
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Reading a refusal back onto the box that caused it
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** A refusal, and the field it belongs against — `null` when it belongs to the whole form. */
+type Refusal = { field: EditableKey | null; message: string };
+
+/**
+ * `detail` IS A LIST FOR ANYTHING PYDANTIC REFUSED AND A STRING FOR ANYTHING THE HANDLER REFUSED,
+ * and both shapes have to land on the right box.
+ *
+ * `apiFetch` has already run the body through `describeApiDetail`, so `ApiError.message` is a
+ * readable sentence rather than "[object Object]" — but it is the sentence for the WHOLE body, and a
+ * 422 about the title printed at the foot of a ten-box form is a message the reader has to go and
+ * match to a box themselves. `ApiError.payload` still holds the original, so this reads the field
+ * out of it and the caller puts the sentence under that box.
+ *
+ * TWO SHAPES, AND THE SECOND ONE IS NOT A GUESS. Pydantic's entries carry `loc: ["body", "<field>"]`
+ * — the field is read from there and accepted only when it is one of the ten this form can write.
+ * The handler's own 422s are plain strings that BEGIN with the column's name, because they are built
+ * as `f"{key} cannot be emptied…"` and `f"{key} is not a date this server can read…"`; the leading
+ * word is matched against the same ten. Anything else — the immutable-field refusal, which is
+ * `loc: ["body"]`, or "No workshop record exists with that id" — has no single owning box and goes
+ * to the banner, which is the honest place for a message about the request rather than about a
+ * field.
+ */
+function readRefusal(err: unknown): Refusal {
+  const fallback = err instanceof Error && err.message.trim() ? err.message : "";
+  if (!(err instanceof ApiError)) return { field: null, message: fallback };
+  const detail = (err.payload as { detail?: unknown } | null | undefined)?.detail;
+
+  if (Array.isArray(detail)) {
+    for (const entry of detail) {
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as { msg?: unknown; loc?: unknown };
+      const named = Array.isArray(record.loc)
+        ? record.loc.filter((part): part is string => typeof part === "string").at(-1)
+        : undefined;
+      if (!named || !EDITABLE_KEY_SET.has(named)) continue;
+      // Pydantic prefixes every custom-validator message with "Value error, "; the designer needs
+      // the sentence after it. Same trim `describeApiDetail` performs, for the same reason.
+      const message = String(record.msg ?? "").replace(/^Value error,\s*/, "").trim();
+      if (message) return { field: named as EditableKey, message };
+    }
+    return { field: null, message: fallback };
+  }
+
+  if (typeof detail === "string" && detail.trim()) {
+    const leading = /^([A-Za-z]+)\s/.exec(detail.trim())?.[1];
+    if (leading && EDITABLE_KEY_SET.has(leading)) {
+      return { field: leading as EditableKey, message: detail.trim() };
+    }
+    return { field: null, message: detail.trim() };
+  }
+
+  return { field: null, message: fallback };
+}
+
+/**
+ * THE THREE WAYS A SAVE FAILS, EACH ANSWERED WITH THE NEXT MOVE RATHER THAN WITH THE STATUS CODE.
+ *
+ * The server's own sentences are correct and are shown verbatim where they exist; what they cannot
+ * carry is what the reader should DO, which differs per code and is the whole reason this exists:
+ *
+ *   * **403** — the account's ROLE is outside `{DESIGNER, ADMIN, MASTER_ADMIN}`. Nothing the reader
+ *     can fix from this screen, so the sentence names who changes it.
+ *   * **404** — either no such workshop or one this account holds no grant on, and
+ *     `load_workshop_or_404` will not say which, deliberately: a 403 there would confirm the id
+ *     exists to exactly the people it is turning away. So the remedy has to cover both, and "ask to
+ *     be added as a viewer" covers both.
+ *   * **409** — soft-deleted. This must NOT be swallowed into a generic failure: it is the one
+ *     refusal with a one-click fix by somebody the designer can name, and the server's sentence
+ *     already says it.
+ */
+function describeSaveRefusal(err: unknown, serverSaid: string): string {
+  const status = err instanceof ApiError ? err.status : 0;
+  if (status === 403) {
+    return (
+      `${serverSaid || "This account may not edit a design workshop."} Editing a workshop's details ` +
+      "needs Designer access or above, which is set on your account rather than on this workshop — " +
+      "an administrator is who changes it. Nothing was sent and nothing was changed."
+    );
+  }
+  if (status === 404) {
+    return (
+      "This workshop is no longer open to this account, so nothing was changed. Either it has been " +
+      "removed, or the access that let you open it has been withdrawn — the repository will not say " +
+      "which, on purpose. Ask an administrator, or the designer who shared it with you, to add you " +
+      "as a viewer of the workshop again."
+    );
+  }
+  if (status === 409) {
+    return (
+      // The place is NAMED, and it is named after the heading that is actually on that screen:
+      // `DeletedWorkshopsCard` renders "Deleted workshops" on `/admin`. A remedy that sends somebody
+      // to a screen spelled differently from the one they are looking at is a remedy they conclude
+      // does not exist — and this refusal's whole value is that it has a one-click fix by a person
+      // the designer can go and ask by name.
+      `${serverSaid || "This workshop is deleted. Restore it before editing."} An administrator can ` +
+      "restore it from Deleted workshops on the admin page; everything you have typed here is still " +
+      "on screen and can be saved once they have."
+    );
+  }
+  return serverSaid
+    ? `The workshop was not changed: ${serverSaid}`
+    : "The workshop was not changed, and the repository did not say why.";
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The form
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A plain text box with its refusal underneath — and the reason EVERY writable box on this form has
+ * one of these, including the five whose refusal "cannot happen".
+ *
+ * {@link readRefusal} attributes a 422 to any of the ten keys this form can write. If a key it
+ * attributes to has nowhere to draw the sentence, the save fails and the screen shows NOTHING: no
+ * banner (the message went to `fieldProblem` instead), no navigation, no field message — a Save that
+ * silently does nothing, which is the single worst outcome this form has and strictly worse than
+ * the generic banner it bypassed. Craft, cluster, state, district and notes had exactly that hole:
+ * their `maxLength` makes a length refusal unreachable THROUGH THIS BROWSER, so the missing slot was
+ * invisible and would have stayed invisible until the server's bound and the input's disagreed —
+ * which is one edit to either side, in a repository that ships the bundle and the API separately.
+ * A rendering slot per writable key means the attribution can never outrun the rendering.
+ *
+ * A COMPONENT AND NOT FIVE COPIES because the error wiring is the part that must not drift: the
+ * `aria-describedby`, the `aria-invalid` and the `role="alert"` have to agree with the id the caller
+ * passes, and five hand-written copies is five chances for one of them to point at nothing. The
+ * wrapper `<div>` is the same one the title box carries and for the same reason — `Field` is a
+ * wrapping `<label>`, so a refusal placed inside it joins the input's accessible NAME.
+ */
+function WritableTextField({
+  label,
+  name,
+  maxLength,
+  defaultValue,
+  error,
+  errorId,
+  multiline
+}: {
+  label: string;
+  name: EditableKey;
+  maxLength: number;
+  defaultValue: string;
+  error?: string;
+  errorId: string;
+  multiline?: boolean;
+}) {
+  const described = error ? errorId : undefined;
+  const invalid = error ? true : undefined;
+  return (
+    <div className="grid min-w-0 gap-1">
+      <Field label={label}>
+        {multiline ? (
+          <TextArea
+            name={name}
+            maxLength={maxLength}
+            defaultValue={defaultValue}
+            aria-invalid={invalid}
+            aria-describedby={described}
+          />
+        ) : (
+          <TextInput
+            name={name}
+            maxLength={maxLength}
+            defaultValue={defaultValue}
+            aria-invalid={invalid}
+            aria-describedby={described}
+          />
+        )}
+      </Field>
+      {error ? (
+        <p id={errorId} role="alert" className="text-xs text-error-600">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
+  const router = useRouter();
+  const baseId = useId();
+  const formRef = useRef<HTMLFormElement | null>(null);
+
+  const [saving, setSaving] = useState(false);
+  /** A refusal that belongs to the whole request rather than to one box. See {@link readRefusal}. */
+  const [problem, setProblem] = useState<string | null>(null);
+  /** A refusal that belongs to ONE box, printed under it and pointed at by `aria-describedby`. */
+  const [fieldProblem, setFieldProblem] = useState<Partial<Record<EditableKey, string>>>({});
+  /** "You pressed Save and there was nothing to send" — see the submit handler. */
+  const [nothingToSend, setNothingToSend] = useState(false);
+
+  const [templates, setTemplates] = useState<DwTemplate[]>([]);
+  const [templateId, setTemplateId] = useState(initial.templateId);
+  const [workshopId, setWorkshopId] = useState(initial.workshopId ?? "");
+  const [linkable, setLinkable] = useState<Workshop[]>([]);
+  /**
+   * The workshop's duration, held here rather than read off the DOM, for the reason the create form
+   * gives: a range is a pair with a rule between its halves, so the picker has to see the current
+   * start to refuse an earlier end. Seeded from the stored dates through `fromIsoDate`, which builds
+   * a LOCAL midnight — `new Date("2026-07-20")` is UTC midnight and reads as the previous day west
+   * of Greenwich, which on an edit form would move a stored date by a day merely by opening the page.
+   */
+  const [duration, setDuration] = useState<{ from?: Date; to?: Date }>(() => ({
+    from: fromIsoDate(initial.startDate),
+    to: fromIsoDate(initial.endDate)
+  }));
+
+  const { dirty, markDirty, resetDirty } = useUnsavedChanges();
+
+  /**
+   * EVERY EDIT, WHEREVER IT CAME FROM — the dirty flag AND the retirement of the last save's answer.
+   *
+   * A REFUSAL IS ABOUT A BODY THAT WAS SENT, so it stops being true the moment the boxes stop being
+   * the boxes that were sent. Left standing, each of the three lies in a different way and all three
+   * are reachable in two keystrokes:
+   *
+   *   * `nothingToSend` says "nothing on this form differs from what is stored" — printed for a Save
+   *     with an empty diff, and still on screen underneath a craft the designer has since typed. It
+   *     is the one banner on this form that makes a CLAIM ABOUT THE DIFF, so it is also the one whose
+   *     staleness would be read as the diff being broken, which is the exact defect the banner was
+   *     added to surface. It must not outlive the diff it described.
+   *   * `fieldProblem` is a red sentence under one box, pointed at by `aria-describedby` and
+   *     announced with `role="alert"`, saying that box's value was refused. The title box already
+   *     clears its native `setCustomValidity` on input for precisely this reason; leaving the React
+   *     half behind would clear the browser's copy of a refusal and keep the app's.
+   *   * `problem` is the whole-request banner — a 403, a 404, a 409, a 422 with no owning box.
+   *
+   * ONLY WHEN THERE IS SOMETHING TO CLEAR, and that guard is not tidiness. This runs on the form's
+   * `onInput`, i.e. once per keystroke across ten boxes: `setProblem(null)` on an already-null state
+   * is a bail-out React charges nothing for, but `setFieldProblem({})` builds a NEW object every
+   * time, which React cannot compare away — so an unguarded reset would re-render the whole form,
+   * its two searchable dropdowns and its calendar on every character typed into the notes box.
+   *
+   * NOT `saving`, and not the leave prompt: those describe an act in flight rather than an answer
+   * about values, and the save handler resets them itself.
+   */
+  function noteEdit() {
+    markDirty();
+    if (nothingToSend) setNothingToSend(false);
+    if (problem !== null) setProblem(null);
+    // `Object.keys` and not truthiness: `{}` is truthy, so the object's mere existence says nothing
+    // about whether a box is carrying a refusal.
+    if (Object.keys(fieldProblem).length) setFieldProblem({});
+  }
+  const [promptOpen, setPromptOpen] = useState(false);
+  /**
+   * WHICH EXIT IS WAITING ON THE PROMPT — this form's own Cancel button, or the round back control
+   * in `PageHeader`. `ToolForm` carries the same flag and its header carries the defect that made it
+   * necessary: "Discard" that only empties the form answers the back arrow by throwing the work away
+   * and NOT leaving, so the reader presses Back a second time to do the thing they already asked
+   * for. The arrow's route in is `useLeaveGuard`, which is registered once for the life of the mount
+   * and has no per-press hook to set a flag from, so the flag marks the button instead and is
+   * cleared on every way out of the prompt.
+   */
+  const [promptFromCancel, setPromptFromCancel] = useState(false);
+  const { completeLeave, abandonLeave } = useLeaveGuard(dirty, () => setPromptOpen(true));
+
+  const recordHref = `/design-workshops/${initial.id}`;
+  const stageOneHref = `${recordHref}/stages/WORKSHOP_SETUP`;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listReportTemplates();
+        if (!cancelled) setTemplates(list);
+      } catch {
+        // The picker degrades to the one option below — the template this workshop already carries —
+        // and the rest of the form still saves. An error banner for a list that failed would read as
+        // the form itself being broken, which is the create form's rule for the same request.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    /*
+      `accessibleOnly` and `workshopType` — the same narrowing the create form applies, and for the
+      same reason: this picker LINKS the workshop, so an option this account cannot file against is
+      an option that points the record at somebody else's roster. The stored link is added back
+      below whatever this list turns out to hold; see `offPageWorkshop`.
+    */
+    listResource<Workshop>("/workshops", {
+      pageSize: 100,
+      workshopType: "DESIGN_PROTOTYPE",
+      accessibleOnly: "true"
+    })
+      .then((result) => {
+        if (!cancelled) setLinkable(sortWorkshopsByOccurrence(result.items ?? []));
+      })
+      .catch(() => {
+        // Silent, as on the create form: the link is a convenience and a banner about it would read
+        // as the whole form having failed. The stored link is still shown, and still saved untouched
+        // as long as nobody changes it.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * THE WORKSHOP THIS RECORD IS ALREADY LINKED TO, whatever page of the list it is on.
+   *
+   * `ToolForm` carries the shipped bug this prevents, word for word: a picker holding one page of a
+   * hundred rows cannot draw a value filed last season, so the control read "not linked" beside a
+   * link that was perfectly intact — and the obvious repair for a box that looks unlinked is to pick
+   * something, which is the single action that really does rewrite the link. Here it would also
+   * orphan every record already filed under the old one. Same hook, called the same way; do not
+   * write a variant of it.
+   */
+  const offPageWorkshop = useRecordOffPage<Workshop>("/workshops", initial.workshopId ?? "", linkable);
+  const linkableRows = useMemo(
+    () => (offPageWorkshop ? mergeById(linkable, [offPageWorkshop]) : linkable),
+    [linkable, offPageWorkshop]
+  );
+
+  /**
+   * The picker's options, with the stored link guaranteed to be one of them — INCLUDING the case the
+   * by-id lookup above cannot fix.
+   *
+   * `useRecordOffPage` covers "not on the loaded page". It deliberately gives up in silence on a
+   * 403 or a 404, and its own comment says why that is honest: the link is intact, the form simply
+   * cannot offer to CHANGE it. That reasoning holds on `ToolForm`, where a required "Craft name" box
+   * sits beside the picker still holding the right name. It does not hold here, because there is no
+   * second box: an unresolvable link would draw the trigger's bare placeholder, which reads as NOT
+   * LINKED — and the obvious repair for a record that looks unlinked is to pick something, which is
+   * the one action that really does re-point it and strand the records filed under the old one.
+   *
+   * So the id is offered under a label that says what it is and why it has no name. Choosing it
+   * changes nothing (it is already the stored value, so the diff omits it); its whole job is to stop
+   * the control lying about the state of the record.
+   */
+  const linkChoices = useMemo(() => {
+    const offered = [
+      { value: "", label: "Not linked to a workshop record" },
+      ...linkableRows.map((workshop) => ({
+        value: workshop.id,
+        label: workshop.place ? `${workshop.title} · ${workshop.place}` : workshop.title
+      }))
+    ];
+    const stored = initial.workshopId ?? "";
+    if (!stored || offered.some((option) => option.value === stored)) return offered;
+    return [
+      offered[0],
+      { value: stored, label: "The workshop this record is linked to — its details are not open to this account" },
+      ...offered.slice(1)
+    ];
+  }, [linkableRows, initial.workshopId]);
+
+  /**
+   * RE-POINTING A LINK ORPHANS THE RECORDS ALREADY FILED UNDER THE OLD ONE, and the warning appears
+   * only while that is actually about to happen.
+   *
+   * Five of the registry's REF fields are WORKSHOP-scoped — `existingProduct.artisanRef` and
+   * `.productRef`, `prototype.productRef`, `processStep.processRef`, `traditionalProcess.processRef`
+   * — and the server narrows each of them with `spec.workshop_where(record.workshopId)` on the
+   * LINKED workshop (see `components/designworkshop/LinkedWorkshop.tsx`). So a record created from
+   * one of those pickers under the old link is a record those pickers can never show again once the
+   * link moves. That is a legitimate thing to do and a terrible thing to do by accident, which is
+   * why it is a sentence on the screen and not a refusal.
+   *
+   * Only when a link is being MOVED or REMOVED, never when one is being added: a workshop that had
+   * no link has no scoped records to strand.
+   */
+  const repointsLink = Boolean(initial.workshopId) && workshopId !== (initial.workshopId ?? "");
+
+  /** Every control's value as a trimmed string — the left-hand side of {@link changedKeys}. */
+  function onScreenValues(form: FormData): Record<EditableKey, string> {
+    const box = (key: EditableKey) => String(form.get(key) ?? "").trim();
+    return {
+      title: box("title"),
+      // React state, not a form control: a themed dropdown is a `<button>` and submits nothing.
+      templateId: templateId.trim(),
+      craftName: box("craftName"),
+      clusterName: box("clusterName"),
+      state: box("state"),
+      district: box("district"),
+      // The two hidden inputs the date range writes, in the same `yyyy-mm-dd` the column stores.
+      startDate: box("startDate"),
+      endDate: box("endDate"),
+      workshopId: workshopId.trim(),
+      notes: box("notes")
+    };
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    // React nulls `event.currentTarget` across an await, so the FormData must be built before any
+    // async work — not after the first `await`, where it reads as null and every box is empty.
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const onScreen = onScreenValues(form);
+
+    setProblem(null);
+    setFieldProblem({});
+    setNothingToSend(false);
+
+    /*
+      A TITLE OF THREE SPACES IS REFUSED HERE RATHER THAN ON THE WIRE, against the box.
+
+      `required` blocks a genuinely empty box natively and names it, but `min_length=1` on the server
+      catches `""` and not `"   "` — so whitespace reaches `_header_patch_data`, which strips it,
+      finds the column is NOT NULL and answers a 422 the reader has to match to a box themselves. A
+      workshop titled with three spaces would render as a blank heading on every screen that lists
+      it and could then only be found by its id, so refusing it is right; refusing it HERE, through
+      the browser's own constraint validation, is what puts the sentence on the box.
+    */
+    if (!onScreen.title) {
+      // Reached through the form's own element list rather than through a ref: `TextInput` is a
+      // plain function component over `InputHTMLAttributes`, which declares no `ref`, and adding one
+      // for this would be a change to a primitive forty other forms share.
+      const titleBox = formElement.elements.namedItem("title");
+      if (titleBox instanceof HTMLInputElement) {
+        titleBox.setCustomValidity(
+          "Every workshop has a title — it is the heading every list, search result and report cover shows it by."
+        );
+        titleBox.reportValidity();
+      }
+      return;
+    }
+
+    const changed = changedKeys(onScreen, initial);
+    if (!changed.length) {
+      /*
+        NOTHING DIFFERS, SO NOTHING IS SENT — AND THE SCREEN SAYS SO INSTEAD OF LEAVING QUIETLY.
+
+        The server answers `{}` with a 200 and the unchanged summary, so a round trip would be
+        harmless; the reason for not making it is what a silent navigation would hide. This form's
+        one real defect class is a wrong diff, and a wrong diff shows up as "I changed the cluster,
+        pressed Save and it went back". If that ever happens, the reader is told here — on the
+        screen, at the moment of the press — rather than discovering it on the next load with
+        nothing anywhere to read.
+      */
+      setNothingToSend(true);
+      return;
+    }
+
+    /*
+      BUILT BY NAMING KEYS, ONE AT A TIME, AND NEVER BY SPREADING ANYTHING.
+
+      `lib/designWorkshops.ts` states the reason on `DwUpdateBody` itself: the `Omit` that closes the
+      two designer keys is documentation and not enforcement, because an object built by spreading or
+      by `Object.fromEntries` widens to an index signature and the compiler stops objecting. The
+      server is `extra="forbid"` and refuses a body that merely CARRIES `designerUserId` — as it
+      refuses the six cover columns, the stamps and the consent keys, each by name — so the way to be
+      sure none of them can arrive is that there is no line here that could add one.
+
+      `undefined` IS HOW A KEY STAYS OFF THE WIRE. `patchDesignWorkshop` sends `JSON.stringify(body)`
+      and `JSON.stringify` drops an `undefined` value, so a key this switch never sets is a key the
+      request never mentions — which is exactly `exclude_unset`'s "absent" on the other end. `null`
+      is a different instruction and is only ever produced from a box the user actually emptied.
+    */
+    const body: DwUpdateBody = {};
+    for (const key of changed) {
+      switch (key) {
+        case "title":
+          // Never nullable: the column is NOT NULL and the blank case returned above.
+          body.title = onScreen.title;
+          break;
+        case "templateId":
+          // Never nullable either, and never blank: the picker always holds one of the offered ids.
+          body.templateId = onScreen.templateId;
+          break;
+        case "craftName":
+          body.craftName = onScreen.craftName || null;
+          break;
+        case "clusterName":
+          body.clusterName = onScreen.clusterName || null;
+          break;
+        case "state":
+          body.state = onScreen.state || null;
+          break;
+        case "district":
+          body.district = onScreen.district || null;
+          break;
+        case "startDate":
+          body.startDate = onScreen.startDate || null;
+          break;
+        case "endDate":
+          body.endDate = onScreen.endDate || null;
+          break;
+        case "workshopId":
+          body.workshopId = onScreen.workshopId || null;
+          break;
+        case "notes":
+          body.notes = onScreen.notes || null;
+          break;
+      }
+    }
+
+    setSaving(true);
+    try {
+      const updated = await patchDesignWorkshop(initial.id, body);
+      /*
+        THE LOCAL COPY IS BROUGHT LEVEL BEFORE THE NAVIGATION, or the record page draws the old
+        title back for a moment and — with no connection afterwards — for good.
+
+        The record page reads `lib/designWorkshopStore`'s draft first and only then refreshes from
+        the server, so a save that updated the repository and not this browser leaves the screen the
+        designer lands on showing what they just corrected away from. `adoptServerSummaries` is the
+        store's own way in for a server row, and it declines to overwrite a header holding unsent
+        edits — which is exactly right and cannot arise here, because nothing in this form writes
+        the draft header.
+
+        Swallowed rather than surfaced: the workshop IS saved by this point, and an IndexedDB write
+        that failed must not be reported as a save that failed. The record page's own server read
+        corrects the copy on arrival.
+      */
+      await adoptServerSummaries([updated]).catch(() => undefined);
+      // Nothing is owed, so the guard must not fire on the navigation this function is about to do.
+      resetDirty();
+      /*
+        BACK TO THE RECORD PAGE, NOT TO THE LIST — and this is the one place this form departs from
+        `ToolForm`/`ProductForm`/`ArtisanForm`, which all `router.push` to their list.
+
+        For those three the record page IS the edit page, so a list is the only other place to go.
+        A design workshop has a record page of its own — the 22-stage index, which is where the
+        reader came from and where the corrected title, dates and craft are immediately visible in
+        the header they were just editing. Dropping them onto a twenty-row list to find their own
+        row would be a worse answer to "did that take?".
+      */
+      router.push(recordHref);
+    } catch (err) {
+      if (isUnreachable(err)) {
+        /*
+          NO OUTBOX FOR THIS ONE, AND THE FAILURE SENTENCE HAS TO SAY SO — the same constraint the
+          record page's status card states, and for the same reason.
+
+          Stages, photographs and the artisan's consent all survive a dead connection because the
+          local draft holds them. A header edit does not: the only writer of the draft header is
+          `patchDraftHeader`, whose outbox arm sends a fixed list of keys, and it has never had a UI
+          caller — the store's own comment warns that the first one would push `ensureDraft`'s
+          empty-string header over the office's real values under a 200. Now that a blank string
+          CLEARS a column rather than being dropped, that hazard is strictly worse than when the
+          warning was written. So this act is online-only by construction.
+
+          WHAT MUST NOT HAPPEN IS THE FORM EMPTYING. Nothing is reset, nothing is navigated: every
+          box still holds what the designer typed, and the sentence says so, because an offline-first
+          product that discards a form on a failed request is the one thing this repository's offline
+          rules exist against.
+        */
+        setProblem(
+          "The repository could not be reached, so nothing was sent and the workshop is unchanged. " +
+            "This one act needs a connection: unlike your stages, a change to the workshop's details is " +
+            "not held in the offline queue. Everything you have typed is still on this form — press " +
+            "Save again when you have signal."
+        );
+        return;
+      }
+      const refusal = readRefusal(err);
+      if (refusal.field) {
+        const against: Partial<Record<EditableKey, string>> = {};
+        against[refusal.field] = refusal.message;
+        setFieldProblem(against);
+        /*
+          AND THE FOCUS GOES TO THE BOX THAT WAS REFUSED. A sentence under a control the reader has
+          scrolled past is a sentence they will not find; moving the caret there is what makes "show
+          it against the field" true rather than merely rendered. Hidden inputs are skipped — the two
+          date keys are written by a picker and there is nothing focusable under that name.
+        */
+        const control = formElement.elements.namedItem(refusal.field);
+        if (control instanceof HTMLElement && !(control instanceof HTMLInputElement && control.type === "hidden")) {
+          control.focus();
+        }
+        return;
+      }
+      setProblem(describeSaveRefusal(err, refusal.message));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Leave for the record page, past the guard when there is unsaved work. */
+  function cancel() {
+    if (!dirty) {
+      router.push(recordHref);
+      return;
+    }
+    setPromptFromCancel(true);
+    setPromptOpen(true);
+  }
+
+  /**
+   * The offered templates, with the one this workshop already carries guaranteed to be among them.
+   *
+   * A PICKER THAT CANNOT DRAW ITS OWN CURRENT VALUE READS AS BLANK, and the obvious repair for a
+   * blank picker is to answer it — which here would change the report a designer produces. That is
+   * `ToolForm`'s shipped craft-dropdown defect in a different control, and the two ways into it are
+   * both live: the list request can fail outright (the effect above swallows it deliberately), and a
+   * template can be retired from `REPORT_TEMPLATE_IDS` while workshops created under it are still
+   * open. The stored id is prepended in both cases; the server still validates whatever is sent.
+   */
+  const templateOptions = useMemo(() => {
+    const offered = templates.map((template) => ({ value: template.id, label: template.name }));
+    if (offered.some((option) => option.value === initial.templateId)) return offered;
+    return [{ value: initial.templateId, label: initial.templateId }, ...offered];
+  }, [templates, initial.templateId]);
+
+  const titleErrorId = `${baseId}-title-error`;
+  const templateErrorId = `${baseId}-templateId-error`;
+  const linkErrorId = `${baseId}-workshopId-error`;
+  const datesErrorId = `${baseId}-dates-error`;
+
+  return (
+    <>
+      <form
+        ref={formRef}
+        onSubmit={submit}
+        // `onInput` catches every real text box in one place — but ONLY for the unsaved-changes
+        // guard. What is SENT is decided by comparing values, not by this flag; see the file header.
+        onInput={noteEdit}
+        className="panel grid gap-4 p-4"
+      >
+        <div>
+          <h2 className="font-display text-lg font-bold text-ink-900">Workshop details</h2>
+          <p className="mt-1 text-sm leading-6 text-ink-muted">
+            The workshop&apos;s own record — what it is called, which report it produces, where and when it ran, and the
+            workshop it is filed against. The 22 stages, the photographs and the report are all edited from the workshop
+            page; nothing here touches them.
+          </p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          {/*
+            THE REFUSAL IS A SIBLING OF THE `Field` AND NOT A CHILD OF IT, and the difference is not
+            cosmetic.
+
+            `Field` is a real `<label>` WRAPPED AROUND its control, with no `for`. For that shape the
+            accessible-name algorithm builds the input's name from the label's whole text content
+            (minus the control itself) — so a refusal rendered inside it stops being a description
+            and becomes part of the field's NAME. The box a screen reader announced as "Workshop
+            title, edit text" would announce itself as "Workshop title * title cannot be emptied.
+            Every workshop has one, the column is NOT NULL…, edit text", and it would go on saying
+            the whole sentence every time the reader tabbed back to check what they had typed —
+            while `aria-describedby` read it out a second time. The one field on this form with a
+            refusal under it would be the one field whose question could no longer be heard.
+
+            Outside the label, the association is unchanged: `aria-describedby` is an ID reference
+            and does not care where in the document the target sits. The wrapper carries `Field`'s
+            own `min-w-0` because it takes over its place in the grid, and without it a long refusal
+            widens this column and spills over the field beside it.
+
+            `FieldBlock` needs none of this and its hints are left where they are: it is a `<div>`
+            named by `aria-labelledby` pointing at its label span alone, so nothing else inside it
+            can reach the name.
+          */}
+          <div className="grid min-w-0 gap-1">
+            <Field label="Workshop title" required>
+              <TextInput
+                name="title"
+                required
+                maxLength={220}
+                defaultValue={initial.title}
+                aria-invalid={fieldProblem.title ? true : undefined}
+                aria-describedby={fieldProblem.title ? titleErrorId : undefined}
+                // Clears the custom refusal set above the moment the reader starts fixing it —
+                // otherwise the browser goes on refusing the submit with a sentence about the text
+                // that is no longer in the box.
+                onInput={(event) => event.currentTarget.setCustomValidity("")}
+              />
+            </Field>
+            {fieldProblem.title ? (
+              <p id={titleErrorId} role="alert" className="text-xs text-error-600">
+                {fieldProblem.title}
+              </p>
+            ) : null}
+          </div>
+
+          {/* FieldBlock, not Field: `Field` is a `<label>`, and a `<label>` cannot name a `<button>`
+              — every themed dropdown in this app is one. See `FormControls.Field`'s header. */}
+          <FieldBlock
+            label="Report template"
+            hint={
+              fieldProblem.templateId ? (
+                <p id={templateErrorId} role="alert" className="text-xs text-error-600">
+                  {fieldProblem.templateId}
+                </p>
+              ) : null
+            }
+          >
+            <Dropdown
+              value={templateId}
+              onChange={(next) => {
+                // A themed control fires no native input event, so the form's `onInput` never sees
+                // it and the leave guard would never arm. (What gets SENT does not depend on this.)
+                noteEdit();
+                setTemplateId(next);
+              }}
+              options={templateOptions}
+              ariaLabel="Report template"
+              describedBy={fieldProblem.templateId ? templateErrorId : undefined}
+              // Templates are fetched rows and there will be a set per cluster, so the filter box is
+              // declared rather than left to the option-count rule. Same call as the create form.
+              searchable
+              disabled={saving}
+            />
+          </FieldBlock>
+
+          {/* The four promoted text columns. `maxLength` mirrors the server's bound on each so the
+              box refuses the 161st character rather than the save refusing the request — but the
+              refusal slot is wired anyway; see {@link WritableTextField}. */}
+          <WritableTextField
+            label="Craft"
+            name="craftName"
+            maxLength={160}
+            defaultValue={initial.craftName ?? ""}
+            error={fieldProblem.craftName}
+            errorId={`${baseId}-craftName-error`}
+          />
+          <WritableTextField
+            label="Cluster"
+            name="clusterName"
+            maxLength={160}
+            defaultValue={initial.clusterName ?? ""}
+            error={fieldProblem.clusterName}
+            errorId={`${baseId}-clusterName-error`}
+          />
+          <WritableTextField
+            label="State"
+            name="state"
+            maxLength={80}
+            defaultValue={initial.state ?? ""}
+            error={fieldProblem.state}
+            errorId={`${baseId}-state-error`}
+          />
+          <WritableTextField
+            label="District"
+            name="district"
+            maxLength={80}
+            defaultValue={initial.district ?? ""}
+            error={fieldProblem.district}
+            errorId={`${baseId}-district-error`}
+          />
+
+          {/*
+            ONE RANGE CONTROL AND NOT TWO NATIVE DATE BOXES, for the two reasons the create form
+            sets out: a native date input formats itself to the BROWSER's locale, so 02/03/2026 is
+            February-to-March on one machine and March-to-April on another with nothing ever
+            erroring; and two independent boxes have no idea about each other, so an end a month
+            before the start saves happily and prints a workshop of negative duration on a DCH cover.
+          */}
+          {/* `FieldBlock` and not a bare `<div>` with a `<span>` over it: the picker is TWO inputs
+              carrying their own "Start date" / "End date" labels, so the thing that needs naming is
+              the GROUP, which is what a `role="group"` with an `aria-labelledby` is for. A heading
+              span alone would be a word on the screen that names nothing to a reader. */}
+          <div className="md:col-span-2">
+            <FieldBlock
+              label="Workshop duration"
+              hint={
+                fieldProblem.startDate || fieldProblem.endDate ? (
+                  <p id={datesErrorId} role="alert" className="text-xs text-error-600">
+                    {fieldProblem.startDate ?? fieldProblem.endDate}
+                  </p>
+                ) : null
+              }
+            >
+              {/*
+                `yyyy-mm-dd`, byte-identical to what the column stores — `workshop_summary` answers
+                `record.startDate.date().isoformat()` and this writes `toIsoDate` — so an untouched
+                range compares EQUAL to the stored value and no key is sent. Pinned by
+                `e2e/design-workshop-header-diff-unit.spec.ts`, because the two spellings drifting
+                apart would send a display-formatted "20/07/2026" to `_parse_date`, which cannot read
+                it, and 422 a form whose dates nobody had touched.
+
+                Hidden inputs carry no `name` inside `DateRangePicker` itself, so these two are the
+                only `startDate`/`endDate` in this form's `FormData` and `form.get` cannot pick up a
+                display box instead.
+
+                ⚠ THESE TWO COLUMNS CAN BE SET AND CORRECTED FROM HERE BUT NOT EMPTIED, and this
+                comment previously claimed the opposite. `DateRangePicker` calls `onChange` only when
+                `parseTypedDate` succeeds, and its blur handler rewrites the box from `from`/`to` —
+                so clearing the "Start date" text and tabbing away restores it, `duration` never
+                moves, and Save answers "Nothing on this form differs from what is stored". The diff
+                below is right and would send `null` the moment `duration` emptied; nothing empties
+                it. A designer removing dates entered against the wrong sitting has to do it in
+                stage 1, where a blank box really does null the promoted column (`_coerce_promoted`).
+                The affordance belongs on `DateRangePicker` — every caller of it has this hole — and
+                not in a copy of the control made here.
+              */}
+              <input type="hidden" name="startDate" value={duration.from ? toIsoDate(duration.from) : ""} />
+              <input type="hidden" name="endDate" value={duration.to ? toIsoDate(duration.to) : ""} />
+              <DateRangePicker
+                from={duration.from}
+                to={duration.to}
+                onChange={(next) => {
+                  noteEdit();
+                  setDuration(next);
+                }}
+                disabled={saving}
+              />
+            </FieldBlock>
+          </div>
+        </div>
+
+        {/*
+          THE SIX BOXES ABOVE THAT STAGE 1 ALSO OWNS, SAID OUT LOUD — because the server cannot say
+          it in a response and the failure is silent and total.
+
+          `promoted_values` in `stage_schema.py` is the declared single writer of the denormalised
+          columns, and `_coerce_promoted` sets a promoted column of a touched entity back to NULL
+          when its stage value is blank. So a designer who corrects the cluster here, opens stage 1
+          and saves it with that box empty watches the correction go to NULL under a 200 reading
+          "Stage saved" — and the workshop then falls out of every list filter and search on craft,
+          state, district and date. That exact regression has already shipped once; it is written up
+          at `backend/app/services/design_workshops.py`. `title` is the mirror image: the create
+          deliberately does not seed `workshopSetup.workshopTitle`, so a title set here stands until
+          somebody types a different one into stage 1, at which point stage 1 wins.
+
+          The record page already prints the honest half of this sentence under its progress bar.
+          This form has to carry it too, because this is the screen where somebody types into them.
+        */}
+        <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+          Craft, cluster, state, district and the dates are also asked in{" "}
+          <Link href={stageOneHref} className="font-medium underline">
+            stage 1, Workshop Setup &amp; Cover Information
+          </Link>
+          , and stage 1 is what the report reads. Correcting one here is real and takes effect at once — but the next
+          time stage 1 is saved with that box empty, the stage&apos;s answer wins and this one is cleared. If the value is
+          wrong on the report, correct it in stage 1; correct it here to fix how the workshop is listed and searched
+          today.
+        </p>
+
+        {/*
+          FULL WIDTH AND OUTSIDE THE FOUR-COLUMN GRID, because it is a picker over records with a
+          warning under it rather than a box — and because it is one of the three fields on this form
+          that nothing else in the product could change until now (`notes` and the report template
+          are the other two: neither is a promoted column, so stage 1 cannot reach them either).
+        */}
+        <FieldBlock
+          label="Linked workshop record"
+          hint={
+            <>
+              <p className="text-xs leading-5 text-ink-500">
+                {linkableRows.length
+                  ? "The Workshop row this 22-stage record belongs to. Only workshops filed as a Design & Prototype Development Workshop, and only ones you have access to, are offered."
+                  : "No design & prototype workshops are open to this account, so there is nothing to link to. Mark one on the Workshops page — or ask an admin for access to it — to use it here."}
+              </p>
+              {repointsLink ? (
+                <p className="mt-1 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+                  Changing this link strands the records already filed under the old one. Five of the pickers inside the
+                  stages — the artisan and product on an existing product, a prototype&apos;s product, and the process on a
+                  process step or a traditional process — only offer records filed against the LINKED workshop, so
+                  anything created from them under the old link will not appear in those lists again. The records
+                  themselves are untouched and stay in the repository.
+                </p>
+              ) : null}
+              {fieldProblem.workshopId ? (
+                <p id={linkErrorId} role="alert" className="mt-1 text-xs text-error-600">
+                  {fieldProblem.workshopId}
+                </p>
+              ) : null}
+            </>
+          }
+        >
+          <Dropdown
+            value={workshopId}
+            onChange={(next) => {
+              noteEdit();
+              setWorkshopId(next);
+            }}
+            options={linkChoices}
+            ariaLabel="Linked workshop record"
+            describedBy={fieldProblem.workshopId ? linkErrorId : undefined}
+            searchable
+            disabled={saving}
+          />
+        </FieldBlock>
+
+        {/* `MAX_NOTES_CHARS` on the server is 20 000; the box carries the same number so a long
+            note is stopped at the keyboard rather than at the save. Not a promoted column and with
+            no stage-1 twin — this form is the only thing in the product that can change it. */}
+        <WritableTextField
+          label="Notes"
+          name="notes"
+          maxLength={20000}
+          defaultValue={initial.notes ?? ""}
+          error={fieldProblem.notes}
+          errorId={`${baseId}-notes-error`}
+          multiline
+        />
+
+        {/* ── WHAT THIS FORM SHOWS AND CANNOT WRITE ────────────────────────────────────────────── */}
+        <div className="grid gap-3 rounded-md border border-line-200 bg-surface-50 p-3">
+          <div>
+            <h3 className="text-sm font-medium text-ink-900">Filled in from stage 1</h3>
+            <p className="mt-1 text-xs leading-5 text-ink-500">
+              These are the workshop&apos;s cover values and stage 1 is the only thing that collects them, so they are shown
+              here and changed there. The repository refuses them on this form by name rather than accepting them and
+              quietly not writing them.
+            </p>
+          </div>
+          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {READ_ONLY_COVER.map((entry) => {
+              const value = initial[entry.key];
+              return (
+                <div key={entry.key} className="min-w-0">
+                  <dt className="field-label">{entry.label}</dt>
+                  {/* NOT RECORDED YET IS SAID, never rendered as an empty line: a blank beside a
+                      label is indistinguishable from a value that failed to load, and every one of
+                      these is legitimately empty until stage 1 has been saved once. */}
+                  <dd className={value ? "text-sm text-ink-900" : "text-sm italic text-ink-500"}>
+                    {typeof value === "string" && value.trim() ? value : "Not recorded yet"}
+                  </dd>
+                  <p className="mt-0.5 text-xs leading-5 text-ink-500">{entry.why}</p>
+                </div>
+              );
+            })}
+          </dl>
+          <p className="text-xs leading-5 text-ink-500">
+            <Link href={stageOneHref} className="font-medium text-purple-700 underline">
+              Open stage 1 to change any of these
+            </Link>
+            .
+          </p>
+        </div>
+
+        {/*
+          TWO MORE THINGS A READER WILL COME HERE LOOKING FOR, and neither is a control on this form.
+          Saying where they are is cheap; leaving somebody to conclude the product cannot do it is
+          the failure — the designer roster in particular has a screen, and it is not on this page.
+        */}
+        <p className="text-xs leading-5 text-ink-500">
+          The workshop&apos;s <strong>status</strong> is set on the{" "}
+          <Link href={recordHref} className="font-medium text-purple-700 underline">
+            workshop page
+          </Link>
+          , under Submission — Mark complete, Submit and Reopen each write one status and say what it means. The{" "}
+          <strong>designers on this workshop</strong> are granted from &ldquo;Designers on a workshop&rdquo; on the{" "}
+          <Link href="/design-workshops" className="font-medium text-purple-700 underline">
+            design workshops list
+          </Link>
+          , which an administrator opens with admin view on; naming a designer is a create-time act here, because it
+          decides whose profile was copied into stages 1 and 3 before those stages existed.
+        </p>
+
+        {/*
+          THE REFUSAL SITS IMMEDIATELY ABOVE THE BUTTONS AND IS NEVER TOP-PINNED.
+
+          The argument is `ReviewEditPanel`'s and it holds here: this form is ten boxes and two
+          panels tall, so a message pinned above the first of them is off-screen at the moment it is
+          produced, and a Save that scrolled nothing and said nothing where the reader is looking is
+          a button that did nothing. `role="alert"` because this banner is the only place a refused
+          save reaches the designer at all.
+        */}
+        {problem ? (
+          <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">
+            {problem}
+          </div>
+        ) : null}
+        {nothingToSend ? (
+          <div role="status" className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+            Nothing on this form differs from what is stored, so nothing was sent and the workshop is unchanged. Change
+            something and press Save again, or press Cancel to go back to the workshop.
+          </div>
+        ) : null}
+
+        <div className="flex justify-end gap-2">
+          <button type="button" className="field-button-secondary" onClick={cancel} disabled={saving}>
+            Cancel
+          </button>
+          <button className="field-button" disabled={saving}>
+            {saving ? "Saving…" : "Save details"}
+          </button>
+        </div>
+      </form>
+
+      <UnsavedChangesDialog
+        open={promptOpen}
+        saving={saving}
+        onKeepEditing={() => {
+          setPromptOpen(false);
+          setPromptFromCancel(false);
+          // Forgets the act the back control handed over rather than banking it — otherwise "Keep
+          // editing" would leave a navigation parked, waiting to fire on the next answer.
+          abandonLeave();
+        }}
+        onDiscard={() => {
+          setPromptOpen(false);
+          resetDirty();
+          if (promptFromCancel) {
+            setPromptFromCancel(false);
+            router.push(recordHref);
+            return;
+          }
+          // The back arrow raised this. `completeLeave` runs the act the control handed over, so the
+          // one answer that means "leave" delivers the leaving as well as the throwing away — see
+          // `PendingLeave` in `UnsavedChangesGuard`.
+          completeLeave();
+        }}
+        onSave={() => {
+          setPromptOpen(false);
+          setPromptFromCancel(false);
+          // The form's own validated save, so a blank title keeps the reader here with the box
+          // highlighted rather than leaving with the work dropped.
+          formRef.current?.requestSubmit();
+        }}
+      />
+    </>
+  );
+}

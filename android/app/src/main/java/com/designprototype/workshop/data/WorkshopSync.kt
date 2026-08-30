@@ -718,6 +718,54 @@ internal fun WorkshopRepository.isConnectionFailure(error: Throwable): Boolean {
 internal fun isConflictRefusal(error: Throwable): Boolean = (error as? HttpException)?.code() == 409
 
 /**
+ * Is this the server saying THE THING THIS RECORD POINTS AT IS NOT HERE?
+ *
+ * ── THE FOURTH QUESTION IN THIS SECTION, AND THE OPPOSITE OF THE THIRD ────────────────────────────
+ *
+ * [isConflictRefusal] asks "is something already occupying what this record asked for". This asks the
+ * mirror question: "is something this record depends on missing". Both are answered refusals, both
+ * are permanent, and both are worthless as kind-3 anonymous rejections — but they end in opposite
+ * places. A clash is resolved by a designer comparing two records with their own eyes and then
+ * abandoning one; a dangling reference is resolved by changing ONE FIELD on a record that is still
+ * whole on the phone, and abandoning it would be throwing away fieldwork for nothing.
+ *
+ * R7 in DROPDOWN_DESIGN §0 states the rule this exists to keep: *"An empty picker and a dangling
+ * foreign key are opposite failures with opposite remedies… They must never be collapsed into one
+ * message."* Before this question was asked, they were: an artisan queued against a design workshop
+ * an admin deleted at the office came out of `replayEntry` as `Rejected("Record not found")`, was
+ * parked by [blocksRetry] for the life of the installation, and offered a Try again that could only
+ * fetch the identical 404 and a Throw away that destroys the only copy of the record and its
+ * photographs.
+ *
+ * ── WHY IT IS THE STATUS, AND WHY 422 IS IN IT ───────────────────────────────────────────────────
+ *
+ * 404 is the whole of it on the routes this outbox replays today. `records.require_record` raises
+ * `404 "Record not found"` for a missing target; `design_workshops.load_workshop_or_404` raises the
+ * BYTE-IDENTICAL detail for a workshop that is missing OR merely invisible, deliberately — *"a 403
+ * would confirm that the id exists to precisely the caller being turned away."* So there is nothing
+ * in the body to branch on, which is [isConflictRefusal]'s conclusion reached a second time by a
+ * different road, and `DwAiVerbRefused` reached it a third.
+ *
+ * 422 is included because a reference validated by a Pydantic validator rather than by a
+ * `require_record` call answers 422 with the field in `loc`, and that is a BETTER answer than a 404:
+ * it names the column, so the sentence can name the box. `danglingReferenceCandidates` prefers it
+ * over reading the payload for exactly that reason. It is filtered by [ApiRefusal.schemaSkew] at the
+ * call site rather than here — a 422 carrying `extra_forbidden` is a disagreement between BUILDS and
+ * has its own outcome, and asking that question needs the error body, which this must not touch.
+ *
+ * TAKES THE THROWABLE AND READS ONLY `code()`, so it is safe to ask BEFORE `apiRefusal` — that one
+ * consumes Retrofit's buffered error body and may be called only once per failure. Same ordering
+ * rule, same reason, as [isConflictRefusal] and the `isTransient` call that precedes them both.
+ *
+ * NOT SUFFICIENT ON ITS OWN, and the call site is where the rest is decided. A 404 with no reference
+ * in the payload to blame is not a dangling reference — it is an ordinary refusal about something
+ * else — and offering a Re-pick over it would be a button with no field to change. See
+ * `danglingReferenceCandidates`, which answers empty for exactly that case.
+ */
+internal fun isMissingReferenceRefusal(error: Throwable): Boolean =
+    (error as? HttpException)?.code().let { it == 404 || it == 422 }
+
+/**
  * THIS RUN OF THE APP. One value for the life of the process, and its only job is to be different
  * next time. See [blocksRetry].
  *

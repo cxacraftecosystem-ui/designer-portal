@@ -36,6 +36,7 @@ from app.api.routes import (
     settings,
     tasks,
     tools,
+    usage,
     users,
     workshops,
 )
@@ -108,6 +109,15 @@ api_router.include_router(dashboard.router)
 # that would swallow any literal path mounted after it (see the note above design_workshop_viewers).
 # Admin-only inside the module; nothing here is scoped to a caller's own workshops.
 api_router.include_router(analytics.router)
+# HOW THE PLATFORM IS USED, /api/usage — and it is mounted here, immediately under /api/analytics,
+# because the two are the pair most likely to be confused and reading them together is the fastest
+# way to stop confusing them. The one above compares CRAFT OUTCOMES across workshops and observes no
+# person; this one records which SCREENS were reached, by whom, and how long the server took. A
+# second meaning of the word "analytics" would have put a privacy surface behind a name already
+# taken at every layer — the route, the web page /admin/analytics, the guard and the nav label — so
+# the prefix is deliberately its own. See app/api/routes/usage.py for who may read which arm, and
+# app/services/usage.py for the batched writer and the consent rules that gate it.
+api_router.include_router(usage.router)
 api_router.include_router(search.router)
 api_router.include_router(map_points.router)
 api_router.include_router(review.router)

@@ -7,6 +7,7 @@ import {
   Brush,
   ChevronDown,
   ClipboardList,
+  ExternalLink,
   FileOutput,
   GitBranch,
   Images,
@@ -78,10 +79,36 @@ const TRUST_ITEMS = [
 const RECORD_TYPES = [
   { icon: UserIcon, title: "Artisan", copy: "The maker: craft, lineage, place, identity, provenance." },
   { icon: Brush, title: "Craft", copy: "The tradition itself — technique, origin, regional identity." },
-  { icon: Package, title: "Product", copy: "What is made: materials, dimensions, pricing, imagery." },
+  // PRODUCT AND TOOL BOTH SAY "measured from a photograph" because both forms mount the same
+  // control — `components/media/RecordPhotoMeasure.tsx` at `ProductForm.tsx:1076` and
+  // `ToolForm.tsx:1242`. Saying it on the Product card alone would have been the cheaper sentence
+  // and it would have read as "the tool form does not have this", which is the shape of claim this
+  // page has already been wrong in twice: an omission on a list of eight is indistinguishable from
+  // an absence. The words are the app's own ("Document using grid", `GridMeasurement.tsx:321`)
+  // rather than a paraphrase, so a reader who signs in recognises the checkbox they were promised.
+  {
+    icon: Package,
+    title: "Product",
+    copy:
+      "What is made: materials, pricing, imagery — and length, breadth and height read off a photograph taken against a measuring grid."
+  },
   { icon: GitBranch, title: "Process", copy: "How it is made, step by ordered step, with media per step." },
-  { icon: Wrench, title: "Tool", copy: "The toolkit, and which artisans use each tool." },
-  { icon: ClipboardList, title: "Questionnaire", copy: "Structured interviews, recorded and auto-transcribed." },
+  {
+    icon: Wrench,
+    title: "Tool",
+    copy: "The toolkit, which artisans use each tool, and its dimensions measured the same way."
+  },
+  // "The standard form" and "reuse" are the app's own words, not descriptions of them:
+  // `questionnaires/[id]/page.tsx:597` toggles between "Publish as the standard form" and "Withdraw
+  // as the standard form", and `questionnaires/ReuseDialog.tsx` is titled "Reuse at another
+  // workshop". The dialog is emphatic that reuse COPIES — two rows, two question trees, two
+  // histories — so "reusable at the next" is deliberately not "shared with the next".
+  {
+    icon: ClipboardList,
+    title: "Questionnaire",
+    copy:
+      "Structured interviews, recorded and auto-transcribed — on the repository's standard form or one a designer wrote and can reuse at the next workshop."
+  },
   { icon: Images, title: "Miscellaneous Media", copy: "Audio, video and photographs that belong to no one record." },
   { icon: UsersRound, title: "Workshop", copy: "Field expeditions: assignments, date windows, approvals." }
 ];
@@ -109,20 +136,170 @@ const HEADLINE = [
   { text: "already written.", gold: true }
 ];
 
-/** The cross-cutting surfaces that sit on top of the records, in the app's own vocabulary. */
+/**
+ * The cross-cutting surfaces that sit on top of the records, in the app's own vocabulary.
+ *
+ * "Scan a code" IS THE APP'S LABEL AND NOT A DESCRIPTION OF ONE — `app/(protected)/scan/page.tsx`
+ * renders `PageHeader title="Scan a code"`, and the same three words are the dashboard tile and
+ * the Android nav row, held to each other by `e2e/dashboard-tile-parity-unit.spec.ts` and
+ * `DashboardTileParityTest`. It belongs on THIS list rather than in the sketches or workshop
+ * sections because what it does is find a RECORD from something printed — a card, a prototype tag,
+ * a screenshot of one — which is exactly what "built on top of the eight" means. It was previously
+ * three deliberate steps down a menu named after reading a list, which is the reason it became a
+ * destination at all; a chip here is the public half of that same fix.
+ */
 const SURFACES = [
   "View Data",
   "Review & approvals",
   "Sharing & access grants",
   "Assigned tasks",
+  "Scan a code",
   "CSV & full-dataset export",
   "Edit history & provenance"
 ];
 
 /**
+ * ── THE INSTITUTIONAL BAND (requirements 15, 16 and 17) ────────────────────────────────────────
+ *
+ * Two marks and one outbound link, sitting between the closing call to action and the footer.
+ *
+ * WHY HERE AND NOWHERE ELSE. The masthead is 100px of dark purple carrying a wordmark and one
+ * button; three marks up there would need three light plates in the most visible part of the page
+ * and would compete with the single conversion this page has. The closing band is worse for the
+ * same reason — a link AWAY from the page, printed next to the sign-in button. Above the footer is
+ * where a reader looks for provenance, and it is the only place on this page where LEAVING is the
+ * expected gesture. It shares the footer's `bg-card`, so the footer's own `border-t` is the hairline
+ * between them and no second rule is drawn.
+ *
+ * ⚠ NO MOTION ON THIS BAND, AND THAT IS THE POINT RATHER THAN AN OMISSION. Every other section
+ * below the fold is `whileInView`, which means framer-motion writes `opacity: 0` into the
+ * server-rendered HTML and only the printing bed ships the `<noscript>` override that undoes it. An
+ * attribution and affiliation band is the single worst member of that class to leave invisible when
+ * JavaScript does not run, so this one renders statically and has nothing to lose. Do not "bring it
+ * in line" with its neighbours by adding a variant.
+ *
+ * ⚠ NO GOLD. Gold is permitted on this page and its budget is already spent on the hero, the
+ * printing bed and the closing band (`DesignWorkshopSection.tsx` records the rule). A fourth gold
+ * surface stops the bed being the signature.
+ *
+ * ── THE LIGHT PLATE, WHICH IS A DARK-MODE FIX AND NOT A DECORATION ─────────────────────────────
+ *
+ * `iit-kharagpur.svg` is 110 paths sharing ONE fill, `#291973`, on transparency. Measured against
+ * this app's real tokens it is 14.18:1 on the light `--card` and **1.24:1** on the dark one — the
+ * ring lettering, the "1951" and the motto are not merely dim in dark mode, they are gone. So it
+ * needs a light ground under it, and the repository already has exactly one answer for a mark that
+ * must keep its own colours on a surface that would swallow it: `WorkshopLogo.tsx:4-5` — "keep its
+ * native colours even on purple surfaces (put it in a cream rounded tile there)". That cream is
+ * `#FAF9F5`, and the plate below reaches it through `bg-logo-cream` — a REAL TOKEN, declared in
+ * `tailwind.config.ts` under the comment "Brand-native logo colors (Android launcher icon) — never
+ * re-themed", beside `logo-terracotta` and `logo-ink`. So this plate is not an exception to "never
+ * hardcode a neutral" (§1.2) at all; it is the one ladder in the config whose whole purpose is to
+ * NOT invert, and naming it is what makes that legible. `bg-[#FAF9F5]` would have rendered the
+ * identical pixels and read as somebody eyedroppering a colour, which is exactly the thing a later
+ * reader would have "fixed" into `bg-card` and broken in dark mode. `tile={false}` has no call site
+ * anywhere in the app, so the cream tile is the only precedent there is.
+ *
+ * BOTH MARKS GET THE PLATE, THOUGH ONLY ONE NEEDS IT. `dc-handicrafts.png` is full colour — a blue,
+ * a yellow, a red and a white counter inside the letterform — and it survives both themes on its
+ * own. A plate behind one mark and a bare mark beside it reads as a mistake rather than as a
+ * treatment, and the alternative (a `dark:`-conditional plate on one of the two) is new theming
+ * machinery on a prerendered page for a problem a shared plate solves with one class. It also gives
+ * the DC mark's white counter a warm ground to sit on rather than the page's own white.
+ *
+ * ⚠ THAT PNG IS INDEXED COLOUR, not RGBA — 256 palette entries with a 182-entry `tRNS` alpha table
+ * (checked on disk, not assumed). It renders correctly and its quantisation is invisible at this
+ * size, but two things follow. Do not apply a CSS filter to it expecting straight-alpha RGBA
+ * behaviour, and do not read a brand hex out of it: each of its three colours is spread over
+ * several near-identical palette entries, so the file is not the authority on what the mark's blue
+ * IS. If an exact colour is ever needed, take it from the institution rather than from this file.
+ *
+ * ── OPTICAL SIZING: THE HEIGHTS ARE NOT EQUAL, AND THAT IS THE CORRECTION ──────────────────────
+ *
+ * The seal is 268 × 300 (portrait, 0.89:1) and the DC mark is 600 × 253 (landscape, 2.37:1). Set to
+ * one height the landscape mark covers nearly three times the area and visibly dominates the row.
+ * So mass is equalised instead of height: the seal at `h-16` is 64 × 57 ≈ 3,650px², and the DC mark
+ * at `h-12` is 48 × 114 of BOX — but its ink occupies only rows 24…235 of its 253, so the ink is
+ * 40 × 109 ≈ 4,380px². The wordmark ends ~20% larger by area, which is right rather than sloppy: a
+ * wordmark is mostly the space between letters where a seal is solid ink. The two plates are one
+ * fixed size and the marks are centred in them, so the row has a real shared baseline instead of
+ * two marks agreeing by coincidence at one viewport width.
+ *
+ * ── `<img>` AND NOT `next/image` ───────────────────────────────────────────────────────────────
+ *
+ * `next.config.ts` states it in its own header: "Nothing renders through `next/image` today (media
+ * is shown with plain `<img>`/`<audio>` tags…)". Its `remotePatterns` allowlist is about REMOTE
+ * hosts and has nothing to say about a file in `public/`, so introducing the optimiser for two
+ * static marks on the one prerendered route would be new machinery for no gain. The eight existing
+ * `<img>` call sites all carry the same eslint suppression; this follows them.
+ *
+ * ── ACCESSIBILITY: WHY `alt=""` IS CORRECT HERE AND IS NOT THE `alt="logo"` TRAP ───────────────
+ *
+ * A logo link whose ONLY content is an image must carry alt text naming where the link goes. These
+ * links carry the institution's full name as REAL TEXT inside the same anchor, which is strictly
+ * better — it is visible, selectable, translatable, and it survives an image that fails to load.
+ * Giving the image the name as well would make a screen reader announce the institution twice per
+ * link. The visible text is therefore the accessible name, and `(opens in a new tab)` is appended
+ * `sr-only` AFTER it so the visible label is still a prefix of the accessible one (WCAG 2.5.3,
+ * Label in Name). The suffix is the wording this repository already uses in
+ * `designworkshop/StageReferenceField.tsx:444`.
+ *
+ * `target="_blank" rel="noreferrer"` is the house form for an outbound anchor — roughly eleven call
+ * sites against one each of the three alternatives — and `noreferrer` implies `noopener` in every
+ * browser this app supports, so the pair is not needed.
+ */
+const INSTITUTIONS = [
+  {
+    /** The formal name, verbatim: it is both the visible label and the link's accessible name. */
+    name: "Indian Institute of Technology Kharagpur",
+    href: "https://www.iitkgp.ac.in/",
+    src: "/logos/iit-kharagpur.svg",
+    // Intrinsic dimensions, so the browser reserves the right box before the file arrives. The
+    // `w-auto` in `markClass` is what makes the rendered width follow from the height.
+    width: 268,
+    height: 300,
+    markClass: "h-12 w-auto sm:h-16"
+  },
+  {
+    // The office's name as this repository already writes it — `report_templates.py:371` sets
+    // `organisation="Office of the Development Commissioner (Handicrafts)"` on the DCH_STANDARD
+    // template. The Ministry line is in the paragraph above rather than repeated in the label,
+    // where it would push this caption to five wrapped lines on a phone.
+    name: "Office of the Development Commissioner (Handicrafts)",
+    href: "https://handicrafts.nic.in/",
+    src: "/logos/dc-handicrafts.png",
+    width: 600,
+    height: 253,
+    markClass: "h-9 w-auto sm:h-12"
+  }
+];
+
+/**
+ * Requirement 17, and the decision behind it: the Centre of Excellence is a REDIRECT, never an
+ * import and never an iframe.
+ *
+ * The Centre's site is a finished Next.js application with its own CMS — pages and typed sections
+ * in Postgres, an editorial studio, revision history and a draft-leak check. This application has
+ * one public route and no content model at all, so "bring the content over" is really "rebuild a
+ * CMS", and a half-built copy of an institutional site is worse than a link to the real one. The
+ * Centre's own site already names this product as one of its three platform pillars, so a link
+ * preserves a deliberate parent/child relationship that collapsing the two would destroy.
+ *
+ * The host is printed in the link text on purpose. A reader about to leave an application they are
+ * being asked to sign in to should be able to see where they are going before they press it.
+ */
+const CENTRE_OF_EXCELLENCE_HREF = "https://cxa-cms.vercel.app/";
+
+/**
  * The public hero — the product's signature dark-purple mesh treatment applied to
- * Design Prototype Workshop: gold-gradient headline line, GSAP line-mask entrance,
+ * Design Prototype Workshop: gold-gradient headline line, a framer-motion line-mask entrance,
  * ambient orbs, and a live-transcript preview card in place of the note card.
+ *
+ * (This line said "GSAP line-mask entrance" for one refactor longer than it was true, three lines
+ * above a paragraph correctly stating the entrance is framer-motion. There is no GSAP anywhere in
+ * `components/hero/` — `grep -rn gsap components/hero/` returns nothing — and the reason to care is
+ * that GSAP in this repository lives behind a mandatory dynamic import whose whole job is keeping
+ * 70 KB off pages that do not use it. A comment claiming a page loads it is how somebody comes
+ * looking for a timeline to reduced-motion-gate, or "restores" one that was never here.)
  *
  * Gold is permitted here (and on auth) and nowhere else. Everything below the dark hero band is
  * built from the themed tokens — `bg-card`, `ink-*`, `line-200` — so the page reads correctly in
@@ -387,6 +564,54 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
           and the tools it takes; every interview, photograph and recording lands attached to the
           artisan, the craft and the workshop it came from. Nothing arrives as a loose file.
         </p>
+        {/*
+          WHAT CHANGED UNDER THIS SECTION, AND WHY IT IS A SECOND PARAGRAPH RATHER THAN A CLAUSE.
+          Six of the eight forms above now also carry a "Design & prototype workshop" box
+          (`forms/DesignWorkshopSelect.tsx` sets those words as the default `label`, so they are
+          quoted and not paraphrased) with the workshop this account was most recently given access
+          to already chosen (`lib/designWorkshopDefault.ts`). That is not one more field on a list
+          of fields — it is a change to what "one connected repository" MEANS, because it is the
+          join between the two halves of this page: the records above and the workshop three
+          sections below. A clause bolted onto the sentence above would have buried the one fact
+          that connects them.
+
+          ⚠ SIX, NOT EIGHT, AND THIS PARAGRAPH SAID "ALL EIGHT" UNTIL IT WAS COUNTED. There are six
+          `<DesignWorkshopSelect>` mount sites and the grep that finds them is
+          `grep -rn "<DesignWorkshopSelect" components app`: Artisan, Product, Process and Tool in
+          `components/forms/`, plus Miscellaneous Media (`app/(protected)/media/page.tsx`) and
+          Questionnaire (`app/(protected)/questionnaire/page.tsx`).
+
+          CRAFT AND WORKSHOP ARE NOT AMONG THEM, and the reason is a missing COLUMN rather than a
+          missing box — so this is not a gap somebody can close by mounting the control. In
+          `schema.prisma`, `designWorkshopId` is declared on Artisan, ProductDocumentation,
+          ToolDocumentation, MediaFile, Process, Questionnaire and QuestionnaireInterview, and that
+          column's own header counts them in its own words: "it holds for every one of these six".
+          `model Craft` carries `workshopId` (the field expedition) and nothing else, and `model
+          Workshop` is itself the container. A craft is a `name String @unique` — one shared
+          tradition row that many artisans point at — so filing it under a single design workshop
+          would be a claim about the tradition rather than about a record of it.
+
+          THE FALSE UNIVERSAL WAS THE WORST OF THE AVAILABLE SENTENCES, which is worth stating
+          because the obvious edit is to put "all eight" back for rhythm. "All eight" is the claim a
+          designer checks by opening the craft form, finding no box, and concluding the feature is
+          broken — where the truth is that it was never claimed for that form. That is the same
+          failure the RECORD_TYPES comment above guards against, running the other way: there, an
+          omission on a list of eight read as an absence; here, a universal reads as a promise.
+
+          THE DEFAULT IS DESCRIBED AS A SUGGESTION AND NEVER AS A SCOPE, which is the distinction
+          that file's own header insists on: "Nothing here narrows what a designer may pick." A page
+          saying the app "files your records under your workshop" would describe a client-side scope
+          the API does not have, and would read to an admin as a promise their records are fenced.
+        */}
+        <p className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
+          Six of the eight also file under a design &amp; prototype workshop — everything captured
+          at one, which is artisans, products, processes, tools, media and questionnaires. A craft
+          is a tradition many workshops document and the field workshop is itself a container, so
+          neither carries the box. Where it is there it arrives already holding the workshop you
+          were most recently given access to, so a fortnight of records lands in the right place
+          without anybody choosing it on every record. It is a suggestion and not a fence: the list
+          still offers every workshop you are on, and a record can be filed under none of them.
+        </p>
         <div className="mt-12 grid grid-cols-2 gap-4 md:grid-cols-4">
           {RECORD_TYPES.map((record) => (
             <div
@@ -501,6 +726,87 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
           >
             Take the walkthrough
           </Link>
+        </div>
+      </section>
+
+      {/* ── The institutions, and the Centre's own site ──────────────────── */}
+      {/* Static by design — see the INSTITUTIONS header for why this band must not be `whileInView`. */}
+      <section aria-label="Institutional affiliation" className="bg-card px-6 py-14">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-9 text-center">
+          <div className="max-w-2xl">
+            <p className="eyebrow mb-3">The institutions behind it</p>
+            {/*
+              NO `<h2>` HERE, DELIBERATELY. Every other band on this page opens with one, and a
+              fourteenth heading landing between "Ready to document living craft?" and the footer
+              would put a fresh section in the document outline at the exact moment the page has
+              finished making its argument. This is a colophon, so it reads as a rule rather than as
+              a band, and the `aria-label` on the section is what names it to a screen reader.
+
+              THE TWO HALVES OF THIS SENTENCE HAVE DIFFERENT KINDS OF EVIDENCE, and a later editor
+              should know which is which. The Development Commissioner half is read out of the code:
+              `report_templates.py:362-371` declares DCH_STANDARD as "the full narrative report for
+              submission to the Development Commissioner (Handicrafts)" with
+              `organisation="Office of the Development Commissioner (Handicrafts)"`, and
+              `report_builder.py:2664` puts "Government of India • Ministry of Textiles" above it on
+              the cover. The affiliation half is the owner's, who supplied both marks and all three
+              destinations. Do not "verify" the first sentence by weakening the second, and do not
+              strengthen the second into a claim about funding or sanction that nothing here checks.
+            */}
+            <p className="text-base leading-relaxed text-ink-700">
+              A Centre of Excellence project at IIT Kharagpur. The document this app writes is
+              addressed to a real office: its default template is a submission to the Office of the
+              Development Commissioner (Handicrafts), and the cover carries the Government of India
+              and Ministry of Textiles line above it.
+            </p>
+          </div>
+
+          <ul className="flex flex-wrap items-start justify-center gap-x-6 gap-y-8 sm:gap-x-12">
+            {INSTITUTIONS.map((institution) => (
+              <li key={institution.href} className="w-36 sm:w-52">
+                <a
+                  href={institution.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  // Hover is CSS, never a framer prop, so the reduced-motion blocks in globals.css
+                  // reach it — the same rule every card on this page follows.
+                  className="group flex flex-col items-center gap-3 rounded-md transition hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <span className="flex h-20 w-32 items-center justify-center rounded-lg border border-line-200 bg-logo-cream shadow-sm transition group-hover:shadow-md sm:h-24 sm:w-40">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={institution.src}
+                      alt=""
+                      width={institution.width}
+                      height={institution.height}
+                      className={institution.markClass}
+                    />
+                  </span>
+                  <span className="text-xs font-medium leading-snug text-ink-700 transition group-hover:text-purple-700">
+                    {institution.name}
+                    <span className="sr-only"> (opens in a new tab)</span>
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+
+          <p className="max-w-2xl text-sm leading-relaxed text-ink-500">
+            The Centre keeps its own site — its account of itself, its research, and the crafts it
+            holds. It is a separate application rather than a section of this one, so this link
+            leaves the repository:{" "}
+            <a
+              href={CENTRE_OF_EXCELLENCE_HREF}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 font-medium text-purple-700 underline-offset-2 hover:underline"
+            >
+              Open the Centre of Excellence site at cxa-cms.vercel.app
+              {/* Text, then a trailing external-link glyph — `settings/MyAiKeysPanel.tsx:176` is the
+                  shape this repository already uses for an anchor that leaves the app. */}
+              <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          </p>
         </div>
       </section>
 

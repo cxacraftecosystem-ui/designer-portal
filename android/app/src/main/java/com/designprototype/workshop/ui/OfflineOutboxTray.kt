@@ -31,12 +31,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.REFERENCE_FIELD_NOUNS
 import com.designprototype.workshop.data.OutboxFailureRow
+import com.designprototype.workshop.data.RepickChoices
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.outboxDiscardConfirmation
 import com.designprototype.workshop.data.outboxFailureRows
 import com.designprototype.workshop.data.outboxRetryAllMessage
 import com.designprototype.workshop.data.outboxRetryMessage
+import com.designprototype.workshop.data.repickEmptyLine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -83,6 +86,14 @@ import kotlinx.coroutines.launch
  *    thing a designer is most afraid of on this screen is deleting the artisan rather than their copy
  *    of the form. Nothing here deletes anything on its own; see `PendingEntry.conflict` for the
  *    incident that rule was written after.
+ * 5. A DANGLING REFERENCE IS THE OPPOSITE OF A CLASH, AND IS THE ONE ROW WITH A REAL WAY OUT. The
+ *    register already holding this record is a clash; the register NOT holding something this record
+ *    points at is `PendingEntry.danglingField` — a design workshop an admin deleted at the office, a
+ *    workshop a grant was withdrawn from. It arrived here as an anonymous "Record not found" under
+ *    the same two buttons as everything else, and both of them are wrong: Try again fetches the
+ *    identical 404, and Throw away destroys a day of fieldwork that is one dropdown away from
+ *    sending. So the row NAMES the field, and a third button re-points it — the remedy R7 says this
+ *    failure has and the empty-picker failure does not. See DROPDOWN_DESIGN §3.7.
  */
 @Composable
 fun OfflineOutboxTray(
@@ -99,6 +110,10 @@ fun OfflineOutboxTray(
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     var confirmDiscard by remember { mutableStateOf<OutboxFailureRow?>(null) }
+    // The row whose dangling field is being re-pointed, or null. A ROW AND NOT AN ID, for
+    // `OutboxFailureCard`'s reason: the dialog needs the label, the field and the file count, and
+    // three values carried separately are three values that can be carried from different rows.
+    var repicking by remember { mutableStateOf<OutboxFailureRow?>(null) }
     var reload by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(reload) {
@@ -164,6 +179,7 @@ fun OfflineOutboxTray(
                         files = row.mediaCount,
                         isConflict = isConflict,
                         savedOnServer = row.savedOnServer,
+                        isDangling = row.danglingNouns.isNotEmpty(),
                     ),
                     color = MaterialTheme.field.body,
                     fontSize = 13.sp,
@@ -189,6 +205,29 @@ fun OfflineOutboxTray(
         // Deliberately NOT an early return: the tray stays composed underneath, so cancelling the
         // confirmation puts the designer back on the list they were reading rather than closing
         // everything and making them find it again.
+    }
+
+    repicking?.let { row ->
+        RepickDialog(
+            repository = repository,
+            row = row,
+            onDismiss = { repicking = null },
+            onChosen = { field, chosen ->
+                val target = row
+                repicking = null
+                act {
+                    // THE SAME SENTENCE A RETRY GETS, and deliberately so: what the designer wants to
+                    // know is identical — did THIS entry go — and a second vocabulary for it would let
+                    // one screen say "was sent" two ways with two different meanings.
+                    outboxRetryMessage(
+                        label = target.label,
+                        result = repository.repickOutboxEntry(appContext, target.entryId, field, chosen),
+                    )
+                }
+            },
+        )
+        // NOT an early return, for the discard confirmation's reason: the list stays composed
+        // underneath so cancelling puts the designer back where they were reading.
     }
 
     AlertDialog(
@@ -231,6 +270,7 @@ fun OfflineOutboxTray(
                         OutboxFailureCard(
                             row = row,
                             busy = busy,
+                            onRepick = { repicking = row },
                             onRetry = {
                                 act {
                                     // The SENTENCE is `outboxRetryMessage`'s and not this
@@ -285,6 +325,7 @@ fun OfflineOutboxTray(
 private fun OutboxFailureCard(
     row: OutboxFailureRow,
     busy: Boolean,
+    onRepick: () -> Unit,
     onRetry: () -> Unit,
     onDiscard: () -> Unit,
 ) {
@@ -308,6 +349,20 @@ private fun OutboxFailureCard(
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
         )
+        if (row.danglingNouns.isNotEmpty()) {
+            // AN EYEBROW, for the clash eyebrow's reason and with the opposite words. The sentence
+            // below carries the whole argument; this line is what a designer scanning six refused
+            // rows needs in order to see that this one is not their mistake, is not a clash, and has
+            // somewhere to go. It NAMES the field, because the sentence's value and this row's whole
+            // remedy are the same fact: which box to change.
+            Text(
+                "POINTS AT ${row.danglingNouns.joinToString(" OR ") { it.uppercase() }} THE SERVER DOES NOT HAVE",
+                color = MaterialTheme.field.warning,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 14.sp,
+            )
+        }
         if (row.conflict) {
             // AN EYEBROW AND NOT A REPLACEMENT for the sentence below it. `outboxConflictSentence`
             // already carries the server's own words, what is still on the phone and what to do in
@@ -336,7 +391,32 @@ private fun OutboxFailureCard(
                 lineHeight = 16.sp,
             )
         }
+        if (row.danglingNouns.isNotEmpty() && row.repickKeys.isEmpty()) {
+            // THE HONEST HALF OF THIS FEATURE. The reference that is missing is one this screen has no
+            // list for — the record a correction is aimed at, or an artisan/craft/product register —
+            // so there is no picker to open and no button to press, and saying so is the only thing
+            // left that helps. Drawing a Re-pick that opens an empty dialog would be a second dead
+            // end wearing the costume of a remedy, which is the exact shape this whole outcome was
+            // added to remove.
+            Text(
+                "There is no list on this screen to re-point it with. Open the record where it was " +
+                    "made, fix the link there, and this entry will send. Nothing here is deleted in " +
+                    "the meantime.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (row.repickKeys.isNotEmpty()) {
+                // FIRST, AND BEFORE Try again, because it is the only one of the three that can work
+                // on this row. Button order is an instruction on a screen somebody reads in a
+                // courtyard, and putting the one useful act third — beside a retry that cannot help
+                // and a delete that destroys fieldwork — is how the delete gets pressed.
+                OutlinedButton(onClick = onRepick, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Re-pick it", fontSize = 12.sp)
+                }
+            }
             OutlinedButton(onClick = onRetry, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("Try again", fontSize = 12.sp)
             }
@@ -352,4 +432,134 @@ private fun OutboxFailureCard(
             }
         }
     }
+}
+
+/**
+ * THE THIRD DOOR: point one queued record at a workshop that exists, and send it.
+ *
+ * ── WHY IT IS HERE AND NOT ON THE RECORD'S OWN FORM ───────────────────────────────────────────
+ *
+ * DROPDOWN_DESIGN §3.7 sketches this as "opens the record's form seeded from the queued payload with
+ * that one field cleared and focused". That is the right shape for a record whose whole body needs
+ * revisiting and the wrong one for this: exactly one key in the payload is wrong, every other answer
+ * in it was typed by somebody standing in front of the artisan, and re-opening a two-hundred-field
+ * form to change one dropdown is a form that can be re-submitted with a dozen fields subtly
+ * re-derived from today's state. `OfflineOutbox.repick` changes the one key and re-serialises the
+ * rest byte for byte. The narrower act is the safer one.
+ *
+ * ── THE LIST IS ASKED FOR, NEVER REMEMBERED ───────────────────────────────────────────────────
+ *
+ * R6 binds here harder than on a form. `WorkshopRepository.repickOptions` goes to the server every
+ * time, because a stale access list is wrong in the permissive direction and this designer is on
+ * this screen precisely because a workshop id turned out not to be honourable. Answering that with a
+ * remembered list would answer a question about the server with a question about the phone.
+ *
+ * ── AND THE EMPTY CASE SAYS WHICH EMPTY IT IS ─────────────────────────────────────────────────
+ *
+ * Three facts share the spelling `emptyList()` — still asking, the read failed, the scope holds none
+ * — and on this screen the one a reader assumes is the one that says the last route out is closed.
+ * `RepickChoices.listed` tells the second from the third and `repickEmptyLine` words them; the first
+ * is a spinner and its own sentence. `searchable = true` is passed for the same reason the district
+ * field passes it: these options ARE the whole answer for this account, and a control that changes
+ * shape between four workshops and nine is a control nobody learns.
+ *
+ * NOTHING HERE CAN DELETE. The dialog writes one key and clears one refusal; `OfflineOutbox.discard`
+ * is still the only door out of this queue that is not a successful send, and only a person opens it.
+ */
+@Composable
+private fun RepickDialog(
+    repository: WorkshopRepository,
+    row: OutboxFailureRow,
+    onDismiss: () -> Unit,
+    onChosen: (field: String, value: String?) -> Unit,
+) {
+    // ONE FIELD PER DIALOG, and the first re-pickable one when the server's answer named several.
+    // Fixing one of two candidates and re-sending is how the designer finds out which it was — the
+    // next pass either succeeds or comes back naming what is left, which is a shorter road to the
+    // truth than asking somebody to guess between two workshops they cannot see.
+    val field = row.repickKeys.first()
+    val noun = REFERENCE_FIELD_NOUNS[field] ?: "workshop"
+
+    var choices by remember(row.entryId, field) { mutableStateOf<RepickChoices?>(null) }
+    var chosen by remember(row.entryId, field) { mutableStateOf("") }
+
+    LaunchedEffect(row.entryId, field) {
+        choices = runCatching { repository.repickOptions(field) }
+            // A THROW IS NOT AN EMPTY LIST. `repickOptions` already swallows its own read failure into
+            // `listed = false`; anything that escapes it is the same fact by a different road, and
+            // reporting it as "you are on none" is the one reading this screen may not make.
+            .getOrDefault(RepickChoices(emptyList(), listed = false))
+    }
+
+    val answered = choices
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Point it at a $noun that exists", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "“${row.label}” is safe on this phone. Choose a $noun it can be filed under and " +
+                        "it will send; nothing else about the record changes.",
+                    color = MaterialTheme.field.body,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                )
+                when {
+                    answered == null -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        // NOT "there are none", and not silence. A read in flight is the third of the
+                        // three facts that share an empty list, and it is the only one that is
+                        // genuinely about to change by itself.
+                        Text("Reading the $noun list…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    }
+
+                    answered.options.isEmpty() -> Text(
+                        repickEmptyLine(noun, answered.listed),
+                        color = MaterialTheme.field.warning,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+
+                    else -> SearchableSelectField(
+                        label = noun.replaceFirstChar { it.uppercase() },
+                        options = answered.options.map { option ->
+                            SelectOption(value = option.id, label = option.label, hint = option.hint)
+                        },
+                        selectedValue = chosen,
+                        placeholder = "Choose one",
+                        // "None" IS A REAL ANSWER HERE and it is the one this whole change made
+                        // sendable: `OfflineOutbox.repick` records it as UNFILED_BY_CHOICE, and the
+                        // replay puts an explicit null on the wire rather than omitting the key. A
+                        // designer who concludes the record belongs to no workshop at all must be
+                        // able to say so and be believed.
+                        includeNone = true,
+                        // The whole answer for this account, not one page of it — so the control keeps
+                        // its shape whether four workshops come back or nine. See the KDoc above.
+                        searchable = true,
+                        onSelect = { chosen = it },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = answered != null && answered.options.isNotEmpty(),
+                onClick = { onChosen(field, chosen.ifBlank { null }) },
+            ) {
+                // NAMES THE ACT AND NOT THE VERB "Save". This sends a queued record, which is a
+                // different promise from saving a form, and the tray has spent four rules on not
+                // letting one screen make the other's promise.
+                Text(if (chosen.isBlank()) "File it under nothing and send" else "Send it", fontSize = 13.sp)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) } },
+    )
 }

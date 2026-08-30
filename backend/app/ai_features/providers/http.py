@@ -254,8 +254,7 @@ def request_json(
         # A 200 that is not JSON is nearly always a captive portal, a proxy error page or the
         # wrong endpoint. Saying so beats a JSONDecodeError three frames down.
         raise ProviderFailed(
-            f"{provider} answered 200 with something that is not JSON: "
-            f"{describe_error_body(body)}",
+            f"{provider} answered 200 with something that is not JSON: {describe_error_body(body)}",
             capability=capability,
             provider=provider,
             remediation="Check the endpoint setting; this does not look like the search API.",

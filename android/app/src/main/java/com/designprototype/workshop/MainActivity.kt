@@ -74,6 +74,10 @@ import com.designprototype.workshop.ui.parseFieldDate
 // numbers the artisan form SHOWS and never stores. See DateTimeFields.kt for why they are ports.
 import com.designprototype.workshop.ui.deriveAgeYears
 import com.designprototype.workshop.ui.deriveExperienceYears
+// Req 14's Android half: the shared years+months pair `DesignerProfileScreen.kt` already draws.
+// See `ExperienceFields.kt`'s own file header — it named this exact call site as the one caller
+// that had not caught up, because that file could not be edited from the workflow that added it.
+import com.designprototype.workshop.ui.ExperienceFields
 import com.designprototype.workshop.ui.FieldIslandNav
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.PRODUCT_MEASURE_DIMENSIONS
@@ -145,6 +149,13 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.designprototype.workshop.data.ApiClient
 import com.designprototype.workshop.data.OfflineQueueResult
+import com.designprototype.workshop.data.unfiledLinkReason
+import com.designprototype.workshop.data.workshopUnfiledReasons
+// C1: the cache-first record registers, and the store their four keys live beside — DwReferenceStore
+// already backs every design-workshop stage's REF field; see the section header above HomeScreen.
+import com.designprototype.workshop.data.DwReferenceStore
+import com.designprototype.workshop.data.DwReferenceList
+import com.designprototype.workshop.data.DwReferenceOption
 import com.designprototype.workshop.data.OutboxCounts
 import com.designprototype.workshop.data.offlineSavedMessage
 import com.designprototype.workshop.data.outboxDeviceBanner
@@ -226,6 +237,18 @@ import com.designprototype.workshop.ui.ConsolidatedQuestionnaireScreen
 import com.designprototype.workshop.ui.DataBrowserScreen
 import com.designprototype.workshop.ui.DesignWorkshopField
 import com.designprototype.workshop.ui.rememberDesignWorkshopPicker
+import com.designprototype.workshop.ui.WorkshopListState
+import com.designprototype.workshop.ui.WorkshopListKind
+import com.designprototype.workshop.ui.workshopListNotice
+import com.designprototype.workshop.ui.listIsAnswerable
+import com.designprototype.workshop.ui.fieldWorkshopOptions
+// The "genuinely empty, unscoped" sentence — see `WorkshopOptions.kt`. Used at the three
+// `emptyMessage` sites this file still spelled out by hand (crafts, and the workshops a
+// designer may request access to): the repository's own worked example, quoted in that
+// function's KDoc, is "No crafts available." — the exact string one of them used to be.
+import com.designprototype.workshop.ui.unscopedEmptyLine
+import com.designprototype.workshop.ui.NO_FIELD_WORKSHOP
+import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
 import com.designprototype.workshop.ui.RecordCodeSection
 import com.designprototype.workshop.ui.RecordEditHistorySection
@@ -286,6 +309,13 @@ import com.designprototype.workshop.ui.resolveDarkTheme
 import com.designprototype.workshop.ui.reviewQueueCutNotice
 import com.designprototype.workshop.ui.syncAppPreferences
 import com.designprototype.workshop.ui.SurfaceCard
+// The walkthrough: its surface, and the device-local flag that opens it exactly once. The step list
+// and the dialog live in `ui/` rather than here so a JVM unit test can read them without standing up
+// a composition — the twelve steps they replace were private to this file, which is why nothing in
+// either client noticed them falling seven steps behind the web.
+import com.designprototype.workshop.ui.WalkthroughDialog
+import com.designprototype.workshop.ui.markWalkthroughSeen
+import com.designprototype.workshop.ui.walkthroughSeen
 import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import retrofit2.HttpException
@@ -401,6 +431,7 @@ import com.designprototype.workshop.data.ProcessStepDto
 import com.designprototype.workshop.data.ProcessStepRequest
 import com.designprototype.workshop.data.ToolDetailDto
 import com.designprototype.workshop.data.WorkshopDetailDto
+import com.designprototype.workshop.data.PageResponse
 import androidx.compose.runtime.mutableStateListOf
 import com.designprototype.workshop.ui.ArtisanQuestionnairePanel
 import com.designprototype.workshop.ui.LocationFieldsSection
@@ -1492,6 +1523,273 @@ private fun LoginScreen(
     }
 }
 
+// ===========================================================================
+// C1 — the four record registers, cached the way the design-workshop stage's
+// REF fields already cache theirs: through DwReferenceStore, ALL-scoped, no
+// expiry, cache-first-then-refresh. See DROPDOWN_DESIGN.md §3.3.
+// ===========================================================================
+
+/**
+ * WHY THE PLAIN RECORD FORMS GET A CACHE AT ALL, AND WHY THIS IS THE CHEAPEST CORRECT ONE.
+ *
+ * [WorkshopRepository.crafts], [WorkshopRepository.artisans], [WorkshopRepository.products] and
+ * [WorkshopRepository.tools] are bare `api.*(pageSize = 100)` calls with nothing behind them — every
+ * form that lists a craft, an artisan or a product to link a new record to loses that list the moment
+ * the request cannot complete. The identical artisan register is durable inside a design-workshop
+ * stage (`DwReferenceField.kt`, backed by [DwReferenceStore]) and evaporates on this screen, for no
+ * reason but that nobody had wired the second caller in.
+ *
+ * That defect is worse than an inconvenience. `ProcessForm` requires an artisan and a product before
+ * it will let the researcher save (the requirement stands down when the list is empty — see the R2b
+ * comment at that form's `submit()` — but an empty list is still a worse outcome than a real one), and
+ * a designer correcting a craft record on the bus home, offline, previously had nothing to pick from
+ * at all. §3.3 rules that this class of list — a shared vocabulary open to every signed-in account,
+ * never an access grant — is exactly the kind [DwReferenceStore] exists to survive a dead connection
+ * for, and R6 (`WorkshopRepository.kt:3918-3923`) rules that a `Workshop`/`DesignWorkshop` picker is
+ * the opposite kind and must NEVER get this treatment: a stale access list reads a revoked grant as a
+ * grant. Craft, artisan and product registers carry no access meaning at all — `records.viewable_where`
+ * already opens every one of them to every signed-in account — so caching them costs nothing R6 cares
+ * about and buys back exactly the offline afternoon [WorkshopPickerState] already refuses to.
+ *
+ * NO NEW STORAGE LAYER. This app has no Room, no SQLDelight and no `SQLiteOpenHelper` (searched;
+ * zero hits), and §3.3 is explicit that inventing one for four lists that already have a working,
+ * tested, `fetchedAt`-stamped, never-expiring JSON-file store would be the wrong shape of fix. Every
+ * function below is a thin cache-first wrapper around the SAME [DwReferenceStore] the stage pickers
+ * already trust, called with the SAME `load`/`store`/`cacheKey` API — nothing here is a second cache
+ * mechanism, only a second set of keys into the one that exists.
+ */
+
+/**
+ * The [DwReferenceStore] model keys these four caches use — deliberately NOT `"Craft"`, `"Artisan"`,
+ * `"Product"` or `"Tool"`, which are already spoken for.
+ *
+ * A design-workshop stage's REF field (`DwReferenceField.kt`, via
+ * [WorkshopRepository.designWorkshopReferences]) caches under precisely those four bare names, and
+ * what it stores in each option's `data` is the STAGE SCHEMA's own curated hydration payload —
+ * whichever fields that workshop's `fromref(...)` mapping names (a craft's `village`, say, not
+ * necessarily this DTO's `place`) — never the full [CraftDto] / [ArtisanDto] / [ProductDetailDto] /
+ * [ToolDetailDto] this file needs. [DwReferenceStore] has no way to know the two shapes disagree; it
+ * only knows a key and a file. Sharing the bare model name would mean this cache's write and the
+ * stage's write silently trade places under the same key — this form's fetch would overwrite the
+ * stage's hydration document with one missing every field a stage row hydrates from, and the stage's
+ * fetch would overwrite this form's cache with options this file cannot safely decode back into a
+ * typed record. Both sides would appear to work, because neither throws, right up until a stage row
+ * hydrates blank or a craft picked from a stale cache is missing a field this file assumes it has.
+ * A distinct prefix keeps the two ALL-scoped caches in two different files under the one store, which
+ * is the entire fix — see [DwReferenceStore.cacheKey]'s own note on why its three segments must never
+ * collide across unrelated callers.
+ */
+// internal, not private: RecordRegisterCacheTest pins these against each other and against the
+// design-workshop stage's own bare model names, which is the whole safety argument above in code.
+internal const val REGISTER_CRAFT = "RecordFormCraft"
+internal const val REGISTER_ARTISAN = "RecordFormArtisan"
+internal const val REGISTER_PRODUCT = "RecordFormProduct"
+internal const val REGISTER_TOOL = "RecordFormTool"
+
+/**
+ * A [CraftDto] reduced to what a picker draws and what a cascade narrows by, and back.
+ *
+ * ONLY `id`, `name` and `place` SURVIVE THE ROUND TRIP, and that is a deliberate, checked choice and
+ * not an oversight: every current reader of a craft list handed to a record form —
+ * `ArtisanForm`/`ProductForm`/`ToolForm`'s "Linked craft" dropdowns and carry lookup, `WorkshopForm`'s
+ * craft checklist — reads only `.id`, `.name` and `.place` off it (grepped for `crafts\.` across every
+ * form in this file before writing this pair). `localName`, `category`, `description`, `workshopId`
+ * and `createdBy` are dropped on write and defaulted to null on read, which is safe PRECISELY BECAUSE
+ * nothing downstream of this cache asks for them; a future caller that starts reading one of them off
+ * a `crafts` list sourced from here would get a silent null and this comment is the flag that would
+ * catch it in review.
+ */
+internal fun craftToOption(c: CraftDto): DwReferenceOption =
+    DwReferenceOption(id = c.id, label = c.name, hint = c.place.orEmpty())
+
+internal fun optionToCraft(o: DwReferenceOption): CraftDto? =
+    o.id.takeIf { it.isNotBlank() }?.let { CraftDto(id = it, name = o.label, place = o.hint.ifBlank { null }) }
+
+/**
+ * An [ArtisanDto] reduced the same way — see [craftToOption]. `hint` carries `place` (shown beside
+ * the name on every "Linked artisan" row this file draws) and [DwReferenceOption.filterValue] carries
+ * `craftId`, which is the exact field `ToolForm` filters an artisan list by once a craft is chosen
+ * (`artisans.filter { it.craftId == craftId }`) — the SAME "value of the parent field this option
+ * belongs under" the cascading REF pickers already use `filterValue` for, so this is not a new
+ * convention, only this cache's own use of an existing one.
+ *
+ * `status` HAS NO HOME HERE AND DOES NOT NEED ONE. [ArtisanDto.status] is a required, non-defaulted
+ * column and every reconstructed row therefore carries `""` for it — checked to be safe by the same
+ * grep as [craftToOption]'s: no record form reads `.status` off a `crafts`/`artisans` list handed to
+ * it for linking (the field means something on the artisan BEING EDITED, never on the register a
+ * picker offers).
+ */
+internal fun artisanToOption(a: ArtisanDto): DwReferenceOption =
+    DwReferenceOption(id = a.id, label = a.name, hint = a.place, filterValue = a.craftId.orEmpty())
+
+internal fun optionToArtisan(o: DwReferenceOption): ArtisanDto? =
+    o.id.takeIf { it.isNotBlank() }
+        ?.let { ArtisanDto(id = it, name = o.label, place = o.hint, status = "", craftId = o.filterValue.ifBlank { null }) }
+
+/**
+ * A [ProductDetailDto] reduced the same way. `filterValue` carries `artisanId` — the parent
+ * [DwReferenceList.narrowedTo] already narrows a cascading list by, and precisely what `ProcessForm`
+ * filters its broader product list by when the artisan-scoped fetch cannot be reached (see
+ * [loadArtisanProductFallback]'s note on that call site).
+ */
+internal fun productToOption(p: ProductDetailDto): DwReferenceOption =
+    DwReferenceOption(id = p.id, label = p.productName, hint = p.artisanName, filterValue = p.artisanId.orEmpty())
+
+internal fun optionToProduct(o: DwReferenceOption): ProductDetailDto? =
+    o.id.takeIf { it.isNotBlank() }
+        ?.let { ProductDetailDto(id = it, productName = o.label, artisanName = o.hint, artisanId = o.filterValue.ifBlank { null }) }
+
+/** A [ToolDetailDto] reduced the same way — only `toolkitName` and `craftName`, [ToolAssignScreen]'s
+ * whole use of a tool list (`"${it.toolkitName} · ${it.craftName}"`). */
+internal fun toolToOption(t: ToolDetailDto): DwReferenceOption =
+    DwReferenceOption(id = t.id, label = t.toolkitName, hint = t.craftName)
+
+internal fun optionToTool(o: DwReferenceOption): ToolDetailDto? =
+    o.id.takeIf { it.isNotBlank() }?.let { ToolDetailDto(id = it, toolkitName = o.label, craftName = o.hint) }
+
+/**
+ * Cache-first, then refresh — [WorkshopRepository.designWorkshopReferences]'s own order of operations,
+ * reused here rather than reinvented: answer from [DwReferenceStore] immediately (nothing, the first
+ * time this device has ever asked), then try the network, and on success replace the cache and answer
+ * again with the fresh list. [onList] is therefore called once or twice, never as a single blocking
+ * round trip — so a craft dropdown fills in from yesterday's register the instant the screen composes
+ * and then quietly improves, rather than sitting empty until a request that may never complete.
+ *
+ * A FAILED FETCH IS SILENT HERE, on the same reasoning [designWorkshopReferences] gives for its own
+ * silence: an ordinary `suspend fun` that propagates a timed-out GET turns a courtyard with no signal
+ * into a crashed craft picker, at a researcher who cannot do anything about it and whose phone is
+ * holding a perfectly good copy of the list already handed to [onList]. [loaded] tells the CALLER
+ * whether the device ended up with an answer from either source, exactly the fact `gotCrafts` /
+ * `gotArtisans` used to read off a bare network result, so [CarryScopeState] keeps working unchanged.
+ *
+ * Returns whether the cache, the fetch, or both answered — false only when this device has never once
+ * cached this model AND the live request also failed, which is the one case a caller should treat as
+ * "no list to offer".
+ *
+ * [model] IS THE BARE REGISTER NAME ([REGISTER_CRAFT] and its three siblings), NOT A COMPUTED KEY.
+ * The cache key ([DwReferenceStore.cacheKey]'s three-segment `model__owner__filter`) is derived once,
+ * in here, from [model] alone — every one of these four registers is ALL-scoped with no narrowing
+ * filter, so every caller would otherwise recompute the identical `cacheKey(model, "ALL", "", "")`
+ * and every [DwReferenceList] written would need its own `model` field threaded through from outside
+ * too. Deriving both from one string in one place is what keeps the key `store` writes under and the
+ * `model` field it stamps on the file from being two values a future edit could change independently
+ * and silently disagree.
+ */
+internal suspend fun <T> loadCachedRegister(
+    context: Context,
+    model: String,
+    decode: (DwReferenceOption) -> T?,
+    encode: (T) -> DwReferenceOption,
+    fetch: suspend () -> List<T>,
+    onList: (List<T>) -> Unit,
+): Boolean {
+    val key = DwReferenceStore.cacheKey(model, "ALL", "", "")
+    var loaded = false
+    DwReferenceStore.load(context, key)?.let { cached ->
+        onList(cached.items.mapNotNull(decode))
+        loaded = true
+    }
+    val fetched = runCatching { fetch() }.getOrNull()
+    if (fetched != null) {
+        onList(fetched)
+        loaded = true
+        // See [DwReferenceStore.store]: an empty fetch never overwrites a non-empty cache, so a
+        // permission hiccup or a wrong-scoped 200 cannot wipe a register this device already has.
+        DwReferenceStore.store(context, key, DwReferenceList(model = model, items = fetched.map(encode)))
+    }
+    return loaded
+}
+
+/** The craft register, ALL-scoped and offline-cached — see the section header above for why. */
+internal suspend fun loadCraftRegister(
+    context: Context,
+    repository: WorkshopRepository,
+    onList: (List<CraftDto>) -> Unit,
+): Boolean = loadCachedRegister(
+    context = context,
+    model = REGISTER_CRAFT,
+    decode = ::optionToCraft,
+    encode = ::craftToOption,
+    fetch = { repository.crafts() },
+    onList = onList,
+)
+
+/** The artisan register, ALL-scoped and offline-cached — see the section header above for why. */
+internal suspend fun loadArtisanRegister(
+    context: Context,
+    repository: WorkshopRepository,
+    onList: (List<ArtisanDto>) -> Unit,
+): Boolean = loadCachedRegister(
+    context = context,
+    model = REGISTER_ARTISAN,
+    decode = ::optionToArtisan,
+    encode = ::artisanToOption,
+    fetch = { repository.artisans() },
+    onList = onList,
+)
+
+/**
+ * The WHOLE product register (every artisan's), ALL-scoped and offline-cached — the coarse list
+ * `ProcessForm` already keeps beside its artisan-scoped one as a fallback; see
+ * [loadArtisanProductFallback] for the narrowed read this backs up.
+ */
+internal suspend fun loadProductRegister(
+    context: Context,
+    repository: WorkshopRepository,
+    onList: (List<ProductDetailDto>) -> Unit,
+): Boolean = loadCachedRegister(
+    context = context,
+    model = REGISTER_PRODUCT,
+    decode = ::optionToProduct,
+    encode = ::productToOption,
+    fetch = { repository.products() },
+    onList = onList,
+)
+
+/** The tool register, ALL-scoped and offline-cached — see the section header above for why. */
+internal suspend fun loadToolRegister(
+    context: Context,
+    repository: WorkshopRepository,
+    onList: (List<ToolDetailDto>) -> Unit,
+): Boolean = loadCachedRegister(
+    context = context,
+    model = REGISTER_TOOL,
+    decode = ::optionToTool,
+    encode = ::toolToOption,
+    fetch = { repository.tools() },
+    onList = onList,
+)
+
+/**
+ * `ProcessForm`'s artisan-scoped product fetch, with the offline fallback it already declared but
+ * could never reach.
+ *
+ * THE FALLBACK EXISTED BEFORE THIS FUNCTION AND WAS DEAD CODE. The cascade effect built `linked` from
+ * [WorkshopRepository.productsForArtisan] as a bare suspend call and then computed `broad`/`byName` as
+ * what its own comment calls a fallback — but `linked` sat OUTSIDE any `runCatching` of its own,
+ * inside one `runCatching` that covered the whole block, so a `productsForArtisan` failure (no signal,
+ * the ordinary case this whole file exists for) threw past `broad` entirely and the caller's
+ * `onFailure` reported "Couldn't load this artisan's products", never running the fallback it had
+ * already written. This function is that same shape with `linked` given its OWN `runCatching`, so a
+ * failed artisan-scoped fetch degrades to filtering the (now offline-cached, via
+ * [loadProductRegister]) whole product register instead of aborting before the fallback is reached —
+ * online behaviour is byte-identical; only the offline path gains the fallback that was already
+ * intended for it.
+ */
+internal suspend fun loadArtisanProductFallback(
+    repository: WorkshopRepository,
+    artisanId: String,
+    artisanName: String?,
+    broadProducts: List<ProductDetailDto>,
+): List<ProductDetailDto> {
+    val linked = runCatching { repository.productsForArtisan(artisanId, artisanName) }.getOrDefault(emptyList())
+    val byName = broadProducts.filter { p ->
+        (p.artisanId != null && p.artisanId == artisanId) ||
+            (!artisanName.isNullOrBlank() && p.artisanName.trim().equals(artisanName, ignoreCase = true))
+    }
+    return (linked + byName).distinctBy { it.id }
+}
+
 @Composable
 private fun HomeScreen(
     repository: WorkshopRepository,
@@ -1658,9 +1956,41 @@ private fun HomeScreen(
         lifecycleOwner?.lifecycle?.addObserver(observer)
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
-    // First-run walkthrough: new sign-ups see it automatically; anyone can reopen it from the menu.
-    var showWalkthrough by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { if (!walkthroughSeen(context)) showWalkthrough = true }
+    /*
+     * ── THE FIRST-RUN GATE. READ WHILE THE FIRST SCREEN IS BEING DECIDED, NOT A FRAME AFTER IT. ──
+     *
+     * New sign-ups meet the walkthrough automatically; everyone can reopen it from the menu or from
+     * Settings. `walkthroughSeen` is a synchronous read of a two-key XML file, which is cheap enough
+     * to do inside the `remember` initialiser — i.e. during the FIRST composition of this screen,
+     * rather than a recomposition later. (It is a first touch of that file and not a free lookup at
+     * one already in memory; `walkthroughSeen`'s own KDoc has the arithmetic and the reason that is
+     * still the right trade.)
+     *
+     * IT USED TO BE A `LaunchedEffect(Unit)`, AND THAT WAS ONE FRAME LATE. An effect runs after the
+     * composition it belongs to has been applied, so the dashboard painted once on its own and the
+     * walkthrough arrived over it on the following frame — a visible flash of the real screen for
+     * exactly the person who has never seen either. The app makes the same call for the theme, one
+     * layer up: `AppPreferencesStore.read()` is deliberately synchronous in `onCreate` because
+     * deciding the theme from a network round trip would flash a light app at somebody who chose
+     * Dark. This is that argument applied to the same kind of device-local boolean.
+     *
+     * IT STAYS HERE AND IS NOT HOISTED INTO `onCreate`. This point in the launch path is AFTER the
+     * auth gate — `RepositoryApp` renders `LoginScreen` until there is a user — and a walkthrough
+     * about recording artisans has nothing to say to somebody who has not signed in yet.
+     */
+    var showWalkthrough by remember { mutableStateOf(!walkthroughSeen(context)) }
+    /*
+     * ONE EXIT, USED BY EVERY WAY OUT OF THE DIALOG: Skip, Done, the back gesture on the first card,
+     * a tap outside the sheet, and following a step's own "Open …" button. Both halves always happen
+     * together, which is the whole reason this is a named local rather than a lambda written out at
+     * each call site: a Skip that closes the dialog but forgets the flag is the single most common
+     * defect this feature has, and it is invisible until the next morning when the walkthrough opens
+     * again over the dashboard of somebody who already said no to it.
+     */
+    fun finishWalkthrough() {
+        showWalkthrough = false
+        markWalkthroughSeen(context)
+    }
 
     /*
      * ── THE TWO FIRST-RUN DASHBOARD CARDS ARE GONE, AND SO ARE THEIR FLAGS. ──────────────────────
@@ -1748,8 +2078,12 @@ private fun HomeScreen(
     }
 
     suspend fun loadLookups() {
-        val gotCrafts = runCatching { repository.crafts() }.onSuccess { crafts = it }.isSuccess
-        val gotArtisans = runCatching { repository.artisans() }.onSuccess { artisans = it }.isSuccess
+        // C1: cache-first, via loadCraftRegister/loadArtisanRegister — see the section header above
+        // HomeScreen. `crafts`/`artisans` are reassigned up to twice each (cache, then the fresh
+        // answer if the network has one), which is exactly what lets ArtisanForm's craft dropdown and
+        // carry-forward work from yesterday's register the instant this composes, offline.
+        val gotCrafts = loadCraftRegister(context, repository) { crafts = it }
+        val gotArtisans = loadArtisanRegister(context, repository) { artisans = it }
         lookupState = if (gotCrafts && gotArtisans) CarryScopeState.LOADED else CarryScopeState.UNAVAILABLE
     }
 
@@ -2228,7 +2562,14 @@ private fun HomeScreen(
                         onChanged = onPreferencesChanged,
                         onBack = { attemptExit { goBack() } },
                         onOpenSpeechAndAi = { screen = Screen.SpeechAndAi },
-                        onOpenMyAiKeys = { screen = Screen.MyAiKeys }
+                        onOpenMyAiKeys = { screen = Screen.MyAiKeys },
+                        // Through the ROUTER and not by setting the flag directly, so the settings
+                        // row and the menu chip are one code path: whatever `openDestination` decides
+                        // the Walkthrough means, both doors mean it. Note that this leaves the
+                        // settings screen exactly where it is — the walkthrough draws over it, and
+                        // closing it puts the reader back on the row they tapped rather than on the
+                        // dashboard, which is what makes "read it again" cost nothing.
+                        onOpenWalkthrough = { openDestination(NavDestination.WALKTHROUGH) }
                     )
 
                     is Screen.SpeechAndAi -> SpeechAndAiScreen(
@@ -3151,7 +3492,30 @@ private fun HomeScreen(
 
                 // The walkthrough never sits on top of a required-update prompt (that must be handled first).
                 if (showWalkthrough && pendingUpdate == null) {
-                    WalkthroughDialog(onDismiss = { showWalkthrough = false; markWalkthroughSeen(context) })
+                    WalkthroughDialog(
+                        onFinish = { finishWalkthrough() },
+                        onOpen = { destination ->
+                            /*
+                             * FOLLOWING A STEP'S OWN BUTTON COUNTS AS HAVING SEEN THE WALKTHROUGH.
+                             * A designer who used the guide to get somewhere got what it is for, and
+                             * re-opening it over their dashboard tomorrow because they took one of
+                             * its links is the same annoyance the flag exists to prevent. The menu
+                             * row and the Settings row are both still there when they want the rest.
+                             *
+                             * `navigate` AND NOT `openDestination`, and the difference is not
+                             * cosmetic. The walkthrough itself is exempt from the unsaved-changes
+                             * guard because it draws OVER the page you were on and takes nothing
+                             * away; the screen it launches is a real departure from what may be a
+                             * half-filled artisan form with audio already recorded into it, so that
+                             * departure must still be asked about. Going straight to the router here
+                             * would make every "Open …" button in the walkthrough a silent way to
+                             * lose a form — which is the exact defect `navigate` was introduced to
+                             * close for the island bar and the drawer.
+                             */
+                            finishWalkthrough()
+                            navigate(destination)
+                        },
+                    )
                 }
 
                 pendingUpdate?.let { release ->
@@ -5728,7 +6092,52 @@ private const val DEFAULT_PROBE_LIMIT = 5
 private class WorkshopPickerState(private val repository: WorkshopRepository, initialId: String) {
     var workshops by mutableStateOf<List<WorkshopDetailDto>>(emptyList())
     var selectedId by mutableStateOf(initialId)
+
+    /**
+     * What [isDirty] and [unfiledReason] compare against.
+     *
+     * PRIVATE SET, for the identical reason `DesignWorkshopPickerState.baselineId` already carries
+     * one: it may be MOVED ONLY BY THIS CLASS'S OWN DEFAULTING LOGIC ([applyDefault], [markSaved])
+     * and never by a direct write from outside it. [unfiledLinkReason] reads a non-blank baseline
+     * over a blank selection as "the researcher opened the picker and chose None" — a real decision
+     * that has to reach the server as an explicit clearance. A bare `var` lets some future call site
+     * move the baseline without moving [selectedId] alongside it, which manufactures exactly that
+     * decision out of a value nobody ever actually cleared.
+     */
     var baselineId by mutableStateOf(initialId)
+        private set
+
+    /**
+     * What happened when the list was asked for — the three answers, told apart, in place of a bare
+     * `workshops: List<..>` that could only say "answered" or "not answered yet" and therefore filed
+     * a FAILED read under the same word as a read still in flight. Mirrors
+     * [DesignWorkshopPickerState.listState] field for field; see [markListed] and [markFailed] for
+     * who sets it and [rememberWorkshopPicker] for the request this describes the outcome of.
+     */
+    var listState by mutableStateOf<WorkshopListState>(WorkshopListState.Loading)
+        private set
+
+    /**
+     * Whether the device reached the server at all, when [listState] is [WorkshopListState.Failed].
+     *
+     * NOT A NETWORK PROBE — [WorkshopRepository.isTransient]'s verdict on the throwable and nothing
+     * else, which is the same classification the offline outbox uses to decide whether an entry is
+     * worth retrying. See [DesignWorkshopPickerState.online] for the full case against a second idea
+     * of what "offline" means on this handset.
+     */
+    var online by mutableStateOf(true)
+        private set
+
+    /**
+     * What the SERVER said this account holds, which is not the same as what arrived.
+     *
+     * [WorkshopRepository.workshopsIMaySubmitToPage] asks for one page; keeping `total` beside the
+     * rows is the only thing that lets [workshopCapLine] print an honest sentence rather than a
+     * silent truncation — see that function's own note on the eleven call sites in this app that
+     * kept `items` and threw `total` away.
+     */
+    var total by mutableStateOf(0)
+        private set
 
     /** Pre-flight answer for the CURRENT selection; null while it loads or when it is unavailable. */
     var check by mutableStateOf<WorkshopSubmissionCheckDto?>(null)
@@ -5746,6 +6155,20 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
 
     /** The value to put in a create/update body — null when the record is deliberately unlinked. */
     fun value(): String? = selectedId.ifBlank { null }
+
+    /**
+     * WHY THIS BOX IS EMPTY, when it is — fed to [WorkshopRepository.queueOffline] through
+     * [workshopUnfiledReasons] at every save handler that mounts this picker. See
+     * [DesignWorkshopPickerState.unfiledReason], whose doc carries the full reasoning: the two
+     * classes read the one rule in [unfiledLinkReason] with their own three inputs rather than each
+     * inventing it, because a rule that decides whether a link is DESTROYED copied into two files is
+     * that defect with a delay on it, waiting for whichever file is edited next.
+     */
+    fun unfiledReason(): String? = unfiledLinkReason(
+        selectedId = selectedId,
+        baselineId = baselineId,
+        hadOptions = workshops.isNotEmpty(),
+    )
 
     /** True once the user has changed the workshop away from the loaded/auto-defaulted one. */
     fun isDirty(): Boolean = selectedId != baselineId
@@ -5829,6 +6252,24 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
         awaitingConfirm?.complete(confirmed)
         awaitingConfirm = null
     }
+
+    /** The read answered. An empty page is an ANSWER and is recorded as one. */
+    internal fun markListed(page: PageResponse<WorkshopDetailDto>) {
+        workshops = page.items
+        total = page.total
+        listState = WorkshopListState.Listed(count = page.items.size, total = page.total)
+    }
+
+    /**
+     * The read did not answer, and whether the phone ever reached the server.
+     *
+     * [workshops] is deliberately left as it was: on a re-open of a form whose list arrived once, a
+     * later request failing must not blank what is already on screen and already usable.
+     */
+    internal fun markFailed(transient: Boolean) {
+        online = !transient
+        listState = WorkshopListState.Failed
+    }
 }
 
 /**
@@ -5857,19 +6298,37 @@ private fun rememberWorkshopPicker(
 ): WorkshopPickerState {
     val state = remember(resetKey) { WorkshopPickerState(repository, initialId.orEmpty()) }
     LaunchedEffect(resetKey) {
-        // A failure here is non-fatal: the dropdown simply stays empty and the record saves unlinked,
-        // which is better than blocking a field capture on a list request. EMPTY and never a cached
-        // list: this device keeps no copy of the workshop table, and if it did, a stale access list
-        // would be wrong in the permissive direction in the one control that must not offer what the
-        // save will then refuse.
-        runCatching { repository.workshopsIMaySubmitTo() }.onSuccess { list ->
-            state.workshops = list
-            // The list is ordered most-recent-occurrence-first; the default is the most recent one
-            // this user may actually submit to (see applyMostRecentSubmittable).
-            if (!isEdit && state.selectedId.isBlank()) {
-                state.applyMostRecentSubmittable(list)
+        /*
+          EMPTY AND NEVER A CACHED LIST ON FAILURE: this device keeps no copy of the workshop table,
+          and if it did, a stale access list would be wrong in the permissive direction in the one
+          control that must not offer what the save will then refuse.
+
+          [WorkshopRepository.workshopsIMaySubmitToPage] OVER [WorkshopRepository.workshopsIMaySubmitTo],
+          specifically because the plain list throws the server's `total` away — see that function's
+          own note — and a picker that only ever knows `items.size` cannot print [workshopCapLine]'s
+          sentence honestly. The page is still the scoped, `accessibleOnly=true` read; nothing here
+          widens what the last patch narrowed.
+        */
+        runCatching { repository.workshopsIMaySubmitToPage() }
+            .onSuccess { page ->
+                state.markListed(page)
+                // The list is ordered most-recent-occurrence-first; the default is the most recent one
+                // this user may actually submit to (see applyMostRecentSubmittable).
+                if (!isEdit && state.selectedId.isBlank()) {
+                    state.applyMostRecentSubmittable(page.items)
+                }
             }
-        }
+            .onFailure { error ->
+                // Leaving the screen is not a failure. Rethrown, as every other load on this client
+                // does, so a dead composable never writes state — AND, since this arm now writes a
+                // sentence, so that a form the researcher simply navigated away from mid-fetch never
+                // reports "the list could not be loaded" about a request that was never actually one.
+                if (error is CancellationException) throw error
+                // WHICH FAILURE, BECAUSE THE TWO HAVE DIFFERENT NEXT MOVES — see
+                // [DesignWorkshopPickerState.online] and [WorkshopRepository.isTransient] for the
+                // full case against a second, private idea of what "offline" means here.
+                state.markFailed(transient = repository.isTransient(error))
+            }
     }
     // Keep the pre-flight answer in step with whatever is selected, including the auto-default, so
     // the warning is already on screen by the time the researcher reaches the save button.
@@ -5901,11 +6360,79 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
     }
     val endLabel = formatIsoDate(check?.endDate ?: selected?.endDate ?: selected?.date)
 
+    /*
+      THE LABEL, THE HINT AND THE ORDER ARE `WorkshopOptions.kt`'S AND NOT THIS FILE'S — the field
+      workshop's half of the same rule [DesignWorkshopField] already states: three copies of one
+      assembly, each claiming to match the others, is the exact condition under which they did not.
+    */
+    val options = remember(state.workshops, state.selectedId) {
+        fieldWorkshopOptions(rows = state.workshops, offPageId = state.selectedId)
+    }
+
+    /*
+      WHICH OF THE STATES THIS PICKER IS IN, IN WORDS — R3. `SearchableSelectField` knows the list is
+      empty and knows nothing whatever about WHY; only this composable holds `listState`, so only
+      this composable can say which of "still loading", "the read failed" or "the read answered and
+      the answer is none" is true right now.
+    */
+    val notice = workshopListNotice(state.listState, WorkshopListKind.FIELD, state.online)
+
+    /*
+      R2 — A FIELD MAY ONLY BE MANDATORY WHERE IT IS ANSWERABLE, Android half: a control with nothing
+      in it may not be opened. `options.isNotEmpty()` and not `state.workshops.isNotEmpty()`,
+      deliberately — the off-page row counts, so a record already filed under a workshop this device
+      cannot list still has one true thing to show and one reversible choice to offer.
+    */
+    val listEnabled = !saving && listIsAnswerable(options)
+
+    /*
+      SAID ONCE, NOT TWICE. `SearchableSelectField` prints `emptyMessage` on the form itself exactly
+      when the list is empty AND the control is disabled, because in that state neither surface can
+      be opened and a sentence living only inside the popup could never be read.
+    */
+    val standDown = options.isEmpty() && !listEnabled
+
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        WorkshopDropdown(
-            workshops = state.workshops,
-            selectedValue = state.selectedId
-        ) { state.selectedId = it }
+        SearchableSelectField(
+            label = "Workshop",
+            options = options,
+            selectedValue = state.selectedId,
+            placeholder = NO_FIELD_WORKSHOP,
+            // Kept even while it could not be honoured, for the reason [DesignWorkshopField] gives:
+            // hiding the row would have made a transport limitation look like a decision, and now
+            // that the clearance reaches the server (see [WorkshopPickerState.unfiledReason]) it
+            // stays for the ordinary reason, which is that unfiling a record is a real answer.
+            includeNone = true,
+            enabled = listEnabled,
+            /*
+              THE FILTER BOX IS OFF, AND THE SENTENCE BELOW IS THE PRICE OF SWITCHING IT OFF — §3.6.
+              [options] is ONE SERVER-TRUNCATED PAGE; a filter box over it answers "no matches" about
+              a workshop that exists, in the one control least allowed to say so.
+            */
+            searchable = false,
+            // The caller's sentence, never the primitive's. Null means "the list arrived with rows
+            // in it", which is the one state that needs no explanation.
+            emptyMessage = notice,
+            onSelect = { state.selectedId = it },
+        )
+        /*
+          RULE 10: EVERY CAP SAYS SO, WITH BOTH NUMBERS, and only when it bites — owed the moment
+          `searchable = false` switches the filter box off above, per [DesignWorkshopField]'s own
+          note on this exact trade. An ordinary designer on four workshops never reads a sentence
+          about a ceiling they cannot reach; the one assigned to more than a page's worth does.
+        */
+        workshopCapLine(state.workshops.size, state.total, WorkshopListKind.FIELD)?.let { cap ->
+            Text(cap, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        // Skipped when the field has been stood down: `SearchableSelectField` already printed this
+        // exact string on the form for that case, and one fact may not appear twice under one control.
+        if (!standDown) notice?.let { Text(it, color = Muted, fontSize = 11.sp, lineHeight = 15.sp) }
+        if (options.isNotEmpty()) {
+            Text(
+                "Only workshops you have access to are listed. Ask an admin if one you worked at is missing.",
+                color = Muted, fontSize = 11.sp, lineHeight = 15.sp,
+            )
+        }
         if (blocked) {
             Text(
                 "You are not assigned to this workshop, so saving will be refused. Ask an admin to " +
@@ -6004,30 +6531,6 @@ private fun workshopEndedLocally(workshop: WorkshopDetailDto?): Boolean {
     val raw = workshop?.endDate ?: workshop?.date ?: workshop?.startDate ?: return false
     val end = parseIsoToLocalDate(raw) ?: return false
     return LocalDate.now(ZoneId.systemDefault()).isAfter(end)
-}
-
-/**
- * The workshop dropdown itself. Styling and behaviour are [DropdownField]'s; only the option labels
- * are workshop-specific. Record forms mount [WorkshopField] rather than this, so they get the
- * pre-flight warnings with it.
- */
-@Composable
-private fun WorkshopDropdown(
-    workshops: List<WorkshopDetailDto>,
-    selectedValue: String,
-    label: String = "Workshop",
-    placeholder: String = "Unlinked",
-    enabled: Boolean = true,
-    onSelect: (String) -> Unit
-) {
-    DropdownField(
-        label = label,
-        options = workshops.map { it.id to workshopOptionLabel(it) },
-        selectedValue = selectedValue,
-        placeholder = placeholder,
-        enabled = enabled,
-        onSelect = onSelect
-    )
 }
 
 /** "Chanderi weaving · 2026-07-12" — the date it took place separates repeat visits to one place. */
@@ -7428,7 +7931,8 @@ private fun CraftForm(
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "craft", offlineFormJson.encodeToString(body),
                     name.trim(), media, name.trim(), "Field media for ${name.trim()}",
-                    editingId = editing?.id)
+                    editingId = editing?.id,
+                    unfiled = workshopUnfiledReasons(workshop = workshop.unfiledReason()))
             }.getOrNull()
             if (queuedOffline != null) {
                 media.reset()
@@ -7613,6 +8117,18 @@ private fun ArtisanForm(
     // oldest and best-documented artisans in the repository.
     var experienceYears by remember(editing) {
         mutableStateOf(editing?.experienceYears?.toString().orEmpty())
+    }
+    // THE MONTHS HALF OF THE SAME ANSWER. `ExperienceFields.kt`'s own file header names this exact
+    // call site as the one caller that had not caught up: the column, the 0..11 API bound and the
+    // wire key on `ArtisanCreateRequest` were all live before this form could set them, so a months
+    // value typed on the web arrived on this handset and was drawn nowhere. Seeded from the record
+    // precisely as `experienceYears` is above — never from a derived figure, because there is none:
+    // `deriveExperienceYears` only ever produces a YEARS readout, and months have no server-side
+    // derivation to defer to. See `WorkshopRepository.ARTISAN_CLEARABLE_COLUMNS`, where
+    // `"experienceMonths"` now sits beside `"experienceYears"`, for how an emptied box here reaches
+    // the server as an explicit null instead of being silently dropped from the PATCH.
+    var experienceMonths by remember(editing) {
+        mutableStateOf(editing?.experienceMonths?.toString().orEmpty())
     }
     var dosItems by remember(editing) { mutableStateOf(splitNumbered(editing?.dos)) }
     var dontsItems by remember(editing) { mutableStateOf(splitNumbered(editing?.donts)) }
@@ -7800,6 +8316,7 @@ private fun ArtisanForm(
                 dateOfBirth = dateOfBirth?.toString(),
                 craftStartDate = craftStartDate?.toString(),
                 experienceYears = experienceYears.toIntOrNull(),
+                experienceMonths = experienceMonths.toIntOrNull(),
                 dos = dosText,
                 donts = dontsText,
                 craftId = craftId.ifBlank { null },
@@ -7817,7 +8334,11 @@ private fun ArtisanForm(
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "artisan", offlineFormJson.encodeToString(body),
                     name.trim(), media, name.trim(), "Field media for ${name.trim()}",
-                    editingId = editing?.id)
+                    editingId = editing?.id,
+                    unfiled = workshopUnfiledReasons(
+                        designWorkshop = designWorkshop.unfiledReason(),
+                        workshop = workshop.unfiledReason(),
+                    ))
             }.getOrNull()
             if (queuedOffline != null) {
                 media.reset()
@@ -7963,31 +8484,29 @@ private fun ArtisanForm(
                 }
             }
         )
-        OutlinedTextField(
-            value = experienceYears,
-            // Digits only, and capped at two of them: 0..90 mirrors the stage registry's own bounds
-            // for `participant.experienceYears`, so this form cannot accept a number the workshop
-            // would then refuse on a row it filled in from this very record.
-            onValueChange = { typed -> experienceYears = typed.filter { it.isDigit() }.take(2) },
-            label = { Text("Experience (years)") },
-            // WHY THIS BOX IS STILL HERE on a form whose experience is derived, and why it is not
-            // merely disabled while a date is set: see the state declaration above, and the web
-            // form's own note. A disabled field would drop out of the payload, the API would read
-            // the absence as a clear, and clearing the joining date a week later would leave the
-            // artisan with no experience at all.
-            supportingText = {
-                Text(
-                    deriveExperienceYears(craftStartDate).let { years ->
-                        if (years == null) {
-                            "Used when there is no \"practising since\" date: a stated number, which does not change as the years pass."
-                        } else {
-                            "The date above answers this - $years years is what the workshop and the report print. A number here stays on the record and is read only while that date is empty."
-                        }
-                    }
-                )
+        ExperienceFields(
+            years = experienceYears,
+            months = experienceMonths,
+            // WHY THIS PAIR IS STILL HERE on a form whose experience is derived, and why it is not
+            // merely disabled while a date is set: see the two state declarations above, and the
+            // web form's own note (`frontend/components/forms/ArtisanForm.tsx`). A disabled control
+            // is omitted from the request body, `WorkshopRepository.ARTISAN_CLEARABLE_COLUMNS` reads
+            // the absence as an instruction to clear the column, and clearing the joining date a
+            // week later would leave the artisan with no experience at all.
+            enabled = true,
+            // 0..90 mirrors the stage registry's own bound for `participant.experienceYears`, so
+            // this form cannot accept a number the workshop would then refuse on a row it filled in
+            // from this very record.
+            maxYears = 90,
+            onYearsChange = { experienceYears = it },
+            onMonthsChange = { experienceMonths = it },
+            help = deriveExperienceYears(craftStartDate).let { years ->
+                if (years == null) {
+                    "Used when there is no \"practising since\" date: a stated answer, which does not change as the years pass."
+                } else {
+                    "The date above answers this - $years years is what the workshop and the report print. A stated answer here stays on the record and is read only while that date is empty."
+                }
             },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
         ArtisanPhoneField(value = phone, error = phoneError) { phone = it; phoneError = null }
@@ -8201,7 +8720,10 @@ private fun WorkshopForm(
         if (existing != null && media.location == null) media.location = existing.toRequest()
     }
     LaunchedEffect(Unit) {
-        runCatching { repository.crafts() }.onSuccess { crafts = it }
+        // C1: cache-first, via loadCraftRegister — see the section header above HomeScreen. The craft
+        // checklist below is offered on every workshop form, including offline in the field, so this
+        // is exactly the list an empty-because-no-cache dropdown would have cost the researcher.
+        loadCraftRegister(context, repository) { crafts = it }
     }
 
     fun submit() {
@@ -8332,7 +8854,11 @@ private fun WorkshopForm(
         }
         CheckboxMultiSelectField(
             label = "Crafts covered",
-            emptyMessage = "No crafts available yet. Create a craft first.",
+            // The repository's own sentence for "answered, and this table has none" — see
+            // `unscopedEmptyLine`'s KDoc, which quotes this exact hand-rolled string (and its
+            // sibling below) as the two worked examples of the bug it exists to fix: a claim about
+            // the whole craft table, asserted from a read that this control never checks succeeded.
+            emptyMessage = unscopedEmptyLine("crafts"),
             options = crafts.map { it.id to (it.name + (it.place?.let { p -> " · $p" } ?: "")) },
             selectedIds = selectedCrafts
         ) { id ->
@@ -8526,7 +9052,11 @@ private fun ProductForm(
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "product", offlineFormJson.encodeToString(body),
                     productName.trim(), media, productName.trim(), "Field media for ${productName.trim()}",
-                    editingId = editing?.id)
+                    editingId = editing?.id,
+                    unfiled = workshopUnfiledReasons(
+                        designWorkshop = designWorkshop.unfiledReason(),
+                        workshop = workshop.unfiledReason(),
+                    ))
             }.getOrNull()
             if (queuedOffline != null) {
                 // Offline is the normal case, but a queued NEW product has no id yet, so no process
@@ -8930,6 +9460,16 @@ private fun ToolForm(
                     repository.queueOfflineEntry(
                         context, "tool", offlineFormJson.encodeToString(body), toolkitName.trim(), items,
                         targetId = if (isEdit) editing?.id else null,
+                        // WHY THIS BOX WAS EMPTY, for both pickers this form mounts — see
+                        // [WorkshopPickerState.unfiledReason]. Missing here is the same defect as
+                        // missing on `trySaveOffline`: a tool queued offline with the workshop or
+                        // design-workshop box cleared would replay indistinguishably from one where
+                        // the picker never had anything to offer, and `patchBodyWithClearances` would
+                        // have nothing to tell the two apart with.
+                        unfiled = workshopUnfiledReasons(
+                            designWorkshop = designWorkshop.unfiledReason(),
+                            workshop = workshop.unfiledReason(),
+                        ),
                     )
                 }.getOrNull()
                 if (queued != null) {
@@ -9338,8 +9878,12 @@ private fun ProcessForm(
     }
 
     LaunchedEffect(Unit) {
-        runCatching { repository.products() }.onSuccess { products = it }
-        val gotArtisans = runCatching { repository.artisans() }.onSuccess { artisans = it }.isSuccess
+        // C1: cache-first, via loadProductRegister/loadArtisanRegister — see the section header above
+        // HomeScreen. `products` doubles as the offline fallback the cascade effect below reads once
+        // its own artisan-scoped fetch cannot reach the server, so caching it here is what lets that
+        // fallback actually fire offline instead of the whole cascade throwing before reaching it.
+        loadProductRegister(context, repository) { products = it }
+        val gotArtisans = loadArtisanRegister(context, repository) { artisans = it }
         artisanListState = if (gotArtisans) CarryScopeState.LOADED else CarryScopeState.UNAVAILABLE
     }
 
@@ -9397,13 +9941,14 @@ private fun ProcessForm(
         productsLoading = true
         val selectedArtisanName = artisans.firstOrNull { it.id == artisanId }?.name?.trim()
         val result = runCatching {
-            val linked = repository.productsForArtisan(artisanId, selectedArtisanName)
+            // C1: the artisan-scoped fetch and its offline fallback now go through
+            // loadArtisanProductFallback, which gives `linked` its own runCatching instead of
+            // letting a failed fetch throw past `broad` before it is ever computed — see that
+            // function's note. `broad` still prefers the in-memory list over a second live
+            // request; since `products` is cache-first now (the LaunchedEffect above), that
+            // in-memory case no longer depends on being online at all.
             val broad = if (products.isNotEmpty()) products else runCatching { repository.products() }.getOrDefault(emptyList())
-            val byName = broad.filter { p ->
-                (p.artisanId != null && p.artisanId == artisanId) ||
-                    (!selectedArtisanName.isNullOrBlank() && p.artisanName.trim().equals(selectedArtisanName, ignoreCase = true))
-            }
-            (linked + byName).distinctBy { it.id }
+            loadArtisanProductFallback(repository, artisanId, selectedArtisanName, broad)
         }
         productsLoading = false
         result.onSuccess { fetched ->
@@ -9429,8 +9974,15 @@ private fun ProcessForm(
         nameError = null; productError = null; stepsError = null; preMediaError = null; artisanError = null
         var firstInvalid = false
         if (name.isBlank()) { nameError = "This field cannot be empty"; if (!firstInvalid) { firstInvalid = true; runCatching { nameFocus.requestFocus() } } }
-        if (artisanId.isBlank()) artisanError = "Please select an artisan"
-        if (productId.isBlank()) productError = "Please select a product"
+        // R2 — A FIELD MAY ONLY BE MANDATORY WHERE IT IS ANSWERABLE. `artisans` / `artisanProducts`
+        // arriving empty — the fetch failed, the device is offline, or the account genuinely has
+        // none scoped to it — must not refuse the save the way a required closed list with no
+        // members did in the OFFLINE_STATES incident (`LocationFields`): native validation blocked
+        // the submit before the offline outbox was ever reached, and the interview and its
+        // photographs died with the tab. A researcher cannot pick from a list with nothing in it, so
+        // a validator that still demands a pick is demanding an answer this screen never offered.
+        if (artisans.isNotEmpty() && artisanId.isBlank()) artisanError = "Please select an artisan"
+        if (artisanProducts.isNotEmpty() && productId.isBlank()) productError = "Please select a product"
         if (preProcessAvailable && preMedia.uris.isEmpty() && (editing?.media?.isEmpty() != false)) {
             preMediaError = "Attach the pre-process media or uncheck the box"
         }
@@ -9516,6 +10068,14 @@ private fun ProcessForm(
                     repository.queueOfflineEntry(
                         context, "process", offlineFormJson.encodeToString(body), name.trim(), items,
                         targetId = if (isEdit) editing?.id else null,
+                        // See the identical note on the tool form's `queueOfflineEntry` call: this
+                        // form mounts both [workshop] and [designWorkshop], and both boxes need their
+                        // own answer to "why was this empty" carried into the outbox, not just the
+                        // three forms that happen to route through `trySaveOffline`.
+                        unfiled = workshopUnfiledReasons(
+                            designWorkshop = designWorkshop.unfiledReason(),
+                            workshop = workshop.unfiledReason(),
+                        ),
                     )
                 }.getOrNull()
                 if (queued != null) {
@@ -10076,6 +10636,7 @@ private fun ToolAssignScreen(
     repository: WorkshopRepository,
     onError: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tools by remember { mutableStateOf<List<ToolDetailDto>>(emptyList()) }
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
@@ -10088,9 +10649,16 @@ private fun ToolAssignScreen(
     var info by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        runCatching { repository.tools() }.onSuccess { tools = it }.onFailure { onError(it.message ?: "Failed to load tools") }
-        runCatching { repository.crafts() }.onSuccess { crafts = it }
-        runCatching { repository.artisans() }.onSuccess { artisans = it }
+        // C1: cache-first, via loadToolRegister/loadCraftRegister/loadArtisanRegister — see the
+        // section header above HomeScreen. The error sentence now fires only when this device has
+        // NEVER cached the tool register and the live fetch also failed; a re-open of this screen
+        // offline, with a register already on the phone from an earlier session, no longer repeats a
+        // "Failed to load tools" complaint about a read that in fact answered from disk.
+        if (!loadToolRegister(context, repository) { tools = it }) {
+            onError("Failed to load tools")
+        }
+        loadCraftRegister(context, repository) { crafts = it }
+        loadArtisanRegister(context, repository) { artisans = it }
     }
     LaunchedEffect(toolId) {
         if (toolId.isBlank()) { assigned = emptyList(); return@LaunchedEffect }
@@ -10122,7 +10690,10 @@ private fun ToolAssignScreen(
             label = "Crafts",
             options = crafts.map { it.id to it.name },
             selectedIds = craftIds,
-            emptyMessage = "No crafts available.",
+            // See `unscopedEmptyLine`'s KDoc — this literal string is the one it names by name as
+            // the motivating bug: a claim about the repository, worded as fact, from a read this
+            // control has no way to know actually answered.
+            emptyMessage = unscopedEmptyLine("crafts"),
             onToggle = { id -> craftIds = if (craftIds.contains(id)) craftIds - id else craftIds + id }
         )
         CheckboxMultiSelectField(
@@ -10344,181 +10915,22 @@ private fun ArtisanQuestionnaireData(repository: WorkshopRepository, artisanId: 
     }
 }
 
-// SharedPreferences holding the "don't remind me again" acknowledgement for AI-cost prompts, and
-// whether the user has seen (or skipped) the first-run walkthrough.
+// SharedPreferences holding the "don't remind me again" acknowledgement for AI-cost prompts.
+//
+// THE WALKTHROUGH'S "SEEN" FLAG LIVES IN THIS SAME FILE and has moved to `ui/WalkthroughScreen.kt`
+// with the rest of the walkthrough, where it names `"fieldrepo_prefs"` again in its own constant
+// rather than importing this one — dragging a shared const across a file boundary for two unrelated
+// helpers buys nothing. Both places carry the same warning: this string is pre-rebrand and stays
+// pre-rebrand, because `getSharedPreferences` with an unknown name hands back an empty document
+// instead of failing, so renaming it would silently reset every installed user's flags.
 private const val APP_PREFS_NAME = "fieldrepo_prefs"
 private const val PREF_AI_COST_ACK = "ai_refine_cost_ack"
-private const val PREF_WALKTHROUGH_SEEN = "walkthrough_seen"
 
 private fun aiCostReminderSuppressed(context: Context): Boolean =
     context.getSharedPreferences(APP_PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_AI_COST_ACK, false)
 
 private fun suppressAiCostReminder(context: Context) {
     context.getSharedPreferences(APP_PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AI_COST_ACK, true).apply()
-}
-
-/** True once the user has finished or skipped the walkthrough at least once on this device. */
-private fun walkthroughSeen(context: Context): Boolean =
-    context.getSharedPreferences(APP_PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_WALKTHROUGH_SEEN, false)
-
-private fun markWalkthroughSeen(context: Context) {
-    context.getSharedPreferences(APP_PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_WALKTHROUGH_SEEN, true).apply()
-}
-
-/** One step of the in-app walkthrough: a heading and a short description of a feature area. */
-private data class WalkStep(val title: String, val body: String)
-
-/**
- * The walkthrough, which is the WEB GUIDE's ten steps rather than a tour of this app's buttons.
- *
- * What it used to be — dashboard, menu, forms, attach media, the grid — described the interface. But
- * a researcher opening this app for the first time does not need to be told what a menu is; they need
- * to know that a workshop comes before a craft, that a craft comes before an artisan, and that a
- * process hangs off a product. That ordering is the actual thing to learn, it is what /guide teaches
- * on the web, and getting it wrong in the field costs a return trip.
- *
- * The wording is lifted from frontend/components/guide/steps.ts on purpose: the two apps are one
- * product, a researcher moves between them mid-workshop, and a step that is worded differently in
- * each reads as two different instructions.
- */
-private val walkthroughSteps = listOf(
-    WalkStep(
-        "Ten steps, in this order",
-        "This is the documentation process the whole repository is built around, and it is the same ten steps in the same order on the web. Work down it once and you will not need the guide again. You can leave at any point and reopen this from the menu."
-    ),
-    WalkStep(
-        "1. Workshop \u00b7 Record workshop",
-        "Open the workshop you are documenting under — or create it — before you record anything " +
-            "else. Every record you make is scoped to a workshop. Products, tools and interviews all " +
-            "carry a linked workshop, and the Data Browser opens on \"By workshop\", which files the " +
-            "whole repository under the workshop it was recorded in. On a create form the most recent " +
-            "workshop you have access to is preselected, so getting this right once saves you picking " +
-            "it on every screen afterwards. Watch out: Create the workshop before you leave for the " +
-            "field — it is the container everything else drops into."
-    ),
-    WalkStep(
-        "2. Craft \u00b7 Add craft",
-        "Add the craft being documented so artisans, products and tools have something to hang " +
-            "off. Craft is the shared vocabulary of the repository: artisans link to a craft, " +
-            "products and tools inherit the craft name from it, and the Data Browser groups every " +
-            "workshop's contents by craft. Adding it once keeps spellings consistent across " +
-            "everyone's records. Watch out: Check the list first — if the craft already exists, reuse " +
-            "it instead of creating a near-duplicate spelling."
-    ),
-    WalkStep(
-        "3. Artisan \u00b7 Record artisan",
-        "Record the person: who they are, where they work, how to reach them, and what they have " +
-            "learnt. The artisan is the anchor of the dataset. Products, processes, tools and " +
-            "questionnaire interviews all link back to an artisan record, and the Do's and Don'ts are " +
-            "the artisan's own hard-won craft knowledge — the part of the archive that cannot be " +
-            "reconstructed later. Watch out: Do's and Don'ts are required. Press Enter for each new " +
-            "point — one lesson per line."
-    ),
-    WalkStep(
-        "4. Product \u00b7 Record product",
-        "Record one thing this artisan makes, with its measurements, economics and photographs. " +
-            "The product record is where the craft becomes measurable: dimensions, cost of making, " +
-            "selling price and market demand are the fields researchers compare across regions. Link " +
-            "it to the artisan and the craft and the whole chain stays navigable. Watch out: Pick the " +
-            "linked craft first — the artisan dropdown stays disabled until a craft is chosen, then " +
-            "only lists that craft's artisans."
-    ),
-    WalkStep(
-        "5. Process \u00b7 Document process",
-        "Walk through how that product is made, one step at a time, filming each step as it " +
-            "happens. The process is the craft itself. A product photograph shows the result; the " +
-            "step-by-step record with per-step media shows the knowledge — the sequence, the hand " +
-            "movements, the judgement calls that a text description always loses. Watch out: Add a " +
-            "step with \"Add Another Step\" and pick Sequential for an ordered stage, or Group of " +
-            "activities for things done together."
-    ),
-    WalkStep(
-        "6. Tool \u00b7 Record tool",
-        "Record the toolkit the artisan uses: what it is made of, how big it is, who made it, " +
-            "what it costs to replace. Tools are the most quietly endangered part of a craft — the " +
-            "maker of a tool often disappears before the craft does. Replacement cost, maker and " +
-            "tradition type are the fields that record whether the toolchain behind the craft is " +
-            "still alive. Watch out: Fill only the dimensions that make sense for the tool — a blade " +
-            "has a length and thickness, a wheel has a radius."
-    ),
-    WalkStep(
-        "7. Questionnaire \u00b7 Take interview",
-        "Sit down with the artisan and work through the interview sections, recording each answer " +
-            "as audio. The questionnaire is the artisan speaking in their own voice and their own " +
-            "language. Recorded audio is auto-transcribed on the server, so you get both the original " +
-            "recording and searchable text without typing during the interview. Watch out: There is " +
-            "one interview per exact set of artisans. If an entry already exists for that set, saving " +
-            "adds your answers to it — it never creates a duplicate."
-    ),
-    WalkStep(
-        "8. Miscellaneous Media \u00b7 Upload media",
-        "Upload the photographs, video, audio and files that do not belong to any single record. " +
-            "Field work produces context that no form has a slot for: the road into the village, the " +
-            "market, an unplanned conversation. Miscellaneous Media keeps that material inside the " +
-            "repository instead of on a phone that gets wiped. Watch out: Upload stays disabled until " +
-            "you pick a Linked record type. If the file belongs to nothing in particular, pick " +
-            "\"Miscellaneous Media\" and leave the entry blank."
-    ),
-    WalkStep(
-        "9. Review \u00b7 Track your submissions",
-        "Everything you submit goes into the review queue and comes back Approved, Rejected, or " +
-            "Sent for revision. Review is what turns a pile of field notes into a dataset anyone can " +
-            "cite. It also means you are never the last check on your own work — a reviewer above " +
-            "your tier reads every record before it counts as final. Watch out: Below Professor the " +
-            "status chip is locked: whatever you create is submitted as Pending. That is normal, not " +
-            "an error."
-    ),
-    WalkStep(
-        "10. View Data \u00b7 Browse records",
-        "Browse the whole repository as a directory tree and export a report of any subtree. This " +
-            "is where the documentation stops being data entry and starts being research material: " +
-            "the same records, filed three different ways, previewable in place and downloadable as a " +
-            "spreadsheet. Watch out: Pick a folder, then use the breadcrumb to move back up — the " +
-            "tree loads lazily as you expand it."
-    ),
-    WalkStep(
-        "Before you leave the field",
-        "A missing field is a phone call; a missing recording is another trip. Every artisan you " +
-            "spoke to has a record with Do's and Don'ts. Every product you photographed has its " +
-            "dimensions and its costs. Every process has its steps in order, and the steps have " +
-            "video. Every tool has a material, a maker and a replacement cost. The questionnaire's " +
-            "completion matrix has no unexplained gaps. Anything you shot that has no home is in " +
-            "Miscellaneous Media."
-    )
-)
-
-/**
- * First-run (and on-demand) walkthrough: a stepped guide across the app's features with Back / Next /
- * Done and a Skip. New sign-ups see it automatically; everyone can reopen it from the menu. Dismissing
- * (Skip, Done, back, or tap-outside) marks it seen so it doesn't reappear on every launch.
- */
-@Composable
-private fun WalkthroughDialog(onDismiss: () -> Unit) {
-    var step by remember { mutableStateOf(0) }
-    val steps = walkthroughSteps
-    val current = steps[step]
-    val isLast = step == steps.lastIndex
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Text("Walkthrough · ${step + 1}/${steps.size}", color = Muted, fontSize = 11.sp)
-                Text(current.title, display = true, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
-            }
-        },
-        text = { Text(current.body, fontSize = 14.sp, color = Body) },
-        confirmButton = {
-            TextButton(onClick = { if (isLast) onDismiss() else step++ }) {
-                Text(if (isLast) "Done" else "Next")
-            }
-        },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (step > 0) TextButton(onClick = { step-- }) { Text("Back") }
-                TextButton(onClick = onDismiss) { Text("Skip") }
-            }
-        }
-    )
 }
 
 /**
@@ -14231,7 +14643,15 @@ private fun QuestionnaireForm(
                                     purpose = media.purposes[uri]))
                             }
                             repository.queueOfflineEntry(context, "questionnaire", offlineFormJson.encodeToString(request),
-                                title.trim().ifBlank { "Interview" }, items)
+                                title.trim().ifBlank { "Interview" }, items,
+                                // See the identical note on the tool form's `queueOfflineEntry` call:
+                                // this form mounts both [workshop] and [designWorkshop], so a cleared
+                                // box needs to reach the outbox as a real clearance rather than
+                                // vanishing into the same silence as a picker that never had options.
+                                unfiled = workshopUnfiledReasons(
+                                    designWorkshop = designWorkshop.unfiledReason(),
+                                    workshop = workshop.unfiledReason(),
+                                ))
                         }.getOrNull()
                         if (queued != null) {
                             media.reset(); qMedia.reset(); questionAudio = emptyMap()
@@ -15391,7 +15811,15 @@ private fun WorkshopAccessScreen(
                 label = "Workshops",
                 options = workshops.map { it.id to workshopOptionLabel(it) },
                 selectedIds = selected,
-                emptyMessage = "No workshops to request yet.",
+                // `unscopedEmptyLine`, and NOT `scopedEmptyLine`, because `workshopsByOccurrence`'s
+                // own KDoc (`WorkshopRepository.kt`) is explicit that this list is unnarrowed by any
+                // grant — "READING IS OPEN IN THIS REPOSITORY AND THIS LIST IS THE WHOLE TABLE" —
+                // and names this exact screen as one of the surfaces meant to read it that way.
+                // `scopedEmptyLine` requires a list "narrowed by a grant" and this one is not, so an
+                // empty answer here is a fact about the repository (no `Workshop` rows exist yet),
+                // not about this account's standing — the same repository-level claim
+                // `unscopedEmptyLine`'s own KDoc quotes this literal string as a worked example of.
+                emptyMessage = unscopedEmptyLine("workshops"),
                 onToggle = { id -> selected = if (id in selected) selected - id else selected + id }
             )
             DropdownField(
@@ -16628,6 +17056,17 @@ private suspend fun trySaveOffline(
     recordName: String?,
     caption: String?,
     editingId: String? = null,
+    /**
+     * WHY A WORKSHOP BOX ON THIS FORM WAS EMPTY, when one was — forwarded verbatim to
+     * [WorkshopRepository.queueOffline]. Build it with [workshopUnfiledReasons] from whichever of
+     * [WorkshopPickerState.unfiledReason] / `DesignWorkshopPickerState.unfiledReason` this call
+     * site's form actually mounts; see [PendingEntry.unfiled] for the two absences this tells apart
+     * and why collapsing them loses a clearance or invents one.
+     *
+     * DEFAULTED TO EMPTY, which is what every call site not yet updated to pass it sends, and which
+     * decodes and replays exactly as an entry queued before this parameter existed.
+     */
+    unfiled: Map<String, String> = emptyMap(),
 ): OfflineQueueResult? {
     if (repository.isOnline(context)) return null
     // An edit with no id is a create, and a create of something that already exists is a duplicate.
@@ -16638,6 +17077,7 @@ private suspend fun trySaveOffline(
         context, type, payloadJson, label, media.uris, recordName, caption,
         purposes = media.purposes,
         targetId = if (isEdit) editingId else null,
+        unfiled = unfiled,
     )
 }
 

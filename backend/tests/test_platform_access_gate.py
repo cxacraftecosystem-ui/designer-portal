@@ -1,7 +1,7 @@
 """THE PLATFORM ALLOW-LIST: the gate, the two distinct refusals, and the migration that must not
 lock anybody out.
 
-Six things are pinned here, and four of them are ways somebody loses access to the product.
+Seven things are pinned here, and four of them are ways somebody loses access to the product.
 
 **NO EXISTING ACCOUNT IS LOCKED OUT BY THE MIGRATION THAT INTRODUCES THE GATE.** An account of every
 one of the seven roles is created with NO allow-list row — the state of the database on the morning
@@ -39,6 +39,17 @@ Suspension writes the roster status and never ``User.role``, so a suspended admi
 ``/auth/login`` and could still mint there, renewably, for ever — a revoked person holding live data
 access. Section 8 pins both doors giving the same answer about the same account, and pins the
 break-glass opening at both.
+
+**BEING ADMITTED AS A DESIGNER IS BEING EMPANELLED — AND IT NEVER REVIVES A REVOCATION.** The two
+rosters are separate gates, so an account the allow-list admitted as a DESIGNER used to be refused by
+the empanelment gate with a sentence about an empanelment nobody had ever granted; section 9 pins
+that it now signs in and that the row created for it says it was derived rather than administered.
+The other half of that section is the guard on the rule the feature turns on: a SUSPENDED
+empanelment is a deliberate revocation and the allow-list must never bring it back, or every
+revocation an administrator has made comes undone one login at a time. Beside the two of them sits
+the control that stops the feature over-delivering: every OTHER rung of the ladder signs in without
+growing a roster row, because ``DesignerRoster`` is read as a statement that somebody is a
+practising designer and never as a record of who logged in.
 
 Postgres is required — every behaviour here is a row deciding an HTTP status — so the module skips
 itself when ``DATABASE_URL`` does not point at a local database, exactly as ``test_designer_roster``
@@ -136,6 +147,12 @@ ACCOUNTS: tuple[tuple[str, str], ...] = (
     # A MASTER admin whose row says SUSPENDED. The break-glass at the second door, which has to open
     # for exactly the same account the sign-in door opens for.
     ("masterBarred", "MASTER_ADMIN"),
+    # A DESIGNER THE ALLOW-LIST ADMITS AND NOBODY EVER EMPANELLED — requirement 28's account, and
+    # the shape of the live failure that produced the requirement. The fixture deliberately creates
+    # NO ``DesignerRoster`` row for it anywhere; the sign-in is what has to create one. Appended at
+    # the END because the parametrisation above takes ``ACCOUNTS[:7]``, which is the seven-rung
+    # ladder and must stay exactly those seven.
+    ("designerUnempanelled", "DESIGNER"),
 )
 
 #: The accounts whose access row is moved out of ACTIVE after the grandfathering, and to what.
@@ -277,6 +294,20 @@ def _rows(client: Any, world: dict[str, Any], term: str | None = None) -> dict[s
     response = client.get(
         "/api/access/roster",
         params={"search": term or world["stamp"], "pageSize": 200},
+        headers=_headers(world, "admin"),
+    )
+    assert response.status_code == 200, response.text
+    return {row["email"]: row for row in response.json()["items"]}
+
+
+def _empanelments(client: Any, world: dict[str, Any]) -> dict[str, Any]:
+    """This run's DESIGNER-roster rows, keyed by email — the OTHER table, read through its own
+    admin endpoint. Narrowed by the run stamp for ``_rows``'s reason: a database carrying a hundred
+    previous runs would otherwise push this run's rows off the first page and the absence of a row
+    would read as proof that nothing was created."""
+    response = client.get(
+        "/api/designers/roster",
+        params={"search": world["stamp"], "pageSize": 200},
         headers=_headers(world, "admin"),
     )
     assert response.status_code == 200, response.text
@@ -1026,3 +1057,143 @@ async def test_a_master_admin_with_a_suspended_row_still_mints(world, client):
     # the sign-in break-glass tests pin, for the same reason: an exemption that repairs the table
     # is an exemption an admin cannot see and cannot undo.
     assert _rows(client, world)[email]["status"] == "SUSPENDED"
+
+
+# --------------------------------------------------------------------------------------
+# 9. Requirement 28: an allow-listed designer is empanelled by default
+# --------------------------------------------------------------------------------------
+
+
+async def test_an_allow_listed_designer_with_no_empanelment_is_empanelled_on_the_spot(
+    world, client
+):
+    """**THE REQUIREMENT, AND THE LIVE FAILURE IT CAME FROM.**
+
+    Two independent gates, and passing one has never passed the other. The allow-list admits this
+    account and can promote it to DESIGNER through ``admitRole``; the empanelment gate then asks a
+    different table whether that designer is still recognised, finds nothing, and answers *"Your
+    designer access has been suspended"* — about an empanelment nobody ever granted, with
+    ``/admin/designers`` showing no row at all to explain it. That is exactly what
+    ``sandycraft3@gmail.com`` read in production, and the only remedy was for an administrator to
+    notice and empanel the same person a second time in a second screen.
+
+    Admitting somebody as a designer now IS empanelling them, which is what the admin doing it
+    already believed. The row is created between the platform gate and the empanelment gate in
+    ``auth.login``; see the comment there for why neither earlier nor later works.
+    """
+    email = world["address"]("designerUnempanelled")
+    assert email not in _empanelments(client, world), (
+        "the fixture must NOT have empanelled this account, or this test is asserting nothing "
+        "about auto-empanelment and would keep passing if the feature were deleted"
+    )
+
+    response = _login(client, email)
+    assert response.status_code == 200, response.text
+    assert response.json()["user"]["role"] == "DESIGNER"
+
+    row = _empanelments(client, world)[email]
+    assert row["isActive"] is True
+    # DERIVED, AND THE ROW SAYS SO IN WORDS. ``addedById`` cannot carry that fact by itself: it is
+    # NULL here, and it is also NULL on a hand-made row whose creating admin was later deleted
+    # (the relation is ``onDelete: SetNull``). An admin reading the roster screen would see the two
+    # as identical; the note is the part that stays true.
+    assert row["addedById"] is None, "nobody administered this; naming an admin would be a lie"
+    assert "automatically" in (row["notes"] or ""), row["notes"]
+    # THE ORDERING INSIDE ``login``, pinned. ``ensure_empanelled`` leaves ``firstSeenAt`` NULL and
+    # ``mark_roster_seen`` stamps it two lines later, so a person who really did sign in carries a
+    # date. Stamping at creation instead would consume that write, and the column — which answers
+    # "did the invitation ever reach them" — would report every empanelment as accepted on the day
+    # it was granted, including the ones granted by an admin days before the person opened the app.
+    assert row["firstSeenAt"] is not None
+
+
+async def test_the_allow_list_never_revives_a_suspended_empanelment(world, client):
+    """**THE REGRESSION GUARD FOR THE ONE RULE THAT MUST NOT BE GOT WRONG.**
+
+    This designer's platform access is fine and their empanelment was deliberately ended. Auto-
+    empanelment reads the allow-list, and the allow-list still admits them — so the tempting
+    implementation, an upsert on the unique ``email``, would take its update arm here and hand the
+    revoked person their standing back at the moment they next tried to sign in, with nothing on
+    either screen to say it happened. Every revocation any administrator has ever made would come
+    undone the same way, quietly, one login at a time.
+
+    Allow-listing grants an empanelment to somebody who never had one. It does not overturn a
+    withdrawal: those are two decisions, and only an admin may make the second, on the roster
+    screen where the act is visible.
+    """
+    email = world["address"]("designerSuspended")
+    before = _empanelments(client, world)[email]
+    assert before["isActive"] is False, (
+        "the fixture must actually have suspended this empanelment, or this test proves nothing"
+    )
+
+    response = _login(client, email)
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == DESIGNER_SUSPENDED_DETAIL
+    # THE SENTENCE IS FOR THE PERSON AND THE LABEL IS FOR THE SCREEN AROUND IT, and this refusal has
+    # to keep both of its own. ``DESIGNER_SUSPENDED`` rather than ``SUSPENDED`` because the two ask
+    # for different things — this person asks an admin to empanel them again, a barred one asks to
+    # be let back into the application — so a client drawing the platform's chrome here would send a
+    # designer off to argue about an access nobody withdrew. Asserted HERE, and not left to the
+    # labelling test in section 2, because a revival is not only a row quietly changing state: the
+    # login that revived it answers 200 and stops labelling anything at all, and this is the test
+    # whose job it is to notice that.
+    assert response.headers.get(auth_routes.ACCESS_STATUS_HEADER) == "DESIGNER_SUSPENDED", (
+        response.headers
+    )
+    # AND THE REFUSAL STILL SAYS ONLY THAT ONE SENTENCE. A gate that started explaining itself —
+    # naming the row it declined to revive, or when the revocation was made, or who made it — hands
+    # anybody who can guess an address the administrator's own record of it, which is a far worse
+    # leak than the single bit this feature's owner weighed and agreed to pay.
+    assert set(response.json()) == {"detail"}
+
+    after = _empanelments(client, world)[email]
+    assert after["isActive"] is False, (
+        "an allow-listed designer's SUSPENDED empanelment was revived by signing in; that is the "
+        "silent undoing of an administrator's revocation the create-only rule exists to prevent"
+    )
+    # And not touched in any other way either. A row left active-but-edited, or one whose revocation
+    # date moved, is the same defect wearing a smaller hat: the roster screen reads the flag, the
+    # date and the note together as one account of what an administrator decided.
+    assert after["revokedAt"] == before["revokedAt"]
+    assert after["notes"] == before["notes"]
+    # A refused attempt is not an arrival. The stamp answers "did the invitation reach them", and
+    # writing it here would report the invitation as accepted on the very day they could not get in.
+    assert after["firstSeenAt"] is None
+
+
+async def test_signing_in_at_any_other_role_puts_nobody_on_the_designer_roster(world, client):
+    """**THE CONTROL ON THE TWO TESTS ABOVE, AND THE WAY THIS FEATURE WOULD OVER-DELIVER.**
+
+    ``DesignerRoster`` is the list of people this institution recognises AS DESIGNERS, and three
+    separate parts of the product read it as an authority rather than as a log: the empanelment gate
+    refuses anybody it does not name, ``/admin/designers`` presents it as the roll of practising
+    designers, and the workshop pickers draw their candidates out of it. So a rule that empanelled
+    every ADMITTED account — the role test dropped as redundant once the allow-list is doing the
+    admitting, or ``access_roster.admits(access)`` read as "there is a row" — would satisfy every
+    other test in this section while adding the institution's professors, researchers, field
+    contributors and volunteers to that roll one sign-in at a time. Nothing on any screen would
+    explain how they got there, and nothing anywhere ever takes such a row off again.
+
+    Every rung of the ladder except the designer signs in here, and none of them may grow a row. The
+    designer beside them is asserted to HAVE one out of the same read, because a query pointed at
+    the wrong run — or at nothing — returns an empty page that satisfies every absence assertion
+    below it perfectly.
+    """
+    others = [(slug, role) for slug, role in ACCOUNTS[:7] if role != "DESIGNER"]
+    for slug, role in others:
+        response = _login(client, world["address"](slug))
+        assert response.status_code == 200, response.text
+        assert response.json()["user"]["role"] == role
+
+    rows = _empanelments(client, world)
+    assert world["address"]("designer") in rows, (
+        "this run's own empanelled designer is missing from the read, so the assertions below are "
+        "proving that the query found nothing rather than that nothing was created"
+    )
+    for slug, role in others:
+        assert world["address"](slug) not in rows, (
+            f"signing in as {role} put the account on the DESIGNER roster; that roster is read as a "
+            "statement that somebody is a practising designer, it is what the workshop pickers "
+            "offer, and nothing downstream ever removes a row that should not have been written"
+        )

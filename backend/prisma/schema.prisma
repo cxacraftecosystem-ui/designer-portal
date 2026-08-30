@@ -279,6 +279,12 @@ model User {
   /// counted against it would make the sentence a designer reads in a courtyard false. See
   /// DwAiVerbDailyUsage.
   dwAiVerbDailyUsage          DwAiVerbDailyUsage[]        @relation("DwAiVerbDailyUsageUser")
+  /// Every request this account made that the usage middleware saw, one row per request. CASCADE on
+  /// the far side, joining the two meters above rather than the decision logs — and for a sharper
+  /// version of their reason. A meter reading is not authorship; these rows are not even that. They
+  /// are what the SYSTEM noticed about a person rather than anything the person entered, so an
+  /// account deletion must take them with it and must never be blocked by them. See UsageEvent.
+  usageEvents                 UsageEvent[]                @relation("UsageEventUser")
   designerRosterEntries  DesignerRoster[] @relation("DesignerRosterAddedBy")
   designerProfile        DesignerProfile? @relation("DesignerProfileUser")
   // Custom questionnaires this designer built from the .xlsx pro-forma, and the answer sheets they
@@ -524,6 +530,13 @@ model Location {
   tools     ToolDocumentation[]
   media     MediaFile[]
   questionnaireInterviews QuestionnaireInterview[]
+  /// THE SEVENTH OWNER, AND THE ONLY ONE WHOSE SUBJECT IS THE PERSON FILLING THE FORM IN. Every
+  /// owner above is a field record whose subject is somebody else, in front of a researcher holding
+  /// a phone; a designer profile is edited from a desk by definition, and what it states is where
+  /// the DESIGNER is based. That difference is the whole reason `DesignerProfile.locationId` carries
+  /// a comment of its own about never auto-capturing — read it before wiring the form, because a
+  /// profile stamped with the desk it was typed at is this model's founding bug in a new hat.
+  designerProfiles DesignerProfile[]
 
   // THIS TABLE IS READ BY COLUMN AT FOUR PLACES, and the comment that used to stand here said it
   // was read by none. It said so because it was written when that was true — every reader arrived
@@ -650,6 +663,32 @@ model Artisan {
   /// continued practice in a way an age is not, and this schema models neither retirement nor
   /// death, so "she said 30 years in 2024" must not silently become "she has 32 now".
   experienceYears Int?
+  /// THE REMAINING MONTHS OF THAT SAME EXPERIENCE, 0-11, and never a total.
+  ///
+  /// The requirement is TWO DROPDOWNS ON ONE LINE — "5 years" beside "6 months" — and the read-back
+  /// has to hand the form back exactly what was chosen. So this is a second column and NOT an
+  /// `experienceTotalMonths` that the two boxes are computed out of. A single stored 66 has to be
+  /// re-divided on every read, and that arithmetic cannot tell "5 years and 6 months" from
+  /// "66 months" from "five and a half years"; it would also make `experienceYears` beside it a
+  /// DERIVED column overnight — a column four export surfaces read and every submitted participant
+  /// table prints — to save one integer of storage.
+  ///
+  /// IT SITS EXACTLY WHERE `experienceYears` SITS IN THE PRECEDENCE: behind the date, never in
+  /// front of it. Where a row has a `craftStartDate` BOTH dropdowns are derived from that one date —
+  /// the date already contains the month, so the months are arithmetic on a fact already stored,
+  /// no new fact is written and the two boxes can never come to disagree with the date they were
+  /// computed from. Where there is no date, this column and the one above it are what a person
+  /// stated, and they age with the RECORD exactly as that column's own paragraph describes. There is
+  /// no third source: the legacy `extraMetadata` spellings the readers fall back to
+  /// (`experienceYears`, `experience`, `yearsOfExperience`) name years and only ever named years.
+  ///
+  /// NULLABLE AND NOT `@default(0)`, which is also why the migration that adds it backfills nothing.
+  /// Every row in this table was written by a form that asked for years alone. A zero default would
+  /// put "and no months" on record for all of them as a stated fact, and the second dropdown would
+  /// open with an answer already selected on records whose artisan was never asked the question. An
+  /// artisan who said "about thirty years" said nothing whatever about months; absent and zero are
+  /// different answers, and NULL is the only one of the two that is true here.
+  experienceMonths Int?
   // Newline-separated, numbered guidance for working with this artisan: dos = positive prompt (what to
   // do / emphasise), donts = negative prompt (what to avoid). Required on new records; nullable so the
   // existing rows from before this field can be backfilled later instead of blocking the migration.
@@ -3931,6 +3970,83 @@ model DesignerRoster {
 
   @@index([isActive])
   @@index([addedById])
+
+  // FIVE INDEXES ADDED FOR THE ROSTER FILTERS (req 30, DROPDOWN_DESIGN §4.7), one per filter or
+  // sort `GET /designers/roster` gains in this wave, each written beside the query it is for. The
+  // discipline is `Location`'s, a few thousand lines up: an index waits for its query rather than
+  // hoping for one, and every one of these has a named parameter on that route arriving in the same
+  // wave. The bill is five extra btree inserts per empanelment — a row an admin types by hand, a
+  // few a week — against a table this screen sorts and filters on every page load.
+  //
+  // WHAT IS DELIBERATELY NOT HERE IS AN INDEX FOR THE SEARCH BOX. `records.contains` builds
+  // `ILIKE '%…%'` and a leading wildcard cannot use a btree at all, so an index on `email`,
+  // `fullName` or `institution` for that read would be written on every insert and probed by
+  // nothing. The only thing that would help is a `pg_trgm` GIN index; there is not one anywhere in
+  // this schema, and enabling the extension is its own decision (DROPDOWN_DESIGN §6 Q4). The search
+  // is already server-side and paged, so its cost is bounded by the page and not by the roster.
+
+  /// THE DEFAULT SORT, UNINDEXED SINCE THIS TABLE WAS CREATED — the one line of this block worth
+  /// reading twice. `designers.list_roster` has ordered `createdAt desc` on every page load since
+  /// the roster shipped, and with nothing to walk, Postgres sorts the whole table to hand back
+  /// fifty rows and sorts it again for page two. Also serves `dateField=added`, the range req 30
+  /// puts on this same column.
+  ///
+  /// The ORDER BY is really `createdAt desc, id desc` — `with_id_tiebreak` is not optional on an
+  /// offset-paged list, because a non-total order hands some rows over twice and never shows
+  /// others. A single-column index still serves it: Postgres walks this one in order and folds the
+  /// `id` leg in with an incremental sort within each group of equal `createdAt`. If a tie group
+  /// here ever grows large enough to measure, the fix is to WIDEN THIS INDEX to `[createdAt, id]`,
+  /// not to add a second one beside it.
+  @@index([createdAt])
+
+  /// The standing chip in the default order — `isActive = ? ORDER BY createdAt DESC LIMIT 50`, what
+  /// the screen issues the moment an admin narrows to suspended rows. Equality column first, sort
+  /// column second: the only order a btree serves both halves of, and the shape
+  /// 20260726200000_index_coverage measured, where the reversed form forced a filter over every row.
+  ///
+  /// `@@index([isActive])` above is now a prefix of this one and could be retired. It is not
+  /// retired here. This file only adds; a redundant index is cheap where a missing one is not; and
+  /// `active_roster_emails` reads `isActive = true` with no sort at all, which is the narrow
+  /// index's own query and the one it was created for. Dropping an index is a decision that wants a
+  /// measurement behind it, and this change has none.
+  ///
+  /// The same caveat as `AccessRoster`'s `[status, createdAt]`: at today's row counts the planner
+  /// walks `[createdAt]` and filters on `isActive` instead, because a standing that most rows
+  /// share is a filter that finds fifty matches immediately. This index is for the day that stops
+  /// being true. The plans are in 20260829120000_roster_filter_indexes.
+  @@index([isActive, createdAt])
+
+  /// THE COLUMN THIS SCREEN EXISTS TO SHOW. `firstSeenAt` answers "who have I added who has not
+  /// turned up" (see its own comment above), and req 30 asks for it three ways: the `firstSeen`
+  /// date range, `sort=firstSeen` — which on `desc` floats every outstanding invitation to the top,
+  /// because Postgres puts NULLs first on a descending sort — and the reserved `never-signed-in`
+  /// token, which is `firstSeenAt IS NULL`.
+  ///
+  /// The range and the sort are unambiguous btree wins. THE `IS NULL` PROBE IS NOT, and saying so
+  /// is the point of this paragraph: Postgres does store NULLs in a btree, so the probe is usable,
+  /// but only while outstanding invitations are a small fraction of the roster. On a roster where
+  /// most rows have never signed in, the planner will correctly ignore this index and scan — which
+  /// is exactly what it does today, so nothing is lost by the index being there.
+  @@index([firstSeenAt])
+
+  /// Three reads, all of them landing in this wave. The multi-select filter
+  /// (`institution IN (…)`), `sort=institution` ascending, and the `SELECT DISTINCT institution
+  /// WHERE institution IS NOT NULL ORDER BY institution LIMIT 201` behind
+  /// `GET /designers/roster/institutions` (§4.5) — the vocabulary the picker is built from, since
+  /// this column is free text and an exact-match filter over free text is only usable behind a
+  /// list of the values that actually exist. That DISTINCT is a sequential scan and a hash
+  /// aggregate without this index and an ordered index-only scan with it, and because NULLs sort
+  /// last ascending, the `IS NOT NULL` arm stops the walk rather than filtering it.
+  ///
+  /// Single column and not composited with `createdAt`: the institution filter is answered by an
+  /// equality over a handful of names and then paged, and the DISTINCT read wants this column
+  /// alone. A composite would serve neither better and would cost the endpoint its index-only scan.
+  @@index([institution])
+
+  /// The `revoked` date range, one of the three `dateField` values that ship on this route
+  /// (`added` | `firstSeen` | `revoked`, §4.1), and `sort=revoked`. Kept narrow for the same reason
+  /// as `firstSeenAt`: it is a range and a sort over one column, which is the shape a btree is for.
+  @@index([revokedAt])
 }
 
 /// A designer's standing details, entered once and reused by every report they generate.
@@ -3955,12 +4071,48 @@ model DesignerProfile {
   department     String?
   qualification  String?
   specialisation String?
+  /// WHOLE YEARS OF PRACTICE, AS THE DESIGNER STATES THEM — the first half of the pair the form now
+  /// asks for, and unlike the artisan's, the whole of the answer.
+  ///
+  /// There is nothing on this model to derive it from. The only other DateTime here is
+  /// `empanelmentDate`, which is the day a ministry listed them and not the day they began
+  /// practising, so `Artisan.craftStartDate`'s trick — store the date, derive the number, let it
+  /// stay right by itself — has nothing to work with. This number therefore decays the way that
+  /// column's comment describes and only the designer can correct it. That cost is accepted rather
+  /// than hidden: a practice-start date here would be a fourth place the same fact is stated and
+  /// nobody has asked for one.
   experienceYears Int?
+  /// THE REMAINING MONTHS, 0-11, never a total, and nullable for the same reason its artisan twin
+  /// is — see `Artisan.experienceMonths`, which carries the argument in full and was added by this
+  /// same migration so that a reader who finds one finds the other.
+  ///
+  /// Stated here in short because the failure it prevents is on this model too: every profile
+  /// stored before this column existed answered a form that asked for years alone, and a
+  /// `@default(0)` would put "and no months" on record for all of them as though a designer had
+  /// picked it. The second dropdown would then open with an answer already selected on a profile
+  /// whose owner was never asked the question. Absent and zero are different answers.
+  experienceMonths Int?
   /// The paragraph that appears as "Designer's profile" in stage 3 of every report.
   biography      String?
   phone          String?
   email          String?
   website        String?
+  /// ── THE FLAT ADDRESS. SUPERSEDED BY `location` BELOW, AND KEPT UNTIL IT HAS BEEN CARRIED ACROSS
+  ///
+  /// These four were the whole of a designer's address until `locationId` was added, and they are
+  /// still the only place the LIVE ROWS' addresses exist. NOTHING IS DROPPED AND NOTHING IS COPIED
+  /// by the migration that added the relation, because a `Location` row cannot be manufactured out
+  /// of them: it would need a coordinate, there is none, and inventing one is the exact class of
+  /// guess `Location`'s own docstring exists to refuse. A destructive drop here would lose every
+  /// designer's address for a schema tidy-up.
+  ///
+  /// So both places are live for now and a LATER MIGRATION retires these once the values have been
+  /// moved by a person, or by a one-shot script that leaves a trail. Two things that migration has
+  /// to settle rather than assume. `city` HAS NO HOME ON THE FAR SIDE — `Location` carries district
+  /// and village and no city — so a designer in Ahmedabad is stating something `village` is not,
+  /// and where it goes is a decision, not a rename. And until the move happens a profile may carry
+  /// an address in either place, so a reader that shows only one of the two will show some
+  /// designers a blank where their address is.
   addressLine    String?
   city           String?
   state          String?
@@ -3983,10 +4135,60 @@ model DesignerProfile {
   empanelmentNo   String?
   empanelmentDate DateTime?
 
+  /// WHERE THE DESIGNER IS BASED, in the same table and the same shape every other record page in
+  /// this system uses — which is what "like the rest of the record pages" actually asks for. The
+  /// district picker, the map pin and the coordinate-versus-state mismatch flag all already exist
+  /// on `Location`; four more loose columns here would be a fourth reimplementation of them and a
+  /// second place a district is spelled.
+  ///
+  /// THE FK SHAPE IS COPIED FROM THE SIX OWNERS ABOVE, character for character: the column lives
+  /// HERE and never on `Location`, it is nullable, the relation is unnamed, and it is
+  /// `onDelete: SetNull`. Not Cascade — deleting a place must not delete a person, and a profile
+  /// whose location row goes is a designer with no address, not a designer with no profile. It
+  /// carries no `@@index`, for the reason none of the six does either: this row is reached by
+  /// `userId` and never by its location, and the only probe of the column is Postgres's own on a
+  /// `Location` delete, which is rare enough that an index written on every profile save would
+  /// cost more than it saves.
+  ///
+  /// ── THIS ADDRESS IS A STATED ADDRESS. THE PROVENANCE GROUP STAYS EMPTY ──────────────────────
+  ///
+  /// state, district, village, pincode, subjectLatitude, subjectLongitude — and never `placeName`,
+  /// never `address`, and never an automatic latitude/longitude/capturedAt triple. THE PROFILE FORM
+  /// MUST NOT AUTO-CAPTURE, and the reason is the finding at the top of `Location`: fifteen artisans
+  /// documented in Rajasthan, Gujarat, Uttarakhand and Andhra Pradesh carry Kharagpur coordinates,
+  /// because the schema stamped the desk each record was typed at and something downstream read it
+  /// as the artisan's address. A designer profile is the one form in this system whose subject IS
+  /// the person filling it in, always edited from a desk, so it is simultaneously the surface where
+  /// that stamp is likeliest and the one where it would look most plausible — "designer based in
+  /// Kharagpur" is a sentence nobody would question. `LocationFields` turns auto-capture off
+  /// whenever it is handed an `initial`, and the profile screen must always hand it one.
+  ///
+  /// ── AND WHY THERE IS NO `Location` ROW UNTIL SOMEBODY SUPPLIES A COORDINATE ─────────────────
+  ///
+  /// `Location.latitude`/`longitude` are NOT NULL, and this change deliberately leaves them that
+  /// way. Relaxing them so a coordinate-less profile address could be stored would weaken the
+  /// invariant on all six field-record owners — where it is load-bearing, and where
+  /// `require_location` in schemas/common.py depends on it — to save one screen a click, and it
+  /// would retype every reader of every location in the repository from `float` to `float | None`.
+  ///
+  /// So this column stays NULL until the designer gives a point, by any of the three routes the
+  /// form already offers: 'Use current GPS' pressed DELIBERATELY, a pin dropped under 'Captured
+  /// at', or the two numbers typed. That is not a new demand — `require_location` already defines
+  /// the coordinate as "a point the researcher stood at, pointed at on a map, or typed", and a
+  /// deliberate press is a statement in a way an automatic capture is not.
+  ///
+  /// THE COST IS STATED RATHER THAN HIDDEN: a designer who wants their DISTRICT recorded must also
+  /// give a coordinate, because until a `Location` row exists there is nowhere for a district to
+  /// go. The form already says exactly that, in those words — "The state and district are stored
+  /// with the coordinates, so this record needs one before they can be saved" — and it only says it
+  /// once an address has been started, so a designer who fills in none of it is asked for nothing.
+  locationId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation("DesignerProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+  user     User      @relation("DesignerProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 }
 
 // ======================================================================================
@@ -4107,4 +4309,280 @@ model AccessRoster {
   @@index([status, requestedAt])
   @@index([addedById])
   @@index([decidedById])
+
+  // SEVEN INDEXES ADDED FOR THE ALLOW-LIST FILTERS (req 30, DROPDOWN_DESIGN §4.7). Same rule as on
+  // `DesignerRoster`: one per filter or sort `GET /access/roster` gains in this wave, each written
+  // beside the query it is for, and nothing added ahead of a query that would use it. Seven extra
+  // btree inserts per row, on a table written by an admin typing an address or by a refused sign-in
+  // bumping `attemptCount` — neither of which is a hot path, and the second of which is an UPDATE
+  // of `attemptCount`/`lastAttemptAt`, columns no index here names, so it stays a HOT update that
+  // touches none of these.
+  //
+  // NO INDEX FOR THE SEARCH BOX, for `DesignerRoster`'s stated reason: `ILIKE '%…%'` cannot use a
+  // btree, and `pg_trgm` is not enabled anywhere in this schema.
+  //
+  // NO INDEX ON `attemptCount` EITHER, although `sort=attempts` ships. "Who is hammering the door"
+  // is a question an admin asks occasionally and by hand, the column is an integer with a handful
+  // of distinct values so a btree on it is nearly all one key, and it is the ONE column here that
+  // is written by an unauthenticated caller's repeated attempts — an index on it would be the only
+  // write cost in this block that a stranger can drive. The sort is left to a scan deliberately.
+
+  /// THE DEFAULT SORT, AND IT HAS NEVER HAD AN INDEX. `access.list_access_roster` orders
+  /// `createdAt desc` on every page load and the endpoint's own docstring explains why that
+  /// ordering is fixed. Also serves `dateField=added`.
+  ///
+  /// THE TIE GROUP ON THIS TABLE IS NOT HYPOTHETICAL, which is why it is spelled out here and only
+  /// summarised on the designer roster: 20260816090000 grandfathered every pre-existing account
+  /// onto this list in one statement, so several hundred rows share a single `CURRENT_TIMESTAMP`.
+  /// The real ORDER BY is `createdAt desc, id desc` (`with_id_tiebreak`, and `records.py:1364-1375`
+  /// names these exact rows as the reason it exists). Postgres walks this index in order and folds
+  /// the `id` leg in with an incremental sort per group — and here one group is the whole
+  /// grandfathered cohort, so the sort inside it is not free. It is still strictly better than
+  /// sorting the table, and the moment it measures badly the fix is to widen THIS index to
+  /// `[createdAt, id]` rather than to add another.
+  @@index([createdAt])
+
+  /// The status multi-select in the default order: `status IN (…) ORDER BY createdAt DESC LIMIT 50`
+  /// — the common query once req 30 lands, because the status chips are the filter an admin toggles
+  /// constantly and the order never changes underneath them. Equality first, sort second.
+  ///
+  /// Distinct from `[status, requestedAt]` above, which serves the QUEUE — pending rows worked
+  /// oldest-request-first — and cannot serve this one: a btree ordered by `requestedAt` inside a
+  /// status has nothing to say about `createdAt`. Two orderings, two composites; that is the cost
+  /// of the endpoint offering both, and it is stated rather than discovered.
+  ///
+  /// AT TODAY'S ROW COUNTS THE PLANNER DOES NOT CHOOSE THIS INDEX, and that is measured rather
+  /// than feared — 20260829120000_roster_filter_indexes has the plans. A narrow status probe plus
+  /// an in-memory sort of eighty-eight pending rows is genuinely cheaper. This one is what stops
+  /// the plan degrading when a status slice grows past what `work_mem` will sort, and with
+  /// `enable_sort = off` it is chosen and needs no sort node at all. If it is still unused at ten
+  /// times this size, drop it — with the measurement in hand.
+  @@index([status, createdAt])
+
+  /// The role multi-select in the default order: `admitRole IN (…) ORDER BY createdAt DESC`.
+  ///
+  /// COMPOSITED WITH THE SORT KEY ON PURPOSE, AND BARE `admitRole` IS NOT ADDED. That column is
+  /// eight values plus NULL over the whole table, so a bare index on it is nearly all one key and
+  /// the planner would rarely choose it; leading it into the sort is what makes it worth writing.
+  /// It also serves the reserved `default` option — `admitRole IS NULL`, the platform-default tier,
+  /// which is a real filter and not a gap (see the column's own comment above, and §4.2: ticking
+  /// all eight named tiers must NOT silently mean the same thing as ticking nothing).
+  @@index([admitRole, createdAt])
+
+  /// `dateField=requested` WITH NO STATUS CHOSEN, and it needs its own index because of the
+  /// leading-column rule: `[status, requestedAt]` can only serve a `requestedAt` range once
+  /// `status` is pinned to an equality, and "everything that was asked for in March" names no
+  /// status at all. Also serves `sort=requested`, including `dir=asc`, which is the queue order an
+  /// admin works oldest-first.
+  @@index([requestedAt])
+
+  /// The remaining three `dateField` values on this route (`added` | `requested` | `decided` |
+  /// `joined` | `firstSeen`, §4.1), one index each, every one of them serving both a range and the
+  /// sort of the same name. They are grouped under one comment because there is nothing to say
+  /// about them individually that is not said by their column comments above: `joinedAt` is the
+  /// date of joining the platform, `decidedAt` is when an admin ruled, `firstSeenAt` is whether the
+  /// person we admitted ever actually arrived.
+  ///
+  /// All three are nullable and all three are frequently NULL — nobody has decided the pending
+  /// rows, and an admitted address that never signed in has no `firstSeenAt`. That costs nothing
+  /// here, because what these serve are RANGES and SORTS: a range excludes NULLs by definition, and
+  /// a sort wants them at one end, which is where the index already puts them.
+  @@index([joinedAt])
+  @@index([decidedAt])
+  @@index([firstSeenAt])
+}
+
+// ======================================================================================
+// Usage: which screens the people using this app actually reach, and how long it took
+// ======================================================================================
+
+/// ONE SERVED REQUEST, RECORDED AS A ROUTE RATHER THAN AS A PATH.
+///
+/// The requirement is to understand how designers move through the platform and where it is slow,
+/// and today nothing in this system can answer either half. There is no page-view, screen-view,
+/// session or navigation record anywhere — no table, no endpoint, and no client code on web or on
+/// Android. The things that look like they might be are all records of somebody CHANGING
+/// something: `RecordRevision` and `ReviewLog` audit writes, `DwReportExport` counts one feature,
+/// the two daily-usage meters count AI spend, and `/activity` is a live re-query of six list
+/// endpoints rather than a feed. Not one of them records anybody LOOKING at anything, which is the
+/// whole of what navigation is.
+///
+/// ── NOT `Analytics*`, AND THE COLLISION IS THE REASON ───────────────────────────────────────
+///
+/// That word is taken, at every layer, by something this is not. `/analytics/design-workshops` is a
+/// cross-workshop CONTENT comparison — adoption rates, follow-up at 3, 6 and 12 months,
+/// cost-to-price ratios — the web route is `/admin/analytics`, the route guard and the nav label
+/// ("Cross-workshop analytics") say the same, and that module's own docstring is careful that "it
+/// issues three SELECTs and writes nothing". A second, unrelated meaning of the same word would put
+/// a table that records PEOPLE next to a feature that compares CRAFT OUTCOMES and leave every
+/// future reader to work out which one a name meant. The prefix here is `Usage`; the route is
+/// `/usage`.
+///
+/// ── THE ROUTE TEMPLATE, NEVER THE INTERPOLATED PATH ─────────────────────────────────────────
+///
+/// "/design-workshops/{workshop_id}/stages/{stage_key}", and never
+/// "/design-workshops/3f9c…/stages/sketches". Two reasons, both load-bearing:
+///
+///   1. A RAW PATH IS A SHADOW COPY OF WHO LOOKED AT WHOSE FIELDWORK. Every record id in this API
+///      travels in the path, so a table of raw paths is a per-designer reading list of other
+///      people's artisans, sketches and interviews — assembled with no access check, kept for ever,
+///      and readable by anybody who can query this table. `access.REVISION_REDACTED_FIELDS` exists
+///      because "a retraction which copies the retracted value into an append-only table is not a
+///      retraction"; the same discipline here refuses the id BEFORE it is written, which is stronger
+///      than redacting it after. There is no query-string column either, and for the same reason:
+///      `?q=` carries whatever somebody typed into a search box.
+///   2. WITHOUT IT NOTHING AGGREGATES. A million distinct paths group into a million groups of one.
+///      The template is the only form in which "which screens do designers actually reach" is a
+///      question with an answer.
+///
+/// ── SHAPED SO THE WRITES CAN BE BATCHED, BECAUSE A ROW PER REQUEST WOULD FIGHT THE POOL ─────
+///
+/// `DATABASE_CONNECTION_LIMIT` is 10 and was deliberately cut to it from 40; `gather_reads` is
+/// already bounded by that width, and the dashboard route carries a written warning not to raise it
+/// to fit something new in. So an INSERT inside the request path is not affordable — and NOTHING
+/// BELOW FORCES ONE. There is no unique constraint, so no upsert; no counter, so no
+/// read-modify-write; no `@updatedAt`, so no row is ever revisited; and the id is a cuid the client
+/// library generates without asking the database for anything. A buffer in the worker and one
+/// `create_many` per flush is the intended writer, and every column below is a value the middleware
+/// already holds at the moment the response is finished.
+///
+/// A DAILY ROLLUP IS THE OBVIOUS NEXT TABLE AND IS DELIBERATELY NOT THIS ONE. A
+/// `@@id([userId, istDay, routeTemplate])` in `DwDictationDailyUsage`'s shape would be cheaper to
+/// write and smaller to keep, and it cannot answer the question that was actually asked: in what
+/// ORDER somebody moved through the app. A rollup is derivable from these rows; these rows are not
+/// derivable from a rollup.
+///
+/// ── CONSENT IS AN OPEN QUESTION, AND IT IS NOT ANSWERED HERE ────────────────────────────────
+///
+/// OBSERVING DESIGNERS IS A NEW CATEGORY OF PERSONAL DATA IN THIS REPOSITORY. Everything else it
+/// holds about a person is something that person typed in; this is something the system noticed
+/// about them without being asked. The codebase already models consent explicitly wherever it
+/// collects a recording — `DwDictationConsent` is three states and not a boolean precisely so that
+/// "not asked" can never be read as "no", and `DwWorkshopConsentDecision` keeps every answer for
+/// ever because a withdrawal must not erase the answer that earlier sends were made under. There is
+/// no equivalent for watching a colleague navigate, and this model does not invent one:
+/// `consentState` below is somewhere to RECORD an answer, not a flow that asks the question.
+/// Somebody still has to decide what is asked, when it is asked, whether a refusal stops collection
+/// or only stops attribution, and what happens to the rows gathered before it was ever asked.
+/// FLAGGED, NOT SETTLED — and the flag is a column rather than a comment alone so that the rows
+/// collected before the decision are findable afterwards.
+model UsageEvent {
+  /// A surrogate id, unlike the two daily meters' composite keys, and for the opposite reason to
+  /// theirs: nothing about a request identifies it, two requests can agree on every column below,
+  /// and a generated cuid is exactly what lets a whole batch be inserted without the database being
+  /// consulted first.
+  id String @id @default(cuid())
+
+  /// WHO, when there was a who. NULL is a first-class answer here and not a gap: an unauthenticated
+  /// request still has a route, a status and a duration, and "the sign-in page is slow for the
+  /// people who cannot get in" is precisely the kind of thing this table should be able to show.
+  ///
+  /// It cannot be filled in by the middleware that fills in everything else, because a pure-ASGI
+  /// middleware never decodes the token — the identity attaches at the dependency layer, and the
+  /// two halves have to be stitched together through `scope["state"]`. See the relation at the foot
+  /// of the model for what happens to this column when an account is deleted.
+  userId String?
+
+  /// WHAT: the matched route's TEMPLATE, e.g. "/design-workshops/{workshop_id}/stages/{stage_key}".
+  /// Read off the route AFTER the handler has run — the router is what populates `scope["route"]` —
+  /// and never from `scope["path"]`, which is the interpolated one. This is the column the whole
+  /// model is arranged around; the docstring above says why, twice over.
+  ///
+  /// A request that matched no route records a fixed placeholder and NOT the path it wanted. A 404
+  /// on "/artisans/3f9c…" would otherwise smuggle a record id back in through the one door nobody
+  /// thinks to guard, and unmatched paths are also where a scanner's junk lands.
+  routeTemplate String
+
+  /// "GET", "POST", "PATCH", "DELETE". A String and not an enum, on `DwAiVerbDailyUsage.verb`'s
+  /// reasoning: this is a meter label rather than something printed in a document, so a wrong value
+  /// costs a wrong breakdown line and nothing more. An enum would turn a method nobody enumerated
+  /// into a failed INSERT — which, on a batched writer, discards the whole flush and not one row.
+  method String
+
+  /// The status the client actually received. It is what makes "where is it slow" and "where is it
+  /// breaking" one query instead of two, and it is the reason a 401 storm on one route is visible
+  /// at all.
+  statusCode Int
+
+  /// Wall-clock milliseconds from the middleware entering to the response being finished. An Int,
+  /// because sub-millisecond precision answers no question anybody has asked and a Float invites an
+  /// average printed to three decimal places that reads as far more exact than the thing it
+  /// measured.
+  ///
+  /// IT MEASURES THE SERVER AND NOTHING ELSE. No network time, no render time, nothing a person
+  /// actually waited for. A reader who forgets that will conclude the app is fast while a designer
+  /// watches a spinner on a 2G connection in a courtyard, which is the misreading this paragraph
+  /// exists to prevent.
+  durationMs Int
+
+  /// WHICH CLIENT: "web", "android" or "api". Taken from a header the client sets, normalised in
+  /// exactly one place, and falling back to "api" for anything that does not say. A String and not
+  /// an enum for `method`'s reason, doubled — this value is CLIENT-SUPPLIED, so an enum would let
+  /// one handset shipping a typo in its header fail the INSERT of a whole batch of unrelated rows.
+  ///
+  /// It exists because "how do they navigate" has two different answers on a laptop and on a handset
+  /// that runs offline for a fortnight at a time, and without this column the two are averaged into
+  /// a designer who does not exist. Nothing else in this schema attaches a platform to a REQUEST, and
+  /// the three columns that come closest — counted 2026-08-29, and it is three rather than the two an
+  /// earlier draft of this paragraph claimed — are `DwReportExport.generatedOnDevice`,
+  /// `RecordAccessTokenRedemption.scannedAtClient` and, on a second model that is easy to miss
+  /// because the column is spelled identically, `DesignWorkshopProvisionalMember.scannedAtClient`.
+  /// NOT ONE OF THEM NAMES A CLIENT. The first says whether a report was built on the handset or on
+  /// the server; the other two are a clock the client supplied, kept as EVIDENCE beside a
+  /// `serverArrivedAt` that is the authority — read that column's own comment before treating either
+  /// as a platform. All three describe an ACT. This one describes the thing that made the request,
+  /// which is why it is a new column rather than a fourth reading of one of those.
+  clientApp String
+
+  /// THE CONSENT THIS ROW WAS COLLECTED UNDER, once there is an answer to record. NULL means NOBODY
+  /// WAS ASKED — the honest state of every row written before a consent flow exists, and the reason
+  /// this is nullable rather than defaulted to anything at all. A default would make rows gathered
+  /// without consent indistinguishable from rows gathered with it, and being the NULL ones is the
+  /// only way they can be found and deleted on the day somebody decides they should be.
+  ///
+  /// A String and NOT the `DwDictationConsent` enum, whose three states are otherwise the right
+  /// shape. That enum is scoped to an ARTISAN'S AUDIO leaving a device in a named workshop; reusing
+  /// it would file a designer's browsing consent and an artisan's recording consent as one fact, and
+  /// the day either meaning moves the other moves with it. When the flow is designed this column
+  /// takes its tokens, or is replaced by a real FK to whatever decision log that flow writes, on
+  /// `DwWorkshopConsentDecision`'s model. Until then: FLAGGED, NOT SETTLED.
+  consentState String?
+
+  /// WHEN. The only clock this table has, deliberately — there is no `updatedAt`, because a row here
+  /// is never revisited. An append-only observation, as `ReviewLog` and `RecordRevision` are.
+  createdAt DateTime @default(now())
+
+  /// CASCADE, joining the two daily meters rather than the decision ledgers, and for a sharper
+  /// version of their reason. A meter reading is not a record of anybody taking responsibility for
+  /// anything; a usage row is not even that — it is an observation OF a person. It must never become
+  /// a new reason an admin cannot delete an account, and when an account does go, what the system
+  /// noticed about that person goes with it. While the consent question above is unsettled, that is
+  /// the only defensible answer.
+  ///
+  /// NOT SetNull, although the column is already nullable and SetNull would keep the rows as
+  /// anonymous aggregate. It would make NULL mean two things in one column — "nobody was signed in"
+  /// and "the person has since been deleted" — so every count of unauthenticated traffic would
+  /// quietly include ex-colleagues' requests. One column with two answers is the exact failure the
+  /// `Location` model above was rewritten to end, and the aggregate is worth less than the column
+  /// meaning one thing.
+  user User? @relation("UsageEventUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// THE TWO QUESTIONS ANYBODY ACTUALLY ASKS, and both have the same shape: one thing held constant,
+  /// over a range of dates. Equality column first and the range last, which is the only order a
+  /// btree serves both halves of — the same shape, for the same reason, as
+  /// `DwReportExport.@@index([designWorkshopId, generatedAt])` and
+  /// `DwWorkshopConsentDecision.@@index([designWorkshopId, createdAt])`.
+  ///
+  /// "What did this designer do last week." It is also the index Postgres probes for the CASCADE
+  /// above, so deleting an account costs nothing beyond the delete itself.
+  @@index([userId, createdAt])
+  /// "Which screens get used, and which of them are slow." The template leads because it is the
+  /// thing held constant while the dates vary.
+  ///
+  /// THERE IS DELIBERATELY NO INDEX ON `createdAt` ALONE. A whole-window scan across every user and
+  /// every route is a report nobody has asked for, and it would be paid for on every insert into
+  /// what will be by far the highest-write table in this schema — `DwDictationDailyUsage`'s argument
+  /// about an index nothing probes, made at the one place in this file where the write rate makes it
+  /// expensive rather than merely untidy.
+  @@index([routeTemplate, createdAt])
 }

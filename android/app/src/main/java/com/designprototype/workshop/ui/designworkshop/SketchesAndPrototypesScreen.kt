@@ -32,6 +32,13 @@ import com.designprototype.workshop.data.isConnectionFailure
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
+// The one label/hint vocabulary every other workshop picker on this handset already draws from —
+// see `WorkshopOptions.kt`'s own file header, which names `dwChooserWorkshopHint` below as one of
+// the "three copies of the same hint builder... still in the tree as this is written", each
+// carrying a comment claiming to match the others when in fact this one alone was missing the
+// status word, so a SUBMITTED workshop and one still running read as the same kind of row here.
+import com.designprototype.workshop.ui.designWorkshopHint
+import com.designprototype.workshop.ui.designWorkshopLabel
 import com.designprototype.workshop.ui.designWorkshopPrefillNote
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
@@ -295,9 +302,7 @@ fun SketchesAndPrototypesScreen(
             fontSize = 22.sp
         )
         Text(
-            "Pick a workshop, then add and file its sketches and prototypes under Upload, or see " +
-                "how its peer round has ranked them under Review. The work itself lives on the " +
-                "workshop's own sketch and prototype stages, which both tabs open.",
+            DW_SKETCH_CHOOSER_SUBTITLE,
             color = MaterialTheme.field.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp
@@ -405,13 +410,13 @@ fun SketchesAndPrototypesScreen(
             options = rows.map { workshop ->
                 SelectOption(
                     value = workshop.id,
-                    label = dwChooserWorkshopLabel(workshop),
-                    // The workshop CODE and the three telling facts. Two workshops that share a title
-                    // and a date render as two identical rows, and an identical row is a choice a
-                    // reader cannot make.
+                    label = designWorkshopLabel(workshop),
+                    // The workshop CODE, ahead of `designWorkshopHint`'s own status/craft/place/date
+                    // facts. Two workshops that share a title and a date render as two identical
+                    // rows otherwise, and an identical row is a choice a reader cannot make.
                     hint = listOfNotNull(
                         workshop.workshopCode?.takeIf { it.isNotBlank() },
-                        dwChooserWorkshopHint(workshop).takeIf { it.isNotBlank() },
+                        designWorkshopHint(workshop),
                     ).joinToString(" · ").takeIf { it.isNotBlank() },
                 )
             },
@@ -500,6 +505,50 @@ fun SketchesAndPrototypesScreen(
         }
     }
 }
+
+/**
+ * **WHAT THIS SCREEN IS FOR, IN THE FIRST PARAGRAPH A DESIGNER READS — and it named the wrong place.**
+ *
+ * ── THE CLAUSE THAT WENT STALE, AND WHY IT IS THE MOST EXPENSIVE ONE ON THE SCREEN ────────────
+ *
+ * This sentence used to end *"The work itself lives on the workshop's own sketch and prototype
+ * stages, which both tabs open."* That was true while the Upload tab was four capture cards: a
+ * photograph could be filed here, and every act performed ON a photograph — tracing it into line
+ * art, straightening it into a plate, measuring a dimension off it — was mounted one tap deeper, in
+ * `FieldRenderer`. **It stopped being true the moment [DwSketchDerivationSection] was mounted on
+ * this tab**, and it stayed on screen saying otherwise.
+ *
+ * **A SENTENCE THAT SENDS A DESIGNER AWAY FROM A CONTROL THEY ARE LOOKING AT IS WORSE THAN NO
+ * SENTENCE**, and this is the fourth instance of that one defect on these two surfaces — after the
+ * other client's empty measuring branch (*"a sentence pointing at the wrong place is the defect this
+ * tab has already paid for once"*), after [dwNoPhotographSentence], and after `DwChooserHalf`'s own
+ * "everything this tab does not offer" note. It is the worst-placed of the four: the other three are
+ * read by somebody already looking at the cards, and this one is read INSTEAD of scrolling to them.
+ * A designer who believes it never finds out the tab traces.
+ *
+ * ── SO IT NAMES THE THREE ACTS, AND KEEPS ONLY THE TRUE HALF OF WHAT IT USED TO CLAIM ─────────
+ *
+ * The stage form is still where a piece is named, captioned, logged and where a dimension taken with
+ * a tape is typed in — the measuring card only ever PROPOSES one off a photograph — so that clause
+ * survives, narrowed to what is genuinely only there. It is the same narrowing, in the same words,
+ * that `DwChooserHalf.stageNote` made one level down; the two are one voice on purpose.
+ *
+ * ── AND IT IS A NAMED CONSTANT NOW, WHICH IS THE PART THAT STOPS THE FIFTH INSTANCE ────────────
+ *
+ * It was an inline literal in the middle of a `Column`, which is exactly why four separate passes
+ * over this feature corrected the sentences they could see and left this one standing. Named and
+ * `internal` for the reason the three list answers below are: *the defect these exist to prevent is a
+ * WORDING one, and a wording defect cannot be caught by a test that cannot see the wording.*
+ * `DwSketchChooserSentenceTest` now pins the property rather than the prose — no sentence on this
+ * screen may put an act this tab mounts a panel for somewhere else.
+ */
+internal const val DW_SKETCH_CHOOSER_SUBTITLE: String =
+    "Pick a workshop, then add and file its sketches and prototypes under Upload, or see how its " +
+        "peer round has ranked them under Review. Upload is also where a photograph already on a " +
+        "row is traced into line art, straightened into a plate or measured against — one " +
+        "photograph, and every panel on the tab follows it. Naming a piece, its caption, its stage " +
+        "log and typing a dimension in by hand are on the workshop's own sketch and prototype " +
+        "stages, which both tabs open."
 
 /*
   ══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -731,6 +780,45 @@ internal const val DW_TURNTABLE_CAPTURE_ADVICE: String =
     "Stand the piece still and move around it, one photograph every 30° for 12 frames, or every 15° " +
         "for 24 — enough that a reviewer can read the form rather than guess it. Keep the light and " +
         "the background the same for all of them."
+
+/**
+ * WHICH MODEL FILES TRAVEL — the one accept list a prototype has and a sketch does not.
+ *
+ * ── WHY THIS IS SAID HERE AT ALL, WHEN NOTHING ON THIS CLIENT ENFORCES IT ─────────────────────
+ *
+ * The prototypes half of the Upload tab takes a kind of file the sketches half refuses outright, and
+ * requirement 7's cross-client pass turns on that difference being VISIBLE rather than merely true.
+ * The other client makes it visible in its file dialog: `PrototypeModelField.tsx:166` builds
+ * `MODEL_ACCEPT` from the eight formats and hands it to the picker, and `:619` prints the labels
+ * under the button. **This client's picker cannot do the first half of that.** `DwMediaCapture`'s
+ * `galleryMimeFor` answers the wildcard MIME for every FILE field, because a filter is the wrong tool for
+ * a list of extensions — Android has no registered type for `.glb` or `.3mf` on most handsets, so an
+ * `application` MIME filter would hide the very files this box wants and a designer would be told, by an
+ * empty file browser, that their model does not exist.
+ *
+ * So the list is stated as ADVICE and named as advice. That is not a downgrade of the other client's
+ * behaviour, because the other client's is advice too: its `accept` is a dialog hint a designer can
+ * override in one click, the card carries no `validate` for models, and its own sentence ends "or any
+ * other file". **BOTH CLIENTS ACCEPT ANY FILE INTO THIS BOX. Only the naming differs, and this is the
+ * naming.** Nothing here narrows or widens what either one takes, which is the rule that matters
+ * when two clients' copy is being brought into line: a sentence that turned this list into a refusal
+ * would be this client quietly rejecting a `.step` the repository would have stored happily.
+ *
+ * THE EIGHT LABELS AND THE ORDER ARE `MODEL_FORMATS`', VERBATIM, GLB FIRST. That file's own note is
+ * the reason and it holds identically here: a field that holds ONE file rewards a format that is one
+ * file, and OBJ arrives as a mesh plus an .mtl plus a folder of textures — three of which a designer
+ * attaches and one of which they forget, producing an untextured grey blob for whoever opens it next.
+ * The per-format notes are NOT carried across; they are eight paragraphs under a disclosure on a
+ * laptop, and this is a paragraph above a capture card on a phone. The one that changes a decision is
+ * the first, and it is here.
+ */
+internal const val DW_PROTOTYPE_MODEL_FORMATS: String =
+    "The “3D model” box takes GLB, glTF, STL, OBJ, PLY, 3MF, FBX or USDZ — or any other file, which " +
+        "is stored and stays downloadable but may not open for the next designer. GLB travels best: " +
+        "it is one self-contained file, where an OBJ arrives as a mesh plus a separate .mtl plus a " +
+        "folder of textures, and this box holds one file. Nothing here refuses anything — this " +
+        "phone's file chooser does not filter by format, so the list is what to look for rather " +
+        "than what is allowed."
 
 /**
  * How many workshops this screen asks for.

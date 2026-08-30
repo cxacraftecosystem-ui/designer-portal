@@ -6,6 +6,7 @@ workshop, and at what level. They are separate ladders on purpose — holding ED
 nothing about another researcher's private data, and vice versa — but they share the same
 request/decide vocabulary so the UIs read alike.
 """
+
 from pydantic import BaseModel, Field
 
 TIERS = {"DOWNLOAD", "COMMENT", "EDIT"}
@@ -18,6 +19,7 @@ class ScopeItemIn(BaseModel):
 
 class DataAccessRequestIn(BaseModel):
     """A grantee asks an owner for access to their data."""
+
     ownerId: str = Field(min_length=1)
     tier: str = "DOWNLOAD"
     allData: bool = True
@@ -27,6 +29,7 @@ class DataAccessRequestIn(BaseModel):
 
 class DataAccessGrantIn(BaseModel):
     """An owner proactively grants a grantee access (no prior request needed)."""
+
     granteeId: str = Field(min_length=1)
     tier: str = "DOWNLOAD"
     allData: bool = True
@@ -36,6 +39,7 @@ class DataAccessGrantIn(BaseModel):
 
 class DataAccessDecisionIn(BaseModel):
     """An owner approves/denies a pending request, optionally adjusting the tier/scope they give."""
+
     status: str  # GRANTED | DENIED
     tier: str | None = None
     allData: bool | None = None
@@ -45,6 +49,7 @@ class DataAccessDecisionIn(BaseModel):
 
 class DataAccessUpdateIn(BaseModel):
     """An owner changes an existing grant's tier/scope/status."""
+
     tier: str | None = None
     allData: bool | None = None
     scopeItems: list[ScopeItemIn] | None = None

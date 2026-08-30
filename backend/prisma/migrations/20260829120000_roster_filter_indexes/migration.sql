@@ -1,0 +1,203 @@
+-- The two roster screens get filters and sorts (requirement 30), so the two roster tables get the
+-- indexes those filters and sorts read. Twelve of them: seven on "AccessRoster", five on
+-- "DesignerRoster". Nothing else is in this file. No column added, dropped, retyped or
+-- re-defaulted; no constraint; no relation; no existing index changed or removed; no row read or
+-- written. Every query that runs today plans exactly as it does today, only faster.
+--
+-- Written by hand rather than taken from `prisma migrate diff`. The statements are what diff would
+-- have emitted; everything above the SQL is why each one is here, which diff cannot know.
+--
+-- WHAT AN INDEX MIGRATION USUALLY IS, AND WHAT THIS ONE ALSO IS. It reads as a performance change
+-- for a feature that has not shipped yet, and half of it is exactly that. The other half is a gap
+-- that predates requirement 30 by months: BOTH TABLES' DEFAULT SORT HAS BEEN UNINDEXED SINCE EACH
+-- WAS CREATED. `access.list_access_roster` and `designers.list_roster` both order `createdAt desc`
+-- on every page load, both are offset-paged, and neither table has ever carried an index on
+-- `createdAt`. Postgres therefore sorts the whole table to hand back fifty rows, and sorts it again
+-- for page two. The two (createdAt) lines below would have been worth landing on their own.
+--
+-- =============================================================================================
+-- 1. WHAT EACH ONE SERVES
+-- =============================================================================================
+--
+-- Every line names either a read that exists today or a parameter of `GET /access/roster` /
+-- `GET /designers/roster` as DROPDOWN_DESIGN section 4.1 and section 4.3 specify them, landing in
+-- this same wave. Nothing here is speculative, and the discipline is the one already written on
+-- "Location".`@@index([state])` in schema.prisma: an index waits for its query rather than hoping
+-- for one.
+--
+--   "AccessRoster"
+--     (createdAt)               default sort `added desc`, LIVE TODAY; and `dateField=added`
+--     (status, createdAt)       the status multi-select in the default order -- the common query
+--     (admitRole, createdAt)    the role multi-select in the default order, including the reserved
+--                               `default` option, which is `admitRole IS NULL`
+--     (requestedAt)             `dateField=requested` with NO status chosen, and `sort=requested`
+--     (joinedAt)                `dateField=joined`, `sort=joined`
+--     (decidedAt)               `dateField=decided`, `sort=decided`
+--     (firstSeenAt)             `dateField=firstSeen`, `sort=firstSeen`
+--
+--   "DesignerRoster"
+--     (createdAt)               default sort `added desc`, LIVE TODAY; and `dateField=added`
+--     (isActive, createdAt)     the standing chip in the default order
+--     (firstSeenAt)             `dateField=firstSeen`, `sort=firstSeen`, and the reserved
+--                               `never-signed-in` token, which is `firstSeenAt IS NULL`
+--     (institution)             the institution multi-select, `sort=institution`, AND the
+--                               `SELECT DISTINCT institution` behind
+--                               GET /designers/roster/institutions -- a sequential scan plus a hash
+--                               aggregate without this index, an ordered index-only scan with it,
+--                               and because NULLs sort last ascending, its `IS NOT NULL` arm stops
+--                               the walk rather than filtering it
+--     (revokedAt)               `dateField=revoked`, `sort=revoked`
+--
+-- EQUALITY COLUMN FIRST, SORT COLUMN SECOND on all three composites. That is the only order a btree
+-- serves both halves of, and it is the shape 20260726200000_index_coverage measured on "MediaFile":
+-- reversed, `(createdAt, workshopId)` served the sort and forced a filter over every row.
+--
+-- THE `id` TIEBREAK, WHICH THESE INDEXES DO NOT CARRY, DELIBERATELY. Both routes really order
+-- `createdAt desc, id desc` -- `with_id_tiebreak`, because offset paging over a non-total order
+-- hands some rows over twice and never shows others. A single-column index still serves that:
+-- Postgres walks it in order and folds the `id` leg in with an incremental sort inside each group
+-- of equal `createdAt`. On "AccessRoster" one such group is large and KNOWN -- 20260816090000
+-- grandfathered every pre-existing account onto the allow-list in a single statement, so several
+-- hundred rows share one `CURRENT_TIMESTAMP`, and `services/records.py` names those exact rows as
+-- the reason the tiebreak exists at all. It is still strictly cheaper than sorting the table. If it
+-- ever measures badly, WIDEN the existing index to `(createdAt, id)`; do not add a second one
+-- beside it, which would be two writes for one query shape.
+--
+-- MEASURED RATHER THAN ASSERTED. `EXPLAIN (ANALYZE, BUFFERS)` of the access list's own default page
+-- -- `SELECT * FROM "AccessRoster" ORDER BY "createdAt" DESC, "id" DESC LIMIT 50` -- against the
+-- local development database on 2026-08-29, 3,334 rows, both plans run warm:
+--
+--   before   Seq Scan on "AccessRoster" (actual rows=3334), top-N heapsort, 132 buffers
+--   after    Index Scan Backward using "AccessRoster_createdAt_idx" (actual rows=68),
+--            Incremental Sort, Presorted Key "createdAt", 23 buffers
+--
+-- Sixty-eight rows touched instead of three thousand three hundred and thirty-four. Wall-clock is
+-- deliberately NOT quoted: at this size both plans finish in single-digit milliseconds and the
+-- run-to-run noise is larger than the difference between them. Buffers and rows-scanned are the
+-- honest numbers here, and they are the ones that grow with the roster.
+--
+-- WHAT THE PLANNER ACTUALLY CHOSE, WHICH IS NOT WHAT THE TABLE ABOVE PROMISES, AND WHY THE
+-- COMPOSITES ARE STILL RIGHT. At today's volumes Postgres prefers the NARROW indexes plus a small
+-- in-memory sort: `status = 'PENDING'` (88 rows of 3,334) goes through "AccessRoster_status_idx"
+-- and sorts 88 rows; `status = 'ACTIVE'` (3,046 rows) walks "AccessRoster_createdAt_idx" backwards
+-- and filters, because a filter that passes nine rows in ten finds fifty of them immediately. That
+-- is the planner being right, not the composites being wrong -- with `enable_sort = off` it takes
+-- "AccessRoster_status_createdAt_idx" and needs NO sort node at all, which is the plan that wins
+-- the moment a status slice is too large to sort in work_mem or the page offset is deep enough that
+-- the filtering walk has to go a long way. The composites are what stops the plan degrading as
+-- these tables grow. If they are still unused at ten times this size, drop them -- with the
+-- measurement in hand, which is the same bar section 2 sets for dropping the two narrow indexes it
+-- deliberately kept.
+--
+-- =============================================================================================
+-- 2. WHAT IS DELIBERATELY NOT HERE
+-- =============================================================================================
+--
+-- This section is the point of writing the file by hand. An index is not free, and the next person
+-- to open this migration will be deciding whether to add one more.
+--
+-- NO INDEX FOR EITHER SEARCH BOX. `services/records.contains` builds `ILIKE '%...%'`, and a leading
+-- wildcard cannot use a btree at all -- so an index on `email`, `fullName`, `notes` or
+-- `institution` for that read would be written on every insert and probed by nothing. The only
+-- shape that would help is a `pg_trgm` GIN index; there is not one anywhere in this schema (the
+-- migrations were searched for `pg_trgm` and `USING gin`), and enabling the extension is its own
+-- decision, DROPDOWN_DESIGN section 6 Q4. Both searches are already server-side and paged, so their
+-- cost is bounded by the page rather than by the corpus.
+--
+-- NO BARE (admitRole). Eight values plus NULL across the whole table is nearly all one key, so the
+-- planner would rarely choose it; leading it into the sort is what makes it worth the write.
+--
+-- NO (attemptCount), although `sort=attempts` ships. "Who is hammering the door" is asked
+-- occasionally and by hand; the column holds a handful of distinct values; and it is the ONE column
+-- in either table written by an unauthenticated caller's repeated attempts, so an index on it would
+-- be the only write cost in this file a stranger could drive. Leaving that sort to a scan is the
+-- choice, not an oversight.
+--
+-- NO (institution, createdAt). The institution filter is an equality over a handful of names and is
+-- then paged, and the DISTINCT read wants this column alone -- a composite would serve neither
+-- better and would cost that endpoint its index-only scan.
+--
+-- NOTHING IS DROPPED, INCLUDING THE TWO INDEXES THAT ARE NOW PREFIXES. "AccessRoster"(status) is a
+-- prefix of the new (status, createdAt), and "DesignerRoster"(isActive) of (isActive, createdAt).
+-- Both stay. This file only adds; a redundant index is cheap where a missing one is not; and each
+-- narrow one still has a query of its own with no sort to fold in -- `count(status = 'PENDING')`
+-- for the pending badge several screens read on every page load, and `active_roster_emails` for
+-- `isActive = true`. Retiring an index is a decision that wants a measurement behind it, and this
+-- change has none.
+--
+-- =============================================================================================
+-- 3. THE LOCK: IT DOES NOT MATTER HERE, AND IT WILL MATTER TO WHOEVER COPIES THIS FILE
+-- =============================================================================================
+--
+-- A plain `CREATE INDEX` takes a SHARE lock on the table for the whole build. That BLOCKS EVERY
+-- WRITE -- INSERT, UPDATE and DELETE -- until the index is finished; reads continue throughout. (It
+-- is SHARE and not ACCESS EXCLUSIVE, which is what `DROP INDEX` and most `ALTER TABLE` forms take.
+-- Getting the name right matters because the two differ for READERS; for writers they are the same
+-- wall. Do not "correct" this sentence to ACCESS EXCLUSIVE.)
+--
+-- ON THESE TWO TABLES IT IS NOTHING, and that is the only reason this file is shaped the way it is.
+-- They are the smallest tables in the product anybody queries: roughly 400 access rows and 1,300
+-- designer rows in production, 3,334 and 1,723 in the local development database this was applied
+-- against on 2026-08-29. Twelve builds over about five thousand rows total is single-digit
+-- milliseconds and no writer notices. There is deliberately NO `apply_concurrently.sql` beside this
+-- file for that reason: 20260726200000_index_coverage and 20260822093000_index_the_account_pointers
+-- both ship one because they index "MediaFile" and "DwStageEntry", and pairing this file with one
+-- would be ceremony over two lists an admin types by hand.
+--
+-- IF YOU COPY THIS FILE TO A TABLE THAT IS NOT SMALL, THAT PARAGRAPH IS THE ONE TO CHANGE, and read
+-- the header of 20260726200000_index_coverage/apply_concurrently.sql before you do. `CREATE INDEX
+-- CONCURRENTLY` takes only SHARE UPDATE EXCLUSIVE and lets writes through, but it CANNOT run inside
+-- a transaction block, and `prisma migrate deploy` sends a migration file as one implicitly
+-- transacted multi-statement query. Putting CONCURRENTLY into a migration.sql does not degrade to a
+-- plain build -- it fails the deploy with ERROR 25001 / Prisma P3018 and leaves a failed row in
+-- _prisma_migrations that blocks every later migration until somebody runs `prisma migrate
+-- resolve`. The answer is the two-file pattern those two migrations use, not a keyword edited into
+-- this one.
+--
+-- =============================================================================================
+-- 4. APPLYING, RE-APPLYING, AND ROLLING BACK
+-- =============================================================================================
+--
+-- IF NOT EXISTS on every statement, for 20260822120000's stated reason, which still holds this
+-- afternoon: this lands in a wave where several agents apply migrations against one local Postgres,
+-- so a half-applied run followed by a re-run is a realistic Tuesday.
+--
+-- THERE IS NO DOWN-MIGRATION IN THIS PROJECT and pushing main deploys with no test gate, so the
+-- rollback is hand-run and is worth stating in full. It is twelve drops and nothing else. An index
+-- cannot change what a query RETURNS -- only how fast the rows are found -- so no data can be lost
+-- by removing one and no client can tell the difference:
+--
+--   DROP INDEX IF EXISTS "AccessRoster_createdAt_idx";
+--   DROP INDEX IF EXISTS "AccessRoster_status_createdAt_idx";
+--   DROP INDEX IF EXISTS "AccessRoster_admitRole_createdAt_idx";
+--   DROP INDEX IF EXISTS "AccessRoster_requestedAt_idx";
+--   DROP INDEX IF EXISTS "AccessRoster_joinedAt_idx";
+--   DROP INDEX IF EXISTS "AccessRoster_decidedAt_idx";
+--   DROP INDEX IF EXISTS "AccessRoster_firstSeenAt_idx";
+--   DROP INDEX IF EXISTS "DesignerRoster_createdAt_idx";
+--   DROP INDEX IF EXISTS "DesignerRoster_isActive_createdAt_idx";
+--   DROP INDEX IF EXISTS "DesignerRoster_firstSeenAt_idx";
+--   DROP INDEX IF EXISTS "DesignerRoster_institution_idx";
+--   DROP INDEX IF EXISTS "DesignerRoster_revokedAt_idx";
+--
+-- Each DROP takes an ACCESS EXCLUSIVE lock, which on these tables is also nothing. Use `DROP INDEX
+-- CONCURRENTLY` if this is ever being undone against something large.
+
+-- CreateIndex
+-- "AccessRoster". The default sort first, because it is the one that was already missing.
+CREATE INDEX IF NOT EXISTS "AccessRoster_createdAt_idx"           ON "AccessRoster"("createdAt");
+CREATE INDEX IF NOT EXISTS "AccessRoster_status_createdAt_idx"    ON "AccessRoster"("status", "createdAt");
+CREATE INDEX IF NOT EXISTS "AccessRoster_admitRole_createdAt_idx" ON "AccessRoster"("admitRole", "createdAt");
+CREATE INDEX IF NOT EXISTS "AccessRoster_requestedAt_idx"         ON "AccessRoster"("requestedAt");
+CREATE INDEX IF NOT EXISTS "AccessRoster_joinedAt_idx"            ON "AccessRoster"("joinedAt");
+CREATE INDEX IF NOT EXISTS "AccessRoster_decidedAt_idx"           ON "AccessRoster"("decidedAt");
+CREATE INDEX IF NOT EXISTS "AccessRoster_firstSeenAt_idx"         ON "AccessRoster"("firstSeenAt");
+
+-- CreateIndex
+-- "DesignerRoster", in the same order: the default sort, the standing chip in that order, then one
+-- per date column the route names, then the institution vocabulary.
+CREATE INDEX IF NOT EXISTS "DesignerRoster_createdAt_idx"          ON "DesignerRoster"("createdAt");
+CREATE INDEX IF NOT EXISTS "DesignerRoster_isActive_createdAt_idx" ON "DesignerRoster"("isActive", "createdAt");
+CREATE INDEX IF NOT EXISTS "DesignerRoster_firstSeenAt_idx"        ON "DesignerRoster"("firstSeenAt");
+CREATE INDEX IF NOT EXISTS "DesignerRoster_institution_idx"        ON "DesignerRoster"("institution");
+CREATE INDEX IF NOT EXISTS "DesignerRoster_revokedAt_idx"          ON "DesignerRoster"("revokedAt");

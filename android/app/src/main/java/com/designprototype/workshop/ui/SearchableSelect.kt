@@ -107,6 +107,37 @@ import kotlinx.coroutines.launch
 // property of the LIST, not of the screen, so the same field behaves the same way on every device
 // — and it is the same number the web uses, so a field that searches on the laptop searches on the
 // phone.
+//
+// WHY THE COUNT IS ONLY EVER THE DEFAULT. Both fields take a nullable `searchable` override, and
+// `null` — what every caller that says nothing gets — is the only value that lets the count decide.
+// It exists because the count is a property of the ANSWER and not of the question, and two kinds of
+// list have an answer that moves under the reader:
+//
+//   1. A list that is ONE SERVER-TRUNCATED PAGE. The design-workshop picker asks for twenty rows,
+//      which is over the threshold, so the handset drew a filter box over a single page — and
+//      typing the title of a workshop that sits on page four answered "Nothing matches" about a
+//      workshop that exists. That is absence read as non-existence, over a list the box could never
+//      reach. The web refuses to draw that box for exactly this reason; `searchable = false` is how
+//      this file refuses too, and the caller owes the reader a sentence saying what does reach the
+//      rest.
+//   2. A list that CHANGES SHAPE WITH THE ANSWER ABOVE IT. Goa has 2 districts, Sikkim 6, Uttar
+//      Pradesh 75, so one district field is an anchored menu in one state and a bottom sheet in the
+//      next, and a researcher cannot learn a control that keeps changing what it is. `searchable =
+//      true` pins it open whatever the count does.
+//
+// WHY AN EMPTY LIST HAS TO SAY SO IN BOTH SURFACES. Until [SearchableSelectField.emptyMessage]
+// existed, a single-select whose list crossed BELOW eight lost, in one step, the filter box, the
+// "N options" live region, the "This list is empty." sentence, the Select-all row and the IME
+// commit path — because every one of those lives in the sheet, and below eight there is no sheet.
+// With `options.isEmpty()`, `includeNone = false` and no `createAction`, tapping the trigger opened
+// a popup with no words in it at all. A picker that opens on nothing reads as "there are none",
+// which is a claim about the repository made from a read that may simply have failed on a handset
+// with no signal — the single most repeated bug class in this product. So `emptyMessage` is drawn
+// in BOTH surfaces, it is the CALLER'S sentence because only the caller knows which of the five
+// empty states it is in (a vocabulary that is genuinely short, a cached list with a date on it, a
+// list this device has not received yet, a read that failed while online, or a scope with nothing
+// in it), and it is spoken from the CLOSED trigger as well, so a field that has been stood down and
+// can no longer be opened still says why.
 // ---------------------------------------------------------------------------------------------
 
 /**
@@ -116,6 +147,15 @@ import kotlinx.coroutines.launch
  * small handset, so it is the point at which the researcher starts scrolling a floating menu whose
  * position they did not choose. MUST match the web's threshold — see the note at the top of the
  * file.
+ *
+ * THE NUMBER DOES NOT MOVE, AND IT IS ONLY EVER THE DEFAULT. A vocabulary written inside this app —
+ * "Draft / Pending / Approved", the sharing tiers, the status ladders — is exactly what eight was
+ * measured for, and every one of those callers still passes nothing and still gets it. What changed
+ * is that a list BACKED BY RECORDS no longer lets a count that moves with the data decide what
+ * shape a control is: those callers pass `searchable` explicitly, in both directions, and the
+ * reasons are set out at the top of this file. Re-measuring this constant to serve them would
+ * silently re-shape every vocabulary and none of the record-backed lists, which is the opposite of
+ * the fix.
  */
 const val SEARCH_THRESHOLD: Int = 8
 
@@ -182,6 +222,70 @@ private fun SelectOption.matches(terms: List<String>): Boolean {
 private fun queryTerms(query: String): List<String> =
     query.trim().split(' ', '\t', '\n').filter { it.isNotBlank() }
 
+/**
+ * Which surface a single-select opens: the caller's ruling if it made one, otherwise the count.
+ *
+ * Lifted out of the composable and made `internal` for one reason. This one line is what a wave of
+ * call sites is about to depend on, and a decision left inline inside an `@Composable` cannot be
+ * asserted here at all: there is no `ui-test-junit4` and no Robolectric in `app/build.gradle.kts`,
+ * so the JVM suite cannot render a picker to look at it. Pulled out, it is pinned by
+ * `SearchableSelectEmptyStateTest` in plain JUnit, which is the same trade every other decision in
+ * this app that matters more than its pixels has already made.
+ *
+ * `null` is NOT `false`. It means "the count decides", which is what every closed vocabulary in this
+ * app wants and what all of them get by passing nothing at all.
+ */
+internal fun resolveSearchable(searchable: Boolean?, options: List<SelectOption>): Boolean =
+    searchable ?: (options.size >= SEARCH_THRESHOLD)
+
+/**
+ * The words a surface falls back to when the caller has not written its own.
+ *
+ * IT IS A FALLBACK AND IT IS NEVER SPOKEN AS A CLAIM. It exists so that an OPENED picker with
+ * nothing in it is not a popup containing no words at all — which is what the anchored menu drew
+ * before, and a wordless popup reads as "there are none" quite as loudly as a sentence would. It is
+ * deliberately the weakest true thing that can be said about a list with no members: it reports the
+ * control’s own state and asserts nothing whatsoever about the repository behind it. Anything
+ * stronger belongs to the caller — see [SearchableSelectField.emptyMessage].
+ */
+private const val GENERIC_EMPTY_LINE: String = "This list is empty."
+
+/**
+ * The one sentence an empty picker prints, in whichever of the two surfaces is open.
+ *
+ * TWO FACTS, AND THEY MAY NEVER SHARE A SENTENCE. "Nothing matches" is about the SEARCH — the term
+ * just typed found nothing in a list that does have members, and the next move is to retype it.
+ * [emptyMessage] is about the LIST — it has no members, and the next move depends entirely on WHY,
+ * which is why that string belongs to the caller and not to this file. Printing “Nothing matches
+ * “”.” at a researcher whose box is empty, which is what an unguarded message does the moment an
+ * empty list can be opened at all, reads as a search that went wrong rather than as a register with
+ * nobody in it, and sends them retyping a name that was never there.
+ *
+ * AND WHEN THERE IS NO LIST AT ALL, THE SEARCH IS NOT THE FACT WORTH PRINTING — which is what
+ * [listIsEmpty] is here to settle, and it is not a refinement. The reference roster is the case, and
+ * it is reachable today: an empty roster with a `createAction` keeps its trigger (that is the whole
+ * point of the exception — the designer is standing in front of the artisan who has no record), the
+ * sheet opens with its box drawn because a multi-select is searchable at every length, the designer
+ * types the name they came to look for, and the caller’s sentence — "No records for this on the
+ * device yet. Connect once and reopen this stage." — is replaced, on the first keystroke, by
+ * "Nothing matches “Ram Kumar”.". That sentence says the term is not in the register. The truth was
+ * that this device has never been given the register, and the designer has just been told the
+ * opposite of it, in the one room where they could still have written the record down. A term cannot
+ * fail to match a list that has no members, so with [listIsEmpty] the list’s own sentence stands
+ * whatever is in the box, and the reader can still empty the box from the button beside it.
+ *
+ * Both surfaces call this so that they cannot drift apart. The sheet has said the right thing since
+ * the day it was written and the anchored menu said nothing whatsoever; the whole point of the fix
+ * is that a list crossing [SEARCH_THRESHOLD] in either direction does not change what the control
+ * tells the reader.
+ */
+internal fun pickerEmptyLine(
+    searching: Boolean,
+    query: String,
+    emptyMessage: String,
+    listIsEmpty: Boolean
+): String = if (searching && !listIsEmpty) "Nothing matches “${query.trim()}”." else emptyMessage
+
 // ---------------------------------------------------------------------------------------------
 // Single select
 // ---------------------------------------------------------------------------------------------
@@ -202,12 +306,78 @@ fun SearchableSelectField(
     includeNone: Boolean = true,
     enabled: Boolean = true,
     /**
+     * Which surface this one call site opens, overruling [SEARCH_THRESHOLD].
+     *
+     * `null` — THE DEFAULT, AND WHAT EVERY CALLER WRITTEN BEFORE THIS PARAMETER GETS — lets the
+     * count decide exactly as it always has: at or above [SEARCH_THRESHOLD] the searchable sheet,
+     * below it the anchored menu. Nothing about a vocabulary written inside this app changes.
+     *
+     * `true` where the list is BACKED BY RECORDS and [options] is the WHOLE answer, so that the
+     * control keeps its shape when the answer shrinks. The district field is the case: two rows in
+     * Goa and seventy-five in Uttar Pradesh, and a reader cannot learn a control that changes shape
+     * with the answer above it.
+     *
+     * `false` to overrule a long list whose [options] are ONE SERVER-TRUNCATED PAGE, because a
+     * filter box over a page filters the page. The design-workshop picker asks for twenty rows, so
+     * typing the title of a workshop sitting on page four answers "Nothing matches" about a
+     * workshop that exists — absence read as non-existence, which is the thing this control is
+     * least allowed to say. A caller that passes `false` owes the reader the sentence naming what
+     * does reach the rest of the list. Keep the list page-sized when you do: the anchored menu
+     * builds every row eagerly inside a scrolling column, which is right for twenty and is not
+     * where two hundred belong.
+     *
+     * Same rule, same words and the same number as `SearchableSelectProps.searchable` on the web,
+     * so a field that searches on the laptop searches on the handset.
+     */
+    searchable: Boolean? = null,
+    /**
+     * The caller's sentence for an empty list, or `null` — THE DEFAULT — meaning it has not
+     * written one.
+     *
+     * NULLABLE, AND THE NULL IS THE POINT. A plain `String` default made this file the author of a
+     * sentence it has no standing to write, and then SPOKE it from the closed trigger.
+     * `DesignReviewScreen.kt:272-281` is the caller that proves the harm: it computes the real
+     * state into its [placeholder] — "Looking for your workshops…", "This list could not be
+     * loaded", "No workshops are listed for this account" — and stands the field down with
+     * `enabled = workshops?.isNotEmpty() == true`. With a non-null default, a researcher using
+     * TalkBack on a handset whose fetch had just failed heard "A workshop you can open yourself.
+     * Nothing selected. This list is empty." while the screen beside them read "This list could not
+     * be loaded". Those are the two opposite facts this control exists to keep apart, and the
+     * primitive was asserting the wrong one OVER a caller that had already got it right. `null`
+     * means "say nothing I was not told", so the forty-odd call sites that pass nothing are, in
+     * speech, exactly what they were before this parameter existed. What an OPENED surface prints
+     * falls back to [GENERIC_EMPTY_LINE], because a wordless popup is worse than a weak sentence.
+     *
+     * IT IS NEVER "THERE ARE NONE". An empty picker has five different causes with five different
+     * next moves — a vocabulary that is genuinely short, a cached list carrying a refresh date, a
+     * list this device has not received yet, a read that failed while online, and a scope with
+     * nothing in it — and only the caller can tell which. "No crafts available." asserts the last
+     * of them from a read that may simply have timed out in a workshop with no signal.
+     *
+     * A FIELD STOOD DOWN OVER AN EMPTY LIST PRINTS IT ON THE FORM, and this file does that rather
+     * than asking each caller to remember. `enabled = false` makes the trigger unopenable, so the
+     * menu's empty arm — the arm added to stop wordless popups — cannot be reached at all; and at
+     * the two workshop pickers the field is disabled by EXACTLY the condition that empties it
+     * (`enabled = rows.isNotEmpty()`), so that arm is dead code at the call sites it was written
+     * for. Left to the caller it is a sentence that has to be repeated at every such site and will
+     * be forgotten at one of them; drawn here it comes from this one string, so the eye and the
+     * screen reader cannot be told different things. It is printed only when this parameter is
+     * non-null, so no caller's layout moves until it has something to say.
+     */
+    emptyMessage: String? = null,
+    /**
      * "Create the record this list has not got", drawn at the foot of whichever surface opens.
      *
      * It must be offered in BOTH branches below and not only in the sheet. A cluster whose artisan
      * register holds three names takes the anchored menu, and three names is precisely the case where
      * the artisan being looked for is the one that was never documented — offering the escape only
      * past eight options would withhold it from every list short enough to need it most.
+     *
+     * IT SURVIVES THE EMPTY ARM TOO, in both surfaces, and that is the point of it. Every one of the
+     * five empty states above is a state in which the record being looked for may be the one nobody
+     * has written down yet; a picker that can still make it is not a dead end, and it is the only
+     * control on the screen that turns "there is nothing here" into something the researcher can do
+     * about it before the interview ends.
      */
     createAction: SelectCreateAction? = null,
     onSelect: (String) -> Unit
@@ -215,7 +385,16 @@ fun SearchableSelectField(
     var sheetOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val selectedLabel = options.firstOrNull { it.value == selectedValue }?.label
-    val searchable = options.size >= SEARCH_THRESHOLD
+    val useSheet = resolveSearchable(searchable, options)
+
+    // THE ONE STATE IN WHICH NEITHER SURFACE CAN BE OPENED, so the sentence has to be on the form
+    // itself. A disabled trigger does not react to a tap, which puts both the anchored menu's empty
+    // arm and the sheet's out of reach — and this is not a corner: the two workshop pickers stand the
+    // field down with the very condition that empties it (`SketchesAndPrototypesScreen.kt:426`,
+    // `DesignReviewScreen.kt:280`), so the arm written to stop a wordless popup is unreachable at
+    // precisely those call sites. Non-null is what turns this on, so a caller with nothing to say
+    // still draws exactly what it drew before.
+    val standDownLine = emptyMessage?.takeIf { options.isEmpty() && !enabled }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, color = MaterialTheme.field.muted, fontSize = 12.sp)
@@ -225,13 +404,42 @@ fun SearchableSelectField(
                 // as its own node — so a researcher swiping onto the control alone would hear
                 // "Ram Kumar, button" with no idea which field it belongs to. Naming the node with
                 // both halves is the only way the control is self-describing wherever focus lands.
-                speech = "$label. ${selectedLabel ?: "Nothing selected"}",
+                //
+                // AND THE CALLER'S EMPTY SENTENCE IS PART OF THAT NAME WHEN THERE IS NOTHING TO
+                // PICK, so a screen-reader user is not made to open a menu to find out it has
+                // nothing in it. It is only ever added when the list is empty, so no control that
+                // has something to offer grows a longer description.
+                //
+                // ONLY EVER THE CALLER'S SENTENCE, NEVER [GENERIC_EMPTY_LINE]. Speech is the one
+                // surface a reader cannot correct by glancing at the rest of the screen, so a
+                // primitive that guesses here contradicts the screen out loud: three of these
+                // pickers put the true state in their [placeholder] — "This list could not be
+                // loaded" — and a manufactured "This list is empty." told the researcher using
+                // TalkBack the register was empty while the researcher beside them read that the
+                // fetch had failed. Weak-but-true is fine for a popup somebody chose to open; it
+                // is not fine as the NAME of a control that is read out unasked.
+                //
+                // AND NOT WHEN [standDownLine] IS ALREADY DRAWING IT. A stood-down field prints
+                // the sentence on the form as a node of its own; appending it here as well makes
+                // TalkBack read the same words twice running, once as the button's name and once
+                // as the text beneath it.
+                speech = buildString {
+                    append(label)
+                    append(". ")
+                    append(selectedLabel ?: "Nothing selected")
+                    if (options.isEmpty() && standDownLine == null) {
+                        emptyMessage?.let {
+                            append(". ")
+                            append(it)
+                        }
+                    }
+                },
                 text = selectedLabel ?: placeholder,
                 hasSelection = selectedLabel != null,
                 enabled = enabled,
-                onClick = { if (searchable) sheetOpen = true else menuOpen = true }
+                onClick = { if (useSheet) sheetOpen = true else menuOpen = true }
             )
-            if (!searchable) {
+            if (!useSheet) {
                 DropdownMenu(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
@@ -244,24 +452,67 @@ fun SearchableSelectField(
                             onClick = { onSelect(""); menuOpen = false }
                         )
                     }
-                    options.forEach { option ->
-                        val isSelected = option.value == selectedValue
+                    if (options.isEmpty()) {
+                        /*
+                         * THE ARM THIS BRANCH DID NOT HAVE, AND THE WHOLE REASON THE PARAMETER
+                         * ABOVE EXISTS.
+                         *
+                         * Before it, an empty list here drew a none-row that may not have been
+                         * asked for, then nothing, then usually no create action either — a popup
+                         * opening on a blank rectangle. A researcher reads that as "there are
+                         * none", and on a handset in a workshop with no signal the truthful reading
+                         * is nearly always "this device has not been given the list yet". The two
+                         * are opposite facts with opposite next moves and they looked identical.
+                         *
+                         * A DISABLED MENU ITEM AND NOT A BARE Text, for three reasons. It keeps the
+                         * row geometry of the menu, so the sentence reads as part of the control
+                         * rather than as a caption floating in a popup. TalkBack stops on it and
+                         * announces it as disabled, so a screen-reader user is told both the fact
+                         * and that it is not one of the answers. And it cannot be tapped, so a
+                         * mis-hit on a one-item menu commits nothing — which matters most here,
+                         * because this menu is at its smallest exactly when it is empty.
+                         *
+                         * NO `maxLines`, unlike the option rows above. Four of the five sentences
+                         * this can carry are two or three lines long and every one of them ends in
+                         * the part that says what to do next; clipping them to one line with an
+                         * ellipsis would keep the claim and throw away the remedy.
+                         */
                         DropdownMenuItem(
                             text = {
                                 Text(
-                                    option.label,
-                                    color = if (isSelected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.field.body
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    // The fallback belongs HERE and not in the parameter default.
+                                    // This popup has been opened, so the reader is looking at it
+                                    // and needs words in it; the closed trigger is read out
+                                    // unasked, and there this file says nothing it was not told.
+                                    emptyMessage ?: GENERIC_EMPTY_LINE,
+                                    color = MaterialTheme.field.muted,
+                                    fontSize = 13.sp,
+                                    lineHeight = 17.sp
                                 )
                             },
-                            trailingIcon = { if (isSelected) SelectedTick() },
-                            onClick = { onSelect(option.value); menuOpen = false }
+                            enabled = false,
+                            onClick = {}
                         )
+                    } else {
+                        options.forEach { option ->
+                            val isSelected = option.value == selectedValue
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        option.label,
+                                        color = if (isSelected) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.field.body
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                trailingIcon = { if (isSelected) SelectedTick() },
+                                onClick = { onSelect(option.value); menuOpen = false }
+                            )
+                        }
                     }
                     // LAST, and behind a rule. A menu item that makes a record is not one of the
                     // answers to "which of these?", and putting it above or among them is how a
@@ -295,6 +546,14 @@ fun SearchableSelectField(
                 }
             }
         }
+        // Under the control and inside the same Column, so it moves with the field on a form that
+        // reflows and a researcher reading top to bottom meets the label, the greyed control and the
+        // reason for it in that order. `field.muted` at 12sp is the voice the multi-select already
+        // uses for its own replacement sentence a few hundred lines below — one shape for one fact,
+        // whichever of the two controls is carrying it.
+        standDownLine?.let { line ->
+            Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 16.sp)
+        }
     }
 
     if (sheetOpen) {
@@ -303,7 +562,13 @@ fun SearchableSelectField(
             options = options,
             selected = if (selectedValue.isBlank()) emptySet() else setOf(selectedValue),
             multiple = false,
+            // Not `useSheet`, and not the override either: the sheet is reachable from this field
+            // ONLY down the branch that decided the control is searchable, so by the time it opens
+            // the answer is true by construction. A `false` here would open a sheet with no box,
+            // which is a shape this field never takes — `searchable = false` keeps the menu.
+            searchable = true,
             noneLabel = if (includeNone) placeholder else null,
+            emptyMessage = emptyMessage ?: GENERIC_EMPTY_LINE,
             createAction = createAction,
             onDismiss = { sheetOpen = false },
             onApply = { next -> onSelect(next.firstOrNull().orEmpty()) }
@@ -332,8 +597,65 @@ fun SearchableMultiSelectField(
     selected: Set<String>,
     modifier: Modifier = Modifier,
     placeholder: String = "Select",
+    /**
+     * What this control says when there is nothing to tick — the caller's sentence, in both of the
+     * two places it can appear: REPLACING the trigger on the form when there is no [createAction],
+     * and inside the sheet's empty arm when there is one and the trigger therefore survives.
+     *
+     * THE DEFAULT IS A KNOWN OFFENDER AND IT IS DELIBERATELY LEFT ALONE HERE. "No options
+     * available." is a claim about what exists, made by a shared primitive that cannot possibly
+     * know: on a handset the same empty list means "this device has not received it yet" far more
+     * often than it means "there are none". Changing the default would silently re-word every
+     * caller that relies on it, which is the sort of change that has to be made one call site at a
+     * time with the reason for each — so the fix belongs to the screens, and the five sentences
+     * they choose between are set out at the top of this file. Pass one. Every caller in this
+     * repository that has thought about it already does.
+     *
+     * AND IT STAYS NON-NULL WHERE [SearchableSelectField.emptyMessage] WENT NULLABLE. The two are
+     * not the same job. There, the string was being SPOKEN from a closed trigger that is read out
+     * whether or not anybody asked, so a default was a claim this file had manufactured. Here it is
+     * a visible line that REPLACES the control on the form, so some string has to exist or an empty
+     * multi-select goes back to being a blank gap between two labels — and the one state in which
+     * it is spoken instead, an empty list with a [createAction], is a control the reader has
+     * deliberately opened.
+     */
     emptyMessage: String = "No options available.",
     enabled: Boolean = true,
+    /**
+     * Whether the sheet draws its filter box. `null` — the default — keeps it, which is what this
+     * control has done at every length since it was written.
+     *
+     * IT DOES NOT MEAN QUITE WHAT IT MEANS ON [SearchableSelectField], and that difference is why
+     * the parameter is nullable on both rather than a `Boolean` with a default. The multi-select
+     * has no anchored-menu branch to fall back to — the note above says why a wall of checkboxes is
+     * not an option — so the sheet is the surface at every length, and `searchable` here can only
+     * be about the box inside it. `null` therefore means the same thing on both: "this control's
+     * own long-standing rule", which happens to be the count on one and "always" on the other.
+     *
+     * Pass `false` for a closed ladder short enough to read at a glance — eight roles, five
+     * statuses — where a filter box is a row of chrome and a keyboard above a list nobody needs to
+     * filter. Pass it for the same reason a single-select does: so that the day a tier is added or
+     * removed, the control does not change shape underneath a reader who had learnt it.
+     */
+    searchable: Boolean? = null,
+    /**
+     * Whether the sheet offers "Select all N shown" and "Clear all". `true` — the default — is
+     * exactly what every caller written before this parameter has today.
+     *
+     * PASS `false` ON ANYTHING THAT FILTERS A LIST RATHER THAN ANSWERING A FORM FIELD. A filter
+     * says "everything" BY ABSENCE: nothing ticked is the unfiltered state and it is the only
+     * spelling of it. Select-all hands the reader a second spelling — every row ticked — that means
+     * the same thing to the query and something quite different to the next person to read the
+     * screen, and once both exist there is no way to tell a default apart from a deliberate choice,
+     * nor to write down which one a saved view meant. The web's scope control sends `undefined`
+     * rather than an empty string for the same reason, and the roster filters on both clients are
+     * bound by it.
+     *
+     * It is published by the primitive rather than by the screens that need it because this file is
+     * written once and called from everywhere; its web twin is `SearchableMultiSelectProps.bulk`,
+     * same name, same default.
+     */
+    bulk: Boolean = true,
     /** See [SearchableSelectField]'s own parameter — same action, same place, same reason. */
     createAction: SelectCreateAction? = null,
     onSelectedChange: (Set<String>) -> Unit
@@ -355,10 +677,25 @@ fun SearchableMultiSelectField(
             Text(emptyMessage, color = MaterialTheme.field.muted, fontSize = 12.sp)
         } else {
             SelectTrigger(
-                speech = "$label. " + if (chosen.isEmpty()) {
-                    "Nothing selected"
-                } else {
-                    "${chosen.size} of ${options.size} selected: ${chosen.joinToString { it.label }}"
+                speech = buildString {
+                    append(label)
+                    append(". ")
+                    if (chosen.isEmpty()) {
+                        append("Nothing selected")
+                    } else {
+                        append(
+                            "${chosen.size} of ${options.size} selected: " +
+                                chosen.joinToString { it.label }
+                        )
+                    }
+                    // ONLY REACHABLE WITH A createAction, and that is what stops it being said
+                    // twice: without one, an empty list replaces this trigger with [emptyMessage]
+                    // in the branch above, and a screen reader would then hear the same sentence
+                    // from the text and again from the button beside it.
+                    if (options.isEmpty()) {
+                        append(". ")
+                        append(emptyMessage)
+                    }
                 },
                 text = if (chosen.isEmpty()) placeholder else "${chosen.size} of ${options.size} selected",
                 hasSelection = chosen.isNotEmpty(),
@@ -402,8 +739,15 @@ fun SearchableMultiSelectField(
             options = options,
             selected = selected,
             multiple = true,
+            // `?: true` and NOT the count: this control has always drawn its box at every length,
+            // and resolving `null` through [SEARCH_THRESHOLD] here would take the box away from
+            // every multi-select in the app that happens to be holding fewer than eight rows today
+            // — a silent change of shape in callers that never asked for one.
+            searchable = searchable ?: true,
             noneLabel = null,
+            emptyMessage = emptyMessage,
             createAction = createAction,
+            bulk = bulk,
             onDismiss = { sheetOpen = false },
             onApply = onSelectedChange
         )
@@ -423,6 +767,20 @@ fun SearchableSelectSheet(
     title: String,
     options: List<SelectOption>,
     selectedValue: String = "",
+    /**
+     * As [SearchableMultiSelectField]'s, and for the same reason: this is a sheet at every length,
+     * so `null` keeps the box, which is what this has always drawn. `false` is for a short closed
+     * ladder mounted in a field a button cannot be.
+     */
+    searchable: Boolean? = null,
+    /**
+     * As [SearchableSelectField]'s, minus the nullability, and the difference is not an oversight.
+     * This composable IS the opened surface — it has no closed trigger to be read out unasked, so
+     * there is no state in which a fallback could be mistaken for something the caller asserted,
+     * and something must be drawn. A caller whose list comes from records should still say which of
+     * the five empty states it is in, here as much as anywhere.
+     */
+    emptyMessage: String = GENERIC_EMPTY_LINE,
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
 ) {
@@ -431,7 +789,9 @@ fun SearchableSelectSheet(
         options = options,
         selected = if (selectedValue.isBlank()) emptySet() else setOf(selectedValue),
         multiple = false,
+        searchable = searchable ?: true,
         noneLabel = null,
+        emptyMessage = emptyMessage,
         onDismiss = onDismiss,
         onApply = { next -> onSelect(next.firstOrNull().orEmpty()) }
     )
@@ -509,8 +869,18 @@ private fun SearchablePickerSheet(
     options: List<SelectOption>,
     selected: Set<String>,
     multiple: Boolean,
+    /**
+     * Whether the filter box is drawn. Resolved by the caller, never here: the two public fields
+     * answer `null` differently — the count on the single-select, "always" on the multi — and
+     * re-deriving it inside would give one of them the other's rule.
+     */
+    searchable: Boolean,
     noneLabel: String?,
+    /** The caller's sentence for an empty list. See [SearchableSelectField.emptyMessage]. */
+    emptyMessage: String,
     createAction: SelectCreateAction? = null,
+    /** Whether the bulk row is offered at all. See [SearchableMultiSelectField]'s parameter. */
+    bulk: Boolean = true,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -563,8 +933,14 @@ private fun SearchablePickerSheet(
         }
     }
 
+    // THE `searchable` GUARD IS A CRASH AND NOT A TIDINESS. [FocusRequester.requestFocus] throws
+    // IllegalStateException("FocusRequester is not initialized") when the requester was never
+    // attached to a node, and with `searchable = false` the OutlinedTextField holding it is not
+    // composed at all — so a closed ladder long enough to clear [AUTOFOCUS_THRESHOLD] would take
+    // the picker down on the frame it opened, on the one code path a short vocabulary is supposed
+    // to make simpler.
     LaunchedEffect(Unit) {
-        if (options.size >= AUTOFOCUS_THRESHOLD) focusRequester.requestFocus()
+        if (searchable && options.size >= AUTOFOCUS_THRESHOLD) focusRequester.requestFocus()
     }
 
     val maxSheetHeight = LocalConfiguration.current.screenHeightDp.dp * SHEET_HEIGHT_FRACTION
@@ -606,43 +982,51 @@ private fun SearchablePickerSheet(
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.semantics { heading() }
                 )
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    // Just "Search", not "Search $title". A field label in this app is a whole
-                    // phrase — "Artisans of selected crafts", "State / union territory" — and
-                    // prefixing it wrapped the label onto two lines, which grows the box and, on a
-                    // required field, produced "Search Craft *". The heading directly above already
-                    // names the list, and it is the first thing TalkBack lands on inside the sheet,
-                    // so the short label loses nothing.
-                    label = { Text("Search") },
-                    singleLine = true,
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Search,
-                            contentDescription = null,
-                            tint = MaterialTheme.field.muted,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) {
-                            IconButton(onClick = { query = "" }) {
-                                Icon(
-                                    Icons.Filled.Close,
-                                    contentDescription = "Clear search",
-                                    tint = MaterialTheme.field.muted,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                // THE COUNT LINE BELOW STAYS WHEN THIS GOES, deliberately. It is the live region
+                // that tells a screen-reader user how many rows are under their thumb, and it is
+                // the only place an empty sheet says "0 options" out loud; dropping it with the box
+                // would take the count away from precisely the short lists that were given
+                // `searchable = false` because they are read at a glance — by everyone except the
+                // reader who cannot see them.
+                if (searchable) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        // Just "Search", not "Search $title". A field label in this app is a whole
+                        // phrase — "Artisans of selected crafts", "State / union territory" — and
+                        // prefixing it wrapped the label onto two lines, which grows the box and, on
+                        // a required field, produced "Search Craft *". The heading directly above
+                        // already names the list, and it is the first thing TalkBack lands on inside
+                        // the sheet, so the short label loses nothing.
+                        label = { Text("Search") },
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.field.muted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Clear search",
+                                        tint = MaterialTheme.field.muted,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
-                        }
-                    },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { onImeAction() }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(focusRequester)
-                )
+                        },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { onImeAction() }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                    )
+                }
                 // A FlowRow and not a Row: "Select all 74 shown" and "Clear all" beside a count are
                 // about 230dp at font scale 1 and will not fit a 360dp screen at font scale 2, and
                 // a Row answers that by drawing off the edge. Wrapping is the only answer that
@@ -663,7 +1047,11 @@ private fun SearchablePickerSheet(
                             // the field unusable.
                             .semantics { liveRegion = LiveRegionMode.Polite }
                     )
-                    if (multiple) {
+                    // `bulk` AND NOT JUST `multiple`: a control that FILTERS a list rather than
+                    // answering a form field must express "everything" by absence, and Select-all
+                    // is a second spelling of it that the reader cannot tell apart from a
+                    // deliberate choice to tick every row. See [SearchableMultiSelectField.bulk].
+                    if (multiple && bulk) {
                         // SELECT ALL TAKES THE VISIBLE ROWS, NOT THE WHOLE LIST — and the count in
                         // the label is what says so, in both states, which is why the word "shown"
                         // stays there even when nothing is filtered. Filtering to "Bagru" and
@@ -738,16 +1126,18 @@ private fun SearchablePickerSheet(
                             modifier = Modifier.fillMaxWidth().padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            // Two different facts, and they must not share a sentence. "Nothing
-                            // matches" is about the SEARCH; with the box empty the list itself is
-                            // empty, and printing “Nothing matches “”.” at a designer — which is what
-                            // an unguarded message does the moment an empty list can be opened at all
-                            // — reads as a search that went wrong rather than a register with nobody
-                            // in it, and sends them retyping a name that was never there.
+                            // Two different facts, and they must not share a sentence — the
+                            // argument, and the reason the second of them is the CALLER'S string
+                            // rather than a hard-coded one, is written on [pickerEmptyLine]. It is
+                            // a shared function and not a copy of the ternary that used to sit here
+                            // because the anchored menu now prints the same thing, and two spellings
+                            // of one sentence is how a list that crosses eight starts telling the
+                            // reader two different stories about itself.
                             Text(
-                                if (searching) "Nothing matches “${query.trim()}”." else "This list is empty.",
+                                pickerEmptyLine(searching, query, emptyMessage, options.isEmpty()),
                                 color = MaterialTheme.field.muted,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
+                                lineHeight = 17.sp
                             )
                             if (searching) {
                                 TextButton(onClick = { query = "" }) { Text("Clear search") }
@@ -820,8 +1210,23 @@ private fun SearchablePickerSheet(
     }
 }
 
-/** "12 of 74 match" while filtering, plain "74 options" otherwise. Read aloud on every keystroke. */
-private fun countLine(shown: Int, total: Int, searching: Boolean): String = when {
+/**
+ * "12 of 74 match" while filtering, plain "74 options" otherwise. Read aloud on every keystroke.
+ *
+ * THE `total == 0` ARM IS THE LIVE REGION'S HALF OF [pickerEmptyLine]'S RULE, and it has to come
+ * first. This line is announced by TalkBack on every keystroke, so without an arm of its own an
+ * empty list answered the first letter typed with "No matches": the sentence in the body of the
+ * sheet having just been made to go on saying WHY the list is empty, the one string that speaks
+ * without being asked would have carried on reporting a failed search over a list that has no
+ * members and therefore cannot fail one. "0 options" is the same weak, true thing the sheet says
+ * before a key is pressed, and it does not move under typing because the fact it reports does not.
+ *
+ * `internal` for the reason [pickerEmptyLine] is: this is what a screen-reader user actually
+ * hears, and it is asserted in `SearchableSelectEmptyStateTest` rather than looked at, because the
+ * JVM suite cannot compose a sheet.
+ */
+internal fun countLine(shown: Int, total: Int, searching: Boolean): String = when {
+    total == 0 -> "0 options"
     !searching -> if (total == 1) "1 option" else "$total options"
     shown == 0 -> "No matches"
     else -> "$shown of $total match"

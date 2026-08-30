@@ -182,8 +182,18 @@ interface WorkshopRepositoryApi {
     @GET("crafts/{id}")
     suspend fun craft(@Path("id") id: String): CraftDto
 
+    /**
+     * A JSON BODY, FOR THE REASON SPELLED OUT ON [updateArtisan] AND ONE MORE.
+     *
+     * `explicitNulls = false` plus `model_dump(exclude_unset=True)` means a null property is dropped
+     * and an absent key means "leave the stored value alone", so the two workshop links — both in
+     * `services/records.CLEARABLE_KEYS` — could not be CLEARED from this client at all. The picker
+     * drew a "None" row, the save answered 200, and the record stayed filed where it was. See
+     * `WorkshopRepository.patchBodyWithClearances`, which encodes the request with the wire encoder
+     * and then puts the explicit nulls back, so a field added to the request class is still sent.
+     */
     @PATCH("crafts/{id}")
-    suspend fun updateCraft(@Path("id") id: String, @Body body: CraftCreateRequest): CraftDto
+    suspend fun updateCraft(@Path("id") id: String, @Body body: JsonObject): CraftDto
 
     @GET("products")
     suspend fun products(
@@ -198,8 +208,18 @@ interface WorkshopRepositoryApi {
     @GET("products/{id}")
     suspend fun product(@Path("id") id: String): ProductDetailDto
 
+    /**
+     * A JSON BODY, FOR THE REASON SPELLED OUT ON [updateArtisan] AND ONE MORE.
+     *
+     * `explicitNulls = false` plus `model_dump(exclude_unset=True)` means a null property is dropped
+     * and an absent key means "leave the stored value alone", so the two workshop links — both in
+     * `services/records.CLEARABLE_KEYS` — could not be CLEARED from this client at all. The picker
+     * drew a "None" row, the save answered 200, and the record stayed filed where it was. See
+     * `WorkshopRepository.patchBodyWithClearances`, which encodes the request with the wire encoder
+     * and then puts the explicit nulls back, so a field added to the request class is still sent.
+     */
     @PATCH("products/{id}")
-    suspend fun updateProduct(@Path("id") id: String, @Body body: ProductCreateRequest): ProductDetailDto
+    suspend fun updateProduct(@Path("id") id: String, @Body body: JsonObject): ProductDetailDto
 
     @GET("tools")
     suspend fun tools(
@@ -212,8 +232,18 @@ interface WorkshopRepositoryApi {
     @GET("tools/{id}")
     suspend fun tool(@Path("id") id: String): ToolDetailDto
 
+    /**
+     * A JSON BODY, FOR THE REASON SPELLED OUT ON [updateArtisan] AND ONE MORE.
+     *
+     * `explicitNulls = false` plus `model_dump(exclude_unset=True)` means a null property is dropped
+     * and an absent key means "leave the stored value alone", so the two workshop links — both in
+     * `services/records.CLEARABLE_KEYS` — could not be CLEARED from this client at all. The picker
+     * drew a "None" row, the save answered 200, and the record stayed filed where it was. See
+     * `WorkshopRepository.patchBodyWithClearances`, which encodes the request with the wire encoder
+     * and then puts the explicit nulls back, so a field added to the request class is still sent.
+     */
     @PATCH("tools/{id}")
-    suspend fun updateTool(@Path("id") id: String, @Body body: ToolCreateRequest): ToolDetailDto
+    suspend fun updateTool(@Path("id") id: String, @Body body: JsonObject): ToolDetailDto
 
     @GET("tools/{id}/artisans")
     suspend fun toolArtisans(@Path("id") id: String): List<ArtisanDto>
@@ -261,8 +291,18 @@ interface WorkshopRepositoryApi {
     @GET("workshops/{id}")
     suspend fun workshop(@Path("id") id: String): WorkshopDetailDto
 
+    /**
+     * A JSON BODY, FOR THE REASON SPELLED OUT ON [updateArtisan] AND ONE MORE.
+     *
+     * `explicitNulls = false` plus `model_dump(exclude_unset=True)` means a null property is dropped
+     * and an absent key means "leave the stored value alone", so the two workshop links — both in
+     * `services/records.CLEARABLE_KEYS` — could not be CLEARED from this client at all. The picker
+     * drew a "None" row, the save answered 200, and the record stayed filed where it was. See
+     * `WorkshopRepository.patchBodyWithClearances`, which encodes the request with the wire encoder
+     * and then puts the explicit nulls back, so a field added to the request class is still sent.
+     */
     @PATCH("workshops/{id}")
-    suspend fun updateWorkshop(@Path("id") id: String, @Body body: WorkshopCreateRequest): WorkshopDetailDto
+    suspend fun updateWorkshop(@Path("id") id: String, @Body body: JsonObject): WorkshopDetailDto
 
     // Pre-flight for a record form: what would submitting into this workshop mean for me? Reports
     // only — it never 403s, so a caller must treat a failure as "no answer", never as "refused".
@@ -541,8 +581,18 @@ interface WorkshopRepositoryApi {
     @POST("processes")
     suspend fun createProcess(@Body body: ProcessCreateRequest): ProcessDetailDto
 
+    /**
+     * A JSON BODY, FOR THE REASON SPELLED OUT ON [updateArtisan] AND ONE MORE.
+     *
+     * `explicitNulls = false` plus `model_dump(exclude_unset=True)` means a null property is dropped
+     * and an absent key means "leave the stored value alone", so the two workshop links — both in
+     * `services/records.CLEARABLE_KEYS` — could not be CLEARED from this client at all. The picker
+     * drew a "None" row, the save answered 200, and the record stayed filed where it was. See
+     * `WorkshopRepository.patchBodyWithClearances`, which encodes the request with the wire encoder
+     * and then puts the explicit nulls back, so a field added to the request class is still sent.
+     */
     @PATCH("processes/{id}")
-    suspend fun updateProcess(@Path("id") id: String, @Body body: ProcessCreateRequest): ProcessDetailDto
+    suspend fun updateProcess(@Path("id") id: String, @Body body: JsonObject): ProcessDetailDto
 
     @POST("workshops")
     suspend fun createWorkshop(@Body body: WorkshopCreateRequest): CreatedRecordDto
@@ -1726,15 +1776,62 @@ interface WorkshopRepositoryApi {
     // entry, its admin-only permission check and all four mutations shipping and correct behind it,
     // and with the admin editor for another designer's profile unreachable as a consequence.
     //
-    // `search` and `activeOnly` are deliberately NOT declared. The screen fetches the roster once
-    // and filters it on the device (see `DesignerRosterScreen`), which is the same trade
-    // `designWorkshopReferences` makes above: a per-keystroke server search is faster in an office
-    // and useless in a courtyard on 2G. The walk over `page` is what keeps that honest.
+    // ── THE FILTERS ARE DECLARED NOW, AND THE TRADE THIS COMMENT USED TO RECORD IS REVERSED ──────
+    //
+    // What stood here said that `search` and `activeOnly` were deliberately NOT declared, because the
+    // screen fetched the whole roster once and filtered it on the device — *"a per-keystroke server
+    // search is faster in an office and useless in a courtyard on 2G"* — and that the walk over
+    // `page` was what kept the trade honest.
+    //
+    // IT DID NOT KEEP IT HONEST, AND THE ARGUMENT HAD THE WRONG SUBJECT. The walk stopped at 500
+    // rows (100 × 5) against a table `design_workshop_viewers.py:106` counts at about 1,300, so on
+    // this repository the device-side box was already searching a PREFIX of the roster and answering
+    // "no match" about designers who exist. Worse, the walk read `createdAt desc` from page one, so
+    // what it kept was the NEWEST empanelments and what it lost was the OLDEST — precisely the row
+    // this screen is opened for, the designer empanelled two seasons ago standing in front of the
+    // admin saying they cannot sign in. And the courtyard argument is about the wrong screen: this is
+    // an ADMIN roster read by an administrator at a desk, not a record form filled in a village, and
+    // the offline answer for it was never a stale local filter but an honest sentence saying the
+    // roster needs the network (DROPDOWN_DESIGN §3.5).
+    //
+    // So every filter goes to the server, one page comes back, and nothing is narrowed on the device
+    // — rule (iv) of §4.6. Five requests became one, which is also the cheaper trade on 2G.
+    //
+    // EVERY PARAMETER IS NULLABLE AND NULL IS OMITTED BY RETROFIT, which is rule (i): "everything" is
+    // spelled by ABSENCE and has no second spelling. `roles`, `institutions` and `status` are
+    // COMMA-JOINED single values rather than repeated keys — §4.1 accepts both, and the comma is the
+    // spelling that fails LOUDLY (a 422 naming the valid values) against a server that has not
+    // learned the parameter, where a repeated key is silently reduced to its last value. See
+    // `ui/RosterFilters.tokenList`.
+    //
+    // `activeOnly` IS GONE FROM THIS SIGNATURE AND MUST NOT COME BACK. `standing` is the same
+    // question in the new grammar, and sending both is a 422 rather than a silent winner
+    // (§4.1). The server keeps accepting `activeOnly` for clients that have not been updated;
+    // this one is not that client.
     @GET("designers/roster")
     suspend fun designerRoster(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
-    ): PageResponse<DesignerRosterDto>
+        @Query("pageSize") pageSize: Int = 50,
+        @Query("search") search: String? = null,
+        @Query("standing") standing: String? = null,
+        @Query("roles") roles: String? = null,
+        @Query("institutions") institutions: String? = null,
+        @Query("dateField") dateField: String? = null,
+        @Query("dateFrom") dateFrom: String? = null,
+        @Query("dateTo") dateTo: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("dir") dir: String? = null
+    ): RosterPageDto<DesignerRosterDto>
+
+    // The vocabulary behind the institution filter — see [RosterInstitutionsDto].
+    //
+    // NEW IN THE SAME WAVE AS THE FILTER, so the two halves can be deployed in either order and this
+    // client must survive both. A handset that lands first meets a 404, which is an ANSWERED refusal
+    // and not a transient one, so the picker prints §3.5's could-not-be-listed sentence rather than
+    // pretending the repository holds no institutions. The screen never blocks on it: the roster
+    // itself is readable, filterable and suspendable with this list missing.
+    @GET("designers/roster/institutions")
+    suspend fun designerRosterInstitutions(): RosterInstitutionsDto
 
     // The email -> account join, and the only one there is: a roster row is keyed by email and
     // carries no user id, while `/designers/{userId}/profile` can only be reached by an id. See
@@ -1770,19 +1867,36 @@ interface WorkshopRepositoryApi {
     // designer; this says who may reach the application, and the sign-in gate reads THIS one for
     // every account except the master admin's.
     //
-    // `search` and `status` ARE declared here, unlike the designer roster's deliberate omission of
-    // `search`. The reason is the pending queue: it is fetched as its own `?status=PENDING` page so
-    // the screen can show "who is waiting" without walking a table that holds every address the
-    // institution has ever admitted or refused. Filtering that on the device would mean downloading
-    // the whole allow-list to find three people — the exact cost the roster's on-device filter was
-    // accepted to avoid, inverted.
+    // `search` and `status` have ALWAYS been declared here — this screen has been server-filtered and
+    // server-paged since it was written, because the table holds every address the institution has
+    // ever admitted OR REFUSED, including every stranger who has ever tried a password against the
+    // front door, and it grows without bound in a direction nobody controls. The pending queue is
+    // fetched as its own `?status=PENDING` page for the same reason.
+    //
+    // WHAT REQUIREMENT 30 ADDS IS THE REST OF §4.1'S GRAMMAR, and one change to a parameter that was
+    // already here: `status` is now COMMA-JOINED and multi-valued. A single value is byte-identical
+    // to what this client sent before — `?status=PENDING` — and the server's own note says a lone
+    // value must stay behaviourally identical as the parameter becomes plural, which is why the
+    // pending queue's own call is untouched by any of this.
+    //
+    // `institutions` is NOT declared, and its absence is a decision rather than an omission:
+    // `AccessRoster` has no institution column, and joining to `DesignerRoster.institution` by email
+    // would narrow the allow-list to the subset that is ALSO empanelled as a designer while calling
+    // itself an institution filter — silently hiding exactly the pending strangers this screen exists
+    // to decide about. `ui/RosterFilters.ACCESS_INSTITUTION_NOTE` says so on the screen.
     @GET("access/roster")
     suspend fun accessRoster(
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         @Query("status") status: String? = null,
-        @Query("search") search: String? = null
-    ): PageResponse<AccessRosterDto>
+        @Query("search") search: String? = null,
+        @Query("roles") roles: String? = null,
+        @Query("dateField") dateField: String? = null,
+        @Query("dateFrom") dateFrom: String? = null,
+        @Query("dateTo") dateTo: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("dir") dir: String? = null
+    ): RosterPageDto<AccessRosterDto>
 
     // THE NOTIFICATION. One integer, cheap enough to ride the app-wide poll that already runs while
     // somebody is signed in — which is why this client adds no timer of its own for it.

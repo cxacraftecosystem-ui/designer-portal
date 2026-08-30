@@ -46,14 +46,49 @@ from app.services.stage_schema import (
 
 #: Profile columns that may exist WITHOUT being copied into a report, each with its reason.
 #:
-#: EMPTY TODAY, AND THAT IS THE POINT. The owner's instruction of 2026-08-25 is that everything typed
+#: IT WAS EMPTY UNTIL 2026-08-29, AND THAT EMPTINESS WAS THE POINT — read the entry below against
+#: this paragraph rather than as a softening of it. The owner's instruction of 2026-08-25 is that everything typed
 #: on the Designer Page is master data pre-filled into every report, so the honest state of this set
 #: is "nothing is exempt". It exists so that a future column which genuinely must not cross — an
 #: internal flag, a private note, something an admin records about a designer rather than something
 #: the designer publishes — is exempted HERE, in one line, with its reason beside it, instead of being
 #: dropped from ``PREFILL_MAP`` in silence where it is indistinguishable from the omission this whole
 #: module exists to catch.
-PREFILL_EXEMPT: dict[str, str] = {}
+#:
+#: ── THE FIRST ENTRY, 2026-08-29, AND IT IS A "NOT YET" RATHER THAN A "NEVER" ────────────────
+#:
+#: The paragraph above says this set is for a column that must NOT cross. ``experienceMonths`` is not
+#: that; it is master data like the years beside it and it SHOULD print. It is here because the
+#: receiving box does not exist and creating one is a bigger, separate decision than the API change
+#: that added the column — written down here in full so the next reader is not left guessing which
+#: kind of entry this is, and so the work it owes is in one place:
+#:
+#:   1. ``f("designerExperienceMonths", "Designer's experience (months)", INT, S, unit="months",
+#:      min_value=0, max_value=11)`` on stage 3's ``workshopPlan``, beside ``designerExperience``.
+#:   2. a ``("experienceMonths", "designerExperienceMonths")`` row in ``PREFILL_MAP``.
+#:   3. deleting this entry, which ``test_the_exemption_list_cannot_name_a_column_that_is_also_carried``
+#:      will then insist on.
+#:
+#: WHY IT WAS NOT DONE IN THE SAME CHANGE. A new registry field moves ``registry_version()``, which
+#: is the refetch signal every client reads, and it owes a re-dump of the 119 KB
+#: ``android/app/src/main/assets/design-workshop-schema.json`` plus a re-cut APK —
+#: ``test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from`` fails until both
+#: happen. It also decides what every future report PRINTS: "14 years" and "6 months" arrive as two
+#: separate key-value lines, because ``report_builder`` appends a field's ``unit`` to its value and
+#: has no way to join two fields into one. That is a report-layout call for the owner, not a
+#: side effect of adding a column to a form.
+#:
+#: WHAT IT COSTS MEANWHILE, STATED PLAINLY: a designer fills in "and 6 months" on the Designer Page,
+#: it saves, it reads back, and the reports generated afterwards say "14 years" exactly as they do
+#: today. Nothing is lost — the value is on the profile row and is copied nowhere — but nothing is
+#: gained downstream either, and a reader who assumes the months reach the .docx will be wrong.
+PREFILL_EXEMPT: dict[str, str] = {
+    "experienceMonths": (
+        "stage 3 has no designerExperienceMonths box yet; adding one moves registry_version(), "
+        "owes a re-dump of the bundled Android asset and a re-cut APK, and decides how the report "
+        "prints the pair. See the note above this dict for the three steps that retire this entry."
+    ),
+}
 
 
 def _registry_field_keys() -> set[str]:
@@ -280,6 +315,10 @@ _PROFILE_VALUES: dict[str, object] = {
     "qualification": "M.Des (Textile Design), NID Ahmedabad",
     "specialisation": "Handloom weave structures, natural dyeing",
     "experienceYears": 14,
+    # The remainder beside it. NOT 0, deliberately: a fixture answering zero would pass equally well
+    # against a serializer that had folded 0 into None somewhere, and this pair is the one place in
+    # the profile where that fold would be invisible.
+    "experienceMonths": 6,
     "biography": "Fourteen years on Odisha's ikat clusters.",
     # The three shaped ones, in the shapes their formats accept — see
     # test_the_stage_three_designer_boxes_refuse_what_the_designer_page_refuses in

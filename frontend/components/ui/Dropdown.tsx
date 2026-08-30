@@ -19,10 +19,20 @@
 import {
   SearchableMultiSelect,
   SearchableSelect,
-  type SelectOption
+  type SelectOption,
+  type SelectServerQuery
 } from "@/components/ui/SearchableSelect";
 
 export type DropdownOption = SelectOption;
+
+/**
+ * Re-exported for the same reason `DropdownOption` is: these three adapters are the address most of
+ * the app imports a picker from, and a caller wiring `serverQuery` should not have to know which of
+ * the two modules the type happens to live in. `components/ui/SearchableSelect` remains the source
+ * of truth, and its comment is where the contract — the debounce, the generation counter, the page
+ * size and the diacritic folding it costs — is written down.
+ */
+export type DropdownServerQuery = SelectServerQuery;
 
 /** Themed single-select dropdown — the app's replacement for the plain browser <select>. */
 export function Dropdown({
@@ -37,7 +47,9 @@ export function Dropdown({
   describedBy,
   searchable,
   capHint,
-  advanceOnSelect = true
+  advanceOnSelect = true,
+  serverQuery,
+  noneLabel
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -83,6 +95,23 @@ export function Dropdown({
    * jumping focus away from the control you are adjusting is wrong.
    */
   advanceOnSelect?: boolean;
+  /**
+   * Point the panel's filter box at the server's `search=` instead of at the array it was handed.
+   * Absent — the default — is exactly today's behaviour, a box that filters what is already loaded.
+   * The whole contract is on `SearchableSelectProps.serverQuery`; the short version is that the
+   * caller owns the term, the 300 ms debounce, the generation counter, and a page size of
+   * `RENDER_CAP`.
+   */
+  serverQuery?: DropdownServerQuery;
+  /**
+   * Draw a first, ungrouped row carrying `value: ""` with this label, and read it back on the
+   * trigger when the value is empty — the way a record is UN-FILED. Absent is today's behaviour.
+   *
+   * Pass the sentence that says what "" means on this field; the four that mean genuinely different
+   * things are in `lib/workshopOptions`. Never an "All …" string — a control that filters says
+   * everything by absence, not by a row. See `SearchableSelectProps.noneLabel`.
+   */
+  noneLabel?: string;
 }) {
   return (
     <SearchableSelect
@@ -98,6 +127,8 @@ export function Dropdown({
       searchable={searchable}
       capHint={capHint}
       advanceOnSelect={advanceOnSelect}
+      serverQuery={serverQuery}
+      noneLabel={noneLabel}
     />
   );
 }
@@ -116,7 +147,9 @@ export function MultiSelectDropdown({
   searchable,
   capHint,
   confirmOnSelect = true,
-  confirmLabel = "Confirm"
+  confirmLabel = "Confirm",
+  bulk = true,
+  serverQuery
 }: {
   values: string[];
   onChange: (values: string[]) => void;
@@ -149,6 +182,25 @@ export function MultiSelectDropdown({
    */
   confirmOnSelect?: boolean;
   confirmLabel?: string;
+  /**
+   * Draw the "Select all N" / "Clear all N" button. `true` by default, which is what this control
+   * has always done.
+   *
+   * **Every control that FILTERS a screen passes `false`**, and it goes with `confirmOnSelect={false}`
+   * and `advanceOnSelect={false}` on the same control. Ticking every row and ticking none must not
+   * both mean "everything" — a filter with two spellings for one state cannot tell a default from a
+   * deliberate choice, and over a truncated page "all" is not all anyway. Offer the absence state as
+   * its own button that sets `[]`, the way `WorkshopScopeSelect`'s "All records" does. The full
+   * argument is on `SearchableMultiSelectProps.bulk`.
+   */
+  bulk?: boolean;
+  /**
+   * Point the panel's filter box at the server's `search=`. Absent is today's behaviour. See
+   * `SearchableSelectProps.serverQuery` for the contract and `SearchableMultiSelectProps.serverQuery`
+   * for the one consequence that is the multi's alone — a truncated answer restyles the bulk button
+   * so it stops claiming "all".
+   */
+  serverQuery?: DropdownServerQuery;
 }) {
   return (
     <SearchableMultiSelect
@@ -165,6 +217,8 @@ export function MultiSelectDropdown({
       capHint={capHint}
       confirmOnSelect={confirmOnSelect}
       confirmLabel={confirmLabel}
+      bulk={bulk}
+      serverQuery={serverQuery}
     />
   );
 }
@@ -188,7 +242,9 @@ export function ComboBox({
   describedBy,
   className,
   disabled,
-  advanceOnSelect = true
+  advanceOnSelect = true,
+  serverQuery,
+  noneLabel
 }: {
   options: DropdownOption[];
   value: string;
@@ -209,6 +265,18 @@ export function ComboBox({
   className?: string;
   disabled?: boolean;
   advanceOnSelect?: boolean;
+  /**
+   * Point the box at the server's `search=` rather than at the array it was handed — the natural
+   * home for it, since this export already exists to say "this list is meant to be searched". Absent
+   * is today's behaviour. See `SearchableSelectProps.serverQuery`.
+   */
+  serverQuery?: DropdownServerQuery;
+  /**
+   * The "" row that un-files a record, and the label the trigger reads back when the value is empty.
+   * Absent is today's behaviour; the record pickers that hand-build such a row today should pass this
+   * instead. See `SearchableSelectProps.noneLabel`.
+   */
+  noneLabel?: string;
 }) {
   return (
     <>
@@ -225,6 +293,8 @@ export function ComboBox({
         describedBy={describedBy}
         searchable
         advanceOnSelect={advanceOnSelect}
+        serverQuery={serverQuery}
+        noneLabel={noneLabel}
       />
     </>
   );

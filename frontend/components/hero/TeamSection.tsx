@@ -52,7 +52,27 @@ const AUDIENCES = [
     points: [
       "Review ladder — approve, reject, revise",
       "Assigned tasks with due dates",
-      "Grantable dataset downloads"
+      "Grantable dataset downloads",
+      // ── THE INSPECTOR, AND WHY THE SENTENCE IS SHAPED LIKE THIS ──────────────────────────────
+      // A whole tier with a whole client shipped and this page named the ROW on the ladder and not
+      // one screen behind it: `design-workshop-inspections/page.tsx` ("Workshops to inspect") and
+      // `[id]/page.tsx` ("Workshop under inspection"), which draws `FieldProvenance` under every
+      // value — the same component the designer's own stage form draws, so an inspector and the
+      // designer being inspected cannot read two accounts of who did what.
+      //
+      // ⚠ IT IS A BULLET ON THIS CARD AND NOT A FIFTH CARD, for two reasons. The grid is
+      // `lg:grid-cols-4` and a fifth audience would leave one card alone on a row. More
+      // importantly, the ADMIN half is the half that belongs on a card about administrators:
+      // `permissions.ts:835-838` — "WHAT AN ADMIN GETS INSTEAD is the administration of who
+      // inspects what" — while the reading surface is the inspector's alone.
+      //
+      // ⚠ NEVER WRITE "INSPECTOR AND ABOVE". `lib/permissions.ts:842` is
+      // `INSPECTION_ROLES = ["INSPECTOR"]`, a one-member set mirroring the server's frozenset, and
+      // that file spends a paragraph on why rank 37 sitting between DESIGNER and PROFESSOR misleads
+      // every threshold instinct: `assert_inspection_surface` refuses professors, admins and the
+      // master admin with a 403, deliberately. Hence "appoint an inspector" and not "an inspector
+      // or anybody senior to one" — an admin appoints, and does not thereby gain the read.
+      "Appoint an inspector to a workshop: they get every stage read-only, with who wrote each field, and nothing they can change"
     ]
   }
 ];
