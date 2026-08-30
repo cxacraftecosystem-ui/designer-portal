@@ -10,7 +10,7 @@ suspended"* — about an empanelment nobody had ever granted, with ``/admin/desi
 at all to explain it. ``sandycraft3@gmail.com`` read exactly that, and the only remedy was for an
 admin to notice and empanel the same person a second time in a second screen.
 
-**SEVEN THINGS ARE PINNED HERE, AND THE SECOND ONE IS WHY THE OTHER SIX ARE SAFE.**
+**EIGHT THINGS ARE PINNED HERE, AND THE SECOND ONE IS WHY THE OTHER SEVEN ARE SAFE.**
 
 1. **AN ALLOW-LISTED DESIGNER IS EMPANELLED ON THE WAY IN**, by ``ensure_empanelled`` sitting
    between the platform gate and the empanelment gate in ``auth.login`` — the only line in the
@@ -65,6 +65,17 @@ admin to notice and empanel the same person a second time in a second screen.
    Section 1 races it for real and then replays the losing half deterministically, since a race that
    only collides sometimes is a test that only tests sometimes.
 
+8. **A REVOCATION ON EITHER ROSTER REACHES THE OTHER, AND A RESTORATION NEVER DOES.** Section 6.
+   The first seven rules are all about a standing being GRANTED, and every one of them is written
+   around the same asymmetry: an admission may be derived, a revocation may not be undone by
+   anything but an administrator's own act. Suspension propagating is that identical rule read in
+   the safe direction — it removes standing at the moment somebody deliberately removed the matching
+   standing next door — and the two regression guards in section 6 are what stop it being "fixed"
+   into a symmetric mirror, which would be rule 2's upsert arriving through a new door. The
+   empanelment-to-allow-list direction is GUARDED, because ``auth.assert_roster_admits`` argues that
+   ending an empanelment must not lock a professor or an admin out of the whole product; the last
+   test in the section is that guard.
+
 Postgres is required — every behaviour here is a row deciding an HTTP status — so the module skips
 itself when ``DATABASE_URL`` does not point at a local database, exactly as
 ``test_platform_access_gate`` does.
@@ -96,7 +107,7 @@ import pytest
 from app.api.routes import auth as auth_routes
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
-from app.services import designers as designers_service
+from app.services import access_roster, designers as designers_service
 from app.services.designers import DERIVED_EMPANELMENT_NOTE
 
 _URL = os.environ.get("DATABASE_URL", "")
@@ -122,6 +133,17 @@ DESIGNER_SUSPENDED_DETAIL = "Your designer access has been suspended. Contact th
 PENDING_DETAIL = (
     "Your access request is awaiting administrator approval. This is not a password problem — an "
     "administrator has to approve this address before you can sign in."
+)
+#: THE PLATFORM'S OWN SUSPENSION SENTENCE, ASSERTED VERBATIM BESIDE THE OTHER TWO, and section 6 is
+#: why this module needs it at all. Once a revocation on one roster mirrors onto the other, a
+#: designer whose empanelment ended is ALSO barred from the application, both gates refuse, and the
+#: platform gate runs first — so the answer they read moves from ``DESIGNER_SUSPENDED_DETAIL`` to
+#: this one. Nothing about either sentence changed; one population moved between them, because that
+#: population is now genuinely barred and the other sentence would be the untrue answer. Pinning
+#: both here is what makes a future change that MERGED the two, or that stopped one of them firing
+#: for the state that produces it, fail rather than pass quietly.
+ACCESS_SUSPENDED_DETAIL = (
+    "Your access to this application has been suspended. Contact the administrator."
 )
 
 #: What an administrator wrote on a roster row by hand. Distinctive on purpose: every test that
@@ -160,6 +182,20 @@ EMPANELLED: tuple[tuple[str, bool], ...] = (
 #: about. Reaching this state through the endpoint is not possible, which is itself worth knowing:
 #: it is why the tests below start from the admin screen instead.
 GMAIL_ADMITTED: tuple[str, ...] = ("handtyped", "revokeddots")
+
+#: SECTION 6'S GMAIL PAIR, AND IT IS BUILT THE OTHER WAY ROUND FROM :data:`GMAIL_ADMITTED` ON
+#: PURPOSE — the allow-list row is stored under the DOTTED alias and the empanelment under the
+#: MAILBOX. That is the only ordering in which the mirror can be asked the question at all, and the
+#: reason is a real, documented limit of :func:`app.services.designers.email_match_keys` rather than
+#: a convenience: it returns the LITERAL spelling first and adds the canonical one, so a lookup
+#: starting from a dotted address finds a row stored either way, while a lookup starting from an
+#: address that ALREADY IS the mailbox yields exactly one key and cannot reach a row stored with
+#: dots. Building it the other way round would test that the mirror fails, which it does, which is
+#: what ``scripts/backfill_email_canonicalisation.py`` exists to repair.
+#:
+#: It is also the pairing the live database actually holds: rows an administrator typed before
+#: canonicalisation shipped carry the dots, and every row written by the code since is the mailbox.
+MIRROR_ALIASED: tuple[str, ...] = ("aliased",)
 
 
 @pytest.fixture(scope="module")
@@ -220,6 +256,29 @@ async def world():
                 "admitRole": "DESIGNER",
                 "joinedAt": datetime.now(UTC),
                 "notes": "Seeded by tests/test_designer_empanelment_auto.py, section 5.",
+            })
+        for slug in MIRROR_ALIASED:
+            # THE ALLOW-LIST ROW UNDER THE ALIAS — dots through the local part and the
+            # ``googlemail.com`` domain, exactly as an administrator's typing left it before
+            # canonicalisation shipped. Written straight into the table because no endpoint will
+            # store this spelling any more, which is the whole point: this is a row already on disk.
+            await db.accessroster.create(data={
+                "email": f"empanel.{slug}.{stamp}@googlemail.com",
+                "status": "ACTIVE",
+                "admitRole": "DESIGNER",
+                "joinedAt": datetime.now(UTC),
+                "notes": "Seeded by tests/test_designer_empanelment_auto.py, section 6.",
+            })
+            # THE EMPANELMENT UNDER THE MAILBOX — a different string entirely, and the one
+            # ``ensure_empanelled`` writes. ``canonical_email`` folds the two together; a
+            # ``find_unique`` on either would answer None about the other.
+            await db.designerroster.create(data={
+                "email": f"empanel{slug}{stamp}@gmail.com",
+                "fullName": f"Aliased roster row for {slug}",
+                "isActive": True,
+                "revokedAt": None,
+                "notes": ADMIN_NOTE,
+                "addedById": people["admin"].id,
             })
         for slug, is_active in EMPANELLED:
             await db.designerroster.create(data={
@@ -1144,3 +1203,621 @@ async def test_a_revocation_typed_with_the_dots_is_not_walked_around_by_the_mail
     )
     assert after[0]["notes"] == ADMIN_NOTE
     assert after[0]["firstSeenAt"] is None, "a refused attempt is not an arrival"
+
+
+# --------------------------------------------------------------------------------------
+# 6. The cross-roster mirror: a revocation on either roster reaches the other
+# --------------------------------------------------------------------------------------
+#
+# **WHAT THIS SECTION IS ABOUT, AND WHY IT IS NOT A CONTRADICTION OF SECTION 1.** Every test above
+# is about a standing being GRANTED, and the rule they all protect is that no path but an
+# administrator's explicit act may hand somebody an empanelment back. That rule is untouched here.
+# What propagates below is the OTHER direction — an administrator ending one of somebody's two
+# standings ends the other — and the two are not symmetrical mistakes:
+#
+#   * reactivation GRANTS what an admin removed: silently, permanently until somebody notices, and
+#     triggered by the revoked party's own sign-in or by an unrelated readmission next door;
+#   * suspension REMOVES standing at the moment an administrator deliberately removed the matching
+#     standing next door, fails closed, and its worst case is a revocation enacted more broadly than
+#     intended — visible on the screen that records it and reversible by the same admin.
+#
+# So the two tests named ``..._never_revives_...`` below are the regression guards for the half that
+# must NOT be built, and they are the reason the rest of the section is safe. A future reader whose
+# instinct is "this mirror is asymmetric, let me finish it" has to delete them first.
+#
+# **THE DEFECT BEING CLOSED WAS A RECORD ONE AND NOT A BYPASS**, which is worth stating so that
+# nobody reads this section as a security fix and tightens it further. Nobody could ever sign in
+# around either roster: ``auth.py`` asks both gates and each refuses on its own answer. What the
+# product had was two admin screens showing contradictory standing for one person — and one live
+# consequence, because ``/designers/directory`` and the workshop pickers filter on
+# ``DesignerRoster.isActive`` and not on the allow-list, so an address an administrator had barred
+# from the whole application was still being offered as somebody to hand a fortnight of fieldwork to.
+
+
+def _access_id(client: Any, world: dict[str, Any], email: str) -> str:
+    """This address's allow-list row id, read back through the admin screen's own endpoint."""
+    rows = _access_rows(client, world, term=email)
+    assert email in rows, f"no allow-list row for {email}; rows seen: {sorted(rows)}"
+    return rows[email]["id"]
+
+
+def _roster_id(client: Any, world: dict[str, Any], email: str) -> str:
+    """This address's empanelment row id, read back through the admin screen's own endpoint."""
+    rows = _empanelments(client, world, term=email)
+    assert email in rows, f"no empanelment for {email}; rows seen: {sorted(rows)}"
+    return rows[email]["id"]
+
+
+def _bar_on_the_allow_list(client: Any, world: dict[str, Any], email: str) -> Any:
+    """``DELETE /api/access/roster/{id}`` — the button an admin presses to end somebody's access."""
+    return client.delete(
+        f"/api/access/roster/{_access_id(client, world, email)}", headers=_headers(world)
+    )
+
+
+def _end_the_empanelment(client: Any, world: dict[str, Any], email: str) -> Any:
+    """``DELETE /api/designers/roster/{id}`` — the button an admin presses to end an empanelment."""
+    return client.delete(
+        f"/api/designers/roster/{_roster_id(client, world, email)}", headers=_headers(world)
+    )
+
+
+async def test_suspending_an_address_on_the_allow_list_suspends_the_empanelment(world, client):
+    """**THE FIRST HALF OF THE MIRROR.** Barring somebody from the application ends their standing
+    as a designer, because there is no state in which the second still means anything after the
+    first.
+
+    Before this, ``/admin/designers`` went on showing an ACTIVE empanelment for somebody an
+    administrator had barred, and nothing downstream ever corrected it — the workshop pickers read
+    ``isActive`` and would offer that person a fortnight of fieldwork they could not sign in to do.
+
+    The mirrored row has to say WHY, in words, because no column can: ``addedById`` names whoever
+    GRANTED the empanelment and is NULL on a derived row anyway. And it must not lose what the row
+    already said about itself — the note is appended, never substituted, or the mirror becomes a
+    worse version of the overwrite ``POST /designers/roster`` answers with a 409.
+    """
+    email = _fresh(world, "mirrorbar")
+    assert _admit(client, world, email, "DESIGNER").status_code == 201
+    before = _empanelments(client, world, term=email)[email]
+    assert before["isActive"] is True, "the admission must have empanelled them, or this proves it"
+
+    suspended = _bar_on_the_allow_list(client, world, email)
+    assert suspended.status_code == 200, suspended.text
+    assert suspended.json()["status"] == "SUSPENDED"
+
+    after = _empanelments(client, world, term=email)[email]
+    assert after["id"] == before["id"], "the mirror wrote a second row instead of ending this one"
+    assert after["isActive"] is False, (
+        "an address an administrator barred from the application is still shown as an actively "
+        "empanelled designer, and the workshop pickers will go on offering them"
+    )
+    assert after["revokedAt"] is not None, "a suspended row with no date reads as a screen bug"
+    notes = after["notes"] or ""
+    assert DERIVED_EMPANELMENT_NOTE in notes, "the row's own account of how it got here was erased"
+    assert access_roster.MIRROR_NOTES[access_roster.MIRROR_ACCESS_SUSPENDED] in notes
+    # THE CLAUSE THAT MAKES IT DISTINGUISHABLE, asserted verbatim rather than only through the
+    # imported constant: an admin reading this screen has to be able to tell a revocation somebody
+    # made HERE from one that arrived as a consequence of an act on the other screen, and a
+    # rewrite that dropped this sentence would still satisfy the containment check above.
+    assert "No administrator withdrew this empanelment on the designer roster directly" in notes
+
+
+async def test_rejecting_a_request_suspends_the_empanelment_too(world, client):
+    """REJECTED AND SUSPENDED ARE ONE SET, and the mirror treats them as one.
+
+    ``access_roster.BARRED`` is ``(REJECTED, SUSPENDED)`` — two answers an administrator gave about
+    the same question, kept apart so the roster keeps saying which decision was actually taken. Both
+    of them end the person's access to the application, so both end the empanelment. Mirroring only
+    the DELETE would leave the queue's own door as the one that quietly does not, which is exactly
+    the shape of the gap this whole family of functions was written to close.
+    """
+    email = _fresh(world, "mirrorreject")
+    assert _admit(client, world, email, "DESIGNER").status_code == 201
+    assert _empanelments(client, world, term=email)[email]["isActive"] is True
+
+    decided = client.post(
+        f"/api/access/roster/{_access_id(client, world, email)}/decision",
+        json={"decision": "REJECT"},
+        headers=_headers(world),
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "REJECTED"
+
+    after = _empanelments(client, world, term=email)[email]
+    assert after["isActive"] is False, "a rejection left an active empanelment standing behind it"
+    assert access_roster.MIRROR_NOTES[access_roster.MIRROR_ACCESS_REJECTED] in (after["notes"] or "")
+
+
+async def test_restoring_platform_access_never_revives_the_empanelment_it_ended(
+    world, client, monkeypatch
+):
+    """**REGRESSION GUARD FOR THE ONE RULE THAT MUST NOT BE GOT WRONG, IN ITS NEW SHAPE.**
+
+    The mirror makes reactivation tempting in a way it was not before: the suspension of this
+    empanelment is now visibly a CONSEQUENCE of the bar, so undoing the bar looks like it ought to
+    undo the consequence. It must not. An administrator who ends an empanelment in March and an
+    administrator who un-bars that address in July for an unrelated reason have made two different
+    decisions, and letting the second silently overturn the first is the upsert
+    ``ensure_empanelled`` refuses, arriving through a door that did not exist when that refusal was
+    written.
+
+    The cost of the asymmetry is real and is asserted here rather than hidden: a bar-and-unbar round
+    trip leaves the person's empanelment ENDED, they are refused at sign-in in the empanelment's own
+    words, and the remedy is one click on ``/admin/designers`` that the administrator has to be told
+    about. That is what the client work named with this change is for.
+    """
+    email = _fresh(world, "mirrorrestore")
+    assert _admit(client, world, email, "DESIGNER").status_code == 201
+    assert _bar_on_the_allow_list(client, world, email).status_code == 200
+    ended = _empanelments(client, world, term=email)[email]
+    assert ended["isActive"] is False, "the state under test was not reached"
+
+    readmitted = client.post(
+        f"/api/access/roster/{_access_id(client, world, email)}/decision",
+        json={"decision": "APPROVE", "role": "DESIGNER"},
+        headers=_headers(world),
+    )
+    assert readmitted.status_code == 200, readmitted.text
+    assert readmitted.json()["status"] == "ACTIVE"
+
+    after = _empanelments(client, world, term=email)[email]
+    assert after["isActive"] is False, (
+        "restoring platform access revived an empanelment an administrator had ended; every "
+        "revocation any administrator ever made would come undone the same way"
+    )
+    # AND NOT TOUCHED IN ANY OTHER WAY EITHER. A row left suspended but with a moved date, or with
+    # the account of its own revocation rewritten, is the same defect wearing a smaller hat.
+    assert after["revokedAt"] == ended["revokedAt"]
+    assert after["notes"] == ended["notes"]
+    # THE PROOF THAT IT MATTERS, through the door the person actually uses. The allow-list admits
+    # them again and provisions the account at DESIGNER, and the empanelment gate still refuses —
+    # in its OWN sentence, which is the state in which that sentence is exactly right.
+    refused = _google(client, monkeypatch, email)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"] == DESIGNER_SUSPENDED_DETAIL
+    assert refused.headers.get(auth_routes.ACCESS_STATUS_HEADER) == "DESIGNER_SUSPENDED"
+
+
+async def test_ending_an_empanelment_suspends_the_admission_it_carried(world, client):
+    """**THE SECOND HALF OF THE MIRROR**, and the narrower of the two.
+
+    This address was admitted to the application AS A DESIGNER — that is what ``admitRole`` records
+    — so ending the empanelment ends the basis on which it was let in. Leaving the admission
+    standing would hand the next Google sign-in a brand-new DESIGNER account that the empanelment
+    gate then refuses: requirement 28's original bug, rebuilt from the other end.
+
+    ``joinedAt`` MUST NOT MOVE. Somebody who joined in 2024 and lost their standing this morning has
+    still been here since 2024, and every record they created is read against that date.
+    """
+    email = _fresh(world, "mirrorempanel")
+    assert _admit(client, world, email, "DESIGNER").status_code == 201
+    before = _access_rows(client, world, term=email)[email]
+    assert before["status"] == "ACTIVE"
+    assert before["admitRole"] == "DESIGNER"
+
+    ended = _end_the_empanelment(client, world, email)
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["isActive"] is False
+
+    after = _access_rows(client, world, term=email)[email]
+    assert after["id"] == before["id"], "the mirror wrote a second allow-list row"
+    assert after["status"] == "SUSPENDED", (
+        "the allow-list still admits somebody whose empanelment an administrator ended, so their "
+        "next sign-in provisions a DESIGNER account the empanelment gate immediately refuses"
+    )
+    assert after["joinedAt"] == before["joinedAt"], "a revocation is not a new joining date"
+    notes = after["notes"] or ""
+    assert access_roster.MIRROR_NOTES[access_roster.MIRROR_EMPANELMENT_ENDED] in notes
+    assert "No administrator barred this address on the allow-list directly" in notes
+
+
+async def test_restoring_an_empanelment_never_revives_the_admission_it_ended(
+    world, client, monkeypatch
+):
+    """**THE SAME REGRESSION GUARD, POINTING THE OTHER WAY.** The asymmetry is total.
+
+    Restoring an empanelment is an administrator saying "this person is a designer again". It is not
+    an administrator saying "let them back into the application", and treating it as though it were
+    would let the designer roster overturn the allow-list's own decisions — the precise thing
+    ``auth.assert_access_admits``' ``waiting`` guard and ``_the_row_that_decides`` both exist to
+    prevent, reached by a write instead of by a read.
+    """
+    email = _fresh(world, "mirrorback")
+    assert _admit(client, world, email, "DESIGNER").status_code == 201
+    roster_id = _roster_id(client, world, email)
+    assert _end_the_empanelment(client, world, email).status_code == 200
+    barred = _access_rows(client, world, term=email)[email]
+    assert barred["status"] == "SUSPENDED", "the state under test was not reached"
+
+    restored = client.patch(
+        f"/api/designers/roster/{roster_id}", json={"isActive": True}, headers=_headers(world)
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["isActive"] is True
+    assert restored.json()["revokedAt"] is None
+
+    after = _access_rows(client, world, term=email)[email]
+    assert after["status"] == "SUSPENDED", (
+        "restoring an empanelment let somebody back into the application whom an administrator had "
+        "barred; the designer roster must not be able to overturn the allow-list"
+    )
+    assert after["decidedAt"] == barred["decidedAt"]
+    assert after["notes"] == barred["notes"]
+    # AND THE REFUSAL IS THE PLATFORM'S OWN SENTENCE, because the platform is what is refusing.
+    # Neither sentence changed; this state produces this one, which is what makes it the true
+    # answer — the person's access to the application is what ended, and the empanelment they now
+    # hold is not what is keeping them out.
+    refused = _google(client, monkeypatch, email)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"] == ACCESS_SUSPENDED_DETAIL
+    assert refused.headers.get(auth_routes.ACCESS_STATUS_HEADER) == "SUSPENDED"
+
+
+async def test_the_mirror_finds_an_empanelment_stored_under_a_gmail_alias(world, client):
+    """**A MIRROR THAT MISSED THE GMAIL TWIN WOULD BE WORSE THAN NO MIRROR AT ALL.**
+
+    The two rows in this test are DIFFERENT STRINGS — the allow-list row is stored under the dotted,
+    ``googlemail.com`` spelling an administrator typed before canonicalisation shipped, and the
+    empanelment under the mailbox that ``ensure_empanelled`` writes. A ``find_unique`` on either
+    answers None about the other. So a mirror keyed on the literal address would suspend the
+    allow-list row, report success, and leave ``/admin/designers`` showing an ACTIVE empanelment for
+    somebody barred from the whole product — with the mirror having "run" and nobody with a reason
+    to look. That is strictly worse than the state before this feature existed, because an
+    administrator would now be relying on it.
+
+    ``email_match_keys`` is what closes it, and the two spellings are asserted to be genuinely
+    different here rather than assumed, so a fixture that quietly stopped being an alias cannot make
+    this test pass for the wrong reason.
+    """
+    alias = f"empanel.aliased.{world['stamp']}@googlemail.com"
+    mailbox = f"empanelaliased{world['stamp']}@gmail.com"
+    assert alias != mailbox, "the fixture must hold two spellings, or this test proves nothing"
+    assert designers_service.canonical_email(alias) == mailbox, (
+        "the two fixture rows are not the same mailbox, so there is nothing here to mirror across"
+    )
+
+    before = _empanelments(client, world)[mailbox]
+    assert before["isActive"] is True
+
+    suspended = client.delete(
+        f"/api/access/roster/{_access_rows(client, world)[alias]['id']}", headers=_headers(world)
+    )
+    assert suspended.status_code == 200, suspended.text
+    assert suspended.json()["status"] == "SUSPENDED"
+
+    after = _empanelments(client, world)[mailbox]
+    assert after["isActive"] is False, (
+        "the empanelment was not found, because it is filed under the other spelling of the same "
+        "Gmail mailbox; the two screens now disagree and the mirror reported nothing wrong"
+    )
+    notes = after["notes"] or ""
+    assert ADMIN_NOTE in notes, "the administrator's own note was overwritten by the mirror"
+    assert access_roster.MIRROR_NOTES[access_roster.MIRROR_ACCESS_SUSPENDED] in notes
+
+
+async def test_mirroring_the_same_revocation_twice_moves_nothing(world, client):
+    """IDEMPOTENT IN BOTH DIRECTIONS, AND FOR THE REASON THE DATES EXIST.
+
+    ``revokedAt`` and ``decidedAt`` answer "when did this person lose this standing". A second
+    mirrored suspension that rewrote either would destroy the answer, and a second appended note
+    would push the administrator's own words further off the screen every round.
+
+    THE TWO HALVES ARE REACHED DIFFERENTLY AND BOTH ARE HERE ON PURPOSE. A second click on the
+    allow-list button never reaches the mirror at all — the endpoint returns early on a row already
+    suspended, deliberately, so that a stray click cannot undo a restoration an administrator made
+    on the other screen. The empanelment side is the one that genuinely re-enters the mirror: end
+    the empanelment, restore it (which propagates nothing), end it again, and the second run finds
+    an allow-list row that is already suspended and must leave it exactly as it is.
+    """
+    email = _fresh(world, "mirroragain")
+    assert _admit(client, world, email, "DESIGNER").status_code == 201
+    roster_id = _roster_id(client, world, email)
+    assert _end_the_empanelment(client, world, email).status_code == 200
+    first = _access_rows(client, world, term=email)[email]
+    assert first["status"] == "SUSPENDED"
+
+    restored = client.patch(
+        f"/api/designers/roster/{roster_id}", json={"isActive": True}, headers=_headers(world)
+    )
+    assert restored.status_code == 200, restored.text
+    assert _end_the_empanelment(client, world, email).status_code == 200
+
+    second = _access_rows(client, world, term=email)[email]
+    assert second["status"] == "SUSPENDED"
+    assert second["decidedAt"] == first["decidedAt"], (
+        "a second mirrored suspension moved the date this person actually lost their access"
+    )
+    assert second["notes"] == first["notes"], "the mirrored sentence was appended a second time"
+
+    # THE OTHER HALF: the allow-list button, clicked twice, must not move the empanelment's date.
+    barred = _fresh(world, "mirroragainbar")
+    assert _admit(client, world, barred, "DESIGNER").status_code == 201
+    assert _bar_on_the_allow_list(client, world, barred).status_code == 200
+    once = _empanelments(client, world, term=barred)[barred]
+    assert once["isActive"] is False
+    assert _bar_on_the_allow_list(client, world, barred).status_code == 200
+    twice = _empanelments(client, world, term=barred)[barred]
+    assert twice["revokedAt"] == once["revokedAt"], (
+        "a second click on the suspend button moved the date the designer lost their empanelment"
+    )
+    assert twice["notes"] == once["notes"]
+
+
+async def test_re_deciding_a_barred_row_does_not_re_end_an_empanelment_an_admin_restored(
+    world, client
+):
+    """**THE MIRROR BELONGS TO THE TRANSITION AT BOTH ALLOW-LIST DOORS, NOT ONLY AT THE ONE THAT
+    HAPPENS TO RETURN EARLY.**
+
+    ``suspend_access_entry`` skips the mirror on a row that is already suspended, and says in so
+    many words why: *"an administrator who barred somebody, then deliberately restored their
+    empanelment on the designer roster while leaving them barred here, would have that restoration
+    silently undone by a stray click on a row that was already suspended."* The decision endpoint is
+    the OTHER door onto the same act — ``access_roster.BARRED`` is ``(REJECTED, SUSPENDED)``, two
+    answers an administrator gave to one question — and it carried no such guard at all, so the
+    sequence below undid the administrator's restoration through the door nobody had tested.
+
+    **THE SEQUENCE IS AN ORDINARY WEEK AND NOT A CONTRIVANCE.** Rejecting somebody ends the
+    empanelment: the mirror, working. An administrator who then decides the person stays on the
+    panel — still empanelled under the cluster programme, simply not to be let into the application
+    — restores that empanelment on the screen built for it, which by design propagates nothing back.
+    After that, anything which re-decided the allow-list row re-entered the mirror: a second REJECT
+    attaching a note, a double-submitted form, or a REJECT recorded over an earlier suspension so
+    that the row says which answer was actually given. The empanelment ended a second time, silently,
+    from a screen about platform access, with nothing anywhere to say it had happened.
+
+    PINNED AT BOTH DOORS OF THE BARRED PAIR, because a rule enforced at one of two doors is the
+    exact shape of bug this whole feature exists to correct: REJECT over a REJECTED row, and then
+    DELETE over that same rejected row — which really does change the status, to SUSPENDED, and so
+    can never be covered by the early return that protects a second click on an already-suspended
+    one.
+    """
+    email = _fresh(world, "mirrorredecide")
+    assert _admit(client, world, email, "DESIGNER").status_code == 201
+    access_id = _access_id(client, world, email)
+    roster_id = _roster_id(client, world, email)
+
+    first = client.post(
+        f"/api/access/roster/{access_id}/decision",
+        json={"decision": "REJECT"},
+        headers=_headers(world),
+    )
+    assert first.status_code == 200, first.text
+    ended = _empanelments(client, world, term=email)[email]
+    assert ended["isActive"] is False, "the state under test was not reached"
+
+    # THE ADMINISTRATOR'S OWN SECOND DECISION, taken on the screen the mirror's docstring sends
+    # them to, and deliberately propagating nothing of its own.
+    restored = client.patch(
+        f"/api/designers/roster/{roster_id}", json={"isActive": True}, headers=_headers(world)
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["isActive"] is True
+    assert _access_rows(client, world, term=email)[email]["status"] == "REJECTED", (
+        "restoring the empanelment must not have let them back into the application either; if "
+        "this fails the asymmetry itself is broken and the rest of this test measures nothing"
+    )
+
+    again = client.post(
+        f"/api/access/roster/{access_id}/decision",
+        json={"decision": "REJECT", "notes": "Second look: the answer stands."},
+        headers=_headers(world),
+    )
+    assert again.status_code == 200, again.text
+    after = _empanelments(client, world, term=email)[email]
+    assert after["isActive"] is True, (
+        "re-deciding a row that was ALREADY barred ended an empanelment an administrator had "
+        "deliberately restored; the mirror ran on the state instead of on the transition, at the "
+        "one allow-list door that carried no guard"
+    )
+    assert after["notes"] == restored.json()["notes"], (
+        "the restored row's account of itself was rewritten by a mirror that should not have run"
+    )
+
+    barred_again = client.delete(f"/api/access/roster/{access_id}", headers=_headers(world))
+    assert barred_again.status_code == 200, barred_again.text
+    assert barred_again.json()["status"] == "SUSPENDED", (
+        "a REJECTED row is not the state the early return covers, so this write really does "
+        "happen — which is exactly why the mirror needs a guard of its own here"
+    )
+    assert _empanelments(client, world, term=email)[email]["isActive"] is True, (
+        "recording a rejection as a suspension ended an empanelment an administrator had restored; "
+        "this person was already barred before the click, so no access of theirs ended here"
+    )
+
+
+async def test_ending_an_empanelment_leaves_an_admin_alone_when_the_account_is_a_gmail_alias(
+    world, client
+):
+    """**THE SAME OUTAGE AS THE TEST ABOVE, REACHED PAST THE GUARD BY ONE DOT.**
+
+    ``admissions_an_empanelment_carries`` protects a professor or an admin who is on the designer
+    roster because they run workshops too, and it does it with two tests. The first — ``admitRole``
+    still says DESIGNER — is expected to be stale, and its own docstring says so. So the whole
+    exemption rests on the second: *the account, if there is one, is itself a designer.* That test
+    looks the account up by :func:`app.services.designers.email_match_keys`, and this test is the
+    case where that list cannot reach it.
+
+    **``User.email`` IS NOT CANONICALISED AND BOTH ROSTERS ARE**, which is not an accident and not
+    rare. ``auth.login_with_google`` says in so many words that account identity was deliberately
+    left out of the Gmail canonicalisation; ``POST /api/users`` stores ``payload.email.lower()``,
+    dots and all; and ``access_roster.follow_email_change`` — the endpoint an admin uses to CORRECT
+    somebody's address — moves the allow-list row to the mailbox while the account keeps the
+    spelling that was typed. So an account filed under ``a.b@gmail.com`` beside roster rows filed
+    under ``ab@gmail.com`` is an ordinary consequence of the product working as designed.
+
+    ``email_match_keys`` derives ONE key from an address that already IS the mailbox — that limit is
+    stated at :func:`app.services.designers.suspend_empanelment` and is inherited here — so the
+    account lookup matches nothing, the guard reads that as *"there is no account"*, and the
+    module's own rule for that answer is to mirror: an empanelment granted before somebody ever
+    opened the app must not leave a live DESIGNER admission behind it. Every one of those steps is
+    defensible on its own and together they bar an ADMINISTRATOR from the entire application,
+    silently, from a screen about designers — the exact outage ``auth.assert_roster_admits``'
+    docstring is written about, and the one thing the guard exists to make impossible.
+
+    THE TWO SPELLINGS ARE ASSERTED TO BE GENUINELY DIFFERENT, so a fixture that quietly stopped
+    being an alias cannot make this pass for the wrong reason.
+    """
+    typed = f"empanel.mirroralias.{world['stamp']}@gmail.com"
+    mailbox = f"empanelmirroralias{world['stamp']}@gmail.com"
+    assert typed != mailbox, "the fixture must hold two spellings, or this test proves nothing"
+    assert designers_service.canonical_email(typed) == mailbox, (
+        "the two spellings are not one mailbox, so there is nothing here for the guard to miss"
+    )
+
+    made = client.post(
+        "/api/users",
+        json={
+            "email": typed,
+            "name": f"Aliased Admin {world['stamp']}",
+            "password": API_PASSWORD,
+            "role": "DESIGNER",
+        },
+        headers=_headers(world),
+    )
+    assert made.status_code == 201, made.text
+    assert made.json()["email"] == typed, (
+        "the account is expected to keep the spelling that was typed — that divergence from the "
+        "canonicalised rosters is the whole state under test"
+    )
+    promoted = client.patch(
+        f"/api/users/{made.json()['id']}", json={"role": "ADMIN"}, headers=_headers(world)
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["role"] == "ADMIN"
+
+    admission = _access_rows(client, world)[mailbox]
+    assert admission["status"] == "ACTIVE"
+    assert admission["admitRole"] == "DESIGNER", (
+        "the promotion is expected NOT to move admitRole; that staleness is why the account test "
+        "below is the only thing standing between this administrator and a lockout"
+    )
+
+    empanelled = client.post(
+        "/api/designers/roster",
+        json={"email": typed, "notes": ADMIN_NOTE},
+        headers=_headers(world),
+    )
+    assert empanelled.status_code == 201, empanelled.text
+    assert empanelled.json()["email"] == mailbox, (
+        "the empanelment is expected to be stored under the mailbox; if this changes, the alias "
+        "gap this test is about has moved and the test needs rewriting rather than deleting"
+    )
+    ended = client.delete(
+        f"/api/designers/roster/{empanelled.json()['id']}", headers=_headers(world)
+    )
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["isActive"] is False, "the empanelment itself must still end"
+
+    after = _access_rows(client, world)[mailbox]
+    assert after["status"] == "ACTIVE", (
+        "ending an empanelment barred an ADMIN from the entire application, because the guard "
+        "could not see their account under the other spelling of the same Gmail mailbox and read "
+        "that as nobody being there"
+    )
+    signed_in = _login(client, typed, API_PASSWORD)
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()["user"]["role"] == "ADMIN"
+
+
+async def test_a_person_with_no_row_on_the_other_roster_is_a_silent_no_op(world, client):
+    """THE MIRROR NEVER CREATES A ROW. It ends standings; it does not invent them.
+
+    Both halves matter and both are here. A mirror that wrote a suspended ``DesignerRoster`` row for
+    every barred address would fill the designer roster — which three parts of the product read as
+    the roll of practising designers — with volunteers and researchers who were never empanelled,
+    and nothing anywhere ever takes such a row off again. A mirror that wrote a suspended
+    ``AccessRoster`` row for every ended empanelment would be worse: the gate reads a missing row as
+    PENDING, so an address with no row is somebody who can still ask to join, and manufacturing a
+    SUSPENDED row for them is a bar no administrator ever decided.
+    """
+    lonely_access = _fresh(world, "mirrornodesigner")
+    assert _admit(client, world, lonely_access, "RESEARCHER").status_code == 201
+    assert lonely_access not in _empanelments(client, world, term=lonely_access), (
+        "the control: a researcher is not empanelled, so there is nothing on the other side"
+    )
+    assert _bar_on_the_allow_list(client, world, lonely_access).status_code == 200
+    assert lonely_access not in _empanelments(client, world, term=lonely_access), (
+        "the mirror invented a designer-roster row for somebody who was never empanelled"
+    )
+
+    lonely_roster = _fresh(world, "mirrornoaccess")
+    created = client.post(
+        "/api/designers/roster", json={"email": lonely_roster}, headers=_headers(world)
+    )
+    assert created.status_code == 201, created.text
+    assert lonely_roster not in _access_rows(client, world, term=lonely_roster), (
+        "the control: empanelling somebody does not write an allow-list row, it is the sign-in that "
+        "does; if that changes, this test is asserting nothing"
+    )
+    ended = client.delete(
+        f"/api/designers/roster/{created.json()['id']}", headers=_headers(world)
+    )
+    assert ended.status_code == 200, ended.text
+    assert lonely_roster not in _access_rows(client, world, term=lonely_roster), (
+        "the mirror invented an allow-list row, and a SUSPENDED one, for an address no "
+        "administrator has ever decided about"
+    )
+
+
+async def test_ending_an_empanelment_leaves_an_admins_access_to_the_product_alone(world, client):
+    """**THE GUARD, AND THE OUTAGE IT PREVENTS.** This is the test that keeps the mirror narrow.
+
+    ``auth.assert_roster_admits`` argues at length that the two refusals must stay two decisions:
+    *"collapsing the pair would mean revoking an empanelment silently locks the person out of the
+    whole product — including a professor or an admin who happens to be on the designer roster
+    because they run workshops too, whose account has nothing to do with the empanelment being
+    ended."* That gate protects them by returning early for any role that is not DESIGNER. A
+    SUSPENDED allow-list row has no such exemption — it refuses everybody — so the mirror carries
+    the exemption itself.
+
+    **THE STATE BELOW IS REAL AND IS REACHED THROUGH THE ENDPOINTS THAT PRODUCE IT.** ``admitRole``
+    records what a row admitted somebody AS, and nothing keeps it in step with the account
+    afterwards: ``PATCH /api/users/{id}`` promotes the person without touching it. So an ADMIN
+    carrying an allow-list row that still says DESIGNER is an ordinary consequence of somebody being
+    promoted, not a contrived fixture — and barring them on the strength of that stale column would
+    lock an administrator out of the application by way of a screen about designers.
+    """
+    email = _fresh(world, "mirroradmin")
+    made = client.post(
+        "/api/users",
+        json={
+            "email": email,
+            "name": f"Runs Workshops Too {world['stamp']}",
+            "password": API_PASSWORD,
+            "role": "DESIGNER",
+        },
+        headers=_headers(world),
+    )
+    assert made.status_code == 201, made.text
+    promoted = client.patch(
+        f"/api/users/{made.json()['id']}", json={"role": "ADMIN"}, headers=_headers(world)
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["role"] == "ADMIN"
+    assert _access_rows(client, world, term=email)[email]["admitRole"] == "DESIGNER", (
+        "the promotion is expected NOT to move admitRole — that staleness is the whole danger the "
+        "guard is about, and if it were kept in step this test would prove nothing"
+    )
+
+    empanelled = client.post(
+        "/api/designers/roster",
+        json={"email": email, "notes": ADMIN_NOTE},
+        headers=_headers(world),
+    )
+    assert empanelled.status_code == 201, empanelled.text
+    ended = client.delete(
+        f"/api/designers/roster/{empanelled.json()['id']}", headers=_headers(world)
+    )
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["isActive"] is False, "the empanelment itself must still end"
+
+    after = _access_rows(client, world, term=email)[email]
+    assert after["status"] == "ACTIVE", (
+        "ending an empanelment barred an ADMIN from the entire application; that is the outage "
+        "auth.assert_roster_admits' docstring is written about, delivered by a screen about "
+        "designers"
+    )
+    signed_in = _login(client, email, API_PASSWORD)
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()["user"]["role"] == "ADMIN"

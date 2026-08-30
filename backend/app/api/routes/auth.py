@@ -18,7 +18,7 @@ from app.core.deps import (
 )
 from app.core.security import create_access_token, verify_password
 from app.schemas.auth import LoginRequest, TokenResponse
-from app.services import access_roster
+from app.services import access_roster, usage
 from app.services.designers import ensure_empanelled, mark_roster_seen, roster_allows
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -116,9 +116,43 @@ def _access_headers(access_status: str) -> dict[str, str]:
     return {ACCESS_STATUS_HEADER: access_status}
 
 
+#: The key the usage-consent gate rides back on, beside the account's own columns.
+#:
+#: Named as a constant because two clients branch on it and a third — the Android settings screen —
+#: reads it to decide whether to show a card. A literal retyped in a Kotlin DTO and a TypeScript type
+#: is a contract living in three files; this is the one the two of them are copied from.
+USAGE_CONSENT_GATE_KEY = "usageConsentGate"
+
+
 def serialize_user(user: Any) -> dict[str, Any]:
+    """The account as every client reads it: every column except the password hash, plus the one
+    derived field a client must not derive for itself.
+
+    ── THE USAGE-CONSENT GATE, AND WHY IT IS COMPUTED HERE ─────────────────────────────────────
+
+    The four consent columns (``usageConsent``, ``usageConsentAt``, ``usageConsentBasis``,
+    ``usageConsentVersion``) reach every client for free, because this function is
+    ``jsonable_encoder`` over the whole row — that is the plumbing fact that makes the whole feature
+    cost the sign-in path nothing. What does NOT come for free is the ANSWER a client actually needs:
+    *must this person be asked, right now?* That is two facts folded into one — have they agreed, and
+    did they agree to the CURRENT text — and the moment the web client and the handset each fold it
+    themselves, the two disagree on the first deploy that bumps ``usage.NOTICE_VERSION`` while only
+    one of them is updated. So the server folds it, once, and both clients render the boolean.
+
+    ADDED HERE RATHER THAN AT THE TWO CALL SITES, because this function is where **all four doors
+    converge**: ``POST /auth/login`` on the password path, the same route on the Google path,
+    ``GET /auth/me`` and ``GET /me``. A client that signs in learns the answer; a client that
+    refreshes its session learns it again; and neither can be given a session without being told.
+    That last part is the point — see :func:`login`, which explains why the gate reports rather than
+    refuses.
+
+    IT NEVER RAISES AND NEVER BLOCKS. ``usage.consent_gate`` is a ``getattr`` off the row plus a
+    string comparison: no query, no await, nothing that can fail. This function is on the hot path of
+    every ``/me`` in the product.
+    """
     payload = jsonable_encoder(user)
     payload.pop("passwordHash", None)
+    payload[USAGE_CONSENT_GATE_KEY] = usage.consent_gate(user)
     return payload
 
 
@@ -267,6 +301,28 @@ async def assert_roster_admits(user: Any) -> None:
 
     Runs AFTER the platform gate, so a suspended designer who is otherwise admitted still reads the
     empanelment sentence rather than a generic one — the specific answer wins where both apply.
+
+    **AND SINCE THE CROSS-ROSTER MIRROR LANDED, "OTHERWISE ADMITTED" IS DOING MORE WORK IN THAT
+    SENTENCE THAN IT USED TO. READ THIS BEFORE CONCLUDING THE GATE IS BROKEN.** An administrator who
+    ends an empanelment through ``/admin/designers`` now also suspends the allow-list row that
+    admission rested on (``app.services.access_roster.mirror_suspension``, an owner's decision, made
+    because the two screens were showing contradictory standing for one person and the workshop
+    pickers were offering designers who could not sign in). So for a person whose account IS a
+    DESIGNER and whose allow-list row admitted them AS a designer, both gates now refuse, the
+    platform one runs first, and they read ``ACCESS_SUSPENDED_DETAIL`` with header ``SUSPENDED``
+    rather than this function's pair. That is not a sentence changing its words — all five are
+    exactly as they were, and each still fires for the state that produces it — it is one population
+    moving from the second refusal to the first, because that population is now genuinely barred
+    from the application and telling them otherwise would be the untrue answer.
+
+    **THE PARAGRAPH ABOVE IS STILL LOAD-BEARING, WHICH IS WHY THE MIRROR IS GUARDED AND NOT
+    UNCONDITIONAL.** The professor and the admin it names are exactly who
+    ``access_roster.admissions_an_empanelment_carries`` refuses to mirror onto: their place in this
+    product does not rest on an empanelment, so ending one leaves their access alone and they never
+    reach the platform refusal at all. This function keeps its own sentence for them, for anybody
+    admitted at another tier, and for every empanelment suspended by a path that predates the
+    mirror. Deleting either the guard or this gate on the theory that the mirror has made them
+    redundant re-opens the outage this docstring was written about.
     """
     if role_value(user) != "DESIGNER":
         return
@@ -502,11 +558,64 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
     await mark_roster_seen(user.email)
     await access_roster.mark_access_seen(access)
 
+    # ── THE USAGE-CONSENT GATE, AT THE ONE POINT BOTH CREDENTIALS JOIN ──────────────────────────
+    #
+    # Both paths are here and neither is anywhere else: the password branch above proved a bcrypt
+    # hash, the Google branch proved an audience inside `login_with_google`, and from this line down
+    # there is one `user`. Putting the gate in the two branches instead would mean writing the rule
+    # twice, and a rule written twice is one door that quietly stops enforcing it — the same argument
+    # the auto-empanelment block twenty lines up makes for its own position.
+    #
+    # **IT ADMITS THE SIGN-IN AND REPORTS "CONSENT REQUIRED". IT DOES NOT REFUSE, AND THAT IS A
+    # DECISION RATHER THAN A SHORTCUT.** The requirement is a blocking agreement — refuse and you
+    # cannot use the product — and it is enforced by the CLIENTS, which will not leave the consent
+    # screen until `usageConsentGate.required` is false. Four reasons this server reports rather than
+    # refuses, in the order they decide it:
+    #
+    #   1. **A 403 here is a gate nobody can get through.** The only way to record an answer is
+    #      `POST /api/usage/consent`, which needs a bearer token. Refuse before minting one and an
+    #      un-consented account can never consent: the product would be permanently unusable for
+    #      every account that has not answered, which on the day this ships is every account there
+    #      has ever been. That alone settles it.
+    #   2. **The client cannot SHOW the consent screen without a session.** It has to read the
+    #      notice, and — for a person who has already answered an older version — the answer they
+    #      previously gave, so the screen can say "this has changed" instead of "please agree".
+    #   3. **THE BREAK-GLASS MASTER ADMIN MUST NOT BE REACHABLE BY THIS.** `assert_access_admits`
+    #      exempts that account by name (`is_break_glass_master`) because "a break-glass that lives
+    #      in the same table it is protecting against is not a break-glass", and the whole argument
+    #      for widening the platform gate to everybody rests on there always being one account that
+    #      can get in and let people back in. A refusal here would be a SECOND lockout, on a column
+    #      no allow-list screen can edit, reachable by a bug in one boolean — and it would need its
+    #      own exemption, which is a second break-glass to keep in step with the first. Reporting
+    #      needs no exemption at all: the master admin signs in, the gate says `required: true`, and
+    #      nothing about their access depends on the answer.
+    #   4. **An admin can always undo a bad state**, because there is no bad state to undo. Nothing
+    #      here can strand an account: the answer is the account's own to give, at a route that needs
+    #      no permission from anybody, and there is no admin-only step in between.
+    #
+    # WHERE THE ENFORCEMENT ACTUALLY LIVES, said plainly so nobody adds a second copy: in the
+    # clients, at the screen. A server-side belt — if one is ever wanted — belongs on the PROTECTED
+    # routes as a dependency, never as a refusal at this door, for reason 1.
+    #
+    # NOTHING IS WRITTEN HERE. Reading the gate is a `getattr` and a string comparison on the row
+    # already in hand; the sign-in path pays no query for it, and this line adds no failure mode to
+    # a route whose failures lock people out of the product.
+    payload = serialize_user(user)
+    if payload[USAGE_CONSENT_GATE_KEY]["required"]:
+        # At INFO, once per sign-in, because the interesting operational question the day this ships
+        # is "how many people are still being asked" — and the answer is otherwise only visible by
+        # querying the accounts table.
+        logger.info(
+            "auth: %s signed in and still owes an answer on usage recording (%s)",
+            user.email,
+            payload[USAGE_CONSENT_GATE_KEY]["state"],
+        )
+
     access_token = create_access_token(
         subject=user.id,
         extra_claims={"email": user.email, "role": enum_value(user.role)},
     )
-    return {"accessToken": access_token, "tokenType": "bearer", "user": serialize_user(user)}
+    return {"accessToken": access_token, "tokenType": "bearer", "user": payload}
 
 
 @router.post("/logout")

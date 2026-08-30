@@ -88,6 +88,35 @@ class AdminHubEntryTest {
     }
 
     @Test
+    fun `a plain admin is offered the Usage tile, because require_usage_reader is Admin and above`() {
+        // `deps.can_read_usage` is Admin and above — the same rank the web's ADMIN_LINKS card is
+        // gated at — so `masterOnly` must stay off. The hub itself is already behind
+        // `isAdmin && adminChrome`, which means this filter is the ONLY thing between an admin and
+        // the aggregate, exactly as it was for [AdminHubEntry.API_KEYS] before that flag was fixed.
+        // Asserted rather than read, for the reason this whole file exists: a permission mirror that
+        // is only ever verified by looking at it is how API_KEYS stayed unreachable.
+        val forAdmin = adminHubEntriesFor(isMasterAdmin = false, canReview = true)
+        assertTrue("require_usage_reader is Admin and above", AdminHubEntry.USAGE in forAdmin)
+        // And it is not review-gated: a reviewer who is not an admin never reaches this hub at all,
+        // and adding a second condition here would only make the mirror stop mirroring.
+        assertTrue(AdminHubEntry.USAGE in adminHubEntriesFor(isMasterAdmin = false, canReview = false))
+    }
+
+    @Test
+    fun `the Usage blurb is the web tile's, verbatim`() {
+        // Verbatim from ADMIN_LINKS in frontend/app/(protected)/settings/page.tsx. A researcher who
+        // moves between the laptop and the handset mid-workshop must meet ONE name for one thing —
+        // and this one in particular must not drift into "Analytics", which is already the name of a
+        // different screen about craft outcomes that observes no person at all. The backend keeps
+        // those two names apart on purpose and says so in `usage.py`'s module docstring.
+        assertEquals("Usage", AdminHubEntry.USAGE.label)
+        assertEquals(
+            "Which screens are reached, how often, how fast, and how often broken — aggregated across every account.",
+            AdminHubEntry.USAGE.description
+        )
+    }
+
+    @Test
     fun `the API keys blurb says which half belongs to the master admin`() {
         // Verbatim from ADMIN_LINKS in frontend/app/(protected)/settings/page.tsx:72. A tile now
         // offered to admins that promised "rotate, test and reveal the provider keys" — as this one

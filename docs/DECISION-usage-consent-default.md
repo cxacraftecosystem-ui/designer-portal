@@ -1,19 +1,40 @@
 # Recording how designers use the platform: what is collected before anybody has been asked
 
-> ## STATUS, 2026-08-29: A DEFAULT IS IN FORCE, THE CONSENT QUESTION ITSELF IS OPEN.
+> ## STATUS, 2026-08-30: THE FLOW SHIPPED. THE DEFAULT BELOW IS UNCHANGED AND ITS REASON IS NOT.
 >
-> * **Decided, and overrulable in one line:** until a consent flow exists, a served request is
->   recorded **without the identity** — which screen, what it answered, how long the server took, and
->   no name. `backend/app/services/usage.py`, `DEFAULT_UNASKED_COLLECTION = UnaskedCollection.ANONYMOUS`.
-> * **Built:** the batched writer, the three-state consent vocabulary, the collection rule and the
->   withdrawal path, all in `backend/app/services/usage.py`. The table is `UsageEvent` in
->   `backend/prisma/schema.prisma`, migrated 2026-08-29.
-> * **NOT built, and not decided by this note:** what is asked, when it is asked, on which screen, and
->   who may see the results. `UsageEvent.consentState` is a place to record an answer, not a flow that
->   asks the question, and every row written so far carries NULL in it — which the schema defines as
->   **nobody was asked**.
-> * **Nothing is deleted.** No existing behaviour changes. `DwDictationConsent` and the audio consent
->   path are untouched; this is a second, separate consent question about a different kind of data.
+> **This banner was rewritten on 2026-08-30. Everything below it is the 2026-08-29 argument and is
+> deliberately unaltered** — see "How this document is kept true" at the foot: this is a decision
+> record, the argument in it is frozen, and only the status line moves.
+>
+> * **The consent flow now exists**, which is the review trigger this document named first. Four
+>   columns on `User` (`usageConsent`, `usageConsentAt`, `usageConsentBasis`, `usageConsentVersion`),
+>   the append-only `UsageConsentDecision` log, a versioned notice, four `/api/usage/consent*` routes
+>   and a gate reported at sign-in. Migration `20260830090000_usage_consent_and_decision_log`. The
+>   argument for its shape — and in particular for recording that a grant at the door is a **condition
+>   of access** rather than a free choice — is in **`docs/DECISION-usage-consent-at-sign-in.md`**,
+>   which is now the document to read first.
+> * **`DEFAULT_UNASKED_COLLECTION` is STILL `ANONYMOUS`**, and it was revisited rather than left
+>   alone. **Its justification has been replaced.** The argument below — "`NOTHING` is the safest and
+>   it is not free … choosing `NOTHING` means this system still cannot answer either half, for as long
+>   as it takes to ship a consent screen on two clients" — is spent, because the screen exists. The
+>   argument now is narrower and stronger: **the largest unasked population is people who are not
+>   signed in at all**, `NOTHING` would stop recording them, and that would silently delete the one
+>   capability the schema names by name as worth having — *"the sign-in page is slow for the people
+>   who cannot get in"*. A request with no account attached identifies nobody, so there is nobody for
+>   a consent question to protect on it.
+> * **`GRANTED` now fires, for the first time.** Rows from a consenting account are attributed and
+>   carry `consentState = "GRANTED"`. Until 2026-08-30 that token had never been written.
+>   `GET /api/usage/me` reports something for the first time.
+> * **Both "known unverified" items at the foot of this page are CLOSED.** The refusal is no longer
+>   process-local — it is a column, read by `resolve_consent` off the row every request already
+>   loads, so it survives a restart and reaches a second worker — and the decision log exists, so
+>   "granted on the 3rd, withdrawn on the 9th" is answerable. The mid-INSERT window is unchanged and
+>   is still stated honestly.
+> * **STILL OPEN, and named in this document's own review triggers:** what happens to the rows
+>   gathered before anybody was asked. They carry `consentState` NULL, **nothing backfills them**, and
+>   the decision belongs to the owner. See the last section of the sign-in document.
+> * **Nothing is deleted by the flow's arrival.** `DwDictationConsent` and the audio consent path are
+>   untouched; this remains a second, separate consent question about a different kind of data.
 
 **Decision:** collect the request and not the person, until somebody with the authority to decide has
 decided otherwise. Recorded because the default here is a choice that is very easy to make by
@@ -184,17 +205,28 @@ exactly as it was, including whichever case it lost.
 | `ANONYMOUS` is in force | `usage.DEFAULT_UNASKED_COLLECTION`, and `GET /api/usage/collection` on the running box. Pinned by `test_the_default_policy_records_the_request_and_drops_the_name` in `backend/tests/test_usage_tracking.py` |
 | A refusal produces no row, not an anonymous one | `usage.collection_plan` — the `REFUSED` branch returns `record=False` |
 | `GRANTED` is written in one circumstance only | the same function: it is the only branch that sets `consent_state` at all |
-| No consent flow exists | `usage.resolve_consent` reads `CONSENT_ATTRIBUTE` off the `User` row and that column does not exist, so it answers `NOT_RECORDED` for everybody. `grep -n "usageConsent" backend/prisma/schema.prisma` returning a hit is the day this whole document needs re-reading |
-| A withdrawal empties the buffer as well as the table | `usage.withdraw`, and the filter in `usage.flush` that runs again in the moment before the write |
+| ~~No consent flow exists~~ **A consent flow exists, since 2026-08-30** | `grep -n "usageConsent" backend/prisma/schema.prisma` now returns hits, which this row said would be "the day this whole document needs re-reading" — it was, and the banner above is the result. `usage.resolve_consent` reads `CONSENT_ATTRIBUTE` off the `User` row and the column is there. `GET /api/usage/collection` → `consent.flowExists` is `true`, and `backend/tests/test_usage_consent.py` pins the column names against the generated Prisma model |
+| A withdrawal empties the buffer as well as the table | `usage.withdraw`, and the filter in `usage.flush` that runs again in the moment before the write. **Since 2026-08-30 that function is the in-process half only** — `usage.record_consent` is the door, and it writes the durable answer and the log row before calling it |
 | The route path literals checked against the shape rules | re-run the count: `grep -rEoh '@router\.(get\|post\|put\|patch\|delete)\(\s*"[^"]*"' backend/app/api/routes/*.py \| wc -l` (271 on 2026-08-29; 176 distinct). The number moves whenever a route is added, so the claim that matters is that no literal is *rejected* — `test_building_the_app_installs_the_real_route_table_as_an_allow_list` asserts that over the live route table rather than over a count |
 
-**Review triggers:** any change to `DEFAULT_UNASKED_COLLECTION`; a consent column reaching the
-`User` model; a consent screen shipping on either client; a decision about what happens to the rows
-gathered before anybody was asked; a retention period being set. The first three would make the
-banner false within a single commit, which is why they are named first.
+**Review triggers:** any change to `DEFAULT_UNASKED_COLLECTION`; ~~a consent column reaching the
+`User` model~~ (**fired 2026-08-30**); ~~a consent screen shipping on either client~~ (**the server
+half fired 2026-08-30; the two client screens are still to come**); a decision about what happens to
+the rows gathered before anybody was asked; a retention period being set. The first three would make
+the banner false within a single commit, which is why they are named first — and two of them did.
 
-**Known unverified, and both are stated in the body rather than hidden here.** The refusal is
-process-local — there is no column to persist it in, so it does not survive a restart and does not
-reach a second worker. And a batch already handed to Prisma when `withdraw()` is called is mid-INSERT
-and neither the purge nor the delete can see it; every other path is closed. Both need a migration
-this document's author was not permitted to write.
+**Known unverified — BOTH CLOSED ON 2026-08-30, and the third is unchanged.** The refusal was
+process-local, with no column to persist it in; there is now `User.usageConsent`, read by
+`resolve_consent` off the row every request already loads, so it survives a restart and reaches a
+second worker. There was no decision log; there is now `UsageConsentDecision`, so "granted on the 3rd,
+withdrawn on the 9th" is answerable. **The mid-INSERT window is unchanged and still stated honestly:**
+a batch already handed to Prisma when the withdrawal runs cannot be seen by either the purge or the
+delete. Every other path is closed — `record_event` refuses a withdrawn account immediately and
+`flush` filters the batch again in the moment before it writes.
+
+**And one that is new, recorded here because nothing else would have found it.** `usage._WITHDRAWN`
+is a process-local set checked *ahead of* the consent rule, so it is a refusal that can outlive the
+answer that produced it: without `usage.resume()`, an account that withdraws and later agrees again
+stays in the set for the life of the worker, with the column reading `GRANTED`, every aggregate
+correct, and not one row written. `record_consent` calls `resume()` on every grant, and
+`test_agreeing_again_after_a_withdrawal_actually_resumes_recording` pins it.

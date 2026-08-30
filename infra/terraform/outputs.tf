@@ -13,6 +13,15 @@ output "s3_public_base_url" {
   value       = "https://${aws_s3_bucket.media.bucket}.s3.${var.aws_region}.amazonaws.com"
 }
 
+# HOW A HUMAN GETS ON THE BOX, PRINTED WHERE THE ADDRESS AND THE BUCKET ARE PRINTED. The command is
+# an output rather than a line in a runbook because it needs the instance id, which nothing else here
+# reports and which is otherwise looked up by hand every time. No inbound port is involved: this
+# works from any network, and it is the reason the security group has no SSH rule.
+output "ssm_session_command" {
+  description = "Open a shell on the API box from anywhere (no SSH, no open port; IAM-authorised)."
+  value       = "aws ssm start-session --target ${aws_instance.api.id} --region ${var.aws_region}"
+}
+
 output "media_access_key_id" {
   description = "IAM access key id for the API (AWS_ACCESS_KEY_ID)."
   value       = aws_iam_access_key.media.id

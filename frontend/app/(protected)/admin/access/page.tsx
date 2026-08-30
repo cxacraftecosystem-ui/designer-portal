@@ -89,6 +89,8 @@ import { BadgeCheck, Clock, MailPlus, ShieldCheck, UserCheck, UserX } from "luci
 
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { Dropdown } from "@/components/ui/Dropdown";
+import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
@@ -760,27 +762,25 @@ function PlatformAccessScreen() {
           </Field>
           <Field label="Joins as">
             {/*
-              A native select rather than the app's Dropdown: this one sits inside an uncontrolled
-              form and is read out of FormData with everything else, and a controlled component here
-              would need state whose only job is to be read back at submit.
+              THE THEMED DROPDOWN, INSIDE AN UNCONTROLLED FORM. The objection this replaced was
+              real and is answered rather than ignored: "this one sits inside an uncontrolled form
+              and is read out of FormData with everything else, and a controlled component here
+              would need state whose only job is to be read back at submit."
 
-              The empty option is FIRST and is the platform's documented default — the lowest rung.
-              A new joiner is promoted deliberately, on Manage users, rather than by whoever happened
-              to type their address in.
+              That state now exists, in `AdmitTierField` below, and it is read back through a hidden
+              input — which is this repository's own pattern for putting a rich control into a
+              FormData submit (`FormControls.MultiNoteField` does exactly this with its notes). The
+              submit handler is untouched: it still reads `form.get("role")` and cannot tell the
+              difference.
+
+              THE RE-SEEDING STILL WORKS, and that is the part worth checking rather than assuming.
+              This form carries `key={editing?.id ?? "new"}` precisely so every `defaultValue` is
+              re-seeded when the admin switches rows. `AdmitTierField` holds its state INSIDE that
+              subtree, so the remount resets it too. State lifted to the page component would not
+              have reset, and the way that fails is the previous row's tier silently riding along
+              into the next correction.
             */}
-            <select
-              name="role"
-              defaultValue={editing?.admitRole ?? ""}
-              className="field-input"
-              aria-label="The tier this person joins at"
-            >
-              <option value="">Default joining tier (lowest rung)</option>
-              {grantable.map((role) => (
-                <option key={role} value={role}>
-                  {roleLabel(role)}
-                </option>
-              ))}
-            </select>
+            <AdmitTierField grantable={grantable} initial={editing?.admitRole ?? ""} />
           </Field>
         </div>
         <Field label="Note">
@@ -1058,6 +1058,39 @@ function PlatformAccessScreen() {
  * grant on Manage users; the server enforces the same ceiling, so this is a mirror rather than the
  * rule.
  */
+/**
+ * The invite form's "Joins as" picker, holding the one piece of state that form needs.
+ *
+ * ITS OWN COMPONENT FOR A REASON THAT IS EASY TO GET WRONG. The form above carries
+ * `key={editing?.id ?? "new"}` so that switching which row is being corrected re-seeds every box.
+ * That remounts the form's SUBTREE — so state declared here resets with it, and state lifted to the
+ * page component would not. The failure of the lifted version is quiet: the previous row's tier
+ * rides along into the next correction, on a control whose whole job is deciding what somebody may
+ * become.
+ *
+ * THE HIDDEN INPUT IS HOW A CONTROLLED WIDGET REACHES AN UNCONTROLLED FORM. `submit` reads
+ * `form.get("role")` out of FormData and is completely unchanged by this; `FormControls`'
+ * `MultiNoteField` puts its notes into a form the same way. `Dropdown` takes its accessible name
+ * from the enclosing `Field` through context, so nothing here passes `ariaLabel` — see
+ * `ui/fieldLabel.tsx` for why that composition matters.
+ */
+function AdmitTierField({ grantable, initial }: { grantable: UserRole[]; initial: UserRole | "" }) {
+  const [role, setRole] = useState<UserRole | "">(initial);
+  return (
+    <>
+      <Dropdown
+        value={role}
+        onChange={(next) => setRole(next as UserRole | "")}
+        options={[
+          { value: "", label: "Default joining tier (lowest rung)" },
+          ...grantable.map((option) => ({ value: option, label: roleLabel(option) }))
+        ]}
+      />
+      <input type="hidden" name="role" value={role} />
+    </>
+  );
+}
+
 function QueueRow({
   entry,
   grantable,
@@ -1086,24 +1119,48 @@ function QueueRow({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {/* Native, and no filter box, for the same reasons as the invite form's picker above: the
-            grantable tiers are the role ladder — at most seven rows, a fixed vocabulary — and this
-            control is rendered once for every entry in the queue, which is where a portalled panel
-            per row stops being free. `aria-label` carries the name because there is no visible label
-            beside it. */}
-        <select
-          value={role}
-          onChange={(event) => setRole(event.target.value as UserRole | "")}
-          className="field-input h-9 py-0 text-sm"
-          aria-label={`The tier ${entry.email} joins at`}
-        >
-          <option value="">Joins at the default tier</option>
-          {grantable.map((option) => (
-            <option key={option} value={option}>
-              Joins as {roleLabel(option)}
-            </option>
-          ))}
-        </select>
+        {/*
+          THE THEMED DROPDOWN, ONE PER QUEUE ROW.
+
+          THE COST OBJECTION THAT KEPT THIS NATIVE DOES NOT HOLD, and it is corrected here rather
+          than deleted because it was the stated reason. It read: "this control is rendered once for
+          every entry in the queue, which is where a portalled panel per row stops being free."
+          `AnchoredPopover` mounts its panel behind `{open ? … : null}` — a CLOSED dropdown is a
+          single `<button>`, exactly what a `<select>` costs, and at most one panel exists on the
+          page at a time however long the queue is.
+
+          THE NAME IS COMPOSED, NOT REPLACED, WHICH IS WHY THERE IS AN `sr-only` LABEL RATHER THAN AN
+          `ariaLabel`. Passing `ariaLabel` would set `aria-label` on the trigger, and that REPLACES
+          name-from-content — the control would announce the question and lose the chosen tier,
+          which is a regression against the `<select>` this replaced (a native select announces its
+          label AND its selected option). A real label element with an id lets `SearchableSelect`
+          compose `aria-labelledby="<label id> <trigger id>"`: "The tier … joins at" followed by
+          "Joins as Designer". `sr-only` because the queue row has no room for a visible label and
+          the trigger's own text already reads as a sentence to a sighted admin.
+
+          `advanceOnSelect={false}`: `focusNextField` walks `data-form-field` elements, and the
+          Approve/Refuse buttons beside this are not fields — so advancing would jump focus into the
+          NEXT ROW'S dropdown, away from the row the admin is deciding. There is nowhere to advance
+          to here; this is a control paired with two buttons, not a step in a form.
+        */}
+        <span id={`tier-label-${entry.id}`} className="sr-only">
+          The tier {entry.email} joins at
+        </span>
+        <FieldLabelProvider value={`tier-label-${entry.id}`}>
+          <Dropdown
+            value={role}
+            onChange={(next) => setRole(next as UserRole | "")}
+            options={[
+              // FIRST, and it is the platform's documented default — the lowest rung. A new joiner
+              // is promoted deliberately, on Manage users, rather than by whoever happened to work
+              // the queue that morning.
+              { value: "", label: "Joins at the default tier" },
+              ...grantable.map((option) => ({ value: option, label: `Joins as ${roleLabel(option)}` }))
+            ]}
+            advanceOnSelect={false}
+            className="h-9 min-w-56 py-0 text-sm"
+          />
+        </FieldLabelProvider>
         <button type="button" className={rowAction("positive")} onClick={() => onApprove(role)}>
           <UserCheck className="h-3.5 w-3.5" aria-hidden />
           Approve

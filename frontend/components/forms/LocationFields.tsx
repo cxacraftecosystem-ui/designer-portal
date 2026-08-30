@@ -14,7 +14,6 @@ import {
 
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
-import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 // The MapLibre loader moved to components/forms/MapPointPicker so this card and the design-workshop
 // stage form share ONE module-level cache. Two caches meant two downloads of the same megabyte in a
 // session where a designer opened an artisan record and then a stage, on the rural connection this
@@ -1928,19 +1927,50 @@ export function LocationFields({
 
             `explainWhenUnavailable={false}` — every form that mounts this card renders
             `DictationUnavailableNotice` once, and a grey paragraph repeated per row is a paragraph
-            nobody reads. `FieldBlock`, not `Field`: the control contains a button, and a `<label>`
-            around a button folds its name into the box's own (§12.3).
+            nobody reads.
+
+            ── NO WRAPPER AT ALL, AND THE WRAPPER IS WHAT THE OWNER WAS LOOKING AT ────────────────
+
+            This box sat inside `<FieldBlock label="Village or place">` until 2026-08-30 and the
+            comment here defended the choice with §12.3 — "the control contains a button, and a
+            `<label>` around a button folds its name into the box's own". Both halves of that were
+            true and the conclusion was still wrong, because `DictatedTextInput` ALREADY solved it:
+            it is not a `Field`, it writes its own `<label className="field-label" htmlFor={boxId}>`
+            for exactly that reason, and its own header says so. So the wrapper drew a SECOND visible
+            `field-label` with the identical words directly above the control's, and the profile page
+            rendered
+
+                Village or place
+                Village or place
+                [                    ]
+
+            which is what the owner reported as a duplicated village/place field. There is one
+            column, one input and one `name="village"` behind it — the repetition was two labels over
+            one box, not two boxes and not two columns, so nothing is orphaned by removing it.
+            A screen reader had it worse than a sighted reader: the group name and the input name
+            were the same string, so the box announced itself as "Village or place, Village or place,
+            edit".
+
+            `FieldBlock` REMAINS THE RIGHT WRAPPER FOR A THEMED DROPDOWN elsewhere in the app — one
+            is a `<button>`, whose name has to arrive through `role="group"` + `aria-labelledby`
+            because a `<label>` cannot name a button. It is wrong HERE because this control is a real
+            `<input>` that carries its own `htmlFor` label; the `FieldLabelProvider` the wrapper
+            installed was dead weight on top of that, since `DictatedTextInput` never reads it. Do
+            not put it back: the box ends up better labelled without it, not worse. (Removing it also
+            took this file's last `FieldBlock` with it, which is why the import is gone.)
+
+            This is a SHARED control — the same double label rendered on the artisan, product, tool,
+            workshop, media and questionnaire forms and on the designer profile, so this one deletion
+            closes it on all seven surfaces at once.
           */}
-          <FieldBlock label="Village or place">
-            <DictatedTextInput
-              name="village"
-              label="Village or place"
-              value={village}
-              placeholder="Bagru"
-              explainWhenUnavailable={false}
-              onChange={(next) => setVillage(next)}
-            />
-          </FieldBlock>
+          <DictatedTextInput
+            name="village"
+            label="Village or place"
+            value={village}
+            placeholder="Bagru"
+            explainWhenUnavailable={false}
+            onChange={(next) => setVillage(next)}
+          />
           <Field label="Pincode">
             <input
               ref={pincodeRef}

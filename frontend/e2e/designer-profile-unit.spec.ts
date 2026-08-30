@@ -30,10 +30,16 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 import {
+  DESIGNER_PROFILE_GROUPS,
   DESIGNER_PROFILE_LABELS,
   DESIGNER_PROFILE_REQUIRED_FIELDS,
   isDesignerProfileFieldRequired
 } from "@/components/designers/profileCopy";
+// The read boundary the profile's own view goes through. Imported and CALLED rather than checked by
+// reading source, because this is the one assertion in this file that is about behaviour: whether an
+// address written before 2026-08-30 comes back as itself is a question with a right answer, and the
+// wrong answer — a round trip through `fromPlainText` — is what the obvious one-liner would produce.
+import { plainFromStoredAddress } from "@/components/designers/storedAddress";
 import { canSeeDataTile, routeGuardFor } from "@/lib/permissions";
 import type { DesignerProfileField } from "@/lib/designers";
 import type { User, UserRole } from "@/lib/types";
@@ -561,5 +567,168 @@ test.describe("the View Data tile", () => {
     expect(routeGuardFor("/search"), "/search must stay open — its endpoints are").toBeNull();
     // And the tile predicate is nowhere in the guard table, in either direction.
     expect(stripComments(read("lib/permissions.ts"))).not.toContain("can: canSeeDataTile");
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────────────────────────
+ * 6. The address after it took rich text (2026-08-30)
+ * ──────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * THE ONE THING THIS CHANGE COULD BREAK FOR EVERY DESIGNER AT ONCE, PINNED FIRST.
+ *
+ * `DesignerProfile.addressLine` is now edited by `RichTextField`. The COLUMN did not change: it is
+ * still `String?`, there is no migration, and `encodeStoredRichText`'s rule is that a document is
+ * only ever stringified when it is not expressible as plain text — so an address nobody formatted is
+ * stored as exactly the prose the `<input>` stored yesterday, and only a bolded word turns the value
+ * into `{"blocks":[…]}`.
+ *
+ * That split hands every READER of the column two cases, and the failure mode of the second one is
+ * this repository's favourite: not a crash, but the literal characters `{"blocks":[{"kind":…` shown
+ * to a designer in the place their street should be. `DesignerProfileView` is the surface that would
+ * have shown them — every other branch on it ends in `String(raw)` — and it is not a surface anybody
+ * would think to re-check while editing a form.
+ *
+ * The first assertion is the compatibility one and it is the one that matters most, because a plain
+ * address is the state of EVERY live row: nothing was migrated and nothing needed to be.
+ */
+test.describe("the designer's address, once it can be formatted", () => {
+  const FORMATTED =
+    '{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}';
+
+  test("an address written before this change renders exactly as it did", () => {
+    /*
+      IDENTITY, NOT A ROUND TRIP, and the difference is the whole reason `plainFromStoredAddress`
+      exists rather than a `toPlain(fromStored(raw))` at the call site. `fromStored` reads a string
+      through `fromPlainText`, which strips each line, drops blank ones and collapses runs — so the
+      obvious one-liner compiles, looks right, and silently reformats every address in the database
+      on its way to the screen. These assertions are what that composition would fail.
+    */
+    expect(plainFromStoredAddress("12 Nagar Road, Bagru")).toBe("12 Nagar Road, Bagru");
+    // Whitespace and blank lines a designer typed are theirs, not ours to tidy.
+    expect(plainFromStoredAddress("12 Nagar Road\n\n  Bagru 303007  ")).toBe(
+      "12 Nagar Road\n\n  Bagru 303007  "
+    );
+    // Devanagari, because an address is among the fields most likely to be typed in a local script
+    // and a mangled one is unreadable rather than merely wrong.
+    expect(plainFromStoredAddress("१२ नगर रोड, बगरू")).toBe("१२ नगर रोड, बगरू");
+    // A blank column keeps this screen's own "Not filled in" wording rather than gaining a second.
+    expect(plainFromStoredAddress(null)).toBe("");
+    expect(plainFromStoredAddress(undefined)).toBe("");
+    // Prose that merely BEGINS with a brace is prose. `decodeStoredRichText` demands a `blocks`
+    // array precisely so a flat number is not reinterpreted as a document.
+    expect(plainFromStoredAddress("{Flat 2} Nagar Road")).toBe("{Flat 2} Nagar Road");
+  });
+
+  test("a formatted address renders as its words and never as braces", () => {
+    const shown = plainFromStoredAddress(FORMATTED);
+    expect(shown).toBe("12 Nagar Road, Bagru");
+    expect(
+      shown,
+      "the read-only profile is printing raw JSON — which reads to an admin as a designer who " +
+        "pasted something strange into their address, not as a rendering bug"
+    ).not.toContain("blocks");
+    // Two paragraphs flatten to two lines. The view prints them with `whitespace-pre-line`; the
+    // REPORT gets them folded to one line, and that fold is the server's — see
+    // `_SINGLE_LINE_PREFILL_COLUMNS` in `backend/app/services/designers.py`.
+    const twoBlocks =
+      '{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road"}]},' +
+      '{"kind":"PARAGRAPH","spans":[{"text":"Bagru 303007"}]}]}';
+    expect(plainFromStoredAddress(twoBlocks)).toBe("12 Nagar Road\nBagru 303007");
+  });
+
+  test("the editor and the read-only view both go through the rich-text boundary", () => {
+    /*
+      THE TWO SURFACES, ASSERTED BY READING SOURCE, because there is no React renderer here (see
+      this file's header) and because what must not happen is somebody EDITING one of these two
+      lines. They are a pair: the editor decodes on the way in, the view flattens on the way out,
+      and either one alone is a screen showing braces.
+    */
+    expect(FORM_CODE).toContain("<RichTextField");
+    expect(FORM_CODE, "the address is what became rich text — not the biography beside it").toMatch(
+      /<RichTextField\s+name="addressLine"/
+    );
+    // The old control must be GONE from this box, or the form would submit two values under one
+    // name and `FormData.get` would answer with whichever came first in document order.
+    expect(FORM_CODE).not.toMatch(/<DictatedField\s+name="addressLine"/);
+    // `defaultValue` is the stored column, raw. `RichTextField` owns the decode; a call site that
+    // pre-flattened would hand the editor prose and lose the designer's marks on the first save.
+    expect(FORM_CODE).toMatch(/<RichTextField[\s\S]*?defaultValue=\{profile\.addressLine \?\? ""\}/);
+
+    expect(VIEW_CODE).toContain("plainFromStoredAddress");
+    expect(
+      VIEW_CODE,
+      "the view must flatten the address BEFORE its generic `String(raw)` branch, or the branch " +
+        "order decides whether an admin sees an address or a JSON document"
+    ).toMatch(/field === "addressLine"[\s\S]*?plainFromStoredAddress/);
+  });
+
+  test("the ceiling the box prints is the ceiling the server applies", () => {
+    /*
+      TWO NUMBERS NOW EXIST AND ONLY ONE OF THEM IS A RULE. The wire body bounds the RAW string
+      generously so that a marked-up address is not refused for the size of its own JSON envelope,
+      and then measures the FLATTENED text against 300 — the same 300 `designerAddress` declares on
+      stage 3 and the same 300 Android's `ADDRESS_LINE_MAX` clamps to.
+
+      A box that printed the envelope would tell a designer they had 20 000 characters and then be
+      refused at 301 by a server they were never warned about; a box that clamped to the envelope
+      would be worse, because the refusal would arrive as a 422 on a twenty-two-key body and lose
+      every other answer on the screen. So this asserts the FORM still passes the words ceiling.
+    */
+    expect(FORM_CODE).toMatch(/<RichTextField[\s\S]*?maxLength=\{MAX\.addressLine\}/);
+    expect(FORM_CODE).toContain("addressLine: 300");
+
+    const schema = readAbsolute(SCHEMA);
+    expect(schema).toContain("ADDRESS_LINE_PLAIN_MAX = 300");
+    expect(
+      schema,
+      "the raw string must have a bound of its own — without one, a client bug can post a novel " +
+        "into a profile column"
+    ).toContain("max_length=ADDRESS_LINE_STORED_MAX");
+  });
+
+  test("both clients call the two address halves by the same two names", () => {
+    /*
+      §1.3 — Android owns the wording. It renamed `ProfileSection("Address")` to "Postal address" and
+      its box to "Address line" on 2026-08-30, saying why: "there are now two of them and an
+      unqualified heading over one of two is the reading a person gets wrong". The web said
+      "Address" for both the group heading AND the first box under it, so the page opened by saying
+      one word twice and then drew a second address card below it.
+    */
+    expect(DESIGNER_PROFILE_LABELS.addressLine).toBe("Address line");
+    expect(DESIGNER_PROFILE_GROUPS.find((group) => group.key === "address")?.title).toBe(
+      "Postal address"
+    );
+    // The heading and the box it sits over must not be the same string again — which is the defect
+    // this pair fixes, stated as the rule rather than as two spellings.
+    expect(DESIGNER_PROFILE_GROUPS.find((group) => group.key === "address")?.title).not.toBe(
+      DESIGNER_PROFILE_LABELS.addressLine
+    );
+  });
+
+  test("the village box carries one label and not two", () => {
+    /*
+      THE OWNER'S OTHER REPORT ON THIS PAGE, AND IT WAS NEVER TWO COLUMNS. `LocationFields` wrapped
+      its village box in `<FieldBlock label="Village or place">` while `DictatedTextInput` draws its
+      OWN `<label className="field-label" htmlFor>` — which it does deliberately, because it contains
+      a button and a `<label>` around a button folds the button's name into the box's (§12.3). So the
+      words rendered twice, stacked, over one input, and a screen reader announced "Village or place,
+      Village or place, edit".
+
+      Asserted on the SHARED file rather than on the designer profile, because that is where the
+      defect was and because the same double label rendered on all seven surfaces that mount this
+      card. There is one `name="village"` and one column behind it; nothing was orphaned.
+    */
+    // STRIPPED, like every other source assertion in this file, and here it is load-bearing rather
+    // than tidy: the comment left at the deletion site quotes the wrapper it removed, so a raw read
+    // counts the label twice and this test would report the bug it just fixed.
+    const location = stripComments(read("components/forms/LocationFields.tsx"));
+    expect(location).toContain('label="Village or place"');
+    expect(
+      (location.match(/label="Village or place"/g) ?? []).length,
+      "the village box is labelled twice again — keep the control's own `<label htmlFor>` and do " +
+        "not wrap it, or the input goes back to being named only by its group"
+    ).toBe(1);
+    expect(location).not.toContain('<FieldBlock label="Village or place">');
   });
 });

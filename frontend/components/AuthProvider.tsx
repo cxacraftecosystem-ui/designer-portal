@@ -8,8 +8,17 @@ import type { User } from "@/lib/types";
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  loginWithGoogle: (googleIdToken: string) => Promise<void>;
+  /**
+   * BOTH SIGN-IN CALLS RETURN THE ACCOUNT, and that return value is not a convenience.
+   *
+   * `serialize_user` carries `usageConsentGate` on every sign-in answer, and /login must branch on
+   * it — record the tick, or hold a standing refusal on screen — BEFORE it navigates. Reading it out
+   * of `user` instead would mean waiting a render for context state to settle, during which /login's
+   * own "already signed in" effect has already fired and replaced the route. The row is in hand the
+   * moment the request resolves; handing it back is what lets the caller decide in the same tick.
+   */
+  login: (email: string, password: string) => Promise<User>;
+  loginWithGoogle: (googleIdToken: string) => Promise<User>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
 };
@@ -65,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     setToken(result.accessToken);
     setUser(result.user);
+    return result.user;
   }, []);
 
   const loginWithGoogle = useCallback(async (googleIdToken: string) => {
@@ -74,6 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     setToken(result.accessToken);
     setUser(result.user);
+    return result.user;
   }, []);
 
   const logout = useCallback(async () => {

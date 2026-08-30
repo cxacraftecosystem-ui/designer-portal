@@ -27,10 +27,17 @@ whose allow-list row is missing or PENDING — that is the empanelment clause, a
 admin who empanels somebody has not silently created a person the gate then refuses. Empanelling a
 DESIGNER account whose allow-list row is PENDING would therefore APPROVE a request nobody has
 decided, and empanelling one whose row is REJECTED or SUSPENDED would put an active empanelment on
-the roster screen for somebody an administrator barred (it would not let them back in — neither
-state is "waiting" — but nothing downstream would ever correct the record, because suspending an
-allow-list row does not suspend an empanelment). Both are refused here and REPORTED instead, under
-"needs an administrator", so a human decides them on the screen built for deciding them.
+the roster screen for somebody an administrator barred — which would not let them back in, since
+neither state is "waiting", but would be a record contradicting the one next to it. (The
+parenthesis here used to end *"and nothing downstream would ever correct the record, because
+suspending an allow-list row does not suspend an empanelment"*. That half is no longer true:
+``access_roster.mirror_suspension`` now ends the empanelment when the allow-list row is suspended
+or rejected. What has NOT changed is this script's answer, because the mirror runs on the ACT of
+barring somebody and not on the state of a row afterwards — an empanelment written here, after the
+bar, is exactly the row nothing would ever come back to correct. The pairs already left disagreeing
+are ``scripts/backfill_roster_suspension_mirror.py``'s subject, not this one's.) Both are refused
+here and REPORTED instead, under "needs an administrator", so a human decides them on the screen
+built for deciding them.
 
 **IT NEVER REVIVES A SUSPENDED EMPANELMENT.** That rule is not restated here; the script calls
 ``ensure_empanelled`` itself, exactly as ``scripts/assign_records_to_workshop.py`` calls

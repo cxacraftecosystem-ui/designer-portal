@@ -86,6 +86,83 @@ function iconForType(type: MediaType) {
   return <FileText className="h-5 w-5" aria-hidden />;
 }
 
+/**
+ * ONE MEDIA FILE, AS A LANDSCAPE CARD THAT NOTHING CAN BE PAINTED ON TOP OF.
+ *
+ * ── WHAT ACTUALLY OVERLAPPED, SINCE IT WAS NOT THIS ─────────────────────────────────────────────
+ *
+ * The report was "multiple cards overlap over each other" while uploading media. Measured at
+ * 320/360/390/640/768/1024/1280/1536px, this card has never overlapped a sibling in any grid that
+ * mounts it: the collision is `UploadTray`'s dock, a `position: fixed` card with no height ceiling
+ * that grew one row per media section until it lay across the page underneath it. That is repaired
+ * where it is caused, in `components/media/UploadTray.tsx` — the measurements are in the comment
+ * there.
+ *
+ * What this file owned is the SECOND half of the same request: "all media appears in the card
+ * format horizontally stacked over one another, for bigger screens, have the same stacked in
+ * multiple horizontal stacks next to each other, so as to ensure that the depth does not grow too
+ * long". A portrait tile is a 4:3 thumbnail plus two lines of text per file, so twenty attachments
+ * in a three-column grid is several screens of scrolling; the same twenty as landscape cards is
+ * under one. `MediaCardGrid` is the multi-column half; this is the horizontal card that goes in it.
+ *
+ * ── WHY FLEXBOX AND NOT A BREAKPOINT ────────────────────────────────────────────────────────────
+ *
+ * The root is `flex flex-wrap`, and the wrap IS the responsiveness. `tailwind.config.ts` runs with
+ * `plugins: []`, so there is no `@container` in this build — and a viewport breakpoint would be the
+ * wrong instrument even if there were, because this component is mounted at five different WIDTHS
+ * on ONE screen and none of them can be read off the viewport: a 116px cell on /products and /tools
+ * (`grid max-w-[240px] grid-cols-2`), a 144px Preview cell on /media, a ~200px slot inside
+ * `ExistingMedia`, and the 254–476px columns of `MediaCaptureField`'s grid. An `sm:` rule would
+ * flip all of them together and be wrong for three.
+ *
+ * `flex: 1 1 6rem` on the thumbnail against `flex: 999 1 8rem` on the text is the whole mechanism:
+ *   - they share a line only where the card can hold 6rem + 8rem + the gap (≈236px), which is every
+ *     capture grid and no table cell — so the wide call sites get the landscape card and the narrow
+ *     ones keep the portrait tile they have today, with no call site being told which it is;
+ *   - 999 against 1 means that when they DO share a line essentially all the free space goes to the
+ *     text and the thumbnail stays at its 6rem base, while a thumbnail alone on its line takes the
+ *     whole of it. That asymmetry is what keeps the 116px and 144px cells looking unchanged;
+ *   - `flex-shrink: 1` on both is the no-overflow guarantee: a line narrower than an item's own
+ *     basis shrinks that item instead of spilling out of the card, so the narrowest supported width
+ *     never gains a horizontal scrollbar. `min-w-0` is the other half — a flex item defaults to
+ *     `min-width: auto` and refuses to shrink below its content, and `truncate` cannot save a box
+ *     that has already grown.
+ *
+ * `min-w-0` RUNS THE WHOLE WAY DOWN — root, thumbnail, text column, and every row inside the text
+ * column — and none of those is decoration. Each one is a flex or grid ITEM, and any item left out
+ * re-exports its content's intrinsic width to the box above it, all the way up to the grid track.
+ * Both ends of the chain were measured failing:
+ *
+ *   - without it on the ROOT, one unbreakable filename sized this card at 425px inside a 311px
+ *     `grid-cols-3` track and it overhung its neighbour by 118 × 90px. The portrait tile got that
+ *     protection free — its text sat in a `min-w-0` GRID item, and a grid item with a definite
+ *     `min-width` contributes exactly that to track sizing — and a flex root does not inherit it;
+ *   - without it on the two ROWS inside the text column, the document's scrollWidth was 493px
+ *     against a 320px viewport. The offender there is not the filename but the status line's
+ *     `truncate` span: `white-space: nowrap` makes a box's minimum contribution the WHOLE
+ *     sentence, and "Upload failed — Object storage upload failed: network error" is a wide
+ *     sentence. `truncate` clips what is painted; it does not make the box narrow.
+ *
+ * Measured after: `scrollWidth === innerWidth` and zero card-to-card intersections at 320, 360,
+ * 390, 640, 768, 1024, 1280 and 1536px, with a failed card, an uploading card and a finished card
+ * all on screen at once.
+ *
+ * ── THE REMOVE CONTROL IS IN THE FLOW NOW, AND THAT IS THE POINT ────────────────────────────────
+ *
+ * Discard/Remove was `absolute right-1.5 top-1.5 z-10`: a black disc painted on top of the
+ * photograph it deletes, covering the corner of every thumbnail in the grid. The card's own
+ * `relative` contained it, so it was never the reported bug — but it is a control drawn over
+ * content, which is that bug at card scale, and in a landscape card it would have landed on the
+ * filename instead of the picture. In the flow it cannot cover anything at any width, it keeps its
+ * accessible name, and the card no longer needs `relative`: nothing inside this box is positioned
+ * any more except the maximise chip, which is contained by the thumbnail's own `relative` and
+ * clipped by its `overflow-hidden`, so the card cannot paint outside its own rectangle at all.
+ *
+ * The card is deliberately NOT `overflow-hidden`. The global focus ring is an `outline` at
+ * `outline-offset: 2px` drawn OUTSIDE the border box, and the remove and Retry buttons sit flush
+ * inside the card's `p-2` — clipping the card would eat both rings. Same rule as the guide's step
+ * card.
+ */
 export function MediaPreviewTile({
   item,
   onOpen,
@@ -112,31 +189,17 @@ export function MediaPreviewTile({
   const kind = resolvePreviewKind(item);
   const percent = progress === null ? null : Math.round(Math.min(1, Math.max(0, progress)) * 100);
   return (
-    // The WHOLE tile opens the lightbox; the remove button and caller-provided actions stop
+    // The WHOLE card opens the lightbox; the remove button and caller-provided actions stop
     // propagation so they never also open the preview.
     <div
-      className="group relative grid cursor-pointer gap-2 rounded-md border border-line-200 bg-field-50 p-2 transition hover:border-purple-300"
+      className="flex min-w-0 cursor-pointer flex-wrap items-start gap-2 rounded-md border border-line-200 bg-field-50 p-2 transition hover:border-purple-300"
       onClick={onOpen}
     >
-      {onRemove ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRemove();
-          }}
-          aria-label={`${removeLabel} ${item.name}`}
-          title={`${removeLabel} ${item.name}`}
-          className="absolute right-1.5 top-1.5 z-10 grid h-7 w-7 place-items-center rounded-full bg-black/70 text-white shadow-sm transition hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-        >
-          <X className="h-4 w-4" aria-hidden />
-        </button>
-      ) : null}
       <button
         type="button"
-        className="relative grid aspect-[4/3] w-full place-items-center overflow-hidden rounded-md bg-field-100 text-left text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-field-600"
+        className="relative grid aspect-[4/3] min-w-0 flex-[1_1_6rem] place-items-center overflow-hidden rounded-md bg-field-100 text-left text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-field-600"
         onClick={(event) => {
-          // The outer tile handles the open; keep the button for keyboard access without firing twice.
+          // The outer card handles the open; keep the button for keyboard access without firing twice.
           event.stopPropagation();
           onOpen();
         }}
@@ -162,33 +225,76 @@ export function MediaPreviewTile({
           <Maximize2 className="h-3.5 w-3.5" aria-hidden />
         </span>
       </button>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-ink" title={item.name}>{item.name}</div>
-        <div className="truncate text-xs text-ink-muted">{mediaLabel(item)}</div>
-      </div>
-      {percent !== null && !failed ? (
-        <div className="h-1.5 overflow-hidden rounded-full bg-field-200" aria-hidden>
-          <div className="h-full rounded-full bg-field-600 transition-all" style={{ width: `${percent}%` }} />
-        </div>
-      ) : null}
-      {statusLabel ? (
-        <div className="flex items-center justify-between gap-2">
-          <span className={`truncate text-xs ${failed ? "text-error-600" : "text-ink-muted"}`}>{statusLabel}</span>
-          {failed && onRetry ? (
+      <div className="grid min-w-0 flex-[999_1_8rem] gap-2">
+        <div className="flex min-w-0 items-start gap-2">
+          <div className="min-w-0 flex-1">
+            {/*
+              `line-clamp-2 break-all`, and both halves of that were measured rather than guessed.
+
+              TWO LINES because the landscape card gives the name a narrower column than the portrait
+              tile did, and one ellipsised line of "IMG_20260812_ravi_bagru_indigo…" is every file in
+              a batch reading as the same file.
+
+              `break-all` AND NOT `break-words`, which is what this was first written with.
+              `overflow-wrap: break-word` stops an over-long word being PAINTED outside its box; it
+              does not change the box's MIN-CONTENT width, and min-content is what sizes a grid
+              track. Measured against a real underscored camera filename — underscores are not line
+              break opportunities, so the whole name is one unbreakable word — this column reported a
+              371px min-content and the card a 425px one, which at 320px gave the document a
+              horizontal scrollbar (scrollWidth 562 against innerWidth 320) and in the fixed
+              `grid-cols-3` track at 1536px made each card overhang the next by 118 × 90px. That is
+              the reported overlap, rebuilt inside the card that is supposed to be the cure for it.
+              `word-break: break-all` puts min-content at one character, so the name wraps instead.
+              `title` still carries the whole string, unbroken, for anyone who needs to read it.
+            */}
+            <div className="line-clamp-2 break-all text-sm font-medium text-ink" title={item.name}>
+              {item.name}
+            </div>
+            <div className="truncate text-xs text-ink-muted">{mediaLabel(item)}</div>
+          </div>
+          {onRemove ? (
             <button
               type="button"
-              className="shrink-0 rounded-sm border border-line-200 bg-card px-2 py-0.5 text-xs font-semibold text-field-600 transition hover:bg-field-50"
               onClick={(event) => {
                 event.stopPropagation();
-                onRetry();
+                onRemove();
               }}
+              aria-label={`${removeLabel} ${item.name}`}
+              title={`${removeLabel} ${item.name}`}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-line-200 bg-card text-ink-muted transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
             >
-              Retry
+              <X className="h-4 w-4" aria-hidden />
             </button>
           ) : null}
         </div>
-      ) : null}
-      {action ? <div onClick={(event) => event.stopPropagation()}>{action}</div> : null}
+        {percent !== null && !failed ? (
+          <div className="h-1.5 overflow-hidden rounded-full bg-field-200" aria-hidden>
+            <div className="h-full rounded-full bg-field-600 transition-all" style={{ width: `${percent}%` }} />
+          </div>
+        ) : null}
+        {statusLabel ? (
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <span className={`truncate text-xs ${failed ? "text-error-600" : "text-ink-muted"}`}>{statusLabel}</span>
+            {failed && onRetry ? (
+              <button
+                type="button"
+                className="shrink-0 rounded-sm border border-line-200 bg-card px-2 py-0.5 text-xs font-semibold text-field-600 transition hover:bg-field-50"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRetry();
+                }}
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {action ? (
+          <div className="min-w-0" onClick={(event) => event.stopPropagation()}>
+            {action}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

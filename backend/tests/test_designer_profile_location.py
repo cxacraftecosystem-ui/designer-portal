@@ -116,6 +116,32 @@ class _ProfileTable:
             self.rows[user_id] = stored
         else:
             stored.update(data["update"])
+        return self._row(stored, include)
+
+    async def find_unique(
+        self, where: dict[str, Any], include: dict[str, Any] | None = None
+    ) -> SimpleNamespace | None:
+        """The read ``prefill_from_profile`` makes, and the only other call any of this reaches for.
+
+        Added when the address became a rich-text column, so that the tests below can follow one
+        value all the way from the wire body to the registry key a report prints it under. Reading
+        the stored dict rather than a second copy is what makes that end-to-end: a test that built
+        its own profile object would prove the flattener works and prove nothing about whether the
+        SAVE path and the PREFILL path agree about what is in the column.
+
+        ``None`` for a designer who has never saved, exactly as Prisma answers — that is the branch
+        ``prefill_from_profile`` returns an empty dict for.
+        """
+        self.calls.append({"where": where, "include": include})
+        stored = self.rows.get(where["userId"])
+        return None if stored is None else self._row(stored, include)
+
+    def _row(self, stored: dict[str, Any], include: dict[str, Any] | None) -> SimpleNamespace:
+        """One stored profile as Prisma would hand it back, relations honoured.
+
+        ``include`` IS HONOURED RATHER THAN IGNORED — see this class's docstring. It is read here,
+        once, so the upsert and the find cannot disagree about what a loaded row looks like.
+        """
         row = SimpleNamespace(
             id=stored["id"],
             userId=stored["userId"],
@@ -127,6 +153,10 @@ class _ProfileTable:
             setattr(row, key, stored.get(key))
         if include and include.get("location"):
             row.location = self._location(stored.get("locationId"))
+        if include and include.get("user"):
+            # The account behind the profile. Only ``name`` is read, and only as the fallback for a
+            # designer who never filled in ``displayName``.
+            row.user = SimpleNamespace(name="Latha Rao")
         return row
 
     def _location(self, location_id: str | None) -> SimpleNamespace | None:
@@ -538,3 +568,153 @@ def test_the_wire_body_still_carries_every_column_the_serializer_reads() -> None
     """
     assert "experienceMonths" in PROFILE_FIELDS
     assert set(PROFILE_FIELDS) <= set(DesignerProfileUpdate.model_fields)
+
+
+# --------------------------------------------------------------------------------------
+# The address after it took rich text (2026-08-30)
+# --------------------------------------------------------------------------------------
+#
+# WHAT CHANGED, AND WHAT MUST NOT HAVE. ``DesignerProfile.addressLine`` is now edited on the web by
+# the same rich-text control the artisan, product, tool and process forms use. The COLUMN did not
+# change — it is ``String?``, there is no migration, and ``encodeStoredRichText``'s rule is that a
+# document is only ever stringified when it is not expressible as plain text — so an address nobody
+# formatted is stored as the same prose it has always been stored as, and only a bolded word turns
+# the value into ``{"blocks": …}``.
+#
+# THAT SPLIT IS EXACTLY WHY THESE TESTS EXIST. It gives the column two shapes and gives every reader
+# of it two cases, and the second one fails SILENTLY: ``str(value)`` on a document prints the braces,
+# and the one reader that matters here writes into a stage blob that a ministry document is generated
+# from. ``format_value`` has no RICH_TEXT branch for a TEXT field, hydration only fills blanks, and a
+# submitted report never re-resolves — so the failure would be permanent, per workshop, and reported
+# by nothing.
+#
+# The first test is the one that matters most, because it is the state of EVERY LIVE ROW: nothing was
+# migrated, and nothing needed to be.
+
+#: A formatted address exactly as ``encodeStoredRichText`` writes one — compact separators, one
+#: paragraph, one marked span. Hand-written rather than produced by the encoder because the encoder
+#: is TypeScript; ``backend/tests/test_rich_text_stored_columns.py`` is what holds the two spellings
+#: together, and this file only has to use a value ``stored_text_document`` recognises.
+FORMATTED_ADDRESS = (
+    '{"blocks":[{"kind":"PARAGRAPH","spans":'
+    '[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}'
+)
+
+
+async def test_an_address_written_before_rich_text_is_stored_and_prefilled_unchanged(
+    db: _Db,
+) -> None:
+    """THE COMPATIBILITY GUARANTEE, end to end, on the shape every live row is in.
+
+    Not one byte of this path may move for an address that carries no formatting.
+    ``plain_from_stored`` is IDENTITY on a plain string — the same object back, never a round trip
+    through ``from_plain``/``to_plain``, which strips lines and collapses blanks — so the column
+    keeps what the designer typed and stage 3 receives what the column keeps.
+
+    The Devanagari line is not decoration: ``ensure_ascii=False`` and the identity branch together
+    are what stop a Hindi address becoming a run of escapes somewhere on this path, and an address is
+    among the fields most likely to be typed in a local script.
+    """
+    plain = "12 Nagar Road, Bagru"
+    saved = await _save({"addressLine": plain})
+    assert saved["addressLine"] == plain
+
+    prefilled = await designer_service.prefill_from_profile(USER_ID)
+    assert prefilled["designerAddress"] == plain
+
+    devanagari = "१२ नगर रोड, बगरू"
+    await _save({"addressLine": devanagari})
+    assert (await designer_service.prefill_from_profile(USER_ID))["designerAddress"] == devanagari
+
+
+async def test_a_formatted_address_is_stored_verbatim_and_reaches_the_report_as_words(
+    db: _Db,
+) -> None:
+    """The column keeps the document; the REPORT gets the words.
+
+    Two assertions, opposite on purpose. The column must hold the document verbatim or the web
+    editor loses the designer's formatting on the next read — the server does not get to normalise a
+    value it was handed. The prefill must hold no trace of it, because its target ``designerAddress``
+    is a registry TEXT field: ``report_builder.format_value`` reaches its RICH_TEXT branch only for a
+    dict, so a stored-JSON STRING falls through to ``clean_text`` and prints
+    ``{"blocks":[{"kind":"PARAGRAPH"…`` onto the cover of a document submitted to a ministry. That is
+    the failure written up on that branch, and this is the door it would have arrived through.
+    """
+    saved = await _save({"addressLine": FORMATTED_ADDRESS})
+    assert saved["addressLine"] == FORMATTED_ADDRESS, "the server rewrote a document it was handed"
+
+    prefilled = await designer_service.prefill_from_profile(USER_ID)
+    assert prefilled["designerAddress"] == "12 Nagar Road, Bagru"
+    assert "blocks" not in prefilled["designerAddress"]
+    assert "{" not in prefilled["designerAddress"]
+
+
+async def test_a_multi_paragraph_address_reaches_the_report_cover_as_one_line(db: _Db) -> None:
+    """The single-line guarantee, moved rather than dropped.
+
+    It used to be incidental on the web — an ``<input type="text">``'s value-sanitization algorithm
+    strips CR and LF, so there was never anything to fold — and the rich editor ends that: Enter
+    splits a block and ``to_plain`` joins blocks with a newline. Storing the break is right, because
+    it is what the designer typed and a postal address genuinely has lines. Sending it into
+    ``designerAddress`` is not: that field is drawn by a one-line control on the stage form and
+    typeset on a report cover, where a bare newline inside a ``w:t`` collapses to a space in Word
+    anyway — so the break buys nothing there and costs a stage box holding an invisible character.
+
+    Both shapes are folded, which is the point of doing it at the prefill rather than at the box: a
+    two-block DOCUMENT and a two-line PROSE value are one address written by two designers.
+    """
+    two_blocks = (
+        '{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road"}]},'
+        '{"kind":"PARAGRAPH","spans":[{"text":"Bagru 303007"}]}]}'
+    )
+    await _save({"addressLine": two_blocks})
+    assert (await designer_service.prefill_from_profile(USER_ID))["designerAddress"] == (
+        "12 Nagar Road Bagru 303007"
+    )
+
+    await _save({"addressLine": "12 Nagar Road\r\nBagru 303007"})
+    assert (await designer_service.prefill_from_profile(USER_ID))["designerAddress"] == (
+        "12 Nagar Road Bagru 303007"
+    )
+
+    # The lone carriage return is the one that matters: invisible in a text box, it survives the
+    # save, and a fold that only knew about the newline would let it through onto the cover.
+    await _save({"addressLine": "12 Nagar Road\rBagru"})
+    assert (await designer_service.prefill_from_profile(USER_ID))["designerAddress"] == (
+        "12 Nagar Road Bagru"
+    )
+
+
+def test_the_address_ceiling_counts_the_designers_words_and_not_the_json_around_them() -> None:
+    """300 is still the rule, and it is now measured on the flattened text.
+
+    A ``max_length=300`` on the RAW string would have made this feature refuse its own saves: the
+    envelope around three formatted words is already past a hundred characters, so a designer would
+    press Bold and be told their address was too long — intermittently, since plain ones would still
+    save. Refusing on the WORDS is the only measurement somebody can act on.
+
+    Both directions are asserted, because dropping the rule is as easy as getting it wrong: a
+    formatted address whose envelope is long and whose words are short must be ACCEPTED, and 301
+    characters of prose must still be refused exactly as they were before this column moved.
+    """
+    # A real address, one marked span per word — which is what an editor produces when somebody
+    # selects a phrase and presses Bold twice. Eight of them, because four came to 213 characters and
+    # the assertion below is worthless unless the envelope actually crosses the old ceiling.
+    address_words = ("Flat", "2", "Nagar", "Road", "Bagru", "Jaipur", "Rajasthan", "303007")
+    marked = ",".join(
+        f'{{"text":"{word} ","marks":["BOLD","ITALIC"]}}' for word in address_words
+    )
+    document = f'{{"blocks":[{{"kind":"PARAGRAPH","spans":[{marked}]}}]}}'
+    assert len(document) > 300, "this fixture no longer exercises the envelope-versus-words split"
+    assert DesignerProfileUpdate(addressLine=document).addressLine == document
+
+    with pytest.raises(ValidationError) as refused:
+        DesignerProfileUpdate(addressLine="x" * 301)
+    assert "report cover" in str(refused.value)
+
+    # And a DOCUMENT whose words are over the line is refused too — otherwise the ceiling would be a
+    # rule a Bold button defeats.
+    long_words = "y" * 301
+    over_the_line = f'{{"blocks":[{{"kind":"PARAGRAPH","spans":[{{"text":"{long_words}"}}]}}]}}'
+    with pytest.raises(ValidationError):
+        DesignerProfileUpdate(addressLine=over_the_line)

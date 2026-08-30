@@ -56,6 +56,7 @@ from typing import Any
 from pydantic import EmailStr, Field, ValidationInfo, field_validator, model_validator
 
 from app.schemas.common import APIModel, LocationInput, forbid_clearing_location
+from app.services import rich_text
 
 #: The profile columns that may not be CLEARED, and the words a designer knows them by.
 #:
@@ -90,6 +91,20 @@ REQUIRED_PROFILE_COLUMNS: dict[str, str] = {
     "phone": "Phone",
     "email": "Email",
 }
+
+#: How many characters of the designer's actual ADDRESS the report cover can carry.
+#:
+#: The number the whole system already agrees on: ``designerAddress`` on stage 3 is declared
+#: ``max_length=300``, ``MAX.addressLine`` in ``DesignerProfileForm.tsx`` is 300 and
+#: ``ADDRESS_LINE_MAX`` in ``DesignerProfileScreen.kt`` is 300. It is measured against the FLATTENED
+#: text — see :meth:`DesignerProfileUpdate._address_line_words_fit_the_report_cover` — so that
+#: promoting the box to rich text did not quietly shrink what a designer may write by the size of a
+#: JSON envelope they never see.
+ADDRESS_LINE_PLAIN_MAX = 300
+
+#: How large the STORED value may be, envelope included. See the comment on
+#: ``DesignerProfileUpdate.addressLine``; this is a bound on the payload, not a rule about words.
+ADDRESS_LINE_STORED_MAX = 20_000
 
 
 class DesignerRosterCreate(APIModel):
@@ -192,7 +207,29 @@ class DesignerProfileUpdate(APIModel):
     phone: str | None = Field(default=None, max_length=40)
     email: EmailStr | None = None
     website: str | None = Field(default=None, max_length=300)
-    addressLine: str | None = Field(default=None, max_length=300)
+    # ── THE ONE RICH-TEXT COLUMN ON THIS PROFILE, AND THE ONLY FIELD HERE WITH TWO CEILINGS ─────
+    #
+    # ``ADDRESS_LINE_PLAIN_MAX`` (300) is the rule and has not moved: it is what the designer's
+    # WORDS are bounded by, it is what both clients' "this box is full" notices count, and it is what
+    # ``designerAddress`` — the registry ``TEXT`` field this column is copied into at workshop
+    # creation — declares. ``ADDRESS_LINE_STORED_MAX`` is not a second rule; it is the size of the
+    # ENVELOPE those 300 characters may arrive in.
+    #
+    # WHY THE ENVELOPE HAD TO GROW. On 2026-08-30 this box became the rich-text editor every other
+    # prose column already uses. The storage shape is unchanged and needs no migration — the column
+    # is still ``String?`` and still holds the designer's prose whenever nothing is formatted — but
+    # the moment a word is bolded, the value stored is ``{"blocks":[{"kind":"PARAGRAPH","spans":
+    # [{"text":"12 Nagar Road, ","marks":[]},{"text":"Bagru","marks":["BOLD"]}]}]}``. That is a
+    # three-word address well past 300 characters, so a ``max_length=300`` on the RAW string would
+    # have made the feature refuse its own saves — and refuse them with a 422 naming a box the
+    # designer can see is short. Worse, the refusal would have been intermittent: plain addresses
+    # would save and formatted ones would not, which reads as "the app broke when I pressed Bold".
+    #
+    # 20 000 is ``biography``'s ceiling above, reused deliberately rather than a new number invented:
+    # 300 characters of prose with a mark on every other word is a few thousand, and this is a bound
+    # on the PAYLOAD so that a client bug cannot post a novel into a profile column, not a number
+    # anybody is meant to meet.
+    addressLine: str | None = Field(default=None, max_length=ADDRESS_LINE_STORED_MAX)
     city: str | None = Field(default=None, max_length=120)
     state: str | None = Field(default=None, max_length=80)
     pincode: str | None = Field(default=None, max_length=12)
@@ -288,5 +325,38 @@ class DesignerProfileUpdate(APIModel):
             raise ValueError(
                 f"{label} is required on a designer profile — it is printed on every report "
                 "generated under this name, so it cannot be left blank."
+            )
+        return value
+
+    @field_validator("addressLine")
+    @classmethod
+    def _address_line_words_fit_the_report_cover(cls, value: Any) -> Any:
+        """Bound the address the designer can SEE, not the JSON it may be wrapped in.
+
+        ``Field(max_length=ADDRESS_LINE_STORED_MAX)`` above is the envelope. This is the rule, and it
+        is the same 300 the column has always had: what reaches ``designerAddress`` on stage 3 — a
+        registry ``TEXT`` field declared ``max_length=300`` and typeset on a report cover — is the
+        FLATTENED text, so the flattened text is what has to fit.
+
+        ``rich_text.plain_from_stored`` is the repository's read boundary and is IDENTITY on a plain
+        string, so an address written before this column took rich text is measured exactly as it was
+        measured before: 300 characters of prose, refused at 301. A formatted address is measured on
+        its words, which is the only measurement a designer can act on — telling somebody their
+        address is too long when the box in front of them holds four words would be a refusal with no
+        available correction, and they would delete a line that was never the problem.
+
+        WHY THIS IS NOT LEFT TO THE CLIENTS. Both of them count too: ``RichTextField`` shows the live
+        count against 300 and Android's box clamps at ``ADDRESS_LINE_MAX``. Neither is the rule — the
+        rule has to be here or the API does not have it, and this is the column whose overflow is
+        discovered on a printed document rather than on a screen.
+        """
+        if not isinstance(value, str):
+            return value
+        words = str(rich_text.plain_from_stored(value)).strip()
+        if len(words) > ADDRESS_LINE_PLAIN_MAX:
+            raise ValueError(
+                f"The address is {len(words)} characters long once its formatting is set aside, and "
+                f"the column stores {ADDRESS_LINE_PLAIN_MAX} — it is printed on a report cover. "
+                "Shorten it, or move part of it into the city, state and pincode boxes beside it."
             )
         return value

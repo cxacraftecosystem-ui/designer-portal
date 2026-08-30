@@ -63,14 +63,17 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { mergeById } from "@/components/data/cappedList";
+import { CappedListNotice } from "@/components/data/CappedListNotice";
 // The pure half of this form: which keys the body carries, and why an untouched box carries
 // none. Extracted so `e2e/design-workshop-header-diff-unit.spec.ts` can call it — a Node spec
 // cannot import a `"use client"` module that pulls in React, `next/navigation` and IndexedDB.
 import { changedKeys, EDITABLE_KEY_SET, type EditableKey } from "@/components/designworkshop/headerDiff";
+// The other pure half, extracted for the same mechanical reason: which options the link picker
+// offers and which of the four sentences it prints. `e2e/design-workshop-link-picker-unit.spec.ts`
+// is what checks that a failed read stops claiming this account has no workshops.
+import { linkedWorkshopView } from "@/components/designworkshop/linkedWorkshopPicker";
 import { DateRangePicker, fromIsoDate, toIsoDate } from "@/components/forms/DateTimeField";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
-import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
@@ -88,6 +91,24 @@ import { adoptServerSummaries } from "@/lib/designWorkshopStore";
 import { useUnsavedChanges } from "@/lib/forms";
 import { isUnreachable } from "@/lib/offline";
 import type { Workshop } from "@/lib/types";
+import {
+  NO_FIELD_WORKSHOP,
+  WORKSHOP_OPTION_PAGE_SIZE,
+  deviceLooksOffline,
+  type WorkshopListState
+} from "@/lib/workshopOptions";
+
+/**
+ * How long a keystroke in the link picker's box waits before it becomes a request.
+ *
+ * The same 300 ms every server-backed box in this app uses (`WorkshopSelect`, `/design-review`,
+ * `DesignWorkshopViewersPanel`, `StageReferenceField`), because a designer who has learnt how fast
+ * one of them answers is entitled to the same from the rest. It is duplicated here rather than
+ * imported from `components/forms/WorkshopSelect` because that module is a `"use client"` component
+ * carrying a submission pre-flight and a late-submission dialog, neither of which belongs on a
+ * design workshop's header — importing it for one number would drag both in.
+ */
+const LINK_SEARCH_DEBOUNCE_MS = 300;
 
 /* ────────────────────────────────────────────────────────────────────────────
  * What this form may write, and what it may only show
@@ -320,7 +341,43 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
   const [templates, setTemplates] = useState<DwTemplate[]>([]);
   const [templateId, setTemplateId] = useState(initial.templateId);
   const [workshopId, setWorkshopId] = useState(initial.workshopId ?? "");
-  const [linkable, setLinkable] = useState<Workshop[]>([]);
+  /**
+   * WHAT THE LINK PICKER'S READ ANSWERED — three states, and the middle one is why this is not a
+   * bare `Workshop[]` any more.
+   *
+   * It WAS `useState<Workshop[]>([])` with a `.catch` that touched nothing, and every sentence and
+   * every option downstream branched on `linkable.length`. So a 500, a timeout and a dead
+   * connection all rendered *"No design & prototype workshops are open to this account"* — a
+   * confident claim about a grant table produced by a request that never arrived, on the one screen
+   * whose whole subject is that link. `lib/workshopOptions.ts` exists for this and its own header
+   * calls it the most repeated bug class in this repository; `{ kind: "loading" }` is the honest
+   * initial value and `{ kind: "failed" }` is what the catch arm now sets.
+   */
+  const [linkList, setLinkList] = useState<WorkshopListState<Workshop>>({ kind: "loading" });
+  /** The panel's own filter box. `linkTerm` is what is typed; `linkApplied` is what the answer is about. */
+  const [linkTerm, setLinkTerm] = useState("");
+  const [linkApplied, setLinkApplied] = useState("");
+  /**
+   * A read is outstanding — INCLUDING while the debounce timer is still counting.
+   *
+   * If it only covered the request, the third of a second between the last keystroke and the fetch
+   * would be spent drawing the PREVIOUS term's rows with no filter applied to them (the local pass
+   * is bypassed under `serverQuery`), i.e. a list that looks like an answer and is not one. Same
+   * flag, same reason, as `useWorkshopSelection`'s.
+   */
+  const [linkPending, setLinkPending] = useState(true);
+  /**
+   * THE STORED WORKSHOP, ONCE SEEN, IS NOT FORGOTTEN THE MOMENT THE READER TYPES.
+   *
+   * With the box wired to the server, the options ARE the answer to the term — so typing three
+   * letters that do not match this record's own workshop drops it out of the list. Without this the
+   * row would fall through to the by-id recovery below, and for the couple of hundred milliseconds
+   * that request is in flight the picker would relabel the record's own link "its details are not
+   * open to this account", which is a false claim about access made while somebody is merely
+   * hunting. `useWorkshopSelection` keeps a `known` union for the same reason and states it: a
+   * researcher typing three letters must not make the workshop already on the record disappear.
+   */
+  const [seenLink, setSeenLink] = useState<Workshop | null>(null);
   /**
    * The workshop's duration, held here rather than read off the DOM, for the reason the create form
    * gives: a range is a pair with a rule between its halves, so the picker has to see the current
@@ -405,29 +462,81 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
 
   useEffect(() => {
     let cancelled = false;
-    /*
-      `accessibleOnly` and `workshopType` — the same narrowing the create form applies, and for the
-      same reason: this picker LINKS the workshop, so an option this account cannot file against is
-      an option that points the record at somebody else's roster. The stored link is added back
-      below whatever this list turns out to hold; see `offPageWorkshop`.
-    */
-    listResource<Workshop>("/workshops", {
-      pageSize: 100,
-      workshopType: "DESIGN_PROTOTYPE",
-      accessibleOnly: "true"
-    })
-      .then((result) => {
-        if (!cancelled) setLinkable(sortWorkshopsByOccurrence(result.items ?? []));
+    const trimmed = linkTerm.trim();
+    // Announced BEFORE the timer, not inside it — see `linkPending`.
+    setLinkPending(true);
+    const timer = window.setTimeout(() => {
+      /*
+        `accessibleOnly` and `workshopType` — the same narrowing the create form applies, and for the
+        same reason: this picker LINKS the workshop, so an option this account cannot file against is
+        an option that points the record at somebody else's roster. The stored link is added back
+        below whatever this list turns out to hold; see `offPageWorkshop`.
+
+        `search` IS THE PANEL'S OWN BOX, AND-ed with both narrowings on the server rather than OR-ed
+        (`list_workshops` appends the scope to the same `AND` list for exactly this reason, so typing
+        cannot reopen a workshop this account may not file against). Until this pass the box filtered
+        the page already fetched, so a designer typing the title of a marked workshop that sits past
+        the cut was answered "No matches" about a workshop that exists — and the next thing a person
+        does after "no matches" is pick something else, which on THIS control re-points a stored link
+        and strands every record the workshop-scoped stage pickers filed under the old one.
+
+        `pageSize` is `WORKSHOP_OPTION_PAGE_SIZE` and not the round `100` this used to ask for: it is
+        `RENDER_CAP` under another name, and asking for more than `SearchableSelect` will ever draw is
+        how a picker ends up with two disagreeing cap sentences — the panel silently trimming at 80
+        while the sentence beside it still speaks of a hundred.
+      */
+      listResource<Workshop>("/workshops", {
+        pageSize: WORKSHOP_OPTION_PAGE_SIZE,
+        workshopType: "DESIGN_PROTOTYPE",
+        accessibleOnly: "true",
+        search: trimmed || undefined
       })
-      .catch(() => {
-        // Silent, as on the create form: the link is a convenience and a banner about it would read
-        // as the whole form having failed. The stored link is still shown, and still saved untouched
-        // as long as nobody changes it.
-      });
+        .then((result) => {
+          if (cancelled) return;
+          // NOT sorted here. `fieldWorkshopOptions` owns the order (occurrence newest-first, then
+          // title, then id) so this control cannot disagree with the other twenty about it.
+          setLinkList({ kind: "ok", rows: result.items ?? [], total: result.total });
+          setLinkApplied(trimmed);
+        })
+        .catch(() => {
+          /*
+            THE CATCH ARM IS THE FIX. It used to be empty, and an empty catch over a list held as
+            `[]` is what turned every failure into the sentence "no design & prototype workshops are
+            open to this account" — a claim about a grant table produced by a request that never
+            arrived. A failed read is a different fact from an empty answer and gets a different
+            sentence (`workshopListNotice`); saying so is the whole of this state's job.
+          */
+          if (!cancelled) setLinkList({ kind: "failed" });
+        })
+        .finally(() => {
+          if (!cancelled) setLinkPending(false);
+        });
+      // Skipped when the box is CLEARED: an empty box is the unnarrowed list, the one request that
+      // cannot be superseded by the next letter, and making the way back to the full list wait a
+      // third of a second is what teaches somebody that clearing it does nothing.
+    }, trimmed ? LINK_SEARCH_DEBOUNCE_MS : 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, []);
+    /*
+      ONE TIMER, AND IT IS THIS EFFECT'S, so a late answer to a term the reader has typed past is
+      discarded by `cancelled` rather than by a generation counter — `apiFetch` carries no
+      `AbortSignal`, and this is the arrangement `useWorkshopSelection` and `/design-review` already
+      use for the same reason.
+    */
+  }, [linkTerm]);
+
+  /** The rows of the current answer, with a stable identity so the by-id recovery below settles. */
+  const linkRows = useMemo<Workshop[]>(() => (linkList.kind === "ok" ? [...linkList.rows] : []), [linkList]);
+
+  // Remembers this record's own workshop the first time an answer carries it. See `seenLink`.
+  useEffect(() => {
+    const stored = initial.workshopId ?? "";
+    if (!stored) return;
+    const found = linkRows.find((row) => row.id === stored);
+    if (found) setSeenLink(found);
+  }, [linkRows, initial.workshopId]);
 
   /**
    * THE WORKSHOP THIS RECORD IS ALREADY LINKED TO, whatever page of the list it is on.
@@ -439,44 +548,30 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
    * orphan every record already filed under the old one. Same hook, called the same way; do not
    * write a variant of it.
    */
-  const offPageWorkshop = useRecordOffPage<Workshop>("/workshops", initial.workshopId ?? "", linkable);
-  const linkableRows = useMemo(
-    () => (offPageWorkshop ? mergeById(linkable, [offPageWorkshop]) : linkable),
-    [linkable, offPageWorkshop]
-  );
+  const offPageWorkshop = useRecordOffPage<Workshop>("/workshops", initial.workshopId ?? "", linkRows);
 
   /**
-   * The picker's options, with the stored link guaranteed to be one of them — INCLUDING the case the
-   * by-id lookup above cannot fix.
+   * The picker, decided — options, the four state sentences, the cut sentence, and whether the
+   * control stands down. Every one of those judgements is in
+   * `components/designworkshop/linkedWorkshopPicker.ts` so that a Node spec can execute it; this
+   * component's job is to hold the answer and draw it.
    *
-   * `useRecordOffPage` covers "not on the loaded page". It deliberately gives up in silence on a
-   * 403 or a 404, and its own comment says why that is honest: the link is intact, the form simply
-   * cannot offer to CHANGE it. That reasoning holds on `ToolForm`, where a required "Craft name" box
-   * sits beside the picker still holding the right name. It does not hold here, because there is no
-   * second box: an unresolvable link would draw the trigger's bare placeholder, which reads as NOT
-   * LINKED — and the obvious repair for a record that looks unlinked is to pick something, which is
-   * the one action that really does re-point it and strand the records filed under the old one.
-   *
-   * So the id is offered under a label that says what it is and why it has no name. Choosing it
-   * changes nothing (it is already the stored value, so the diff omits it); its whole job is to stop
-   * the control lying about the state of the record.
+   * `offPageWorkshop ?? seenLink` and not the other way round: the by-id read is the fresher of the
+   * two and is the one that can reach a workshop outside the list's scope at all.
    */
-  const linkChoices = useMemo(() => {
-    const offered = [
-      { value: "", label: "Not linked to a workshop record" },
-      ...linkableRows.map((workshop) => ({
-        value: workshop.id,
-        label: workshop.place ? `${workshop.title} · ${workshop.place}` : workshop.title
-      }))
-    ];
-    const stored = initial.workshopId ?? "";
-    if (!stored || offered.some((option) => option.value === stored)) return offered;
-    return [
-      offered[0],
-      { value: stored, label: "The workshop this record is linked to — its details are not open to this account" },
-      ...offered.slice(1)
-    ];
-  }, [linkableRows, initial.workshopId]);
+  const link = useMemo(
+    () =>
+      linkedWorkshopView({
+        list: linkList,
+        searchApplied: linkApplied,
+        term: linkTerm,
+        pending: linkPending,
+        storedId: initial.workshopId ?? "",
+        storedRow: offPageWorkshop ?? seenLink,
+        online: !deviceLooksOffline()
+      }),
+    [linkList, linkApplied, linkTerm, linkPending, initial.workshopId, offPageWorkshop, seenLink]
+  );
 
   /**
    * RE-POINTING A LINK ORPHANS THE RECORDS ALREADY FILED UNDER THE OLD ONE, and the warning appears
@@ -730,6 +825,15 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
   const titleErrorId = `${baseId}-title-error`;
   const templateErrorId = `${baseId}-templateId-error`;
   const linkErrorId = `${baseId}-workshopId-error`;
+  /*
+    THREE IDS FOR THREE DIFFERENT FACTS ABOUT ONE LIST, all named on the control by
+    `aria-describedby`: what the list IS (or what went wrong reading it), why an empty one can be
+    empty, and what it left out. They are separate elements rather than one paragraph because two of
+    the three are conditional and a reader must not be told about a cut that is not there.
+  */
+  const linkScopeId = `${baseId}-workshopId-scope`;
+  const linkGapId = `${baseId}-workshopId-gap`;
+  const linkCutId = `${baseId}-workshopId-cut`;
   const datesErrorId = `${baseId}-dates-error`;
 
   return (
@@ -961,11 +1065,39 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           label="Linked workshop record"
           hint={
             <>
-              <p className="text-xs leading-5 text-ink-500">
-                {linkableRows.length
-                  ? "The Workshop row this 22-stage record belongs to. Only workshops filed as a Design & Prototype Development Workshop, and only ones you have access to, are offered."
-                  : "No design & prototype workshops are open to this account, so there is nothing to link to. Mark one on the Workshops page — or ask an admin for access to it — to use it here."}
-              </p>
+              {/*
+                ONE SENTENCE, CHOSEN BY THE STATE AND NOT BY `rows.length`. Which of the five it is —
+                silence while the read is in flight, the failure sentence, the offline sentence, the
+                scoped "none are open" sentence, or the sentence describing the scope when the list
+                holds something — is decided in `linkedWorkshopPicker.ts` and worded by
+                `lib/workshopOptions.ts`. Nothing is written here, because the same five sentences
+                spelled a sixth way on this screen is how a reader learns none of them means much.
+              */}
+              {link.notice ? (
+                <p id={linkScopeId} className="text-xs leading-5 text-ink-500">
+                  {link.notice}
+                </p>
+              ) : null}
+              {/*
+                AND THE SECOND HALF OF "why is it empty", which no shared module can know: this
+                request narrows by `workshopType` as well as by access, and the Kind is set by a
+                professor or an admin. The sentence it replaced told a designer to go and mark a
+                workshop on a page whose form is hidden from them and whose API refuses them
+                (`can_manage_workshops` is `has_rank(user, "PROFESSOR")`, 40; DESIGNER is 35).
+              */}
+              {link.gap ? (
+                <p id={linkGapId} className="mt-1 text-xs leading-5 text-ink-500">
+                  {link.gap}
+                </p>
+              ) : null}
+              {/*
+                WHAT THE LIST LEFT OUT, WITH THE NUMBER. Non-negotiable in this repository and it was
+                simply absent here: the request used to ask for 100 rows into a panel that draws 80,
+                so on a deployment with more marked workshops than that the picker dropped rows in
+                silence. The sentence is `workshopCutSentence`'s and it names the box, which now
+                genuinely reaches past the cut because the box goes to the server.
+              */}
+              <CappedListNotice id={linkCutId} cuts={[link.cut]} />
               {repointsLink ? (
                 <p className="mt-1 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
                   Changing this link strands the records already filed under the old one. Five of the pickers inside the
@@ -983,18 +1115,72 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
             </>
           }
         >
-          <Dropdown
-            value={workshopId}
-            onChange={(next) => {
-              noteEdit();
-              setWorkshopId(next);
-            }}
-            options={linkChoices}
-            ariaLabel="Linked workshop record"
-            describedBy={fieldProblem.workshopId ? linkErrorId : undefined}
-            searchable
-            disabled={saving}
-          />
+          {/*
+            SEARCH KEYSTROKES STOP HERE instead of bubbling to the form's `onInput={noteEdit}`.
+
+            A React portal moves the panel out of the DOM but NOT out of the React tree, so the
+            filter box's synthetic input events still reach this form — where `noteEdit` arms the
+            unsaved-changes guard and retires the last save's answer. Without this, typing three
+            letters to FIND a workshop, changing nothing and pressing Escape leaves the page
+            unleavable behind the "you have unsaved changes" prompt, and wipes a 422 the designer was
+            in the middle of reading. `WorkshopSelect` carries the same guard for the same reason.
+            Nothing inside this subtree is a control whose input this form needs.
+          */}
+          <div onInput={(event) => event.stopPropagation()}>
+            <Dropdown
+              value={workshopId}
+              onChange={(next) => {
+                // A themed dropdown is a `<button>` and fires no native input event, so the form's
+                // `onInput` never sees this. The diff is what decides the body either way; this is
+                // the unsaved-changes guard's copy, which is allowed to over-report.
+                noteEdit();
+                setWorkshopId(next);
+              }}
+              options={link.options}
+              ariaLabel="Linked workshop record"
+              /*
+                Both list facts reach the control, not just the refusal: what the list IS and what it
+                LEFT OUT are the two things a screen-reader user needs AT the picker rather than
+                somewhere underneath it, and `aria-describedby` takes a list of ids. Ids that name
+                nothing are ignored by the accessibility tree, so the two notices being conditional
+                costs nothing here.
+              */
+              describedBy={
+                fieldProblem.workshopId
+                  ? `${linkScopeId} ${linkGapId} ${linkCutId} ${linkErrorId}`
+                  : `${linkScopeId} ${linkGapId} ${linkCutId}`
+              }
+              /*
+                THE ROW THAT UN-FILES THE RECORD IS THE PRIMITIVE'S, not a hand-built
+                `{ value: "", label: … }` in the options array. Two layers each entitled to draw
+                "none" is two rows sharing the React key `""`, a duplicate-key warning, a list
+                offering the same answer twice and a control that cannot say which of the two is
+                selected — `lib/workshopOptions.ts` forbids it by name. `NO_FIELD_WORKSHOP` is the
+                one string for this table, replacing this screen's private ninth spelling of it.
+              */
+              noneLabel={NO_FIELD_WORKSHOP}
+              /*
+                Never the literal "No options", and never a claim the state does not support: it is
+                `SEARCHING_LABEL` mid-flight, the failure sentence after a failure, and the scoped
+                "none are open to this account" only when the read actually answered with none.
+              */
+              emptyLabel={link.emptyLabel}
+              placeholder={link.placeholder}
+              /*
+                The box is the SERVER'S. `truncated` is deliberately absent: `GET /workshops` reports
+                a real `total`, so the cut is stated once, underneath, with its number — a flag arm as
+                well would print "there are more and the server did not say how many" under a sentence
+                that just said how many.
+              */
+              serverQuery={{ value: linkTerm, onChange: setLinkTerm, pending: linkPending }}
+              /*
+                R2/R3 — nothing to pick means the control is disabled AND the sentence above says why.
+                A silently disabled picker is the same silent emptiness in another costume. It never
+                stands down over a term or mid-flight; see `linkedWorkshopView`.
+              */
+              disabled={saving || link.standingDown}
+            />
+          </div>
         </FieldBlock>
 
         {/* `MAX_NOTES_CHARS` on the server is 20 000; the box carries the same number so a long

@@ -48,13 +48,13 @@ reason, as ``dictation_consent``'s two clocks — ``recordedAt`` is when the per
 ``createdAt`` is when the server heard it, and collapsing them fabricates one of the two.
 
 ================================================================================================
-CONSENT: FLAGGED, NOT SETTLED — AND THE DEFAULT IS STATED RATHER THAN ASSUMED
+CONSENT: ASKED AT THE DOOR SINCE 2026-08-30, AND THE DEFAULT FOR THE UNASKED IS STILL STATED
 ================================================================================================
 
 Watching a designer navigate is a NEW CATEGORY OF PERSONAL DATA in this repository. Everything else
 it holds about a person is something that person typed in; this is something the system noticed
 about them without being asked. The codebase already models consent explicitly wherever it collects
-a recording, and this module follows that model in shape without pretending it has been applied:
+a recording, and this module now follows that model in fact as well as in shape:
 
 * three states and never a boolean (:class:`UsageConsent`), so "nobody has asked" can never be read
   as "they said no";
@@ -63,12 +63,24 @@ a recording, and this module follows that model in shape without pretending it h
 * the token ``"GRANTED"`` is written ONLY when a grant was actually recorded — never as a default,
   never as an optimistic guess. A row that claims a consent nobody gave is worse than no row.
 
+**THE FLOW EXISTS NOW, AND WHAT IT ADDED IS LISTED HERE SO THE SHAPE IS READABLE IN ONE PLACE.**
+:class:`UsageConsentBasis` records WHETHER AN ANSWER WAS FREELY GIVEN — the gate at sign-in is a
+condition of access and a grant collected there is not free consent, so the circumstance is stored
+beside the answer rather than left to be assumed; :data:`NOTICE_VERSION` records WHICH TEXT was on
+screen, so a later reword cannot claim agreement to wording nobody saw; ``UsageConsentDecision`` is
+the append-only log, because a withdrawal must not erase the answer earlier collection was made
+under; and :func:`record_consent` is the one door, which on a REFUSAL also empties the buffer and
+DELETES the stored rows. ``docs/DECISION-usage-consent-at-sign-in.md`` carries the whole argument.
+
 **THE DEFAULT IS :data:`DEFAULT_UNASKED_COLLECTION` = ANONYMOUS, AND IT IS A DECISION SOMEBODY ELSE
-IS ENTITLED TO OVERRULE IN ONE LINE.** Until a consent flow exists every account is
-``NOT_RECORDED``, and this module then records the request WITHOUT the identity: route, status,
-duration and client, with ``userId`` NULL and ``consentState`` NULL. That is deliberately the
-middle option of three, all three of which are spelled out as real selectable values in
-:class:`UnaskedCollection` so that the alternatives are visible rather than hypothetical:
+IS ENTITLED TO OVERRULE IN ONE LINE.** It governs an account that has NOT YET ANSWERED, which since
+the flow shipped is two populations and neither of them is "the whole fleet": the handful of
+requests between a session being minted and the consent screen being answered, and — far larger —
+every UNAUTHENTICATED request, which has no account to have asked. This module then records the
+request WITHOUT the identity: route, status, duration and client, ``userId`` NULL, ``consentState``
+NULL. That is deliberately the middle option of three, all three of which are spelled out as real
+selectable values in :class:`UnaskedCollection` so that the alternatives are visible rather than
+hypothetical:
 
 * ``NOTHING`` collects nothing at all until somebody has been asked. Safest, and it means requirement
   22-25 measures nothing until a screen ships on two clients.
@@ -79,12 +91,24 @@ middle option of three, all three of which are spelled out as real selectable va
   rather than arrived at by accident; if it is chosen, ``consentState`` is STILL NULL, because
   nobody was asked and the column must not be made to say otherwise.
 
-The open questions the schema flags are not answered here and must not be answered by a later reader
-guessing: what is asked, when it is asked, whether a refusal stops collection or only stops
-attribution, and what happens to rows gathered before it was ever asked. This module ships one
-defensible default for each, all in :func:`collection_plan`, and
-``docs/DECISION-usage-consent-default.md`` carries the argument so the owner can overrule it without
-reading the code.
+**WHY THE ARRIVAL OF THE FLOW DID NOT CHANGE THAT CONSTANT, WHICH IS THE OBVIOUS THING TO EXPECT.**
+The old argument for ANONYMOUS was "otherwise this system measures nothing at all, for as long as it
+takes to ship a screen on two clients". That argument is spent. The one that replaced it, on
+2026-08-30, is narrower and stronger: **the largest unasked population is people who are not signed
+in**, and ``NOTHING`` would stop recording them — deleting, silently, the one capability the schema
+names by name as worth having ("the sign-in page is slow for the people who cannot get in", which
+:data:`MIN_IDENTIFIED_USERS_FOR_ROUTE` also has a paragraph protecting). A request with no account
+attached identifies nobody, so there is nobody for a consent question to protect on it. The value is
+unchanged and its justification is not; that is recorded in
+``docs/DECISION-usage-consent-default.md`` with the date, rather than left as a constant whose reason
+has quietly expired.
+
+Three of the four questions the schema flagged are now answered — what is asked
+(:func:`consent_notice`), when (at sign-in, and again whenever :data:`NOTICE_VERSION` moves), and
+whether a refusal stops collection or only stops attribution (it stops collection entirely, and
+deletes what was stored). **THE FOURTH IS STILL OPEN AND MUST NOT BE ANSWERED BY A LATER READER
+GUESSING: what happens to the rows gathered before anybody was asked.** They carry ``consentState``
+NULL, that NULL is what makes them findable as a set, and nothing here backfills it.
 
 **WHAT A REFUSAL COSTS THE NUMBERS, SAID OUT LOUD.** A ``REFUSED`` account is not recorded at all,
 not even anonymously, so every aggregate this module produces describes *everyone who did not
@@ -127,7 +151,7 @@ import asyncio
 import logging
 import re
 from collections import deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -157,8 +181,11 @@ logger = logging.getLogger(__name__)
 #: Where the dependency layer leaves the signed-in account's id for the middleware to pick up.
 USAGE_USER_ID_KEY = "usage_user_id"
 
-#: Where the dependency layer leaves the caller's resolved :class:`UsageConsent`. Absent today for
-#: every request, because nothing yet asks anybody — see :func:`resolve_consent`.
+#: Where the dependency layer leaves the caller's resolved :class:`UsageConsent`. Written by
+#: ``deps.get_current_user`` on every AUTHENTICATED request since 2026-08-30, and genuinely absent on
+#: every unauthenticated one — there is no account to resolve a consent from. The middleware reads
+#: anything that is not a :class:`UsageConsent` as absent rather than coercing it, so a wrong type
+#: fails towards "nobody was asked" and never towards a claimed consent.
 USAGE_CONSENT_KEY = "usage_consent_state"
 
 #: The header a client sets to say what it is. Nothing sends it yet: as of 2026-08-29 neither
@@ -393,15 +420,24 @@ class UnaskedCollection(str, Enum):
 
 #: **THE HONEST DEFAULT, AND IT IS DELIBERATELY THE MIDDLE ONE OF THE THREE.**
 #:
-#: Until a consent flow exists, this module records WHAT WAS REACHED and not WHO REACHED IT. The
-#: reasoning, stated so it can be overruled rather than merely obeyed:
+#: For an account NOBODY HAS ASKED, this module records WHAT WAS REACHED and not WHO REACHED IT.
 #:
-#: * ``NOTHING`` is the safest and it is not free. The requirement is to understand how designers
-#:   move through the platform and where it is slow, and today nothing in this system can answer
-#:   either half; choosing ``NOTHING`` means it still cannot, for as long as it takes to design,
-#:   build and ship a consent screen on web and on Android. Route, status and duration with no
-#:   identity attached answer the "where is it slow" half in full and the "how do they move" half in
-#:   aggregate, and they do it while nobody's name is in the table.
+#: **READ THE POPULATION BEFORE THE ARGUMENT, BECAUSE IT CHANGED ON 2026-08-30 AND THE SENTENCE HERE
+#: DID NOT KEEP UP FOR A WHILE.** This paragraph used to open "until a consent flow exists" and to
+#: say that "today nothing in this system can answer either half" — both of which were true when
+#: there was no column, no route and no screen, and neither of which is true now. The flow shipped;
+#: an account that has answered GRANTED is attributed and an account that has REFUSED is not
+#: recorded at all. What this constant governs is the REMAINDER, and the module docstring's section
+#: "WHY THE ARRIVAL OF THE FLOW DID NOT CHANGE THAT CONSTANT" is the argument that kept it where it
+#: is. The reasoning, stated so it can be overruled rather than merely obeyed:
+#:
+#: * ``NOTHING`` is the safest and it is not free — and what it would now cost is not "measuring
+#:   nothing until a screen ships", it is the UNAUTHENTICATED half of the traffic, which is by far
+#:   the largest unasked population and has no account that could ever have been asked. Route,
+#:   status and duration with no identity attached answer "where is it slow" in full and "how do
+#:   they move" in aggregate, and they do it while nobody's name is in the table — including for
+#:   "the sign-in page is slow for the people who cannot get in", which nothing else in this system
+#:   can show and which ``NOTHING`` would delete.
 #: * ``ATTRIBUTED`` is what most products do by default and it is the one thing this module will not
 #:   do by default. Building a per-designer trail of colleagues who were never asked, in a repository
 #:   that already refuses to send an artisan's voice anywhere without a recorded answer, would be
@@ -415,11 +451,82 @@ class UnaskedCollection(str, Enum):
 #: the argument in prose, and the table of what each option costs, for whoever makes that call.
 DEFAULT_UNASKED_COLLECTION = UnaskedCollection.ANONYMOUS
 
-#: The name this module will read off a ``User`` row once somebody builds the flow. It does not exist
-#: yet — adding it is a Prisma migration this module may not write — and :func:`resolve_consent`
-#: therefore answers ``NOT_RECORDED`` for everybody. Named as a constant rather than inlined so the
-#: day the column lands there is exactly one line to change and one grep to find it.
+#: The name this module reads off a ``User`` row. **THE COLUMN NOW EXISTS** (migration
+#: ``20260830090000_usage_consent_and_decision_log``) and this constant is what the migration was
+#: named after, not the other way round: it was written down long before the column so that the day
+#: it landed there was exactly one line to change and one grep to find it.
+#:
+#: DO NOT RENAME EITHER HALF WITHOUT THE OTHER. :func:`resolve_consent` reads it with ``getattr``,
+#: and a ``getattr`` miss does not raise — it returns None, which resolves to ``NOT_RECORDED``, which
+#: silently reverts collection for the entire fleet to anonymous with no error, no log line and no
+#: test going red. ``tests/test_usage_tracking.py`` pins the name against the generated Prisma model
+#: for exactly that reason.
 CONSENT_ATTRIBUTE = "usageConsent"
+
+#: When the person answered. The other three columns of the answer, named here for the same reason as
+#: the one above: they are read by ``getattr`` and a miss is silent.
+CONSENT_AT_ATTRIBUTE = "usageConsentAt"
+#: Whether the answer was a turnstile or a free choice — see :class:`UsageConsentBasis`.
+CONSENT_BASIS_ATTRIBUTE = "usageConsentBasis"
+#: Which version of the notice was on screen — see :data:`NOTICE_VERSION`.
+CONSENT_VERSION_ATTRIBUTE = "usageConsentVersion"
+
+
+class UsageConsentBasis(str, Enum):
+    """UNDER WHAT CIRCUMSTANCES an answer was given. **The distinction that keeps the record honest.**
+
+    The gate at sign-in is a CONDITION OF ACCESS: a person who will not agree cannot use the product.
+    Under GDPR Art. 7(4) and the DPDP-style regimes this deployment sits under, that is not freely
+    given consent — consent is not free where performance of the service is made conditional on it
+    and the processing is not necessary for the service.
+
+    **The requirement is not refused; it is recorded truthfully.** Storing ``GRANTED`` and nothing
+    else would file nine thousand turnstiles as nine thousand free choices, and no later reader — a
+    colleague, an ethics board, a methods section — could tell them apart. With this value stored
+    beside the answer, and on every log row, they can.
+
+    A FOURTH :class:`UsageConsent` MEMBER WAS THE ALTERNATIVE AND IS REFUSED. It would break
+    :func:`collection_plan`'s three-way rule — which is the whole of the collection policy, in one
+    function — and the documented meaning of ``UsageEvent.consentState``, in one edit. The
+    circumstance is a second fact about one answer, so it is a second column.
+    """
+
+    #: The blocking agreement at the door. The account could not proceed without it.
+    REQUIRED_AT_SIGN_IN = "REQUIRED_AT_SIGN_IN"
+
+    #: Answered or changed on the account's own settings screen, where saying no costs nothing. Every
+    #: WITHDRAWAL is one of these, and that asymmetry is what makes the turnstile defensible: the
+    #: gate makes you agree to get in, and the settings card lets you take it back and keep working.
+    #: A withdrawal that cost access would be theatre.
+    OFFERED_IN_SETTINGS = "OFFERED_IN_SETTINGS"
+
+
+#: **THE VERSION OF THE TEXT PEOPLE ARE AGREEING TO. BUMP IT WHENEVER THE NOTICE CHANGES MEANING.**
+#:
+#: A consent record that cannot say WHAT WAS AGREED TO invites exactly the claim it cannot support:
+#: that everybody on file agreed to whatever the notice says today. So the version is stored on the
+#: ``User`` row and on every decision row, and :func:`consent_gate` asks again when it has moved.
+#:
+#: DATED RATHER THAN NUMBERED, and the suffix is what makes two edits in one day distinguishable.
+#: A bare integer would need a lookup table to date; a bare date cannot separate a morning's wording
+#: from an afternoon's.
+#:
+#: WHAT COUNTS AS A CHANGE OF MEANING: a new column collected, a new reader admitted, a change to
+#: what a withdrawal does, a change to retention. Fixing a typo does not. The test that pins this
+#: constant to the notice's own content is what stops the notice moving while the version does not —
+#: which would be the failure this constant exists to prevent, arriving by inattention rather than by
+#: intent.
+NOTICE_VERSION = "2026-08-30.1"
+
+#: How far ahead of the server's clock a client-reported ``recordedAt`` may be before it is refused.
+#:
+#: Fifteen minutes, exactly as ``dictation_consent.MAX_DEVICE_CLOCK_SKEW`` is, and copied
+#: deliberately so that a reader who knows one knows the other. A handset's clock drifts and a few
+#: minutes out is ordinary; a consent dated to next March is a phone whose clock was set by hand, and
+#: storing it would put an answer in the log that appears to have been given before the account
+#: existed. The refusal names the next move rather than silently substituting ``now()``, because a
+#: substituted timestamp is a fabricated fact about when somebody consented.
+MAX_DEVICE_CLOCK_SKEW = timedelta(minutes=15)
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,18 +552,22 @@ class CollectionPlan:
 
 
 def resolve_consent(user: Any) -> UsageConsent:
-    """This account's answer about being observed. Today: ``NOT_RECORDED``, for everybody.
+    """This account's answer about being observed, read off the row that is already in hand.
 
-    **NOTHING IN THIS SYSTEM ASKS ANYBODY YET, AND THIS FUNCTION DOES NOT PRETEND OTHERWISE.** There
-    is no column, no route and no screen; the schema flags the question as open and this module may
-    not answer it by inventing a store. So the honest answer for every account is "nobody has asked",
-    and :data:`DEFAULT_UNASKED_COLLECTION` decides what that means for collection.
+    SYNCHRONOUS AND NO DATABASE WORK, WHICH IS THE WHOLE POINT OF ITS SHAPE. It reads
+    :data:`CONSENT_ATTRIBUTE` off the ``User`` row the dependency layer has ALREADY loaded to
+    authenticate the request, so the consent lookup on the hot path costs no extra round trip —
+    the constraint :func:`record_event` is built around, and the reason this function was written
+    with this signature a migration before the column existed.
 
-    It is a real function with a real signature all the same, and it is SYNCHRONOUS and does no
-    database work on purpose. When the flow exists it reads :data:`CONSENT_ATTRIBUTE` off the ``User``
-    row the dependency layer has ALREADY loaded to authenticate the request — so wiring it up costs
-    no extra round trip on the request path, which is the constraint :func:`record_event` is built
-    around. One line changes here; no caller changes at all.
+    **A STALE NOTICE VERSION IS STILL ``GRANTED`` HERE, AND THAT IS DELIBERATE.** The version is
+    compared in :func:`consent_gate`, which is what asks a person again; it is not compared here.
+    Flipping a stale grant to ``NOT_RECORDED`` would mean a wording change silently reclassified the
+    whole fleet mid-window — every aggregate's population would move on a deploy, and every
+    designer's own ``/usage/me`` would go blank overnight — to enforce something the version column
+    already answers by being stored. What the version exists to prevent is a record CLAIMING somebody
+    agreed to text they never saw; that is prevented by keeping the version, not by deleting the
+    agreement.
 
     UNREADABLE RESOLVES TO ``NOT_RECORDED``, never to ``GRANTED``: a null, an unknown token, a
     wrong-cased string, a row restored from before the column existed. That is the same posture as
@@ -493,9 +604,10 @@ def collection_plan(
     """The three-way rule, in one place: what is recorded for GRANTED, for REFUSED, and for neither.
 
     ``consent=None`` is read as :attr:`UsageConsent.NOT_RECORDED`. That is not a convenience — it is
-    the case that actually happens, because the middleware finds nothing under
-    :data:`USAGE_CONSENT_KEY` for every request until a flow exists, and "the stitch found nothing"
-    and "nobody has asked this person" are the same fact today.
+    the case that actually happens on **every unauthenticated request**, where there is no account
+    for the stitch to resolve a consent from and so :data:`USAGE_CONSENT_KEY` is genuinely absent.
+    "The stitch found nothing" and "nobody has asked this person" are the same fact, and reading the
+    absence as anything else would attribute a request nobody signed in for.
 
     **GRANTED** — recorded and attributed, with ``consentState = "GRANTED"``. The only circumstance
     in which that token is ever written, so a row carrying it is a row somebody actually agreed to.
@@ -606,16 +718,27 @@ async def withdraw(user_id: str) -> Withdrawal:
     Deleting reuses the answer the schema already gave for the same data.
 
     NOTE WHAT IT DOES *NOT* DO, because the audio path does not either: it does not pretend the
-    observation never happened. There is no log of the withdrawal, for the honest reason that this
-    module has nowhere to write one — ``DwWorkshopConsentDecision``'s equivalent for usage is part of
-    the flow nobody has designed yet. Whoever designs it should read that model first.
+    observation never happened. The dated decisions stay in ``UsageConsentDecision``, which is the
+    only surviving evidence that the deleted rows were ever collected under an agreement — and which
+    matters more here than one consent question over, precisely because here the rows themselves are
+    gone.
 
-    **THE DURABLE HALF IS MISSING AND THAT IS NOT HIDDEN.** The refusal is remembered in a
-    process-local set, so it holds until this process restarts and does not reach a second worker.
-    There is no column to persist it in and this module may not add one. A real withdrawal needs the
-    answer stored and fed back through :func:`resolve_consent`; until then this function is the part
-    that can be built without a migration, and it is worth having on its own — it is what empties the
-    queue.
+    **THE DURABLE HALF EXISTS SINCE 2026-08-30 AND THIS IS NO LONGER THE WHOLE WITHDRAWAL.**
+    :func:`record_consent` is the door: it writes ``REFUSED`` to ``User.usageConsent`` and a row to
+    the decision log, and THEN calls this function. So the refusal now survives a restart and reaches
+    a second worker, because :func:`resolve_consent` reads the column off the row every request
+    already loads.
+
+    WHAT THIS FUNCTION IS NOW: the fast, in-process half. ``_WITHDRAWN`` stops rows that are already
+    in THIS process's buffer, which no column can reach, and the delete clears the archive. Calling
+    it alone still stops collection in this worker and still deletes — that is why it is safe as a
+    fallback — but it does not record an answer, and an account withdrawn only this way is GRANTED
+    again the moment the process restarts. **Call :func:`record_consent`, not this.** The one place
+    this is still the right call on its own is a test.
+
+    THE COUNTERPART IS :func:`resume`, and forgetting it is the live trap: an account that agrees
+    again after a withdrawal stays in ``_WITHDRAWN`` for the life of the process unless something
+    takes it out, with every other part of the system reading GRANTED.
 
     NEVER RAISES, and the caller need not check the result — the same posture, for the same reason,
     as ``cancel_pending_transcriptions``: the person's answer is the thing that matters, and losing
@@ -671,6 +794,659 @@ async def withdraw(user_id: str) -> Withdrawal:
 def is_withdrawn(user_id: str | None) -> bool:
     """Whether this process has been told to stop recording this account. See :func:`withdraw`."""
     return bool(user_id) and user_id in _WITHDRAWN
+
+
+def resume(user_id: str) -> bool:
+    """Undo the process-local half of a withdrawal, because an account may agree again.
+
+    **WITHOUT THIS, A RE-CONSENT IS RECORDED, BELIEVED BY EVERY OTHER PART OF THE SYSTEM, AND
+    QUIETLY INEFFECTIVE.** :data:`_WITHDRAWN` is checked first in :func:`record_event` and again in
+    :func:`flush`, ahead of the consent rule and by design — it is the fast path that stops rows
+    already in this process's buffer without a database read. It is also, therefore, a refusal that
+    outlives the answer that produced it: a person who withdraws on Monday and agrees again on
+    Tuesday would stay in the set until this worker restarted, with ``usageConsent`` reading GRANTED,
+    ``/usage/me`` reporting nothing, and no log line anywhere saying why.
+
+    Returns whether the account was actually in the set, so a caller can tell a re-consent from a
+    first one. Called by :func:`record_consent` on every GRANT — never conditionally, because the
+    condition would be "was it in the set", which is the thing this function answers.
+    """
+    was_withdrawn = user_id in _WITHDRAWN
+    _WITHDRAWN.discard(user_id)
+    if was_withdrawn:
+        logger.info(
+            "usage: %s has agreed again; this process will record its requests from now on. The "
+            "rows deleted by the earlier withdrawal are gone and are not restored",
+            user_id,
+        )
+    return was_withdrawn
+
+
+# --------------------------------------------------------------------------------------
+# THE NOTICE: what a person is agreeing to, computed from the policy actually in force
+#
+# **ONE SOURCE, AND IT IS THIS SERVER.** The sign-in screen on the web, the sign-in screen on
+# Android and the settings card on both have to say the same thing, and the thing they say has to be
+# what this deployment actually does. Writing the copy a second time in TSX and a third time in
+# Kotlin is how two clients come to describe one decision differently — which is the failure
+# ``feedback.FEEDBACK_FIELDS`` exists to prevent one contract over, and which matters more here than
+# it does there: a consent notice that does not match the collection is not a smaller kind of
+# correct, it is a consent to something else.
+#
+# COMPUTED, NOT ASSERTED. :func:`collects` derives its account-id line from
+# :func:`collection_plan` — the same function the recorder itself calls, on the same constant — so a
+# one-line policy flip changes what is PUBLISHED in the same edit that changes what is RECORDED,
+# because it is the same line of code. The alternative was a constant sentence, and it was a lie
+# waiting for that flip: under ``ATTRIBUTED`` it would have gone on telling a reader that attribution
+# follows consent.
+# --------------------------------------------------------------------------------------
+
+
+def collects() -> list[str]:
+    """What this deployment actually records, COMPUTED from the policy rather than asserted.
+
+    **THE ACCOUNT-ID LINE USED TO BE A CONSTANT SAYING "ONLY WHERE CONSENT HAS BEEN RECORDED AS
+    GRANTED", AND THAT IS TRUE OF EXACTLY ONE OF THE THREE POLICIES THIS MODULE SHIPS.**
+    :data:`DEFAULT_UNASKED_COLLECTION` is documented as overrulable in one line and
+    :class:`UnaskedCollection` names all three values on purpose, so both of the others are one edit
+    away:
+
+    * ``ATTRIBUTED`` records the id for people nobody ever asked. The old sentence would then have
+      gone on telling a reader of the published method that attribution follows consent, on the same
+      page whose ``consent.unaskedPolicy`` field said ATTRIBUTED — and the prose is the half a person
+      reads.
+    * ``NOTHING`` records no row at all, and this whole list would have gone on enumerating seven
+      things that were not being collected.
+
+    NOTE WHAT DOES *NOT* VARY: ``consentState`` stays NULL under all three policies, so no row ever
+    claims a consent that was not given whatever this returns.
+
+    LIVES IN THE SERVICE AND NOT IN THE ROUTE MODULE, since 2026-08-30, and the move is the point.
+    The sign-in notice needs these sentences with NO SESSION AT ALL — a person deciding whether to
+    agree has not agreed yet — while ``GET /usage/collection`` needs them behind
+    ``require_usage_reader``. Two callers at two different gates, one list.
+    """
+    plan = collection_plan(UsageConsent.NOT_RECORDED)
+    if not plan.record:
+        return [
+            "NOTHING. This deployment's policy for accounts nobody has asked is "
+            f"{DEFAULT_UNASKED_COLLECTION.value}, and no request from an unasked account is "
+            "recorded at all. The columns below describe what this instrumentation WOULD collect "
+            "from an account that has agreed. See 'consent'.",
+        ]
+
+    if plan.attribute:
+        account = (
+            "The account id, on EVERY signed-in request — including from accounts nobody has asked. "
+            "This deployment's policy for the unasked is "
+            f"{DEFAULT_UNASKED_COLLECTION.value}. The rows still record consentState NULL, "
+            "which means nobody was asked; they are attributed and unconsented, and anybody "
+            "reporting figures drawn from them has to say so. See 'consent' below."
+        )
+    else:
+        account = (
+            "The account id, ONLY where consent has been recorded as granted. An account that has "
+            "not answered, or that has refused, has no name on any row. See 'consent' below."
+        )
+
+    return [
+        "The matched route TEMPLATE — /design-workshops/{workshop_id}, never the interpolated "
+        "path. Record ids travel in paths here, so a table of raw paths would be a per-designer "
+        "reading list of other people's fieldwork.",
+        "The HTTP method.",
+        "The status code the client received.",
+        "Server duration in whole milliseconds.",
+        "Which client said it was, from a header: web, android, or api for anything that did "
+        "not say — which is every client today, because neither the web nor the Android layer "
+        "sends the header yet.",
+        account,
+        "The moment the request finished.",
+    ]
+
+
+def does_not_collect() -> list[str]:
+    """The other half of the notice, and the half a person actually wants. Constant, because every
+    line of it is true under all three policies: none of these has a column to be stored in."""
+    return [
+        "The interpolated path, so no record id is ever stored.",
+        "Query strings — '?q=' carries whatever somebody typed into a search box.",
+        "Request or response bodies, headers other than the client label, IP addresses, "
+        "user agents, or anything a person typed.",
+        "Anything at all from the routes in 'notMeasured'.",
+    ]
+
+
+def readable_by() -> dict[str, str]:
+    """Who can read what, keyed by route. **CHANGE THIS IN THE SAME COMMIT AS ANY NEW READ ROUTE.**
+
+    It is not documentation of the gates — it is a promise made to a person at the moment they are
+    deciding whether to agree, and it is shown to them verbatim. A route that reads one account's
+    trail and is not named here makes the notice false for everybody who has already answered.
+    ``tests/test_usage_tracking.py`` walks the router against this dict so the omission cannot ship.
+    """
+    return {
+        "/usage/me": "the account itself, and nobody else at any rank",
+        "/usage/me/trail": "the account itself, and nobody else at any rank",
+        "/usage/routes": "Admin and above (deps.can_read_usage) — aggregates only, no user ids",
+        "/usage/timeline": "Admin and above — aggregates only, no user ids",
+        "/usage/latency": "Admin and above — aggregates only, no user ids",
+        "/usage/clients": "Admin and above — aggregates only, no user ids",
+        "/usage/screens": "Admin and above — aggregates only, no user ids",
+        "/usage/collection": "Admin and above — this document, no figures about anybody",
+        "/usage/accounts/{user_id}/trail": (
+            "the MASTER ADMIN alone (deps.can_read_person_usage), and only where that account's own "
+            "answer is GRANTED — a trail of somebody who refused, or who was never asked, is not "
+            "readable by anyone. Each read is written to the server log naming the reader, the "
+            "subject and the window; there is deliberately no durable audit TABLE for it yet, and "
+            "the route says so rather than implying one"
+        ),
+    }
+
+
+def retention_note() -> str:
+    """How long these rows are kept. A sentence saying there is no policy, because the absence of one
+    is a fact a person agreeing to be recorded is entitled to, and silence would be read as a policy
+    somebody chose."""
+    return (
+        "There is no retention policy and nothing deletes these rows on a schedule; that is a "
+        "decision nobody has made yet, and this sentence exists so it is not mistaken for one "
+        "that was. Deleting an account deletes its rows (onDelete: Cascade), and withdrawing "
+        "consent deletes that account's rows immediately."
+    )
+
+
+def consent_notice() -> dict[str, Any]:
+    """The whole text a person is agreeing to, versioned, in the order it must be read in.
+
+    **THE ORDER IS NOT COSMETIC.** What is collected, then what is not, then — before anything else —
+    that agreeing is REQUIRED. A person who reads two paragraphs of reassurance and then discovers
+    the choice was not a choice has been handled rather than asked. So the requirement is the third
+    section and is stated in the plainest sentence in the payload, not implied by a disabled button.
+
+    Then: what a duration is NOT (it measures the server, not what anybody waited for — the single
+    most misread number in this feature); who can read it; that it can be withdrawn, where, and what
+    a withdrawal actually does to what is already stored; and the retention answer, which is that
+    there is not one.
+
+    EVERY SECTION IS COMPUTED FROM THE RUNNING POLICY, not typed out here — see :func:`collects`.
+    A deployment that flipped :data:`DEFAULT_UNASKED_COLLECTION` would publish a different notice on
+    the same deploy, which is the only way a notice and a collection can be kept from disagreeing.
+
+    THE VERSION TRAVELS WITH IT so a client can send back what it actually showed. A client that
+    sends a version this server has never heard of is not refused — see
+    :func:`consent_decision_plans` — because refusing would lock out a handset holding a cached
+    notice, and the honest record of "they agreed to THAT text" is the version they saw.
+    """
+    return {
+        "version": NOTICE_VERSION,
+        "title": "Recording how you use this platform",
+        "required": True,
+        "requiredSentence": (
+            "You cannot sign in without agreeing to this. It is a condition of using the platform, "
+            "which means it is not a free choice — and this system records that it was not, rather "
+            "than filing your answer as though you had been offered one."
+        ),
+        "collects": collects(),
+        "doesNotCollect": does_not_collect(),
+        "durationCaveat": (
+            "The duration recorded is SERVER time only: from this API receiving your request to it "
+            "finishing the answer. It is not what you waited for — it excludes the network, your "
+            "device and anything drawn on your screen."
+        ),
+        "readableBy": readable_by(),
+        "withdrawal": {
+            "where": "Settings, on either client, at any time.",
+            "costsNothing": (
+                "Withdrawing does not sign you out and does not remove anything you can do. That "
+                "is deliberate: an agreement you cannot take back without losing access is not an "
+                "agreement."
+            ),
+            "does": [
+                "Stops recording new requests from this account immediately.",
+                "Throws away anything already observed and not yet written.",
+                "DELETES the rows already stored for this account — it does not merely unname them.",
+            ],
+            "doesNot": [
+                "It does not erase the fact that you had agreed. The dated decisions stay in your "
+                "own consent log, because a withdrawal must not rewrite the answer the earlier "
+                "collection was actually made under.",
+            ],
+        },
+        "retention": retention_note(),
+        "document": "docs/DECISION-usage-consent-at-sign-in.md",
+    }
+
+
+# --------------------------------------------------------------------------------------
+# The recorded answer, and the gate a client renders from it
+# --------------------------------------------------------------------------------------
+
+
+def consent_record(user: Any) -> dict[str, Any]:
+    """One account's stored answer, read off a row already in hand. No database work.
+
+    Four columns rather than one, because "GRANTED" alone cannot answer any of the three questions a
+    reader of a consent record actually has: when, under what circumstances, and to what text.
+    """
+    at = getattr(user, CONSENT_AT_ATTRIBUTE, None)
+    basis = getattr(user, CONSENT_BASIS_ATTRIBUTE, None)
+    version = getattr(user, CONSENT_VERSION_ATTRIBUTE, None)
+    return {
+        "state": resolve_consent(user).value,
+        "at": at.isoformat() if isinstance(at, datetime) else None,
+        "basis": str(getattr(basis, "value", basis)) if basis else None,
+        "version": str(version) if version else None,
+    }
+
+
+def consent_gate(user: Any) -> dict[str, Any]:
+    """Whether this account must be asked now, and the sentence saying why. **The client renders
+    from this and computes nothing itself.**
+
+    THE VERSION COMPARISON LIVES HERE AND IN NO CLIENT. "Have they agreed, and to the current text"
+    is two facts and one answer, and the moment a web client and an Android client each derive that
+    answer for themselves the two will disagree the first time somebody bumps
+    :data:`NOTICE_VERSION` and only one of them is redeployed. One field, ``required``, decided by
+    the server.
+
+    THREE STATES REACH THREE DIFFERENT SENTENCES, on ``dictation_consent.gate_refusal``'s rule: the
+    next moves differ, so the sentences must. Nobody-has-asked is answered by asking. A refusal has
+    already been answered, and this account is *working normally* — telling it to go and agree would
+    be false. A stale version is a third case again: they agreed, the text moved, and what is wanted
+    is a fresh reading rather than a first one.
+
+    IT NEVER REFUSES ANYTHING AND HAS NO STATUS CODE. It is a description of a state, attached to a
+    sign-in that SUCCEEDED — see ``routes/auth.login``, which explains at length why a 403 at the
+    door would be a gate nobody could get past.
+    """
+    state = resolve_consent(user)
+    stored = consent_record(user)
+    agreed_version = stored["version"]
+
+    if state is UsageConsent.GRANTED and agreed_version == NOTICE_VERSION:
+        required = False
+        reason = "This account has agreed to the current version of the recording notice."
+    elif state is UsageConsent.GRANTED:
+        required = True
+        reason = (
+            "This account agreed to an earlier version of the recording notice"
+            + (f" ({agreed_version})" if agreed_version else "")
+            + ". The notice has changed, so the question is being asked again — agreeing to text "
+            "somebody never saw is not something this system will record on their behalf. "
+            "Recording continues in the meantime under the answer already given."
+        )
+    elif state is UsageConsent.REFUSED:
+        required = False
+        reason = (
+            "This account has declined to have its use of the platform recorded, and nothing about "
+            "its requests is kept — not anonymously either. That answer is on record and it costs "
+            "this account nothing: everything else in the product works exactly as it does for "
+            "anybody else. It can be changed in Settings at any time."
+        )
+    else:
+        required = True
+        reason = (
+            "Nobody has asked this account yet whether its use of the platform may be recorded. "
+            "Agreeing is a condition of using the platform, so this has to be answered before the "
+            "product can be used — and until it is, requests are recorded WITHOUT any name on them."
+        )
+
+    return {
+        "state": state.value,
+        "required": required,
+        "reason": reason,
+        "noticeVersion": NOTICE_VERSION,
+        "agreedVersion": agreed_version,
+        "agreedAt": stored["at"],
+        "basis": stored["basis"],
+        # Named so a client never has to guess, and so the sentence above is actionable rather than
+        # merely true. Both are under the /api prefix the router is mounted at.
+        "answerAt": "POST /api/usage/consent",
+        "noticeAt": "GET /api/usage/consent/notice",
+    }
+
+
+# --------------------------------------------------------------------------------------
+# Writing an answer down: planned, not performed
+#
+# ``dictation_consent``'s shape, copied deliberately so that a reader who knows one knows the other:
+# a plan can be asserted about by pytest with no database, no event loop and no generated Prisma
+# client, and a plan NAMES ITS TABLE — which is what makes "a usage consent is never written onto
+# the observations themselves" true by construction rather than by convention.
+# --------------------------------------------------------------------------------------
+
+#: The tables a usage consent may be written into, and the whole list.
+#:
+#: **``UsageEvent`` IS ABSENT AND THAT IS THE POINT.** The tempting wrong move here is exactly the
+#: one the audio path had to refuse for stage entries: writing the answer onto the rows it is about.
+#: An UPDATE across a consenting account's hundred thousand observations would (a) be a write to the
+#: highest-write table in the schema on a request somebody is waiting on, and (b) destroy the one
+#: distinction ``consentState`` exists for, because the rows collected BEFORE the answer would come
+#: to claim it. A later change that wants it has to delete a check, which is a visible act in a diff
+#: and a failing test rather than a quiet new call site.
+CONSENT_WRITABLE_TABLES: frozenset[str] = frozenset({"User", "UsageConsentDecision"})
+
+#: Named so the refusal can name it, and so a reader grepping for the observations table finds the
+#: paragraph above.
+OBSERVATION_TABLE = "UsageEvent"
+
+
+class ConsentOperation(str, Enum):
+    CREATE = "CREATE"
+    UPDATE = "UPDATE"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentWritePlan:
+    """One intended database write, described rather than performed."""
+
+    table: str
+    operation: ConsentOperation
+    data: Mapping[str, Any]
+    #: Present for an UPDATE only, and always exactly ``{"id": ...}`` — one row, named.
+    where: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.table not in CONSENT_WRITABLE_TABLES:
+            raise UsageRuleViolation(
+                f"A usage consent may not be written into {self.table}. It is four columns on the "
+                f"account and a row in its decision log, and nowhere else — writing it onto "
+                f"{OBSERVATION_TABLE} would make the rows collected BEFORE the answer claim it, "
+                f"which is the one distinction consentState exists for. Write it to one of "
+                f"{', '.join(sorted(CONSENT_WRITABLE_TABLES))}."
+            )
+        if self.operation is ConsentOperation.UPDATE and not self.where:
+            raise UsageRuleViolation(
+                "An update must name the single row it changes. Pass where={'id': user_id}."
+            )
+        if self.operation is ConsentOperation.CREATE and self.where:
+            raise UsageRuleViolation("A create names no existing row. Drop the where clause.")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentDecisionPlans:
+    """The two writes one consent decision makes: the answer on the account, and the log row.
+
+    Returned together and applied together. The log is the authoritative history — it is what keeps
+    "who agreed on the 3rd" answerable after a withdrawal on the 9th, by which time the observations
+    made under the grant have been DELETED — and the columns are the current state
+    :func:`resolve_consent` reads on every request without walking a log.
+    """
+
+    account: ConsentWritePlan
+    decision: ConsentWritePlan
+
+    def __iter__(self):
+        yield self.account
+        yield self.decision
+
+
+def consent_decision_plans(
+    *,
+    user_id: str,
+    decision: UsageConsent,
+    basis: UsageConsentBasis,
+    notice_version: str,
+    at: datetime,
+    recorded_at: datetime | None = None,
+    note: str | None = None,
+) -> ConsentDecisionPlans:
+    """One account records its own answer. Pure: no database, no framework, no clock of its own.
+
+    ``at`` is the server's clock — when this request arrived. ``recorded_at`` is what the CLIENT
+    said, and when it is present it is the moment the box was actually ticked; Android signs people
+    in offline-capable contexts and syncs later.
+
+    **WHAT LANDS IN ``usageConsentAt`` IS THE MOMENT THE PERSON ANSWERED**, so ``recorded_at`` when
+    it was supplied and ``at`` when it was not. The other question — when the server heard it — is
+    answered by the log row's own ``createdAt`` default, which is why nothing here sets it.
+
+    ``NOT_RECORDED`` IS REFUSED AS A DECISION, exactly as it is one consent question over. It is the
+    absence of an answer, and "somebody deliberately recorded that nobody has been asked" is not a
+    state a person can be in. Taking an answer back is ``REFUSED``, which is a decision with a next
+    move; un-recording one would leave a log saying an answer was un-given and a gate that cannot
+    tell that from an account nobody has opened.
+
+    **AN UNRECOGNISED ``notice_version`` IS ACCEPTED, NOT REFUSED**, and that is a deliberate
+    asymmetry with everything else this function checks. A handset can hold a cached notice for a
+    fortnight and a rollback can put an older one back in front of people; refusing the answer would
+    lock those people out of a product whose door this consent is. What the record has to be true
+    about is WHICH TEXT THEY SAW, and the honest answer to that is the version they say they saw. It
+    is stored verbatim and bounded, never rewritten to today's.
+    """
+    account = str(user_id or "").strip()
+    if not account:
+        raise UsageRuleViolation(
+            "A usage consent belongs to an account. Sign in and record it as yourself — there is "
+            "deliberately no route by which one person records another's answer about being "
+            "observed, because a consent somebody else can enter for you is not a consent."
+        )
+    if decision is UsageConsent.NOT_RECORDED:
+        raise UsageRuleViolation(
+            "NOT_RECORDED is what an account says before anybody has asked, not an answer somebody "
+            "can record. Send GRANTED to agree, or REFUSED to decline — REFUSED is also how an "
+            "agreement is withdrawn, and it deletes what has already been collected."
+        )
+    version = str(notice_version or "").strip()[:64]
+    if not version:
+        raise UsageRuleViolation(
+            "A consent must say which version of the notice was on screen. Send the 'version' the "
+            "notice endpoint returned — a record that cannot say what was agreed to is worse than "
+            "none, because it invites the one claim it cannot support."
+        )
+
+    # BOTH MOMENTS ARE MADE AWARE BEFORE EITHER IS COMPARED, and the reason is a 500 rather than a
+    # preference: an ISO-8601 moment with no offset parses NAIVE, and `naive > aware` raises
+    # TypeError in Python — which is not a UsageRuleViolation, so no route's except clause catches
+    # it, and a designer recording an answer they were entitled to file gets "something went wrong".
+    at = _as_utc_moment(at)
+    recorded_at = _as_utc_moment(recorded_at)
+    if recorded_at is not None and at is not None and recorded_at > at + MAX_DEVICE_CLOCK_SKEW:
+        raise UsageRuleViolation(
+            f"This answer says it was recorded at {recorded_at.isoformat()}, which is in the "
+            f"future — the device's clock is wrong. Fix the date and time on the device and try "
+            f"again, or answer here so this server's own clock is used. It is not stored with a "
+            f"corrected time, because when somebody consented is not something this server may "
+            f"guess."
+        )
+
+    answered_at = recorded_at or at
+    return ConsentDecisionPlans(
+        account=ConsentWritePlan(
+            table="User",
+            operation=ConsentOperation.UPDATE,
+            where={"id": account},
+            data={
+                CONSENT_ATTRIBUTE: decision.value,
+                CONSENT_AT_ATTRIBUTE: answered_at,
+                CONSENT_BASIS_ATTRIBUTE: basis.value,
+                CONSENT_VERSION_ATTRIBUTE: version,
+            },
+        ),
+        decision=ConsentWritePlan(
+            table="UsageConsentDecision",
+            operation=ConsentOperation.CREATE,
+            data={
+                "userId": account,
+                "decision": decision.value,
+                "basis": basis.value,
+                "noticeVersion": version,
+                "note": (note or "").strip()[:500] or None,
+                # Only what the CLIENT said. NULL when the answer was given straight against this
+                # server, where `createdAt` is the same moment and a copy would later read as "a
+                # device reported this", which would be false.
+                "recordedAt": recorded_at,
+            },
+        ),
+    )
+
+
+def _as_utc_moment(moment: datetime | None) -> datetime | None:
+    """A moment that can be compared with another. Naive means UTC; aware keeps its own offset.
+
+    NOT a conversion to UTC: ``+05:30`` is what the device said and rewriting it would lose the only
+    clue about where the answer was taken down. All this does is stop a missing offset turning into a
+    ``TypeError`` at the comparison two lines above the refusal it would otherwise have produced.
+    """
+    if moment is None or moment.tzinfo is not None:
+        return moment
+    return moment.replace(tzinfo=UTC)
+
+
+def _consent_model(table: str) -> Any:
+    """The Prisma model one writable table name maps to. THE SECOND HALF OF THE CONSTRUCTION GUARD.
+
+    The name is checked before the client is touched, so the refusal is a :class:`UsageRuleViolation`
+    with a sentence on any machine, with or without a generated Prisma client. There is no entry for
+    ``UsageEvent``, so even a plan that somehow carried its name — a future edit that loosened
+    :class:`ConsentWritePlan` — would still have nowhere to be applied. Resolved per call rather than
+    in a module-level dict, because a dict built at import binds the client's attributes before
+    anything has connected.
+    """
+    if table not in CONSENT_WRITABLE_TABLES:
+        raise UsageRuleViolation(
+            f"There is no usage-consent writer for {table}. A consent is four columns on the "
+            f"account and a row in its decision log: {', '.join(sorted(CONSENT_WRITABLE_TABLES))}."
+        )
+    return {"User": db.user, "UsageConsentDecision": db.usageconsentdecision}[table]
+
+
+async def apply_consent_plan(plan: ConsentWritePlan) -> Any:
+    """Perform one planned write. The only place this module touches consent storage with intent."""
+    model = _consent_model(plan.table)
+    if plan.operation is ConsentOperation.CREATE:
+        return await model.create(data=dict(plan.data))
+    return await model.update(where=dict(plan.where or {}), data=dict(plan.data))
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentOutcome:
+    """What recording one answer actually reached. Returned by :func:`record_consent`."""
+
+    #: The updated ``User`` row, as the client should read its consent columns back from.
+    account: Any
+    #: The decision that was recorded.
+    decision: UsageConsent
+    #: What the withdrawal reached, on a REFUSAL. ``None`` on a grant, where nothing is deleted.
+    withdrawal: Withdrawal | None
+
+
+async def record_consent(
+    *,
+    user_id: str,
+    decision: UsageConsent,
+    basis: UsageConsentBasis,
+    notice_version: str,
+    at: datetime | None = None,
+    recorded_at: datetime | None = None,
+    note: str | None = None,
+) -> ConsentOutcome:
+    """**THE ONE DOOR.** Record an answer, and on a refusal do to the collected data what the audio
+    path does to a queued recording.
+
+    ── WHAT IT FOLLOWS, NAMED ──────────────────────────────────────────────────────────────────
+
+    ``routes/design_workshops.record_dictation_consent`` is the model and this function copies three
+    things from it deliberately:
+
+    1. **TWO WRITES, THE ANSWER FIRST AND THE LOG SECOND, AND NOT IN A TRANSACTION.** The order is
+       chosen for the failure it leaves. If the log write fails after the account write, the account
+       carries a correctly attributed answer with one history row missing: recoverable, and the gate
+       is right. The other order would leave a log saying somebody withdrew while
+       :func:`resolve_consent` still reads GRANTED and collection continues — which is the one
+       failure that matters.
+    2. **THE REFUSAL REACHES WHAT WAS ALREADY COLLECTED, and only the refusal does.** There, a
+       REFUSED decision runs ``cancel_pending_transcriptions``, because nine clips queued under a
+       grant given on the 3rd would otherwise go out on the night of the 9th — *"a consent that
+       cannot recall what it already authorised is a preference, not a permission."* Here the queue
+       is this module's own buffer and the archive is the ``UsageEvent`` table, and :func:`withdraw`
+       empties the first and DELETES from the second. Guarded to REFUSED exactly as that call is: on
+       a GRANT it would delete the record the grant was given in order to keep.
+    3. **AFTER the decision is applied, never before.** The person's answer is the thing that
+       matters and must land even if the cleanup fails; :func:`withdraw` never raises, for that
+       reason.
+
+    ── AND THE ONE THING IT ADDS, WHICH THE AUDIO PATH HAS NO NEED OF ──────────────────────────
+
+    **A GRANT CALLS :func:`resume`.** ``_WITHDRAWN`` is a process-local set that makes
+    :func:`record_event` and :func:`flush` refuse an account without a database read; a person who
+    withdraws and later agrees again would otherwise stay in it for the life of the process, and
+    their re-consent would be recorded, believed by every other part of the system, and quietly
+    ineffective. There is no equivalent trap one consent question over because that gate reads a
+    column and holds no set.
+
+    THE DURABLE HALF IS NOW REAL, which is what closes the gap :func:`withdraw`'s docstring names.
+    The answer is a column, ``resolve_consent`` reads it on every request through the row the
+    dependency layer already loaded, and a second worker therefore honours a refusal it never saw
+    recorded. The process-local set is now a FAST PATH — it stops rows already in this process's
+    buffer — and no longer the only defence.
+
+    THE CACHED IDENTITY IS INVALIDATED BY THE CALLER, not here. ``deps.invalidate_cached_user`` lives
+    in a module that imports this one, so calling it from here would be an import cycle;
+    ``routes/usage`` does it, and its docstring says why it must.
+    """
+    plans = consent_decision_plans(
+        user_id=user_id,
+        decision=decision,
+        basis=basis,
+        notice_version=notice_version,
+        at=at if at is not None else datetime.now(UTC),
+        recorded_at=recorded_at,
+        note=note,
+    )
+    account = await apply_consent_plan(plans.account)
+    await apply_consent_plan(plans.decision)
+
+    withdrawal: Withdrawal | None = None
+    if decision is UsageConsent.REFUSED:
+        withdrawal = await withdraw(user_id)
+    else:
+        resume(user_id)
+    return ConsentOutcome(account=account, decision=decision, withdrawal=withdrawal)
+
+
+async def consent_history(user_id: str, *, limit: int = 50) -> list[Any]:
+    """One account's answers, newest first. The only read this log has."""
+    if not user_id:
+        return []
+    return await db.usageconsentdecision.find_many(
+        where={"userId": user_id},
+        order=[{"createdAt": "desc"}, {"id": "desc"}],
+        take=max(1, min(int(limit), 200)),
+    )
+
+
+def consent_decision_payload(row: Any) -> dict[str, Any]:
+    """One recorded answer as the clients read it.
+
+    BOTH MOMENTS ARE CARRIED, and that is the point of the pair rather than a duplication:
+    ``recordedAt`` is what the client said (null when the answer was given straight against this
+    server) and ``createdAt`` is when the server heard it. A fortnight of no signal makes them differ
+    by a fortnight, and a reader who can see only one of them cannot tell an answer given today from
+    one given before the device was last synced.
+
+    ``basis`` AND ``noticeVersion`` ARE NOT OPTIONAL ON THE WIRE. They are the two fields that make
+    this row a consent record rather than a boolean with a date on it.
+    """
+    return {
+        "id": getattr(row, "id", None),
+        "decision": _enum_token(getattr(row, "decision", None)),
+        "basis": _enum_token(getattr(row, "basis", None)),
+        "noticeVersion": getattr(row, "noticeVersion", None),
+        "note": getattr(row, "note", None),
+        "recordedAt": _iso_or_none(getattr(row, "recordedAt", None)),
+        "createdAt": _iso_or_none(getattr(row, "createdAt", None)),
+    }
+
+
+def _enum_token(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(getattr(value, "value", value))
+
+
+def _iso_or_none(value: Any) -> str | None:
+    return value.isoformat() if isinstance(value, datetime) else None
 
 
 # --------------------------------------------------------------------------------------
@@ -1511,4 +2287,587 @@ async def usage_for_routes(
         "to": until,
         "minimumIdentifiedUsers": MIN_IDENTIFIED_USERS_FOR_ROUTE,
         "routes": routes,
+    }
+
+
+# --------------------------------------------------------------------------------------
+# THE RICHER AGGREGATES: over time, at the tail, and split by client
+#
+# ── WHY THESE THREE ARE RAW SQL WHEN NOTHING ELSE IN THIS MODULE IS ─────────────────────────
+#
+# Not for speed, and not because Prisma is inadequate in general. Each of the three asks for
+# something Prisma's ``group_by`` cannot express AT ALL:
+#
+#   * bucketing by hour or day needs ``date_trunc`` in the GROUP BY, and ``group_by`` groups only by
+#     stored columns;
+#   * a percentile needs ``percentile_cont`` — an ordered-set aggregate — and ``group_by`` offers
+#     count, avg, min, max and sum. **NO PERCENTILE IS RECOVERABLE FROM WHAT IS ALREADY STORED**:
+#     ``avgDurationMs`` is a count-weighted mean of per-group means (see :func:`_fold_status`), and a
+#     mean carries no information about a tail. p95 is the number anybody actually wants — a route
+#     whose mean is 120 ms and whose p95 is 4 seconds is a route that is broken for one request in
+#     twenty, and the mean says it is fine;
+#   * ``COUNT(DISTINCT "userId")`` in the same statement as the counts is what lets the withholding
+#     floor be applied per emitted row without a second round trip. ``group_by`` can only produce it
+#     as a separate grouping, which is why :func:`usage_for_routes` pays two.
+#
+# ── AND WHY EVERY ONE OF THEM IS STILL AN INDEX PROBE ───────────────────────────────────────
+#
+# All three carry ``"routeTemplate" = ANY($…)`` plus a ``createdAt`` range: equality on a bounded set
+# of named templates, then a range — exactly the shape ``@@index([routeTemplate, createdAt])`` was
+# built for, and never a scan. **THERE IS DELIBERATELY NO SPELLING FOR "EVERY ROUTE" ON ANY OF
+# THEM**, for the same reason :func:`usage_for_routes` has none: that is a whole-window scan across
+# every user and every route, the schema refuses to build the ``createdAt``-only index that would
+# serve one, and no route added in this wave asks for it. If somebody wants the global ranking, the
+# answer is a daily rollup table designed on purpose.
+#
+# ── THE MOMENTS ARE BOUND AS NAIVE-UTC TEXT, WHICH IS NOT AN OVERSIGHT ──────────────────────
+#
+# Prisma maps ``DateTime`` to ``TIMESTAMP(3)`` — no time zone — and stores UTC in it. So each bound
+# is converted to UTC, stripped of its offset and bound as an ISO string cast to ``::timestamp``,
+# which is byte-for-byte what the ORM path compares against. Binding an AWARE value against a
+# ``timestamptz`` cast would make Postgres convert using the SERVER's timezone, producing a window
+# quietly wrong by hours rather than an error anybody notices — the same failure
+# :func:`_ensure_window` refuses naive datetimes to prevent, arriving from the other direction.
+# Interpolating the dates into the SQL text is refused outright: this module is one keystroke from
+# recording record ids, and a file that interpolates one value teaches the next reader to interpolate
+# another.
+# --------------------------------------------------------------------------------------
+
+#: The buckets a timeline may be asked for. Two, and both are calendar units in UTC — there is no
+#: "every 5 minutes", because a bucket finer than an hour over a route only a few people use is a
+#: named person's afternoon reconstructed from a page labelled *aggregates*.
+TIMELINE_BUCKETS: tuple[str, ...] = ("hour", "day")
+
+#: Most buckets one timeline may return, and **the response states it**.
+#:
+#: 750 is chosen from the two windows anybody actually asks for: a year of days is 366 and a month of
+#: hours is 744, and both fit. Hourly over the full 366-day window is 8,784 rows of JSON describing
+#: an index range scan that touched every row in the year — a request that is almost certainly a
+#: mistake, and one that would be served slowly and then rendered as an unreadable chart. It is
+#: REFUSED with the arithmetic in the sentence rather than silently truncated, on
+#: ``analytics.ROW_CAP``'s rule: a cap that is announced is a cap, and a cap that is silent is a lie.
+MAX_TIMELINE_BUCKETS = 750
+
+#: The percentiles reported, in the order they are reported. Three, and the median is included
+#: BESIDE the tail rather than instead of it: p50 alone hides the tail and p99 alone cannot say
+#: whether the tail is the whole distribution or one request in a hundred.
+LATENCY_PERCENTILES: tuple[float, ...] = (0.5, 0.95, 0.99)
+
+#: Rows one trail read may return. **A trail is a log and not an aggregate** — it is the one shape in
+#: this module that replays the order somebody moved through the app — so the page is small and the
+#: cap is stated on every response. 200 is one screenful of scrolling and roughly an hour of one
+#: person's ordinary work; a caller who wants a day walks the pages, which is deliberate friction.
+MAX_TRAIL_ROWS = 200
+
+
+def _sql_window(since: datetime, until: datetime) -> tuple[str, str]:
+    """The window as the two naive-UTC ISO strings the raw statements bind. See the banner above."""
+    return (
+        since.astimezone(UTC).replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds"),
+        until.astimezone(UTC).replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds"),
+    )
+
+
+def _checked_templates(templates: Sequence[str]) -> list[str]:
+    """The template list every new aggregate takes, put through the one gate and the one cap.
+
+    Shared rather than repeated so that a caller cannot use any of these endpoints as an oracle by
+    probing it with interpolated paths, and so the cap is one number in one place.
+    """
+    wanted = [ensure_route_template(value) for value in templates]
+    if not wanted:
+        raise UsageRuleViolation(
+            "This report needs at least one route template; there is no 'every route' form, "
+            "because that is a scan of the whole window and no index serves it."
+        )
+    if len(wanted) > MAX_TEMPLATES_PER_QUERY:
+        raise UsageRuleViolation(
+            f"At most {MAX_TEMPLATES_PER_QUERY} templates may be named at a time; this call named "
+            f"{len(wanted)}."
+        )
+    return wanted
+
+
+def _withheld_because(what: str) -> str:
+    """The one sentence every withheld row in this module carries, with the subject swapped in.
+
+    Written once so that four endpoints cannot come to explain the same refusal four different ways
+    — and phrased as what the figure WOULD have described rather than as a rule number, because the
+    reader is an administrator looking at a dash and not a person reading this file.
+    """
+    return (
+        f"Fewer than {MIN_IDENTIFIED_USERS_FOR_ROUTE} identified people are behind {what}, so a "
+        f"figure here would describe them individually rather than describe a group."
+    )
+
+
+def _withhold(entry: dict[str, Any], keys: Sequence[str], *, what: str) -> dict[str, Any]:
+    """Blank every metric on one row and say why. **A REFUSAL AND NEVER A ZERO.**
+
+    Every value goes to ``None`` and ``withheld`` goes to True. That pairing is load-bearing on the
+    client side and the reason it is worth a helper: ``null`` coerces to 0 through arithmetic and
+    through ``??``, so a consumer that falls back instead of branching on ``withheld`` publishes a
+    number this server explicitly refused to state — and a chart is worse than a table here, because
+    a plotted zero looks like a measurement while a blank cell looks like a blank cell.
+    """
+    blanked = dict(entry)
+    for key in keys:
+        blanked[key] = None
+    blanked["withheld"] = True
+    blanked["withheldBecause"] = _withheld_because(what)
+    return blanked
+
+
+def _error_rate(requests: Any, client_errors: Any, server_errors: Any) -> float | None:
+    """Errors as a proportion of requests, or None when there is nothing to divide.
+
+    ZERO REQUESTS IS None AND NOT 0.0, which is the whole reason this is a function. An hour with no
+    traffic has no error rate — 0/0 is not "nothing went wrong", it is "nothing happened" — and a
+    chart that plots the first as the second draws a reassuring flat line through every night and
+    every outage in which the API answered nothing at all.
+    """
+    total = int(requests or 0)
+    if total <= 0:
+        return None
+    return round((int(client_errors or 0) + int(server_errors or 0)) / total, 4)
+
+
+async def usage_timeline(
+    templates: Sequence[str],
+    since: datetime,
+    until: datetime,
+    *,
+    bucket: str = "day",
+) -> dict[str, Any]:
+    """Requests and errors over time for named screens, bucketed by hour or day.
+
+    ONE STATEMENT. The counts, the three status bands and the distinct-identity count come back
+    together, because splitting them would pay a 756 ms latency twice to compute what one grouping
+    already returns — and because the floor has to be applied per bucket, which needs the identity
+    count in the same row as the figures it would withhold.
+
+    **THE FLOOR APPLIES PER BUCKET AND NOT PER SERIES, AND THAT IS THE STRICTER READING ON PURPOSE.**
+    A series-level check would let an hour used by one person ride through inside a window used by
+    fifty — which is exactly the shape of question this floor exists to refuse, since the window is
+    chosen by whoever is asking and can be narrowed until only one person is left in it. So each
+    bucket carries its own ``identifiedUsers`` and each is withheld on its own.
+
+    AN EMPTY BUCKET IS RETURNED AS A ZERO AND NOT OMITTED. A gap in a series is read as "no data
+    here"; a zero is read as "nothing happened here", and only the second is true of an hour this
+    API was awake for. The buckets are filled in Python rather than by ``generate_series`` in the
+    statement, so the SQL stays an index probe over rows that exist.
+    """
+    since, until = _ensure_window(since, until)
+    wanted = _checked_templates(templates)
+    unit = str(bucket or "").strip().lower()
+    if unit not in TIMELINE_BUCKETS:
+        raise UsageRuleViolation(
+            f"A timeline is bucketed by one of {', '.join(TIMELINE_BUCKETS)}; {bucket!r} is "
+            f"neither. There is deliberately no finer bucket: below an hour, a series over a screen "
+            f"a few people use is one person's afternoon on a page labelled aggregates."
+        )
+    expected = _expected_buckets(since, until, unit)
+    if expected > MAX_TIMELINE_BUCKETS:
+        raise UsageRuleViolation(
+            f"That window is {expected} {unit} buckets and at most {MAX_TIMELINE_BUCKETS} are "
+            f"returned. Ask for a narrower window, or bucket by day instead of by hour — the "
+            f"request is refused rather than truncated, because a truncated series looks exactly "
+            f"like a period in which nothing happened."
+        )
+
+    start, end = _sql_window(since, until)
+    rows = await db.query_raw(
+        """
+        SELECT
+          to_char(date_trunc($1::text, "createdAt"), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS bucket,
+          COUNT(*)::int                                                        AS requests,
+          COUNT(*) FILTER (WHERE "statusCode" < 400)::int                      AS ok,
+          COUNT(*) FILTER (WHERE "statusCode" >= 400 AND "statusCode" < 500)::int AS client_errors,
+          COUNT(*) FILTER (WHERE "statusCode" >= 500)::int                     AS server_errors,
+          COUNT(DISTINCT "userId")::int                                        AS identified_users
+        FROM "UsageEvent"
+        WHERE "routeTemplate" = ANY($2::text[])
+          AND "createdAt" >= $3::timestamp
+          AND "createdAt" <  $4::timestamp
+        GROUP BY 1
+        ORDER BY 1
+        """,
+        unit,
+        wanted,
+        start,
+        end,
+    )
+
+    # COUNT(DISTINCT "userId") already skips NULLs — SQL's own rule — which happens to be exactly the
+    # rule the floor needs: a row identifying nobody protects nobody, so it must not be counted
+    # towards a floor that exists to protect identified people. Stated because the alignment is
+    # convenient rather than deliberate, and a later reader "fixing" it with COALESCE would suppress
+    # every unauthenticated screen in the product.
+    by_bucket = {str(row["bucket"]): row for row in rows}
+    metrics = ("requests", "ok", "clientErrors", "serverErrors", "errorRate", "identifiedUsers")
+    series: list[dict[str, Any]] = []
+    for label in _bucket_labels(since, until, unit):
+        row = by_bucket.get(label)
+        if row is None:
+            series.append(
+                {
+                    "bucket": label,
+                    "requests": 0,
+                    "ok": 0,
+                    "clientErrors": 0,
+                    "serverErrors": 0,
+                    "errorRate": None,
+                    "identifiedUsers": 0,
+                    "withheld": False,
+                }
+            )
+            continue
+        entry = {
+            "bucket": label,
+            "requests": int(row["requests"] or 0),
+            "ok": int(row["ok"] or 0),
+            "clientErrors": int(row["client_errors"] or 0),
+            "serverErrors": int(row["server_errors"] or 0),
+            "errorRate": _error_rate(
+                row["requests"], row["client_errors"], row["server_errors"]
+            ),
+            "identifiedUsers": int(row["identified_users"] or 0),
+            "withheld": False,
+        }
+        people = entry["identifiedUsers"]
+        if 0 < people < MIN_IDENTIFIED_USERS_FOR_ROUTE:
+            entry = _withhold(entry, metrics, what=f"this {unit}")
+        series.append(entry)
+
+    return {
+        "from": since,
+        "to": until,
+        "bucket": unit,
+        "templates": wanted,
+        "minimumIdentifiedUsers": MIN_IDENTIFIED_USERS_FOR_ROUTE,
+        "maxBuckets": MAX_TIMELINE_BUCKETS,
+        "series": series,
+    }
+
+
+def _expected_buckets(since: datetime, until: datetime, unit: str) -> int:
+    """How many buckets a window spans, counted the way :func:`_bucket_labels` fills them.
+
+    Computed BEFORE the query so an over-wide request is refused without touching the database, which
+    is the same ordering ``routes/usage._window`` uses for the window cap and for the same reason: a
+    refusal that costs a 756 ms round trip teaches people to fear the endpoint.
+    """
+    step = timedelta(hours=1) if unit == "hour" else timedelta(days=1)
+    first = _floor_to(since, unit)
+    span = until - first
+    # Ceiling division, so a window ending mid-bucket still counts the bucket it ends in — the same
+    # bucket :func:`_bucket_labels` will emit for it.
+    return max(1, -(-int(span.total_seconds()) // int(step.total_seconds())))
+
+
+def _floor_to(moment: datetime, unit: str) -> datetime:
+    """``date_trunc`` in Python, in UTC, so the labels this module generates and the labels Postgres
+    generates are the same strings. They are compared as strings, so a mismatch would show up as a
+    series of empty buckets sitting next to a series of orphaned rows."""
+    at_utc = moment.astimezone(UTC)
+    if unit == "hour":
+        return at_utc.replace(minute=0, second=0, microsecond=0)
+    return at_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _bucket_labels(since: datetime, until: datetime, unit: str) -> list[str]:
+    """Every bucket in ``[since, until)``, as the exact strings ``to_char`` produced above."""
+    step = timedelta(hours=1) if unit == "hour" else timedelta(days=1)
+    labels: list[str] = []
+    cursor = _floor_to(since, unit)
+    while cursor < until and len(labels) <= MAX_TIMELINE_BUCKETS:
+        labels.append(cursor.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        cursor += step
+    return labels
+
+
+async def usage_latency(
+    templates: Sequence[str], since: datetime, until: datetime
+) -> dict[str, Any]:
+    """Median and tail latency per screen. **The numbers the stored averages cannot produce.**
+
+    ``avgDurationMs`` elsewhere in this module is a count-weighted mean of per-group means — exact as
+    a mean, and carrying no information whatever about a tail. A screen averaging 120 ms with a p95
+    of four seconds is broken for one request in twenty and reads as healthy in every other endpoint
+    here. That is why this is a separate statement and not a serializer change over what is already
+    fetched: ``percentile_cont`` is an ordered-set aggregate over the raw column, and there is
+    nothing stored anywhere from which it could be reconstructed afterwards.
+
+    SERVER TIME, LIKE EVERYTHING ELSE IN THIS MODULE. A p99 here is the ninety-ninth percentile of
+    what this API took, not of what anybody waited for; it excludes the network, the device and the
+    render. The response carries that sentence rather than leaving it to be assumed, because a
+    percentile reads as more authoritative than a mean and is misread in the same direction.
+
+    THE FLOOR APPLIES PER TEMPLATE, on the identity count from the same statement. A p99 over four
+    people is one of those four people's worst request.
+    """
+    since, until = _ensure_window(since, until)
+    wanted = _checked_templates(templates)
+    start, end = _sql_window(since, until)
+
+    rows = await db.query_raw(
+        """
+        SELECT
+          "routeTemplate"                                                       AS template,
+          COUNT(*)::int                                                         AS requests,
+          COUNT(DISTINCT "userId")::int                                         AS identified_users,
+          percentile_cont(0.5)  WITHIN GROUP (ORDER BY "durationMs")            AS p50,
+          percentile_cont(0.95) WITHIN GROUP (ORDER BY "durationMs")            AS p95,
+          percentile_cont(0.99) WITHIN GROUP (ORDER BY "durationMs")            AS p99,
+          MAX("durationMs")::int                                                AS max_ms
+        FROM "UsageEvent"
+        WHERE "routeTemplate" = ANY($1::text[])
+          AND "createdAt" >= $2::timestamp
+          AND "createdAt" <  $3::timestamp
+        GROUP BY 1
+        """,
+        wanted,
+        start,
+        end,
+    )
+
+    by_template = {str(row["template"]): row for row in rows}
+    metrics = ("requests", "identifiedUsers", "p50Ms", "p95Ms", "p99Ms", "maxDurationMs")
+    out: list[dict[str, Any]] = []
+    for name in wanted:
+        row = by_template.get(name)
+        if row is None:
+            # A screen with no traffic in the window, reported as such rather than omitted — the
+            # same rule `usage_for_routes` follows, and a real answer a data-driven list could not
+            # give. Every percentile is None because there is no distribution, which is not the same
+            # fact as a withheld one and must not be rendered as one.
+            out.append(
+                {
+                    "routeTemplate": name,
+                    "requests": 0,
+                    "identifiedUsers": 0,
+                    "withheld": False,
+                    "p50Ms": None,
+                    "p95Ms": None,
+                    "p99Ms": None,
+                    "maxDurationMs": None,
+                }
+            )
+            continue
+        entry = {
+            "routeTemplate": name,
+            "requests": int(row["requests"] or 0),
+            "identifiedUsers": int(row["identified_users"] or 0),
+            "withheld": False,
+            # Rounded to a whole millisecond, exactly as `_fold_status` rounds its mean and for the
+            # column's own stated reason: `durationMs` is an Int, and a percentile printed to three
+            # decimal places reads as far more exact than the thing it measured.
+            "p50Ms": _round_ms(row["p50"]),
+            "p95Ms": _round_ms(row["p95"]),
+            "p99Ms": _round_ms(row["p99"]),
+            "maxDurationMs": int(row["max_ms"] or 0),
+        }
+        people = entry["identifiedUsers"]
+        if 0 < people < MIN_IDENTIFIED_USERS_FOR_ROUTE:
+            entry = _withhold(entry, metrics, what="this screen in this period")
+        out.append(entry)
+
+    return {
+        "from": since,
+        "to": until,
+        "percentiles": [f"p{int(value * 100)}" for value in LATENCY_PERCENTILES],
+        "minimumIdentifiedUsers": MIN_IDENTIFIED_USERS_FOR_ROUTE,
+        "routes": out,
+    }
+
+
+def _round_ms(value: Any) -> int | None:
+    """A percentile as a whole millisecond, or None where Postgres had no rows to compute one."""
+    if value is None:
+        return None
+    return round(float(value))
+
+
+async def usage_clients(
+    templates: Sequence[str], since: datetime, until: datetime
+) -> dict[str, Any]:
+    """The web / android / api split over named screens.
+
+    **THE COLUMN HAS ALWAYS EXISTED AND IS ALWAYS ``api`` TODAY.** ``clientApp`` is written on every
+    row from the ``x-client-app`` header, :data:`CLIENT_APPS` lists the three values it accepts and
+    :data:`DEFAULT_CLIENT_APP` is what an unlabelled client records as — and as of 2026-08-30 neither
+    ``frontend/lib/api.ts`` nor the Android network layer sends the header. So this endpoint answers
+    honestly and the answer is currently "one client, and it did not say what it was".
+
+    THAT IS WORTH SHIPPING RATHER THAN WAITING FOR, and the response says why in its own words: the
+    schema's argument for the column is that "how do they navigate" has different answers on a laptop
+    and on a handset that runs offline for a fortnight at a time, and until the header is sent the
+    two are averaged into a designer who does not exist. An endpoint reporting 100% ``api`` is what
+    makes that gap visible to whoever can close it; a missing endpoint makes it invisible.
+
+    THE FLOOR APPLIES PER CLIENT ROW. If exactly three identified people used the Android app in the
+    window, "Android: 412 requests, 3 people" is a description of those three.
+    """
+    since, until = _ensure_window(since, until)
+    wanted = _checked_templates(templates)
+    start, end = _sql_window(since, until)
+
+    rows = await db.query_raw(
+        """
+        SELECT
+          "clientApp"                                                           AS client,
+          COUNT(*)::int                                                         AS requests,
+          COUNT(*) FILTER (WHERE "statusCode" < 400)::int                       AS ok,
+          COUNT(*) FILTER (WHERE "statusCode" >= 400 AND "statusCode" < 500)::int AS client_errors,
+          COUNT(*) FILTER (WHERE "statusCode" >= 500)::int                      AS server_errors,
+          COUNT(DISTINCT "userId")::int                                         AS identified_users,
+          AVG("durationMs")                                                     AS avg_ms
+        FROM "UsageEvent"
+        WHERE "routeTemplate" = ANY($1::text[])
+          AND "createdAt" >= $2::timestamp
+          AND "createdAt" <  $3::timestamp
+        GROUP BY 1
+        """,
+        wanted,
+        start,
+        end,
+    )
+
+    by_client = {str(row["client"]): row for row in rows}
+    metrics = (
+        "requests",
+        "ok",
+        "clientErrors",
+        "serverErrors",
+        "errorRate",
+        "identifiedUsers",
+        "avgDurationMs",
+    )
+    out: list[dict[str, Any]] = []
+    # Every known client is emitted whether or not it appears, in a fixed order, so a client with no
+    # traffic reads as a zero rather than as an absence — and so the shape of the answer does not
+    # change on the day the web layer starts sending the header. Anything stored outside the three
+    # (a hand-edited row, a value from a build that predates `normalise_client_app`) is appended
+    # rather than dropped: silently omitting a client would understate the total.
+    known = sorted(CLIENT_APPS)
+    for name in known + sorted(set(by_client) - set(known)):
+        row = by_client.get(name)
+        if row is None:
+            out.append(
+                {
+                    "clientApp": name,
+                    "requests": 0,
+                    "ok": 0,
+                    "clientErrors": 0,
+                    "serverErrors": 0,
+                    "errorRate": None,
+                    "identifiedUsers": 0,
+                    "avgDurationMs": None,
+                    "withheld": False,
+                }
+            )
+            continue
+        entry = {
+            "clientApp": name,
+            "requests": int(row["requests"] or 0),
+            "ok": int(row["ok"] or 0),
+            "clientErrors": int(row["client_errors"] or 0),
+            "serverErrors": int(row["server_errors"] or 0),
+            "errorRate": _error_rate(
+                row["requests"], row["client_errors"], row["server_errors"]
+            ),
+            "identifiedUsers": int(row["identified_users"] or 0),
+            "avgDurationMs": _round_ms(row["avg_ms"]),
+            "withheld": False,
+        }
+        people = entry["identifiedUsers"]
+        if 0 < people < MIN_IDENTIFIED_USERS_FOR_ROUTE:
+            entry = _withhold(entry, metrics, what="this client in this period")
+        out.append(entry)
+
+    return {
+        "from": since,
+        "to": until,
+        "templates": wanted,
+        "minimumIdentifiedUsers": MIN_IDENTIFIED_USERS_FOR_ROUTE,
+        "clients": out,
+    }
+
+
+# --------------------------------------------------------------------------------------
+# THE TRAIL: the one shape in this module that is a log rather than an aggregate
+#
+# Everything above answers "how often, how fast, how often broken" and cannot replay an afternoon.
+# This can. It is therefore the most sensitive read in the feature, and the gate is NOT here — see
+# ``routes/usage.py``, which owns it, on the house rule that this repository has twice shipped a UI
+# guard over an open endpoint. What THIS function owns is that it cannot be pointed at a set of
+# people: there is no "everybody" form and no filter, only one named account.
+# --------------------------------------------------------------------------------------
+
+
+async def trail_for_user(
+    user_id: str,
+    since: datetime,
+    until: datetime,
+    *,
+    limit: int = MAX_TRAIL_ROWS,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """One account's requests in the order they happened. Rides ``@@index([userId, createdAt])``.
+
+    **THE CALLER MUST ALREADY HAVE ESTABLISHED THAT IT MAY READ THIS ACCOUNT.** This function
+    authorises nothing; it is the query, not the gate — the same division
+    :func:`usage_for_user` states, and it matters more here because this shape is a log.
+
+    NO WITHHOLDING FLOOR, and its absence is not an oversight in either of the two ways this is
+    read. A floor exists to stop one person being picked out of a group, and there is no group here
+    at all: the subject is named in the URL. Applying one would mean refusing to show somebody their
+    own afternoon on the grounds that too few people were in it.
+
+    NEWEST FIRST, AND TIE-BROKEN ON ``id``. Two requests can share a millisecond — the timestamp is
+    stamped when the response finished and this API serves parallel requests — so ordering on
+    ``createdAt`` alone is not a total order, and a paged read over a non-total order silently skips
+    and repeats rows at the page boundary. The cuid is the tiebreaker because it is the only other
+    column guaranteed distinct.
+
+    IT RETURNS THE ``consentState`` OF EVERY ROW rather than folding it away, and that is deliberate
+    on the cross-account route: a trail whose rows say GRANTED is a trail collected under an
+    agreement, and a reader is entitled to see that on the rows rather than infer it from the
+    account's current answer — which may have been given after some of the rows were written.
+    """
+    since, until = _ensure_window(since, until)
+    if not user_id:
+        raise UsageRuleViolation(
+            "trail_for_user needs an account id; there is no 'everybody' form, and there is no "
+            "filter that would make one."
+        )
+    take = max(1, min(int(limit), MAX_TRAIL_ROWS))
+    skip = max(0, int(offset))
+
+    rows = await db.usageevent.find_many(
+        where={"userId": user_id, **_window_where(since, until)},
+        order=[{"createdAt": "desc"}, {"id": "desc"}],
+        take=take,
+        skip=skip,
+    )
+    return {
+        "userId": user_id,
+        "from": since,
+        "to": until,
+        "limit": take,
+        "offset": skip,
+        "maxRows": MAX_TRAIL_ROWS,
+        "events": [
+            {
+                "id": getattr(row, "id", None),
+                "routeTemplate": getattr(row, "routeTemplate", None),
+                "method": getattr(row, "method", None),
+                "statusCode": getattr(row, "statusCode", None),
+                "durationMs": getattr(row, "durationMs", None),
+                "clientApp": getattr(row, "clientApp", None),
+                "consentState": getattr(row, "consentState", None),
+                "at": _iso_or_none(getattr(row, "createdAt", None)),
+            }
+            for row in rows
+        ],
     }

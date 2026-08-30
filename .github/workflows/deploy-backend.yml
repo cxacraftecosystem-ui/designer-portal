@@ -147,9 +147,32 @@ jobs:
       #
       # WHY NOT THE ALTERNATIVES: GitHub publishes thousands of runner CIDRs and a security group
       # takes 60 rules, so the range cannot simply be allow-listed. `0.0.0.0/0` would trade a travel
-      # problem for a permanently exposed port. SSM Session Manager removes inbound SSH entirely and
-      # is the better end state, but it needs an instance profile and an agent on a box that is
-      # currently serving traffic — a migration, not a workflow edit.
+      # problem for a permanently exposed port.
+      #
+      # ─── THE PARAGRAPH THAT USED TO END HERE HAS BEEN OVERTAKEN BY EVENTS ────────────────────
+      #
+      # It read: "SSM Session Manager removes inbound SSH entirely and is the better end state, but
+      # it needs an instance profile and an agent on a box that is currently serving traffic — a
+      # migration, not a workflow edit." The first half was right and the second half was wrong, so
+      # it is corrected rather than deleted: attaching an instance profile is an IN-PLACE update on
+      # a running instance, and the SSM agent ships already running in the Ubuntu 24.04 AMI. It was
+      # done on 2026-08-30 with no downtime and no reboot — `designrepo-ssm`, declared in
+      # `infra/terraform/main.tf` — and `aws ssm start-session --target i-0e091ca8e6b417b52` now
+      # opens a shell on the box from any network.
+      #
+      # THE STATIC PORT-22 RULE WAS THEN DELETED FROM THE SECURITY GROUP, which is what makes this
+      # step load-bearing rather than belt-and-braces. There is no standing SSH access to this box
+      # for anybody; this window, opened for one runner and revoked in the `if: always()` step
+      # below, is the ONLY time port 22 is open at all. If that step is ever removed or allowed to
+      # fail silently, the group keeps a live rule for a machine that no longer exists.
+      #
+      # THIS JOB WAS NOT MIGRATED TO SSM ALONGSIDE IT, AND THAT IS A DECISION RATHER THAN AN
+      # OVERSIGHT. `rsync` and the piped `.env` write both want a real SSH transport; doing them
+      # over SSM means either `AWS-StartSSHSession` as a ProxyCommand — which still needs the deploy
+      # key, and buys nothing once the window is already narrow and self-revoking — or rewriting the
+      # sync as an S3 round trip, which is a larger change to the one workflow that must not break.
+      # The window is 60 seconds of a /32 that AWS itself reported; SSM's advantage over it is
+      # marginal, whereas SSM's advantage over a pinned HOME address was the whole point.
       - name: Open the deploy window for this runner
         id: sgwindow
         env:

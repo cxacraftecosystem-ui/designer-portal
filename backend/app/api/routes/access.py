@@ -24,6 +24,26 @@ delete the joining date, the attempt history and the name of the admin who appro
 because the gate treats a missing row as PENDING, would silently put the person back in the queue
 they were removed from.
 
+**BARRING SOMEBODY HERE ALSO ENDS THEIR EMPANELMENT; LETTING THEM BACK IN DOES NOT RESTORE IT.**
+Both barring endpoints — the ``DELETE`` and the REJECT arm of the decision — call
+``app.services.access_roster.mirror_suspension``, which is the ONE place either roster's revocation
+reaches the other. The approving paths deliberately call nothing of the sort: reviving a suspended
+empanelment from this screen would undo an administrator's revocation as a side effect of an
+unrelated readmission, which is the rule ``app.services.designers.ensure_empanelled`` is built
+around. The consequence an admin has to be shown is that a bar-and-unbar round trip leaves the
+person's empanelment ended — see the mirror's own docstring, and the client work named with it.
+
+**AND BOTH OF THEM MIRROR ON THE ACT OF BARRING SOMEBODY, NEVER ON A BAR THAT ALREADY STANDS.**
+``AccessStatus`` has two barred states, so an administrator can re-decide a row that is already
+refusing somebody — REJECT over a rejection, or DELETE over one — and neither of those clicks ends
+anybody's access, because it ended when the first one did. Mirroring them would re-enact a
+consequence for a standing that has not moved, and the one thing standing in the way is an
+empanelment an administrator deliberately restored on ``/admin/designers`` in the meantime, which is
+the single kind of act this product allows to give a standing back. Each endpoint's guard is argued
+at the call site. Pairs left disagreeing before the mirror existed are NOT repaired by clicking
+either button again — the click cannot tell such a pair from a restored one — and belong to
+``scripts/backfill_roster_suspension_mirror.py``, where a human reads the plan first.
+
 **NOTHING HERE MAY BE THE ONLY WAY BACK IN.** These endpoints are how a locked-out institution is
 unlocked, which is why the master admin is exempt from the gate in ``auth.py`` rather than by a row
 in this table. An exemption stored in the table the gate reads is not an exemption; it is one bad
@@ -61,7 +81,12 @@ from app.core.deps import (
 from app.schemas.access_roster import AccessDecision, AccessRosterCreate, AccessRosterUpdate
 from app.services import access_roster
 from app.services.access_roster import access_payload, normalise_email
-from app.services.designers import canonical_email, email_match_keys, ensure_empanelled
+from app.services.designers import (
+    adopt_allow_list_name,
+    canonical_email,
+    email_match_keys,
+    ensure_empanelled,
+)
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_filters import enum_filter_list_or_422
 from app.services.records import add_date_range, contains, count_and_page, enum_filter_or_422
@@ -425,12 +450,26 @@ async def decide_access_request(
 
     Approving a SUSPENDED row is how access is restored, and ``joinedAt`` is not moved by it: a
     person who joined in 2024, lost access and was let back in has still been here since 2024.
+
+    **AND REJECTING ENDS THE EMPANELMENT THAT ADMISSION CARRIED, WHILE APPROVING RESTORES NOTHING.**
+    The REJECT arm is one of the two doors on this screen that bar somebody, so it calls
+    ``app.services.access_roster.mirror_suspension`` exactly as ``DELETE`` does; the APPROVE arm
+    calls no such thing, because reviving a suspended empanelment from here would undo an
+    administrator's revocation as a side effect of an unrelated readmission. Only the first REJECT
+    mirrors — see the comment on the guard, which is the same "on the transition, never on
+    restating it" rule the other two barring endpoints apply.
     """
     row = await db.accessroster.find_unique(where={"id": row_id})
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
 
     if payload.decision == "REJECT":
+        # READ BEFORE THE WRITE, because the write is what destroys the answer: after it the row
+        # says REJECTED whatever it said a moment ago, so the same test made afterwards could only
+        # ever answer "already barred" and the mirror below would never run for anybody. This is the
+        # ``row.isActive`` versus ``updated.isActive`` reading that ``designers.update_roster_entry``
+        # spells out on the other roster, on this table's column.
+        was_barred = access_roster.status_of(row) in access_roster.BARRED
         updated = await db.accessroster.update(
             where={"id": row_id},
             data={
@@ -440,6 +479,48 @@ async def decide_access_request(
                 **({"notes": _clean(payload.notes)} if payload.notes is not None else {}),
             },
         )
+        # ── THE MIRROR RUNS ON THE ACT OF BARRING SOMEBODY, NEVER ON RESTATING A BAR THAT STANDS ──
+        #
+        # REJECTED is one of the two barred states (``access_roster.BARRED``), so a rejection ends
+        # this address's access to the application exactly as a suspension does, and the empanelment
+        # goes with it: an ACTIVE designer row left standing behind a refusal is somebody
+        # ``/designers/directory`` and the workshop pickers go on offering as a person to hand a
+        # fortnight of fieldwork to. ``updated.email`` and not the request body, for the reason
+        # :func:`_empanel_an_admitted_designer` states — the stored address is what both rosters are
+        # keyed on.
+        #
+        # **GUARDED ON THE TRANSITION, WHICH IS THE RULE THE DESIGNER ROSTER'S TWO DOORS ALREADY
+        # STATED AND WHICH THIS SCREEN'S TWO WERE MISSING.** ``designers.update_roster_entry``
+        # mirrors only where ``isActive`` actually went from true to false, and
+        # ``designers.suspend_roster_entry`` returns early on a row already suspended; both say in so
+        # many words that the mirror belongs to the moment somebody's standing ENDS. Neither arm of
+        # this module said it — :func:`suspend_access_entry` below returns early on an ALREADY
+        # SUSPENDED row, which reads like the same rule and is not: it is a decision about whether to
+        # WRITE, it cannot see a REJECTED row, and this arm had nothing at all. Unguarded, the
+        # exception had teeth: an administrator who rejects a designer (the empanelment is
+        # suspended by the mirror), then deliberately restores that empanelment on
+        # ``/admin/designers`` — a separate decision, and the only kind of act this product lets
+        # grant a standing back — would have it silently ended again by a second click on REJECT,
+        # against a row that was already rejected and about which nothing had changed. That is
+        # exactly the restoration-undone failure the early return next door was written to prevent,
+        # arriving through the queue's door instead of the roster screen's.
+        #
+        # **SUSPENDED → REJECTED IS ALSO NOT A TRANSITION FOR THIS PURPOSE**, and testing the whole
+        # ``BARRED`` set rather than REJECTED alone is deliberate rather than incidental. The person
+        # lost their access when they were suspended, the mirror ran then, and an admin re-recording
+        # WHICH of the two refusals it was is correcting the record — not barring anybody who was
+        # not already barred. Mirroring it would re-enact a consequence for a standing that has not
+        # moved, which is the same defect in a narrower form.
+        #
+        # WHAT THIS DELIBERATELY DOES NOT DO IS REPAIR A PAIR LEFT DISAGREEING BEFORE THE MIRROR
+        # EXISTED. A rejected row whose empanelment is still active is not fixed by clicking REJECT
+        # again, and must not be: that click cannot tell the un-mirrored pair from the pair an
+        # administrator restored on purpose. ``scripts/backfill_roster_suspension_mirror.py`` is the
+        # repair, where a human reads the plan before anything is written.
+        if not was_barred:
+            await access_roster.mirror_suspension(
+                updated.email, access_roster.MIRROR_ACCESS_REJECTED, actor_id=current_user.id
+            )
         return access_payload(updated)
 
     assert_role(payload.role, current_user)
@@ -501,11 +582,31 @@ async def suspend_access_entry(
     almost always means for a pending row, so the clients send the decision endpoint for that; this
     arm exists so that whichever one is called, nothing is deleted and the row keeps saying
     something true.
+
+    **IT ALSO ENDS THE EMPANELMENT — BUT ONLY WHERE THIS CLICK IS WHAT ENDED THE ACCESS.** The
+    mirror runs on the transition into being barred, never on a row that was barred already: a
+    second click on an already-suspended row returns early before anything is written, and a
+    REJECTED row moved to SUSPENDED writes but does not mirror, because the person lost their
+    access when they were rejected. See the two comments in the body, and the same rule stated at
+    the REJECT arm of :func:`decide_access_request`.
     """
     row = await db.accessroster.find_unique(where={"id": row_id})
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    # READ BEFORE THE WRITE, AND ASKING ABOUT THE PAIR RATHER THAN ABOUT THIS ONE STATE — see the
+    # block on the mirror below, which is the only thing this answer is used for. The early return
+    # underneath decides something different (whether to write at all) and deliberately keeps its
+    # narrower test.
+    was_barred = access_roster.status_of(row) in access_roster.BARRED
     if access_roster.status_of(row) == access_roster.SUSPENDED:
+        # ALREADY SUSPENDED IS A NO-OP INCLUDING FOR THE MIRROR, AND THAT IS DELIBERATE RATHER THAN
+        # AN EARLY RETURN NOBODY REVISITED. Mirroring here would make a second click on this button
+        # DO something: an administrator who barred somebody, then deliberately restored their
+        # empanelment on the designer roster while leaving them barred here, would have that
+        # restoration silently undone by a stray click on a row that was already suspended. The
+        # mirror belongs to the TRANSITION — the moment somebody's access actually ends — and pairs
+        # that were left disagreeing before this feature existed are repaired by
+        # ``scripts/backfill_roster_suspension_mirror.py``, where a human reads the plan first.
         return access_payload(row)
     updated = await db.accessroster.update(
         where={"id": row_id},
@@ -515,6 +616,28 @@ async def suspend_access_entry(
             "decidedById": row.decidedById or current_user.id,
         },
     )
+    # AND THE EMPANELMENT GOES WITH THE ACCESS. Barring an address from the application is strictly
+    # wider than ending an empanelment, so there is no state in which an ACTIVE designer-roster row
+    # still means anything afterwards — it would sit on ``/admin/designers`` saying the institution
+    # recognises a practising designer who cannot sign in, and feed them to the workshop pickers.
+    # This direction needs no guard on WHO it may bar, for that reason; the reverse one does. See
+    # :func:`app.services.access_roster.mirror_suspension`.
+    #
+    # **IT DOES NEED THE GUARD ON WHETHER ANY ACCESS ACTUALLY ENDED HERE, AND THE EARLY RETURN ABOVE
+    # IS NOT THAT GUARD.** That return covers SUSPENDED → SUSPENDED, where there is nothing to write
+    # at all. The state it cannot cover is REJECTED → SUSPENDED, which is a real write — the row
+    # genuinely changes which of the two refusals it records — reached by an administrator pressing
+    # this button on a row the decision endpoint had already rejected. The person was ALREADY barred
+    # before that click, so no access of theirs ended in it, and mirroring would re-enact a
+    # consequence for a standing that has not moved: an empanelment the administrator deliberately
+    # restored in the meantime, ended a second time from a screen about platform access, with the
+    # note deduped so that ``isActive`` flipping back is the only trace anywhere. Same rule, same
+    # sentence, as the REJECT arm of :func:`decide_access_request` — one rule, now enforced at both
+    # of this screen's barring doors rather than at whichever one happens to return early.
+    if not was_barred:
+        await access_roster.mirror_suspension(
+            updated.email, access_roster.MIRROR_ACCESS_SUSPENDED, actor_id=current_user.id
+        )
     return access_payload(updated)
 
 
@@ -554,17 +677,38 @@ async def _empanel_an_admitted_designer(row: Any, actor_id: str | None) -> None:
     as an admission for anybody whose allow-list row is missing or PENDING: changing a dropdown
     would have approved somebody, through a second table, with no decision recorded anywhere. On a
     REJECTED or SUSPENDED row the same edit does not let them in — neither state is "waiting" — but
-    it does put an active empanelment on ``/admin/designers`` for somebody an administrator barred,
-    and nothing downstream ever corrects it, because suspending an allow-list row does not suspend
-    an empanelment. ``status_of`` and ``role_of`` rather than the raw attributes for their own
-    documented reason: Prisma returns an enum member on a live row and a bare string on a hand-built
-    one, and ``==`` answers False for the first of those — a comparison that fails OPEN here.
+    it does put an active empanelment on ``/admin/designers`` for somebody an administrator barred.
+    (This paragraph used to end *"and nothing downstream ever corrects it, because suspending an
+    allow-list row does not suspend an empanelment"*. The second half of that is no longer true —
+    :func:`app.services.access_roster.mirror_suspension` now suspends the empanelment when the
+    allow-list row is suspended or rejected — but the FIRST half still is, and it is why this test
+    stays: the mirror runs on the act of barring somebody, so an empanelment created by an edit
+    AFTERWARDS is written to a table nothing will look at again.) ``status_of`` and ``role_of``
+    rather than the raw attributes for their own documented reason: Prisma returns an enum member on
+    a live row and a bare string on a hand-built one, and ``==`` answers False for the first of
+    those — a comparison that fails OPEN here.
 
-    **IT ONLY EVER CREATES.** :func:`ensure_empanelled` will not revive a suspended roster row, and
-    nothing here suspends one either: barring an address from the application is not the same
-    decision as withdrawing an empanelment, which is exactly why ``auth.py`` keeps the two refusals
-    in two distinct sentences. An admin who means to end an empanelment does it on the designer
-    roster, where the act is visible on the screen that records it.
+    **IT ONLY EVER CREATES, AND THAT IS UNCHANGED BY THE MIRROR ARRIVING NEXT DOOR.**
+    :func:`ensure_empanelled` will not revive a suspended roster row, and nothing on THIS path
+    suspends one either: an ADMISSION is what this function is about, and admitting somebody is not
+    an act that ends anything. Ending an empanelment because the allow-list barred the address is
+    :func:`app.services.access_roster.mirror_suspension`, called from the two endpoints above that
+    actually bar somebody (``DELETE`` and the REJECT arm of the decision) — never from here, where
+    the only thing that has happened is that an administrator let somebody in.
+
+    **AND IT CARRIES THE NAME ACROSS, IN BOTH ORDERS OF EVENTS.** The empanelled row is created with
+    the allow-list's ``fullName`` by :func:`ensure_empanelled` itself, so a designer admitted with a
+    name recorded appears on ``/admin/designers`` as that name from the first moment. What this
+    function adds is the other order: a row that was ALREADY empanelled, whose name an admin typed
+    here afterwards. ``/admin/designers`` used to keep showing a bare email address in that case,
+    for the life of the row, with the name sitting in plain sight on the neighbouring screen —
+    which is what made the derived empanelments look half-registered next to hand-typed ones.
+
+    :func:`adopt_allow_list_name` FILLS AND NEVER OVERWRITES, which is what makes it safe to call on
+    every edit: a name an administrator typed on the designer roster itself is that screen's own
+    record and is left exactly as it is. It is called only when ``ensure_empanelled`` reports it did
+    NOT create the row, because on the create path the name has already been carried by the same
+    read and a second lookup would answer with what was just written.
     """
     if access_roster.status_of(row) != access_roster.ACTIVE:
         return
@@ -572,7 +716,11 @@ async def _empanel_an_admitted_designer(row: Any, actor_id: str | None) -> None:
         return
     # The acting admin, and not None as on the sign-in path: an administrator really did take this
     # action, and ``addedById`` is how the roster screen says who.
-    await ensure_empanelled(getattr(row, "email", None), actor_id=actor_id)
+    created = await ensure_empanelled(getattr(row, "email", None), actor_id=actor_id)
+    if not created:
+        # The row was already there. See the paragraph above: this is the only path on which a name
+        # typed AFTER the empanelment can reach the designer roster, and it cannot overwrite one.
+        await adopt_allow_list_name(getattr(row, "email", None), getattr(row, "fullName", None))
 
 
 async def _lift_existing_account(email: str, role: str) -> None:

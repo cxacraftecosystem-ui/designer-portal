@@ -23,11 +23,33 @@
  *   Alhasan Systems Pakistan admin boundaries (Pakistan-occupied Kashmir) and Natural Earth's
  *   disputed-areas layer (the Shaksgam Valley), dissolved into one polygon set.
  *
- * LICENCE
- *   The dataset's own README states CC-0 for this file; the repository README states CC BY 4.0
- *   for anything not explicitly licensed. Attribution costs nothing and satisfies both readings,
- *   so it is rendered on the page — see ATTRIBUTION below, which is displayed as visible text
- *   beside the map and must not be removed.
+ * LICENCE — CC-0, AND THAT IS WHY NOTHING ON THE PAGE CREDITS IT ANY MORE
+ *   The DATASET'S OWN README states CC-0 for `Country/india-composite.geojson`. The REPOSITORY
+ *   README states CC BY 4.0 "for anything not explicitly licensed" — and a file-level declaration
+ *   IS explicit licensing, so that blanket clause does not reach this file. CC-0 waives
+ *   attribution outright. There is no obligation to discharge.
+ *
+ *   THE VISIBLE CREDIT IS GONE, REMOVED BY DIRECTION ON 2026-08-30. It had a long life: declared,
+ *   exported and rendered nowhere for several releases; then a `<figcaption>` under the printing
+ *   bed's map; then the landing page's footer colophon when that caption was removed. Each of
+ *   those moves was made on the belt-and-braces reasoning that "attribution costs nothing and
+ *   satisfies both readings", which was a reasonable call and never a legal necessity. Asked to
+ *   remove it, the question became which reading is actually correct — and the file-level CC-0
+ *   above is the answer.
+ *
+ *   ⚠ THE PROVENANCE STAYS HERE, AND A COMMENT IS THE RIGHT HOME FOR IT ONLY BECAUSE THE
+ *   OBLIGATION IS GONE. The older note in this spot said a source comment "is stripped by the
+ *   build and reaches no visitor" and so could never stand in for the credit. That was correct
+ *   while an obligation existed and is quoted so nobody re-derives it as an objection: what a
+ *   comment cannot do is DISCHARGE a licence, and it is not being asked to. What it can do — say
+ *   where this geometry came from, how it was assembled, and on what basis it is used without a
+ *   credit — is exactly what an audit trail is for.
+ *
+ *   ⚠ IF THE PATH IS EVER REPLACED, RE-DECIDE THIS FIRST. Everything above rests on ONE fact about
+ *   ONE file. Geometry from a CC BY, ODbL or share-alike source brings the visible credit straight
+ *   back, as TEXT ON THE PAGE, because §3(a)(1) requires attribution to reach the recipient and no
+ *   comment ever will. The credit is not a styling decision either way — see the note in
+ *   `HeroLanding.tsx`'s footer, which says the same thing where the notice used to render.
  *
  * VERIFICATION — measured, not assumed
  *   Checks were run twice: once on the 252,604-point source, and again on the 1321-point
@@ -52,21 +74,27 @@
  *   path, not dropped from it.
  *
  * PROJECTION
- *   Web Mercator, normalised so the bounding box above fills `0 0 100 113.68`. Site marks are
- *   projected with the identical transform, so a mark can never drift from the coastline it sits on.
+ *   Web Mercator, normalised so the bounding box above fills `0 0 100 113.68`. This used to end
+ *   "site marks are projected with the identical transform, so a mark can never drift from the
+ *   coastline it sits on" — there are no site marks any more (see below). If one is ever added
+ *   back, that rule comes back with it: project it through this same transform and never by eye.
  *
  * SIZE
  *   11,181 characters of path data, 1321 points. Inline, so there is no runtime map
  *   dependency, no tiles, and no network request for the page's signature graphic.
  */
 
-/** Visible credit. Rendered beside the map; removing it breaks the CC BY reading of the licence. */
-export const INDIA_OUTLINE_ATTRIBUTION = {
-  text: "Boundary: DataMeet India community",
-  href: "https://github.com/datameet/maps/blob/master/Country/india-composite.geojson",
-  licence: "CC BY 4.0",
-  licenceHref: "https://creativecommons.org/licenses/by/4.0/"
-} as const;
+/*
+ * `INDIA_OUTLINE_ATTRIBUTION` USED TO BE DECLARED HERE AND IS DELETED RATHER THAN LEFT UNEXPORTED.
+ *
+ * It held the credit's four strings and had exactly one importer, the landing page's footer. With
+ * the notice removed (see LICENCE above — the file is CC-0 and the obligation does not exist), a
+ * constant nothing renders is precisely the "declared, exported and rendered nowhere" state this
+ * module's history warns about twice, and leaving it would invite a future reader to wire it back
+ * up on the assumption that its absence from the page was an oversight.
+ *
+ * The source URL it carried is not lost: it is in the SOURCE block above, where provenance belongs.
+ */
 
 export const INDIA_VIEWBOX = "0 0 100 113.68";
 export const INDIA_WIDTH = 100;
@@ -192,32 +220,24 @@ export const INDIA_PATH =
   "2.5ZM18.8 102L18.8 101.9L18.8 102ZM14.1 99.2Z";
 
 /**
- * The field sites, at their true coordinates in the projection above.
+ * THE FIELD SITES USED TO LIVE HERE, AND THEY WERE DELETED RATHER THAN LEFT EXPORTED.
  *
- * `status` is the honest part and the reason this is data rather than four hardcoded circles.
- * There is ONE workshop in the repository today. The other three are stated as next, and the map
- * must not imply four active sites — an unqualified dot on each would do exactly that. The one
- * live site is printed; the three that are next are drawn as blocks that have not come down.
+ * `FieldSite`, `LIVE_SITE` (Bagru) and `NEXT_SITES` (Dehradun, Jammu, Akola) fed four marks on the
+ * printing bed: one gold impression for the workshop that exists, three empty registration targets
+ * for the ones that do not yet. The marks were removed by direction, and this data went with them
+ * in the same change on purpose. Keeping it would have recreated, exactly, the condition this
+ * module and `PrintingBed.tsx` both record as having shipped for several releases — coordinates
+ * and place names declared, exported, described at length in a comment, and imported by nothing.
+ * Data nobody renders is not documentation; it is a claim with no reader and no expiry.
+ *
+ * ⚠ IF SITE MARKS COME BACK, THE HONESTY RULE COMES BACK WITH THEM AND IT IS NOT OPTIONAL. There
+ * is ONE workshop in this repository today. Four identical dots would say there are four, in
+ * graphics, which is the one thing this drawing is not allowed to do; the live site is printed and
+ * the others are drawn as blocks that have not come down. Project every coordinate through the
+ * transform described above, and give the names a home in real text beside the map — the SVG is
+ * `role="img"` with a single name, and its `.fr-map-label` text is withheld under 640px, so a mark
+ * drawn without accompanying prose is a mark that most readers are never told about.
  */
-export type FieldSite = {
-  id: string;
-  name: string;
-  region: string;
-  /** Projected into INDIA_VIEWBOX by the same transform as INDIA_PATH. */
-  x: number;
-  y: number;
-  lon: number;
-  lat: number;
-};
-
-export const LIVE_SITE: FieldSite =
-  { id: "bagru", name: "Bagru", region: "Rajasthan", x: 25.25, y: 41.57, lon: 75.5457, lat: 26.8129 };
-
-export const NEXT_SITES: readonly FieldSite[] = [
-  { id: "dehradun", name: "Dehradun", region: "Uttarakhand", x: 33.76, y: 27.92, lon: 78.0322, lat: 30.3165 },
-  { id: "jammu", name: "Jammu", region: "Jammu & Kashmir", x: 22.9, y: 18.24, lon: 74.857, lat: 32.7266 },
-  { id: "akola", name: "Akola", region: "Maharashtra", x: 30.25, y: 64.43, lon: 77.0082, lat: 20.7002 }
-];
 
 /**
  * Which cells of the printing grid the cloth actually needs.

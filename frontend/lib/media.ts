@@ -4,7 +4,8 @@ import { API_BASE, ApiError, apiFetch, getToken, listResource, type ApiFetchOpti
 // is DECLARED there rather than here so the classification can read its `status`: an S3 403 or 413
 // used to reach the outbox drain as an unrecognised error, default to "the connection is at fault",
 // and be re-thrown for ever under "Still no connection" — the whole jam, through the storage leg.
-import { LocalRefusalError, StorageError, triageFailure } from "@/lib/failureTriage";
+import { LocalRefusalError, StorageError, triageFailure, underlyingError } from "@/lib/failureTriage";
+import { bytes } from "@/lib/format";
 import type { MediaFile, MediaType } from "@/lib/types";
 
 /**
@@ -336,9 +337,43 @@ const SAFE_RETRY_ATTEMPTS = 4;
 
 /**
  * Files at/under this size go up as one PUT; larger ones switch to an S3 multipart upload that the
- * server stitches back into a single object. 64 MiB matches Android's `MULTIPART_THRESHOLD`.
+ * server stitches back into a single object.
+ *
+ * ── WHY THIS IS ONE PART'S WORTH OF BYTES, AND WAS 64 MiB UNTIL 2026-08-30 ──────────────────────
+ *
+ * THE TWO LEGS ARE SIGNED ON COMPLETELY DIFFERENT BUDGETS, and the old threshold ignored that.
+ * `presign_put_url` signs a whole-file PUT for **900 seconds** (`backend/app/services/s3.py:204`);
+ * `presign_upload_part` signs each part for **3600** (`:266`). So the single PUT is the leg with a
+ * quarter of the time, and — until this change — the leg carrying the biggest files.
+ *
+ * What that cost. A 40 MB loom video uploaded from a browser on a field connection at ~30 kB/s needs
+ * about 22 minutes on the wire. Its signature dies at 15, S3 answers 403, and the transfer is thrown
+ * away whole — THERE IS NO RESUMING A SINGLE PUT. `uploadWhole` then mints another 900-second
+ * signature, sends the same 40 MB from byte zero, and dies at exactly the same place; three attempts
+ * later the file is reported failed. That is not a slow upload, it is a file that **can never be
+ * sent at all** — and the retry loop is what disguised it, because a fresh presign per attempt looks
+ * like the signature window is handled right up until one transfer is longer than the window itself.
+ *
+ * `MULTIPART_PART_SIZE` on the server is 16 MiB (`backend/app/api/routes/media.py:85`), so this is
+ * the honest statement of the rule rather than a guess about link speed: **a file bigger than one
+ * part is sent as parts.** Above it every chunk is separately signed, separately retried and — on a
+ * 403 — separately RE-signed mid-upload (see `sendPart`), so a signature expiring costs one 16 MiB
+ * part instead of the whole video. Below it nothing changes: a 12-megapixel photograph is 3-6 MB and
+ * takes the identical path it took before, so the files that move are exactly the ones that failed.
+ *
+ * WHAT LOWERING IT COSTS, STATED SO NOBODY HAS TO REDERIVE IT: files between 16 and 64 MiB now try
+ * multipart first, so on a bucket whose CORS rule omits `ExposeHeaders: ["ETag"]` they take the
+ * `EtagUnavailableError` fallback — one aborted multipart, then the same single PUT they used to do
+ * directly. That is bounded at one part, by construction: `uploadInParts` probes part 1 alone before
+ * fanning out precisely so this is discovered after 16 MiB rather than after 400 MB, and the abort
+ * leaves no billable parts behind. See {@link multipartAvailable}, which then holds for the session.
+ *
+ * KEEP IN STEP WITH Android's `MULTIPART_THRESHOLD` in `data/WorkshopRepository.kt`, whose KDoc
+ * names this constant. The two clients disagreeing does not break either of them, but it means a
+ * video that uploads from the phone and fails from the browser has no explanation that reads the
+ * same on both.
  */
-export const MULTIPART_THRESHOLD = 64 * 1024 * 1024;
+export const MULTIPART_THRESHOLD = 16 * 1024 * 1024;
 const PART_CONCURRENCY = 3;
 const PART_MAX_ATTEMPTS = 3;
 
@@ -501,6 +536,403 @@ async function apiRetry<T>(
   throw lastError;
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * "Object storage upload failed: network error" — the sentence that could not be true
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * WHAT A BROWSER IS ALLOWED TO KNOW WHEN A PUT TO THE BUCKET FAILS, AND WHAT IT IS NOT.
+ *
+ * ── THE INCIDENT ────────────────────────────────────────────────────────────────────────────────
+ *
+ * The media bucket's CORS rule was written in `infra/terraform/main.tf` and never applied to the
+ * deployed bucket, so `OPTIONS <bucket>/<key>` carrying `Access-Control-Request-Method: PUT`
+ * answered 403 and EVERY upload from the web client died in `xhr.onerror`. What a designer read was
+ *
+ *     Upload failed — Object storage upload failed: network error
+ *
+ * on each tile, and, when a whole batch was lost, "Check your internet connection and try again —
+ * the record was saved, so re-open it and re-attach the media."
+ *
+ * Both sentences were false, and false in the most expensive direction available. The connection was
+ * fine — the API leg of the same upload had answered seconds earlier, from the same page, over the
+ * same link. So the advice sent people out of a workshop to hunt for signal they already had, told
+ * them to re-open a record and do the identical thing again, and pointed nobody at the one setting
+ * that was actually wrong. A configuration fault wearing an offline message is not a cosmetic defect:
+ * it is the difference between an afternoon lost and a one-line change to a bucket.
+ *
+ * ── WHY THE OLD SENTENCE COULD NOT BE FIXED WHERE IT WAS WRITTEN ────────────────────────────────
+ *
+ * `xhr.onerror` fires with `xhr.status === 0`, `getAllResponseHeaders()` empty and no body — for a
+ * blocked preflight, a blocked response, a DNS failure, a pulled cable and a TLS failure ALIKE. That
+ * is the platform working as designed (telling a page why a cross-origin request was refused is
+ * itself the information leak CORS exists to prevent), so no amount of inspecting the XHR will ever
+ * separate them. "network error" was therefore never a wording bug. It was a guess printed as a fact,
+ * and the honest replacement for a guess is not a better guess — it is naming both possibilities and
+ * the one observation a person can make to decide between them.
+ *
+ * ── THE THREE THINGS THAT ARE ACTUALLY KNOWABLE, WHICH IS ALL THIS SECTION SPENDS ───────────────
+ *
+ * 1. WHETHER ANY BYTES LEFT THE DEVICE. A refused preflight fails before the request body is ever
+ *    sent, so `xhr.upload.onprogress` never fires once; a connection that dies mid-transfer fires it
+ *    first. One boolean, zero requests, and when it is TRUE it exonerates the bucket outright — S3
+ *    does not take four megabytes of a body it was going to refuse cross-origin.
+ * 2. WHICH HOST AND WHICH PAGE. `new URL(uploadUrl).origin` is the bucket the presign signed against
+ *    and `location.origin` is the site being refused. Both are already in hand at the instant of
+ *    failure, so the message can NAME the two ends of the rule that is missing. See
+ *    {@link probeTargetFor} for why nothing had to be added to the presign response to get them.
+ * 3. WHETHER THAT HOST ANSWERS THIS SITE AT ALL. Measurable, cheaply, decisively, and only from a
+ *    browser — {@link measureStorageReach}.
+ *
+ * NOTHING ELSE IS INVENTED. `navigator.onLine` is deliberately not consulted: it reports whether the
+ * device has a link, not whether anything is reachable over it, and a captive portal or a dead uplink
+ * both report true. Timing is deliberately not used either — a refused preflight and a connection
+ * refused by a firewall both fail in single-digit milliseconds, so a threshold there would be the
+ * next guess printed as a fact.
+ */
+
+/**
+ * What {@link measureStorageReach} can establish. Four states, and each maps to one sentence that is
+ * true of it — there is no arm here that means "probably".
+ */
+export type StorageReach =
+  /** Not measured: no probe ran, or none could. The message keeps the honest either/or. */
+  | "unmeasured"
+  /** Not even an opaque response came back. This device has no route to the bucket's host. */
+  | "no-route"
+  /** The host answered the opaque probe and refused the readable one: no CORS rule covers this site. */
+  | "site-refused"
+  /** The host answered BOTH: reads from this site are allowed, so it is neither headline cause. */
+  | "reads-allowed";
+
+/** Everything the transport failure knows about itself, and the whole input to its sentence. */
+export type StorageTransportFacts = {
+  /** Fact 1 above. True once a single byte of the body has reached the socket. */
+  bytesMoved: boolean;
+  sentBytes: number;
+  totalBytes: number;
+  /** Fact 2: the bucket's origin, e.g. `https://s3.dualstack.ap-south-1.amazonaws.com`. */
+  bucketOrigin: string | null;
+  /** Fact 2: the origin being refused, e.g. `https://designer-repository.vercel.app`. */
+  pageOrigin: string | null;
+  /** Fact 3, once measured. */
+  reach: StorageReach;
+};
+
+/**
+ * A PUT that produced no HTTP answer at all — `xhr.onerror`, the one failure a browser is forbidden
+ * to explain — carrying the facts above so that the sentence, and every reading of it downstream, is
+ * true of what actually happened.
+ *
+ * ── IT EXTENDS `StorageError` WITH A NULL STATUS, AND THAT IS LOAD-BEARING RATHER THAN TIDY ─────
+ *
+ * `kindForStorage` in `lib/failureTriage.ts` sorts a `StorageError` whose `status` is null to kind
+ * `unreachable`, whose row is `retry: "connection"` and `drain: "stop-and-keep"`: nothing was decided
+ * about the object, so NOTHING MAY BE MARKED and the bytes stay the designer's. Every keep-the-work
+ * path in this client hangs off that one verdict — the outbox drain leaves the entry queued rather
+ * than recording a failure against it, and `components/designworkshop/FieldInput.tsx` asks
+ * `isTransient` and answers a true by writing the captured photographs into the local draft store.
+ *
+ * A SUBCLASS IS STILL `instanceof StorageError`, so all of that goes on holding, unchanged and
+ * unre-tested. Had this been a new error type of its own it would have fallen to the classifier's
+ * default (which is also `unreachable`, but by accident rather than by declaration); had it carried a
+ * fabricated status to make itself read as `refused` — tempting, because a bucket refusing this site
+ * IS a refusal in plain English — the drains would have begun recording failures against photographs
+ * and `FieldInput` would have stopped staging them. A cross-origin misconfiguration would have
+ * started DELETING captures. The classification is therefore deliberately left exactly as it was.
+ *
+ * WHAT WAS WRONG WAS NEVER THE RETRY POLICY. `unreachable` is the honest kind: no server decided
+ * anything about this object, and keeping the work is right whichever of the two causes it turns out
+ * to be. What was wrong was `ScreenAction: "say-offline"` being read as licence to blame a connection
+ * that was demonstrably working. That is a SENTENCE defect, so it is fixed here, where the facts are,
+ * and not by adding a seventh kind to a table this module does not own.
+ */
+export class StorageTransportError extends StorageError {
+  readonly facts: StorageTransportFacts;
+  /** The unsigned object URL {@link measureStorageReach} may probe, or null when none can be formed. */
+  readonly probeUrl: string | null;
+
+  constructor(facts: StorageTransportFacts, probeUrl: string | null) {
+    // `status` STAYS NULL. See the note above: it is the null that keeps the designer's bytes.
+    super(storageTransportSentence(facts), null);
+    this.name = "StorageTransportError";
+    this.facts = facts;
+    this.probeUrl = probeUrl;
+  }
+}
+
+/**
+ * The sentence itself — pure, so `e2e/storage-transport-diagnosis-unit.spec.ts` can walk every arm
+ * without a browser, a bucket or a network. The wording is the deliverable of this whole section, and
+ * a wording nothing can assert against is the wording that drifts back to "network error".
+ *
+ * EVERY ARM NAMES A CAUSE THE READER CAN ACT ON, and the `unmeasured` arm names BOTH plus the
+ * observation that separates them — "if the rest of the app is still loading". That clause is the one
+ * a designer can actually run: the API leg of this very upload succeeded moments ago, so a page that
+ * is still working is proof the link is up and the fault is at the bucket.
+ */
+export function storageTransportSentence(facts: StorageTransportFacts): string {
+  const bucket = facts.bucketOrigin ?? "the storage bucket";
+  const site = facts.pageOrigin ?? "this site";
+  if (facts.bytesMoved) {
+    // Fact 1, decisive on its own: the bucket had already accepted the request and was taking the
+    // body, which a cross-origin refusal never does. No probe is run for this case.
+    return (
+      `Object storage upload failed: the connection to ${bucket} dropped after ` +
+      `${bytes(facts.sentBytes)} of ${bytes(facts.totalBytes)} had been sent. The bucket had already ` +
+      `accepted the request and taken bytes, so this is the connection and not a setting — try again ` +
+      `on a steadier signal.`
+    );
+  }
+  switch (facts.reach) {
+    case "no-route":
+      return (
+        `Object storage upload failed: this device cannot reach ${bucket} at all — not even a refusal ` +
+        `came back, and nothing was sent. That is the connection, not the repository and not this file.`
+      );
+    case "site-refused":
+      /*
+        WHAT THIS ARM MAY SAY IS BOUNDED BY WHAT THE PROBE MEASURED, WHICH IS A **READ**.
+
+        It used to end "that bucket's CORS rule does not allow this site … retrying cannot clear it",
+        and that last clause was the same kind of mistake as "network error": a certainty asserted
+        from a measurement that does not carry it. `measureStorageReach` is two GETs. An S3 CORS rule
+        matches on the METHOD as well as the origin, so a rule reading `AllowedMethods: ["PUT"]` —
+        correct for this site, uploads working — refuses the read probe and lands here. Verified in
+        Chromium against a server with exactly that rule: the probe returns `site-refused` while a
+        real cross-origin PUT from the same page succeeds. On such a bucket the FIRST ordinary blip
+        that killed a PUT before any byte moved (a dead spot, a reset connection — the field case
+        this product exists for) would have been reported as a permanent misconfiguration, and the
+        designer told in as many words to stop trying.
+
+        The KDoc on {@link measureStorageReach} already names the opposite asymmetry — GET allowed,
+        PUT not, which reads as `reads-allowed` — and this is that same hole in the other direction.
+        So the arm keeps everything the probe DID establish (the host is up; it will not answer this
+        site; that is a setting and not a signal problem, which is the whole point of the diagnosis)
+        and states the step it did not measure as the inference it is. "Unlikely to help" is the
+        strongest form the evidence supports, and it still sends a designer to the right person.
+      */
+      return (
+        `Object storage upload failed: ${bucket} is reachable from this device but refused to answer ` +
+        `${site} — that bucket's CORS rule does not cover this site for reads, and the upload failed ` +
+        `the way a refused one does. That points at a setting on the bucket rather than your ` +
+        `connection, so trying again is unlikely to help until somebody widens that rule.`
+      );
+    case "reads-allowed":
+      return (
+        `Object storage upload failed: ${bucket} is reachable and does answer ${site}, so this is ` +
+        `neither a lost connection nor a missing CORS rule — either the upload itself was refused, or the ` +
+        `connection dropped as it started.`
+      );
+    case "unmeasured":
+    default:
+      // THE HONEST EITHER/OR. Reached when no probe could run (no `fetch`, no usable object URL), and
+      // it is the sentence "network error" should always have been: both causes named, plus the one
+      // thing a person can look at to decide between them.
+      return (
+        `Object storage upload failed: ${bucket} gave no reply at all and not one byte was sent. That ` +
+        `is either no network on this device or that bucket refusing uploads from ${site}, and the ` +
+        `browser is not allowed to see which. If the rest of the app is still loading, it is the bucket.`
+      );
+  }
+}
+
+/**
+ * The object URL to probe, derived from the PRESIGNED PUT URL by dropping its query string.
+ *
+ * ── WHY THE BACKEND WAS NOT ASKED FOR THIS ──────────────────────────────────────────────────────
+ *
+ * The obvious move is to widen `PresignResponse` with a `bucketOrigin` and the origins the bucket is
+ * expected to allow. It was not made, for two reasons, and the second is the real one:
+ *
+ *   • EVERYTHING NEEDED IS ALREADY HERE. A presigned S3 URL is `https://<host>/<key>?X-Amz-…`, so
+ *     the origin and the object path are both in the string this function is handed, and
+ *     `location.origin` is the other end of the rule. A round trip that returns a fact the caller
+ *     already holds is a fact that can go out of step with the URL actually being PUT to.
+ *   • THE ONE FACT THE BACKEND COULD ADD IS ABOUT A DIFFERENT SERVER. `settings.cors_origins` is the
+ *     list the API accepts, not the list the bucket accepts, and the API's IAM user is granted
+ *     `s3:PutObject`/`s3:GetObject`/`s3:DeleteObject` and NOT `s3:GetBucketCors` — so the backend
+ *     cannot read the bucket's real rule and could only ever send what it assumes that rule should
+ *     be. Printing an assumption as "the origin the bucket allows" would put a second
+ *     confident-and-wrong sentence beside the one this section exists to delete.
+ *
+ * The browser makes the one measurement it alone can make ({@link measureStorageReach}), and nobody
+ * asserts anything nobody measured.
+ *
+ * DROPPING THE QUERY IS WHAT MAKES THE PROBE SAFE: the unsigned URL cannot write, so S3 answers it
+ * with a 403 or a 404 — and a 403 carrying the CORS headers is exactly as informative as a 200,
+ * because what is measured is whether the browser is permitted to READ the answer, not what it says.
+ */
+function probeTargetFor(uploadUrl: string): string | null {
+  try {
+    const parsed = new URL(uploadUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    // A relative or malformed URL (MinIO behind a proxy, a test double). No probe; honest either/or.
+    return null;
+  }
+}
+
+/** The bucket's origin for the message, or null when the URL cannot be parsed. */
+function originOf(uploadUrl: string): string | null {
+  try {
+    return new URL(uploadUrl).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The whole diagnosis gets this long, for BOTH probes together. Generous enough that a slow rural
+ * link still answers, short enough that it can never be mistaken for the app having hung — see the
+ * bound argued on {@link measureStorageReach}. It is not a network timeout in the ordinary sense: the
+ * upload has already failed by the time it starts, so everything this budget buys is an explanation.
+ */
+const STORAGE_PROBE_TIMEOUT_MS = 8_000;
+
+/**
+ * THE ONE MEASUREMENT THAT SEPARATES "NO NETWORK" FROM "THE BUCKET REFUSES THIS SITE".
+ *
+ * Two requests, and the pair is what makes it decisive rather than another guess:
+ *
+ *   1. `mode: "no-cors"` IS NOT SUBJECT TO CORS AT ALL. It resolves with an opaque response whenever
+ *      the host was reached and answered anything — 200, 403, 404 alike — and rejects only when the
+ *      network genuinely failed. So a rejection here is proof of "no route", full stop.
+ *   2. AN ORDINARY FETCH of the same URL IS CORS-checked, and rejects when the response carries no
+ *      `Access-Control-Allow-Origin` this page satisfies. A rejection here, after (1) resolved, is
+ *      proof the host is up and is refusing this site: the CORS misconfiguration, named.
+ *
+ * BOTH ARE GETs, DELIBERATELY. A HEAD would be marginally cheaper and would be wrong: S3 attaches the
+ * CORS response headers only when the request's method matches an `AllowedMethods` entry, so a rule
+ * listing GET and not HEAD would make a perfectly healthy bucket read as "site-refused". GET is in
+ * every S3 CORS rule anyone writes. A PUT probe would be sharper still — it is the method that is
+ * actually failing — and is not made: it would be an unsigned write attempt against a real object key.
+ *
+ * WHAT IT CANNOT SEE, STATED SO NOBODY READS MORE INTO IT, AND IT CUTS BOTH WAYS. AN S3 CORS RULE
+ * MATCHES ON THE METHOD AS WELL AS THE ORIGIN, AND THIS MEASURES ONLY GET:
+ *
+ *   - a rule that allows GET but not PUT answers both (1) and (2) and comes back `reads-allowed`.
+ *     That is why `reads-allowed` is its own arm with its own sentence rather than being folded into
+ *     "unmeasured" — it rules out the two headline causes and says so, instead of pretending to have
+ *     found the third;
+ *   - a rule that allows PUT but not GET — `AllowedMethods: ["PUT"]`, correct for this site, uploads
+ *     working — refuses (2) and comes back `site-refused`. Verified in Chromium against a server
+ *     with exactly that rule: this returns `site-refused` while a real cross-origin PUT from the same
+ *     page succeeds. So `site-refused` is evidence of a setting, NOT proof that the upload is
+ *     refused, and its two sentences are worded to claim only the first. Read them before widening
+ *     what they say.
+ *
+ * A PUT PROBE WOULD CLOSE BOTH, AND IS STILL NOT MADE: it means an unsigned write against a real
+ * object key, and a diagnostic that writes to the customer's bucket to explain a failure is a worse
+ * trade than a sentence that says "unlikely" instead of "cannot".
+ *
+ * ── IT IS BOUNDED, AND THAT IS NOT BELT-AND-BRACES ──────────────────────────────────────────────
+ *
+ * `fetch` has NO default timeout, and the very failure this runs after is the one most likely to make
+ * it hang: a black-holed route or a captive portal accepts the connection and never answers, so both
+ * probes can sit for a browser's full connect timeout. This function is awaited before the upload's
+ * error reaches the screen, so an unbounded probe would turn a clear, immediate failure into a
+ * multi-minute silence — which is precisely the trade the stall watchdog (see {@link STALL_TIMEOUT_MS})
+ * exists to refuse, reintroduced one layer up by the diagnosis meant to help.
+ *
+ * A CAP THAT FIRES YIELDS `"unmeasured"`, NEVER A VERDICT. An aborted second probe looks exactly like
+ * a refused one, so reading a timeout as `"site-refused"` would be a new confident lie in place of the
+ * old one. Nothing measured, nothing claimed: the message falls back to the honest either/or.
+ *
+ * `timeoutMs` is a parameter and not only a constant so that
+ * `e2e/storage-transport-diagnosis-unit.spec.ts` can pin the bound without waiting out its default.
+ * Production has one caller and it passes nothing.
+ *
+ * Exported for the same spec, to drive the decision table against a stubbed `fetch`. This measurement
+ * chooses which sentence a designer reads; leaving it untestable is how the wrong sentence ships again.
+ */
+export async function measureStorageReach(probeUrl: string, timeoutMs = STORAGE_PROBE_TIMEOUT_MS): Promise<StorageReach> {
+  if (typeof fetch !== "function" || typeof AbortController === "undefined") return "unmeasured";
+  const controller = new AbortController();
+  const cap = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = controller.signal;
+  try {
+    const reached = await fetch(probeUrl, { method: "GET", mode: "no-cors", cache: "no-store", signal })
+      .then(() => true)
+      .catch(() => false);
+    // The abort check comes FIRST, deliberately: a capped fetch also reports `reached === false`, and
+    // reporting that as "no route" would blame a connection this function never actually measured.
+    if (signal.aborted) return "unmeasured";
+    if (!reached) return "no-route";
+    const readable = await fetch(probeUrl, { method: "GET", cache: "no-store", signal })
+      .then(() => true)
+      .catch(() => false);
+    if (signal.aborted) return "unmeasured";
+    return readable ? "reads-allowed" : "site-refused";
+  } finally {
+    clearTimeout(cap);
+  }
+}
+
+/**
+ * How long one reach verdict may be reused. SHORT ON PURPOSE, and the reason is a lie it would
+ * otherwise tell. The natural implementation caches it for the session exactly as
+ * {@link multipartAvailable} does one screen up — but that flag records a capability which cannot come
+ * back during a session, whereas a bucket's CORS rule is one `terraform apply` away. A session-long
+ * verdict would go on blaming a bucket that had been fixed twenty minutes earlier, the first time a
+ * real signal drop happened. A minute is long enough that one failing batch of three files measures
+ * once, and short enough that the next attempt asks again.
+ */
+const STORAGE_REACH_TTL_MS = 60_000;
+let storageReachCache: { at: number; probe: Promise<StorageReach> } | null = null;
+
+/** The cached, in-flight-deduplicated reading of {@link measureStorageReach}. */
+function reachOfStorage(probeUrl: string): Promise<StorageReach> {
+  const now = Date.now();
+  if (storageReachCache && now - storageReachCache.at < STORAGE_REACH_TTL_MS) return storageReachCache.probe;
+  // `.catch` rather than a rejecting promise: a probe that throws must leave the message at the
+  // honest either/or, never turn a failed upload into an unhandled rejection somewhere up the stack.
+  const probe = measureStorageReach(probeUrl).catch((): StorageReach => "unmeasured");
+  storageReachCache = { at: now, probe };
+  return probe;
+}
+
+/**
+ * Turn a transport failure that has run out of retries into one that names what happened — or leave
+ * it exactly as it is.
+ *
+ * ── IT RUNS AFTER THE RETRIES, NEVER INSTEAD OF THEM ────────────────────────────────────────────
+ *
+ * Called once, from {@link uploadObject}, on the error that survived `uploadWhole`'s three
+ * fresh-presign attempts or `uploadInParts`' per-part retries. Nothing about those loops, the stall
+ * watchdog (see {@link STALL_TIMEOUT_MS}) or cancellation is touched, and the probe costs nothing on
+ * the happy path or on a blip the retries absorb — it spends its two requests only on an upload that
+ * has already definitively failed.
+ *
+ * THREE CASES ARE RETURNED UNTOUCHED, EACH FOR ITS OWN REASON:
+ *   • an ABORTED upload — the designer cancelled, or the stall watchdog fired. Probing a transfer
+ *     somebody stopped would spend two requests explaining a non-event, and "Upload cancelled" and the
+ *     stall sentence are both already true of what happened.
+ *   • anything that is NOT a transport failure — an HTTP answer classifies itself by its status.
+ *   • a failure where bytes MOVED — fact 1 has already decided it; see {@link storageTransportSentence}.
+ */
+async function sharpenTransportFailure(error: unknown, signal?: AbortSignal): Promise<StorageTransportError | null> {
+  if (signal?.aborted) return null;
+  if (!(error instanceof StorageTransportError)) return null;
+  if (error.facts.bytesMoved || error.facts.reach !== "unmeasured") return null;
+  if (!error.probeUrl) return null;
+  const reach = await reachOfStorage(error.probeUrl);
+  if (reach === "unmeasured") return null;
+  const sharper = new StorageTransportError({ ...error.facts, reach }, error.probeUrl);
+  /*
+    THE ORIGINAL IS CARRIED AS A STACK AND EMPHATICALLY NOT AS A `cause`.
+
+    `underlyingError` in `lib/failureTriage.ts` recurses to the DEEPEST cause, by design — it exists
+    so that a `MediaBatchError` wrapping an S3 refusal is classified by the refusal. Chaining the
+    unmeasured error underneath the measured one would therefore hand every reader downstream the
+    error whose reach is still `"unmeasured"`, and the probe would have been spent to produce a
+    sentence nothing ever reads. This is the SAME failure with more known about it, not a second
+    failure wrapping a first, so it carries the original's throw site and nothing else.
+  */
+  sharper.stack = error.stack;
+  return sharper;
+}
+
 /**
  * PUT a blob to object storage with real byte-level progress, via XHR (fetch cannot report upload
  * progress). Returns the ETag when the response exposes one — S3 multipart completion needs it.
@@ -526,6 +958,10 @@ function putBlob({
     const total = body.size;
     const xhr = new XMLHttpRequest();
     let stalled = false;
+    // Fact 1 of the three above `StorageTransportError`: whether the body ever started moving, and
+    // how far it got if it did. Written only by `xhr.upload.onprogress`, read only by `xhr.onerror`.
+    let moved = false;
+    let sent = 0;
     let watchdog: number | null = null;
     const arm = (ms: number) => {
       if (watchdog !== null) window.clearTimeout(watchdog);
@@ -548,6 +984,15 @@ function putBlob({
     xhr.timeout = 0;
     xhr.upload.onprogress = (event) => {
       arm(STALL_TIMEOUT_MS);
+      // RECORDED BEFORE THE `lengthComputable` GUARD, AND DELIBERATELY NOT BEHIND IT. The question
+      // this answers is "did the transfer START", not "how far did it get", and a browser that
+      // cannot compute a total still reports `loaded` honestly. A refused preflight never reaches
+      // this handler at all, because the body is never sent — which is why one boolean here clears
+      // the bucket of a mid-transfer drop without spending a single request to ask.
+      if (event.loaded > 0) {
+        moved = true;
+        sent = event.loaded;
+      }
       if (event.lengthComputable) onProgress?.(event.loaded, event.total);
     };
     xhr.upload.onload = () => arm(FINALIZE_TIMEOUT_MS);
@@ -560,7 +1005,26 @@ function putBlob({
           reject(new StorageError(`Object storage upload failed: HTTP ${xhr.status}`, xhr.status));
         }
       });
-    xhr.onerror = () => settle(() => reject(new StorageError("Object storage upload failed: network error")));
+    xhr.onerror = () =>
+      settle(() =>
+        reject(
+          // NOT "network error", which was a guess printed as a fact — see the section above this
+          // function. `status` is 0, the headers are empty and there is no body, identically, for a
+          // blocked preflight and for a pulled cable, so all this handler may do is carry the facts
+          // it does have. The verdict is sharpened once, after the retries, in `uploadObject`.
+          new StorageTransportError(
+            {
+              bytesMoved: moved,
+              sentBytes: sent,
+              totalBytes: total,
+              bucketOrigin: originOf(url),
+              pageOrigin: typeof location === "undefined" ? null : location.origin,
+              reach: "unmeasured"
+            },
+            probeTargetFor(url)
+          )
+        )
+      );
     xhr.onabort = () =>
       settle(() =>
         reject(
@@ -729,10 +1193,31 @@ async function uploadObject(options: ObjectUploadOptions): Promise<StagedObject>
   const mimeType = file.type || "application/octet-stream";
   // Hashed alongside the transfer, not before it, so it never delays the bytes leaving the device.
   const checksum = computeChecksum(file);
-  const target =
-    file.size > MULTIPART_THRESHOLD && multipartAvailable
-      ? await uploadInParts(options, mediaType, mimeType)
-      : await uploadWhole(options, mediaType, mimeType);
+  /*
+    THE ONE PLACE A TRANSPORT FAILURE IS EXPLAINED, AND IT IS HERE BECAUSE THIS IS THE FUNNEL.
+
+    Both legs below end in the same `putBlob`, so both can produce the same unexplainable
+    `xhr.onerror`, and both have already spent their own retries by the time they throw —
+    `uploadWhole` three attempts each with a fresh presign, `uploadInParts` three per part with a
+    re-sign on a 403. Asking for the diagnosis HERE means it is asked once, on an upload that has
+    definitively failed, instead of inside either loop where it would fire on the blip the next
+    attempt absorbs.
+
+    NOTHING ABOUT THE RETRY, STALL OR CANCEL BEHAVIOUR IS TOUCHED. `sharpenTransportFailure` returns
+    null for everything it has learned nothing new about — an abort, a stall, an HTTP answer, a
+    failure where bytes moved — and this rethrows the original in every one of those cases.
+  */
+  let target: UploadTarget;
+  try {
+    target =
+      file.size > MULTIPART_THRESHOLD && multipartAvailable
+        ? await uploadInParts(options, mediaType, mimeType)
+        : await uploadWhole(options, mediaType, mimeType);
+  } catch (error) {
+    const explained = await sharpenTransportFailure(error, options.signal);
+    if (explained) throw explained;
+    throw error;
+  }
   return { ...target, mediaType, mimeType, sizeBytes: file.size, checksum: await checksum };
 }
 
@@ -741,7 +1226,12 @@ async function uploadWhole(options: ObjectUploadOptions, mediaType: MediaType, m
   let lastError: unknown;
   let previousKey: string | null = null;
   for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt += 1) {
-    // A fresh presign per attempt keeps the 15-minute signature window from expiring under retries.
+    // A fresh presign per attempt keeps the 15-minute signature window from expiring BETWEEN
+    // attempts — the backoff below can spend seconds, and a slow first attempt can spend minutes.
+    // It does nothing whatever for a SINGLE transfer that is itself longer than the window: that
+    // one dies at 403 at the fifteen-minute mark and restarts from byte zero to die there again.
+    // Only {@link MULTIPART_THRESHOLD} keeps such a file off this path at all; read its note before
+    // trusting this line to cover a large upload, because it reads as though it does and it does not.
     const presign = await apiRetry<PresignResponse>(
       "/media/presign",
       {
@@ -1666,7 +2156,82 @@ export class MediaBatchError extends Error {
  * surface `.message` whole get a sentence that is true of what happened instead of one that is true
  * a third of the time.
  */
+/**
+ * The advice half of the sentence for a transport failure — what to DO, given what was measured.
+ *
+ * The REASON half is `StorageTransportError.message`, which `uploadMediaBatch` has already put in
+ * front of this, so no clause here repeats a cause; each is only the next action.
+ *
+ * `site-refused` IS THE CLAUSE THAT HAD TO EXIST. "Re-open it and re-attach the media" is an
+ * instruction that cannot work while a bucket is refusing this site, and an instruction that cannot
+ * work is how a designer spends an afternoon proving the app right. It is also the only clause that
+ * does not promise a retry, because it is the only case where the client can be certain a retry is
+ * futile: `reads-allowed` and `unmeasured` both leave a real possibility that the next attempt lands,
+ * and saying otherwise would be the same overconfidence in the opposite direction.
+ *
+ * Exported for the same reason {@link measureStorageReach} is: these five clauses ARE the fix, and a
+ * clause nothing can assert against is the clause that drifts back to "check your internet connection".
+ */
+export function adviceForTransportFailure(error: StorageTransportError): string {
+  if (error.facts.bytesMoved)
+    return "The record was saved, so re-open it and re-attach the media once the signal is steady.";
+  switch (error.facts.reach) {
+    case "site-refused":
+      /*
+        THE CLAUSE THIS WHOLE SECTION EXISTS FOR, MINUS THE ONE PROMISE IT COULD NOT KEEP.
+
+        It read "re-attaching them now will fail in exactly the same way", and that is a guarantee
+        about a PUT drawn from two GETs — see the arm of the same name in
+        {@link storageTransportSentence} for the bucket rule that makes it false. Telling a designer
+        their files are unsendable is the most expensive thing on this screen to get wrong in this
+        direction: it is the one clause that asks somebody to STOP, so unlike every other message
+        here, being wrong costs the upload that would have worked rather than a wasted attempt.
+
+        What survives is everything that was measured and everything that is worth acting on — the
+        bytes are safe, the page cannot fix a bucket, and the person to tell is whoever administers
+        it. "May well fail the same way" carries the same instruction to a reader and claims only
+        what the probe supports.
+      */
+      return (
+        "Nothing you saved is lost and these files are still on this device, but nothing on this page can " +
+        "change a setting on the bucket, so trying again may well fail the same way. Keep them, and report " +
+        "that the bucket will not answer this site."
+      );
+    case "reads-allowed":
+      return (
+        "The record was saved, so re-open it and re-attach the media. If it fails the same way again this is " +
+        "the bucket's upload rule rather than your connection — say so when you report it."
+      );
+    case "no-route":
+      return "Check your internet connection and try again — the record was saved, so re-open it and re-attach the media.";
+    case "unmeasured":
+    default:
+      return (
+        "The record was saved. If the rest of the app is still loading, this is the bucket rather than your " +
+        "connection and re-attaching will not help until it is fixed; if the app has stopped loading too, it is " +
+        "the connection and a retry will."
+      );
+  }
+}
+
 function adviceForALostBatch(cause: unknown): string {
+  /*
+    THE ONE CASE `screen` CANNOT DECIDE, AND WHY THIS BRANCH IS NOT A SEVENTH OPINION.
+
+    A cross-origin refusal and a genuine loss of signal are the SAME kind — `unreachable` — and they
+    have to stay the same kind, because what must be done with the WORK is identical for both: keep it
+    (see {@link StorageTransportError}). So `screen` is `say-offline` for both, and `say-offline`'s
+    clause — "Check your internet connection and try again" — is exactly right for one of them and
+    exactly wrong for the other. That is the whole of the incident this module was audited over.
+
+    The transport error is the only value in the client holding the fact that separates them, so it is
+    read here rather than pushed into `lib/failureTriage.ts` as a seventh kind: a kind is a statement
+    about what to DO, and there is nothing new to do. Nothing about the classification is overridden —
+    the verdict, the retry policy and the drain action are untouched and the batch is still kept. Only
+    the ADVICE CLAUSE is chosen by what was measured.
+  */
+  const transport = underlyingError(cause);
+  if (transport instanceof StorageTransportError) return adviceForTransportFailure(transport);
   const { screen } = triageFailure(cause);
   switch (screen) {
     case "say-signed-out":

@@ -63,7 +63,13 @@ export const DESIGNER_PROFILE_LABELS: Record<DesignerProfileField, string> = {
   phone: "Phone",
   email: "Email",
   website: "Website",
-  addressLine: "Address",
+  // "Address line", not "Address", and VERBATIM FROM ANDROID (§1.3) — `ProfileText("Address line",
+  // …)` in `DesignerProfileScreen.kt`, renamed there on 2026-08-30 with the reason that holds here
+  // unchanged: there are now two addresses on this screen, and an unqualified word over one of two
+  // is the reading a person gets wrong. It also ends the repetition a reader met first — the group
+  // heading below said "Address" and the first box under it said "Address", so the page opened by
+  // saying the same word twice before asking anything.
+  addressLine: "Address line",
   city: "City or town",
   state: "State",
   pincode: "Pincode",
@@ -163,6 +169,22 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   experienceYears:
     "Years 0 to 70 and months 0 to 11, chosen separately — leave a box on “Not recorded” rather than answering 0, which means something different. The years are the range the report’s own field accepts; the months are kept on your profile and are not printed on a report yet.",
   biography: "The paragraph that appears as “Designer’s profile” in stage 3 of every report.",
+  // ── ADDED 2026-08-30, WITH THE EDITOR, AND EVERY CLAUSE OF IT IS CHECKED CODE ──────────────────
+  //
+  // §17 ("claims about the report — copy written from copy") is the reason this sentence is short
+  // and specific rather than reassuring. It is NOT written from Android's copy or from the
+  // walkthrough: the whole of it is `prefill_from_profile` in `backend/app/services/designers.py`,
+  // which copies this column into the registry's `designerAddress` through
+  // `rich_text.plain_from_stored` and then `_fold_to_one_line`. So the words reach the document, the
+  // marks and the line breaks do not, and `test_a_multi_paragraph_address_reaches_the_report_cover_
+  // as_one_line` is what keeps that true.
+  //
+  // WHY SAY IT AT ALL. A formatting toolbar is a promise, and a designer who bolds their street and
+  // finds it unbolded on a submitted cover has been misled by a control rather than by a sentence.
+  // The handset says the same thing from the other side — that editing a formatted address there
+  // replaces it — so the two clients describe one behaviour rather than each describing its half.
+  addressLine:
+    "Printed on the report cover as plain text, on one line. Formatting and line breaks are kept on your profile and are not carried into the document.",
   pincode: "Six digits. Optional, and never guessed for you.",
   photoMediaId: "One photograph. Attaching another replaces it.",
   // ⚠ "for the report's signature block" WAS FALSE, and it is the second false promise this one
@@ -246,7 +268,13 @@ export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
     fields: ["biography"]
   },
   { key: "contact", title: "Contact", fields: ["phone", "email", "website"] },
-  { key: "address", title: "Address", fields: ["addressLine", "city", "state", "pincode"] },
+  // "Postal address", VERBATIM FROM ANDROID's `ProfileSection("Postal address")` (§1.3), which was
+  // renamed there on 2026-08-30 saying why: "because there are now two of them and an unqualified
+  // heading over one of two is the reading a person gets wrong". These four are the columns the
+  // report prefill copies; the `LocationFields` card the editor draws under them holds the district
+  // and the map point, which no column here can hold. The web was out of parity by these two strings
+  // for a day — this one and `addressLine`'s label above.
+  { key: "address", title: "Postal address", fields: ["addressLine", "city", "state", "pincode"] },
   {
     key: "empanelment",
     title: "Empanelment",

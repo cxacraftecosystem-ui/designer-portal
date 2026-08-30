@@ -469,8 +469,17 @@ function MediaPageBody() {
       // keep the form (and its selection) intact when part of the batch still needs another attempt.
       load(page, search);
       if (failed.length) {
+        // THE CAUSE, NOT ONLY THE CASUALTIES. This branch named the files and stopped, so a designer
+        // whose uploads were being refused by the bucket's CORS rule was told which photographs had
+        // not landed and nothing whatever about why — which reads as "try again", and trying again
+        // was the one thing that could not work. `BatchFailure.error` is the transport layer's own
+        // sentence (see `storageTransportSentence` in lib/media.ts); it already distinguishes a lost
+        // connection from a bucket refusing this site, so the only thing needed here is to show it.
+        // The first failure's reason is enough: a batch either met one refusal or lost the link.
+        const reason = failed[0]?.error ? `${failed[0].error} ` : "";
         setError(
           `${failed.length} of ${selectedFiles.length} file(s) failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
+            reason +
             "The rest were saved — remove the ones that landed and upload again."
         );
         return;
@@ -483,6 +492,13 @@ function MediaPageBody() {
       setLinkedType("");
       setLinkedEntryId("");
     } catch (err) {
+      // NOTHING LANDED, AND NOTHING IS DISCARDED EITHER. `selectedFiles` and the form are left exactly
+      // as they were — no `formElement.reset()`, no `setSelectedFiles([])` on this path — so the files
+      // are still attached and one more press of Upload retries them. That matters most for the case
+      // this message now names: a bucket refusing this site fails every file with the record it links
+      // to already saved, and clearing the picker here would have destroyed the only handle a designer
+      // has on the captures. `MediaBatchError`'s message already carries the reason and the advice
+      // clause chosen for that reason, so surfacing it whole is right.
       setError(err instanceof Error ? err.message : "Unable to upload media");
     } finally {
       setUploading(false);

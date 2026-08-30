@@ -127,10 +127,18 @@ import {
   TYPE_DETAILS_INSTEAD,
   WORKSHOP_OPTION_PAGE_SIZE,
   designWorkshopOptions,
+  deviceLooksOffline,
   fieldWorkshopOptions,
   workshopCutSentence,
-  type WorkshopListState
+  workshopEmptyLabel,
+  workshopListNotice,
+  type WorkshopListState,
+  type WorkshopListVoice
 } from "@/lib/workshopOptions";
+// One spelling of "the Kind is set by a professor or an admin", shared with the edit form's link
+// picker: two screens explaining the same empty list in two ways is how a reader learns that
+// neither explanation is worth reading.
+import { LINKED_WORKSHOP_KIND_GAP } from "@/components/designworkshop/linkedWorkshopPicker";
 
 /**
  * The five statuses `DesignWorkshopStatus` declares, plus the reserved empty option.
@@ -322,11 +330,19 @@ function DesignWorkshopsPageBody() {
     Development Workshop. See the picker's own note for why the whole workshop list is the wrong
     thing to offer.
   */
-  const [sourceWorkshops, setSourceWorkshops] = useState<Workshop[]>([]);
-  // The server's TOTAL for this scope, not `sourceWorkshops.length` — the two part company the
-  // moment this account can reach more than `WORKSHOP_OPTION_PAGE_SIZE` of them, which is exactly
-  // the gap `workshopCutSentence` below exists to state rather than leave silent.
-  const [sourceWorkshopsTotal, setSourceWorkshopsTotal] = useState(0);
+  /**
+   * WHAT THE READ ANSWERED, and not merely what it returned.
+   *
+   * This was `useState<Workshop[]>([])` beside a `useState(0)` total, filled by a `.then` and left
+   * alone by a `.catch` — and the option set below then hardcoded `{ kind: "ok", … }` over it, which
+   * is the three-state type being asked for its opinion and told what to say. A 500, a timeout or a
+   * dead connection therefore rendered *"No design & prototype workshops are open to this
+   * account"*: a confident claim about a grant table produced by a request that never arrived, and
+   * the identical sentence the edit form printed for the same reason. `WorkshopListState` exists so
+   * the three cannot be collapsed; the server's TOTAL rides inside its `ok` arm, where it belongs,
+   * because a total is only meaningful about an answer that exists.
+   */
+  const [sourceList, setSourceList] = useState<WorkshopListState<Workshop>>({ kind: "loading" });
   const [sourceWorkshopId, setSourceWorkshopId] = useState("");
   const formRef = useRef<HTMLFormElement | null>(null);
   /**
@@ -523,17 +539,50 @@ function DesignWorkshopsPageBody() {
     })
       .then((result) => {
         if (!cancelled) {
-          setSourceWorkshops(sortWorkshopsByOccurrence(result.items ?? []));
-          setSourceWorkshopsTotal(result.total);
+          setSourceList({
+            kind: "ok",
+            rows: sortWorkshopsByOccurrence(result.items ?? []),
+            total: result.total
+          });
         }
       })
-      // Silent: this picker is a convenience over boxes the designer can always type into, and an
-      // error banner for a shortcut that failed would read as the form itself being broken.
-      .catch(() => undefined);
+      .catch(() => {
+        /*
+          STILL NO BANNER — this picker is a convenience over boxes the designer can always type
+          into, and an error banner for a shortcut that failed would read as the form itself being
+          broken. What changed is that the failure is now RECORDED rather than discarded: the
+          sentence under the control says the list could not be loaded instead of claiming this
+          account has no design-prototype workshops, which is a claim about a grant table that a
+          failed request cannot support. Silence about the banner, not about the state.
+        */
+        if (!cancelled) setSourceList({ kind: "failed" });
+      });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  /** The rows of the answer, for the four boxes `applySourceWorkshop` fills from the picked row. */
+  const sourceWorkshops = useMemo<readonly Workshop[]>(
+    () => (sourceList.kind === "ok" ? sourceList.rows : []),
+    [sourceList]
+  );
+
+  /**
+   * WHICH LIST THIS IS, for the state sentences. `scoped` is true because the request carries
+   * `accessibleOnly=true`, so an empty answer means "none is open to this account" — whose next move
+   * is an administrator — and never "none has been recorded", whose next move is to create one.
+   */
+  const sourceVoice: WorkshopListVoice = { table: "field", scoped: true, online: !deviceLooksOffline() };
+  /**
+   * §3.5's sentence about the read, or "" while it is in flight — LOADING SAYS NOTHING, on purpose.
+   *
+   * A sentence that appears and vanishes inside a second is noise on a fast connection and, on a
+   * slow one, is replaced by a different sentence just as the reader finishes it. The panel covers
+   * the wait in the slot where it belongs (`workshopEmptyLabel` → `SEARCHING_LABEL`). Held in a
+   * const so the empty case renders no element at all rather than an empty `<p>` with a margin.
+   */
+  const sourceNotice = workshopListNotice(sourceList, sourceVoice);
 
   /**
    * ROUTED THROUGH THE SHARED BUILDER, so this row's label and hint match every other workshop
@@ -547,12 +596,11 @@ function DesignWorkshopsPageBody() {
    * recover.
    */
   const sourceWorkshopOptions = useMemo(
-    () =>
-      fieldWorkshopOptions(
-        { kind: "ok", rows: sourceWorkshops, total: sourceWorkshopsTotal },
-        { group: true, offPage: { mode: "refuse" } }
-      ),
-    [sourceWorkshops, sourceWorkshopsTotal]
+    // THE STATE IS HANDED IN WHOLE, not rebuilt as a literal `{ kind: "ok" }`. Writing the arm by
+    // hand told the builder the read had succeeded whatever had actually happened, which is how the
+    // three-way type came to be carried by this call site and still produce a two-way answer.
+    () => fieldWorkshopOptions(sourceList, { group: true, offPage: { mode: "refuse" } }),
+    [sourceList]
   );
 
   /**
@@ -982,12 +1030,39 @@ function DesignWorkshopsPageBody() {
               noneLabel={TYPE_DETAILS_INSTEAD}
               ariaLabel="Start from a recorded workshop"
               searchable
+              /*
+                Never the literal "No options", and never a claim the state does not support:
+                `SEARCHING_LABEL` while the read is in flight, the failure sentence after a failure,
+                and the scoped "none are open to this account" only once the read has answered with
+                none. The panel used to say "No options" through all three.
+              */
+              emptyLabel={workshopEmptyLabel(sourceList, sourceVoice)}
             />
-            <p className="text-xs leading-5 text-ink-500">
-              {sourceWorkshops.length
-                ? "Only workshops filed as a Design & Prototype Development Workshop, and only ones you have access to, appear here."
-                : "No design & prototype workshops are open to this account. Mark one on the Workshops page — or ask an admin for access to it — to use it here."}
-            </p>
+            {/*
+              ONE SENTENCE, CHOSEN BY THE STATE. `sourceWorkshops.length` could not tell a failed read
+              from an empty answer, so a timeout printed the "none are open to this account" claim —
+              the same defect, in the same words, the edit form's picker carried. The four state
+              sentences are `lib/workshopOptions.ts`'s; the scope sentence below is this screen's, and
+              describes what the REQUEST asked for rather than what the read answered.
+            */}
+            {sourceList.kind === "ok" && sourceList.rows.length > 0 ? (
+              <p className="text-xs leading-5 text-ink-500">
+                Only workshops filed as a Design &amp; Prototype Development Workshop, and only ones you have access to,
+                appear here.
+              </p>
+            ) : sourceNotice ? (
+              <p className="text-xs leading-5 text-ink-500">{sourceNotice}</p>
+            ) : null}
+            {/*
+              AND WHO CAN CLOSE THE GAP. The sentence this replaced sent the reader off to set a
+              workshop's Kind themselves — an act `can_manage_workshops` gates at PROFESSOR (rank
+              40), so on the account this product is built for, a DESIGNER at 35, it was advice the
+              API refuses and a page that hides the form. Shared with the edit form's picker so the
+              two screens cannot come to disagree about why the same list is empty.
+            */}
+            {sourceList.kind === "ok" && sourceList.rows.length === 0 ? (
+              <p className="text-xs leading-5 text-ink-500">{LINKED_WORKSHOP_KIND_GAP}</p>
+            ) : null}
             {/*
               WHAT THAT SENTENCE DOES NOT COVER: a scope can be correct and the list still CUT. The
               box above is client-side — it searches only the `WORKSHOP_OPTION_PAGE_SIZE` rows

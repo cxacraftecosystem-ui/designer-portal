@@ -215,6 +215,14 @@ import com.designprototype.workshop.ui.workshopAccessQueueFailure
 import com.designprototype.workshop.ui.workshopAccessQueueNotice
 import com.designprototype.workshop.ui.ApiKeysScreen
 import com.designprototype.workshop.ui.MyAiKeysScreen
+import com.designprototype.workshop.ui.UsageConsentDoor
+import com.designprototype.workshop.ui.UsageConsentGateScreen
+import com.designprototype.workshop.ui.UsageDoorState
+import com.designprototype.workshop.ui.UsageRecordingScreen
+import com.designprototype.workshop.ui.UsageScreen
+import com.designprototype.workshop.ui.rememberUsageDoorState
+import com.designprototype.workshop.ui.usageAnswerAtTheDoor
+import com.designprototype.workshop.ui.usageConsentBlocks
 import com.designprototype.workshop.ui.AppPreferences
 import com.designprototype.workshop.ui.AppPreferencesStore
 import com.designprototype.workshop.ui.AppNavigationDrawerContent
@@ -357,6 +365,7 @@ import androidx.compose.material.icons.filled.DesignServices
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Map
@@ -633,6 +642,21 @@ private sealed interface Screen {
      * to "where do settings live" that the comment above this block spent a paragraph deleting.
      */
     data object SpeechAndAi : Screen
+    /**
+     * THIS ACCOUNT's usage-recording answer, its own record, and the withdrawal — one level below
+     * [Appearance], beside [MyAiKeys].
+     *
+     * ON THE ACCOUNT SIDE OF THE BOUNDARY [SpeechAndAi] DRAWS, and not on the device side: the answer
+     * follows the person to every handset they sign in on and to the web, exactly like a personal AI
+     * key. It is NOT `AdminHubEntry.USAGE`, which is the cross-account aggregate at
+     * `require_usage_reader`; one is what the platform holds about YOU, the other is what it holds
+     * about everybody, and the two must never be reachable through one door.
+     *
+     * NO `NavDestination` OF ITS OWN, matching its two siblings — the drawer keeps lighting the
+     * Settings row while it is open. A menu entry for a sub-screen would be the third answer to
+     * "where do settings live" that the block above this one spent a paragraph deleting.
+     */
+    data object UsageRecording : Screen
     /**
      * The /data directory-tree browser. Its own Screen rather than a Create mode because it owns its
      * whole viewport: it draws its own top bar and lays out with a LazyColumn, which must never be
@@ -1039,6 +1063,20 @@ private fun RepositoryApp(
     val scope = rememberCoroutineScope()
     var user by remember { mutableStateOf(repository.cachedUser()) }
     var loading by remember { mutableStateOf(user == null && repository.hasToken()) }
+    /*
+     * THE USAGE-RECORDING CONSENT THE SIGN-IN SCREEN TAKES, held HERE and not inside [LoginScreen].
+     *
+     * The sign-in handlers below need two of its fields after that screen has gone: the notice
+     * version that was actually on the person's screen, and the moment they ticked the box. Both die
+     * with the composable if the state lives there, and "when they agreed" would silently become
+     * "when the server heard" — the exact collapse the two-clock design exists to prevent, on a fleet
+     * where a phone can agree in a courtyard and sign in on the bus an hour later.
+     *
+     * It also seeds itself from this device's stored copy of the notice on the FIRST FRAME, before
+     * any network, which is what lets the gate ask the question honestly with no signal instead of
+     * either locking the person out or waving them through. See `ui/UsageConsentGate.kt`.
+     */
+    val consentDoor = rememberUsageDoorState()
     var error by remember { mutableStateOf<String?>(null) }
     /**
      * WHAT [error] was refused FOR — the account, the credentials, or neither.
@@ -1198,13 +1236,21 @@ private fun RepositoryApp(
                 error = error,
                 refusal = refusal,
                 busy = loading,
+                consentDoor = consentDoor,
                 onLogin = { email, password ->
                     scope.launch {
                         loading = true
                         error = null
                         refusal = AccessRefusal.NOT_REFUSED
                         runCatching { repository.login(email, password) }
-                            .onSuccess { user = it }
+                            // The answer the person gave at the door, sent the moment a token
+                            // exists — and ONLY if the server still says this account owes one. See
+                            // `usageAnswerAtTheDoor`: a tick taken before anybody knew whose account
+                            // it was must never overwrite a refusal made freely in Settings. It never
+                            // throws, so a consent that does not reach the server leaves the account
+                            // signed in with the gate still open, and `UsageConsentGateScreen` asks
+                            // properly one screen later rather than this reading as "sign-in failed".
+                            .onSuccess { user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor) }
                             .onFailure { failure ->
                                 // The STATUS AND HEADERS first, then the message, and in that order:
                                 // reading the message consumes Retrofit's buffered error body, so the
@@ -1230,7 +1276,10 @@ private fun RepositoryApp(
                             val idToken = googleAuthClient.getIdToken()
                             repository.loginWithGoogle(idToken)
                         }
-                            .onSuccess { user = it }
+                            // The same one line as the password path, and on purpose: this is the
+                            // path researchers actually use, so a consent recorded only on the other
+                            // one would be a consent almost nobody's account carries.
+                            .onSuccess { user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor) }
                             .onFailure { failure ->
                                 // The Google path matters MORE than the password one here, and it
                                 // matters more again since the allow-list shipped. It is the path
@@ -1244,6 +1293,48 @@ private fun RepositoryApp(
                                 error = failure.signInErrorMessage()
                             }
                         loading = false
+                    }
+                }
+            )
+            /*
+             * ── THE CONSENT GATE, WHICH IS WHERE IT ACTUALLY HOLDS ──────────────────────────────
+             *
+             * BETWEEN SIGN-IN AND THE PRODUCT, and it is a `when` arm rather than a dialog because a
+             * dialog is dismissible and this is not: the requirement is that a person cannot use the
+             * app until they have answered.
+             *
+             * THE SERVER DECIDES, AND THIS READS ITS BOOLEAN. `usage.consent_gate` folds "have they
+             * agreed" and "did they agree to the CURRENT text" into one field precisely so that the
+             * web and this client cannot come to different answers on the first deploy that moves the
+             * notice version. `usageConsentBlocks` is a `?.required == true` and nothing else; a null
+             * gate is a deployment older than the flow and blocks nobody.
+             *
+             * IT IS REACHED IN THREE REAL SITUATIONS and none of them is a corner case: the sign-in
+             * screen could not load the notice at all; the tick was taken and the POST that records it
+             * did not land; or the notice version moved since this account last agreed. The screen
+             * carries its own way out — signing out — because a person who genuinely cannot agree, or
+             * a phone that cannot reach the server to record that they did, must not be held on one
+             * screen whose controls all do nothing.
+             */
+            usageConsentBlocks(user) -> UsageConsentGateScreen(
+                repository = repository,
+                user = user!!,
+                onSatisfied = { user = it },
+                // The same three lines as HomeScreen's `onLogout` below, deliberately repeated rather
+                // than hoisted: the two are one gesture today and are not one concept — this one is an
+                // escape from a question, that one is finishing a day's work — and a shared lambda
+                // would make a later change to either silently change both.
+                onSignOut = {
+                    scope.launch {
+                        runCatching { googleAuthClient.clear() }
+                        repository.logout(appContext)
+                        // FORGET THE TICK, and this line is not tidiness. `consentDoor` outlives
+                        // the sign-in screen on purpose, and the handsets in this fleet are
+                        // shared: without it the next person meets a consent box somebody else
+                        // ticked, and this client posts a GRANTED against THEIR account carrying
+                        // the first person's tick moment. See `UsageDoorState.reset`.
+                        consentDoor.reset()
+                        user = null
                     }
                 }
             )
@@ -1263,6 +1354,10 @@ private fun RepositoryApp(
                     scope.launch {
                         runCatching { googleAuthClient.clear() }
                         repository.logout(appContext)
+                        // The same line as the gate screen's escape above, and for the same
+                        // reason: a shared handset must not offer the next person a box the
+                        // last one ticked.
+                        consentDoor.reset()
                         user = null
                     }
                 }
@@ -1373,6 +1468,16 @@ private fun RepositoryApp(
  * live. The deleted file is in this repository's history under
  * `android/app/src/main/java/com/designprototype/workshop/ui/AuthScreen.kt` and is the starting
  * point; it is not a thing to resurrect wholesale.
+ *
+ * ── AND IT NOW CARRIES THE USAGE-RECORDING CONSENT, WHICH GATES BOTH CREDENTIALS ────────────────
+ *
+ * The design is in `ui/UsageConsentGate.kt`; what matters at THIS call site is that the tick gates
+ * the GOOGLE button as well as the password one. Google is the path researchers actually use — this
+ * file says so twice already — so a consent required only of the email form would be a consent
+ * almost nobody is asked for. On the web the same mistake is worse than an oversight, because that
+ * button is third-party-rendered inside an `opacity-0` overlay and a `disabled` attribute never
+ * reaches it at all. Here both buttons are ours, so `enabled` is enough — but it has to be written
+ * on BOTH, and on any third credential the day one is added.
  */
 @Composable
 private fun LoginScreen(
@@ -1380,6 +1485,16 @@ private fun LoginScreen(
     busy: Boolean,
     onLogin: (String, String) -> Unit,
     onGoogleLogin: () -> Unit,
+    /**
+     * The usage-recording consent this screen must take before either credential is offered.
+     *
+     * HOISTED OUT OF THIS COMPOSABLE and passed in, because the sign-in handler needs two of its
+     * fields AFTER this screen has gone: the notice version that was actually on the person's screen,
+     * and the moment they ticked the box. State that died with the composable would leave the
+     * `POST /usage/consent` guessing at both, and "when they agreed" would quietly become "when the
+     * server heard", which is precisely the collapse the two-clock design exists to prevent.
+     */
+    consentDoor: UsageDoorState,
     /**
      * WHAT [error] was refused for — the account, the credentials, or neither.
      *
@@ -1476,15 +1591,32 @@ private fun LoginScreen(
                         Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                     }
                 }
+                // ── THE USAGE-RECORDING CONSENT ────────────────────────────────────────────────
+                //
+                // ABOVE THE BUTTONS AND NOT BELOW THEM. A person reads down this card and presses the
+                // first control that looks like the way in; a required agreement drawn under that
+                // control is one somebody meets only by being refused by it. The panel is also
+                // deliberately BELOW the refusal panel above — an account that has been suspended has
+                // a more urgent thing to read than a recording notice, and the two must not compete.
+                UsageConsentDoor(door = consentDoor)
                 Button(
-                    enabled = !busy && email.isNotBlank() && password.isNotBlank(),
+                    // `consentDoor.mayProceed` is the gate. It is TRUE when no notice could be
+                    // obtained from any source, on purpose: the enforcement then moves to
+                    // [UsageConsentGateScreen] one screen later, where a token exists and the
+                    // question can actually be answered. A button permanently disabled by a
+                    // checkbox whose text never arrives would be a fleet-wide lockout on the one
+                    // screen that has no other controls.
+                    enabled = !busy && email.isNotBlank() && password.isNotBlank() && consentDoor.mayProceed,
                     onClick = { onLogin(email, password) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(if (busy) "Signing in..." else "Login")
                 }
                 OutlinedButton(
-                    enabled = !busy,
+                    // THE SAME GATE ON THE GOOGLE PATH, and this is the one that matters — see this
+                    // screen's KDoc. Leaving it off here would mean the consent was required of the
+                    // handful of admin-issued password accounts and of nobody else.
+                    enabled = !busy && consentDoor.mayProceed,
                     onClick = onGoogleLogin,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -2234,6 +2366,7 @@ private fun HomeScreen(
             // settings lands on the settings screen that offered them, not on the dashboard.
             is Screen.SpeechAndAi -> Screen.Appearance
             is Screen.MyAiKeys -> Screen.Appearance
+            is Screen.UsageRecording -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -2327,6 +2460,8 @@ private fun HomeScreen(
         // Draws its own TopAppBar, like Speech & AI, so the shared header must not add a
         // second one above it.
         is Screen.MyAiKeys -> null
+        // Its own TopAppBar too, for the same reason.
+        is Screen.UsageRecording -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all eight arms immediately below — counted by reading them: workshops, stages,
         // one stage, report, report history, codes, photos, viewers. Each of those screens draws its
@@ -2399,6 +2534,10 @@ private fun HomeScreen(
         // inside Settings, and dimming the menu row they arrived through would read as having left.
         is Screen.SpeechAndAi -> NavDestination.SETTINGS
         is Screen.MyAiKeys -> NavDestination.SETTINGS
+        // Settings, not the admin hub. This screen is the ACCOUNT's own consent; the hub's Usage tile
+        // is the cross-account aggregate, and lighting the admin row here would tell a designer with
+        // no admin rights that they are inside an administrative tool.
+        is Screen.UsageRecording -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -2563,6 +2702,7 @@ private fun HomeScreen(
                         onBack = { attemptExit { goBack() } },
                         onOpenSpeechAndAi = { screen = Screen.SpeechAndAi },
                         onOpenMyAiKeys = { screen = Screen.MyAiKeys },
+                        onOpenUsageRecording = { screen = Screen.UsageRecording },
                         // Through the ROUTER and not by setting the flag directly, so the settings
                         // row and the menu chip are one code path: whatever `openDestination` decides
                         // the Walkthrough means, both doors mean it. Note that this leaves the
@@ -2577,6 +2717,11 @@ private fun HomeScreen(
                     )
 
                     is Screen.MyAiKeys -> MyAiKeysScreen(
+                        repository = repository,
+                        onBack = { attemptExit { goBack() } }
+                    )
+
+                    is Screen.UsageRecording -> UsageRecordingScreen(
                         repository = repository,
                         onBack = { attemptExit { goBack() } }
                     )
@@ -3432,7 +3577,7 @@ private fun HomeScreen(
             // Rendered by the FIRST dispatcher above, which owns the destinations that draw
             // their own chrome. Listed here only to keep this `when` exhaustive.
             is Screen.Appearance, is Screen.SpeechAndAi, is Screen.MyAiKeys,
-            is Screen.DataBrowser -> Unit
+            is Screen.UsageRecording, is Screen.DataBrowser -> Unit
         }
 
         message?.let {
@@ -11691,6 +11836,31 @@ internal enum class AdminHubEntry(
         "Rank the transcription providers, and — for the master admin — rotate, test and reveal keys.",
         Icons.Filled.VpnKey
     ),
+    /*
+     * WHICH SCREENS ARE REACHED, AND HOW OFTEN — the phone's twin of the web's `/settings/usage`.
+     *
+     * ADMIN AND NOT MASTER ADMIN, mirroring `require_usage_reader` (`deps.can_read_usage`), which is
+     * Admin and above on an argument worth keeping in view: a record of what colleagues DID is more
+     * revealing than the roster of who they are, and "a feature that observes colleagues cannot be
+     * gated more loosely than one that observes cloth". So it sits exactly where the aggregate sits
+     * on the server and nowhere looser. No flag is needed to say so — the hub itself is already
+     * behind `isAdmin && adminChrome`, so `masterOnly = false` IS the mirror.
+     *
+     * IN THE HUB AND NOT ON THE SETTINGS SCREEN, because this is where the phone already keeps the
+     * web's `ADMIN_LINKS` — Task assignment, Workshop access, API keys and this one are four cards
+     * in one grid over there, and TASKS is already a hub entry here for that reason.
+     *
+     * THE LABEL AND DESCRIPTION ARE VERBATIM from `ADMIN_LINKS` in
+     * `frontend/app/(protected)/settings/page.tsx`. A researcher who moves between the laptop and the
+     * handset mid-workshop must meet one name for one thing, and "Usage" specifically must not drift
+     * into "Analytics": `/admin/analytics` is a different screen about craft outcomes that observes
+     * no person at all, and the backend keeps the two names apart on purpose.
+     */
+    USAGE(
+        "Usage",
+        "Which screens are reached, how often, how fast, and how often broken — aggregated across every account.",
+        Icons.Filled.Insights
+    ),
     // GET/PUT /settings (transcription mode + the off-peak window) IS require_master_admin, so this
     // one stays. It is the narrow half of the same file the ranking above was carved out of.
     SETTINGS("Settings", "Transcription output and off-peak processing.", Icons.Filled.Tune, masterOnly = true)
@@ -11799,6 +11969,12 @@ private fun AdminHubScreen(
                 onMessage = onMessage,
                 onError = onError
             )
+            // Same as the two above: the hub's "All admin tools" pill is the back control, so the
+            // screen's own arrow stays off (`onBack = null`). Nothing is passed down about the
+            // caller's rank, and nothing should be — `require_usage_reader` is Admin and above and
+            // the hub is already behind `isAdmin`, so a second predicate inside the screen would be a
+            // third copy of one rule and the one nobody updates.
+            AdminHubEntry.USAGE -> UsageScreen(repository = repository, onBack = null)
             AdminHubEntry.SETTINGS -> SettingsScreen(repository = repository, onMessage = onMessage, onError = onError)
         }
     }

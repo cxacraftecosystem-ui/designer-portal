@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.DesignerProfileDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -257,21 +258,39 @@ class DesignerProfileScreenTest {
           `DictatedTextArea` its multi-line one; both take the API column name as `name`, which is
           the same string this screen's tables are keyed by — the LABELS differ between the clients
           ("Name as printed" here, "Name" there) and are allowed to, the columns are not.
+
+          ── THE THIRD CONTROL, ADDED 2026-08-30, AND WHY IT COUNTS AS DICTATION ──────────────────
+
+          `RichTextField` joined the other two when `addressLine` became a rich-text column on the
+          web. It carries a microphone like the other two do — the difference is WHERE: the button is
+          inside `RichTextEditor` and inserts a committed phrase at the caret with the surrounding
+          run's marks, as one undoable step, rather than appending to the end of the box. That is a
+          better microphone than the one it replaced, not the absence of one.
+
+          IT IS NAMED HERE BECAUSE THE ALTERNATIVE IS SILENT. Without this arm the regex simply stops
+          finding `addressLine`, the assertion below reports it as "only on the handset", and the
+          honest-looking repair is to delete the column from [DESIGNER_PROFILE_DICTATED] — which
+          would take the microphone off the handset's address box to match a web box that still has
+          one. The failure this test exists to catch would have caused it.
+
+          A NEW CONTROL WITH NO MICROPHONE MUST NOT BE ADDED TO THIS ALTERNATION. The list is "the
+          web's controls that dictate", not "the web's controls".
         */
         val web = repoFile(
             "frontend/components/designers/DesignerProfileForm.tsx",
             "../frontend/components/designers/DesignerProfileForm.tsx",
         ).readText(Charsets.UTF_8)
 
-        val webDictated = Regex("<Dictated(?:Field|TextArea)\\s+name=\"([A-Za-z]+)\"")
+        val webDictated = Regex("<(?:DictatedField|DictatedTextArea|RichTextField)\\s+name=\"([A-Za-z]+)\"")
             .findAll(web)
             .map { it.groupValues[1] }
             .toSet()
 
         assertTrue(
-            "no <DictatedField> or <DictatedTextArea> was found in DesignerProfileForm.tsx — if the " +
-                "web's dictation controls were renamed, this test has to follow them rather than be " +
-                "deleted, because the parity it checks is the thing the owner asked for",
+            "no <DictatedField>, <DictatedTextArea> or <RichTextField> was found in " +
+                "DesignerProfileForm.tsx — if the web's dictation controls were renamed, this test " +
+                "has to follow them rather than be deleted, because the parity it checks is the " +
+                "thing the owner asked for",
             webDictated.isNotEmpty(),
         )
         assertEquals(
@@ -306,6 +325,114 @@ class DesignerProfileScreenTest {
         // And it leaves ordinary text exactly alone, including the scripts the local-name box is for.
         assertEquals("मीरा नायर", designerProfileOneLine("मीरा नायर"))
         assertEquals("", designerProfileOneLine(""))
+    }
+
+    // ── The address column after it took rich text on the web (2026-08-30) ───────────────────────
+
+    /*
+      WHY THESE FOUR TESTS EXIST, IN ONE PARAGRAPH.
+
+      `DesignerProfile.addressLine` is now read by the web through a rich-text editor and written as
+      one of two shapes in the SAME `String?` column: the designer's prose when nothing is formatted,
+      and `{"blocks":[…]}` the moment a word is bolded. This handset has no rich editor for it and
+      deliberately is not getting one (see `designerProfileAddressText`), which leaves it with two
+      obligations it can fail SILENTLY — show the words rather than the braces, and hand the document
+      back unharmed on a save it had nothing to do with. Neither failure raises an error: the first
+      looks like a designer who pasted something odd into their address, and the second looks like
+      nothing at all until somebody opens the browser again and their formatting is gone.
+
+      The pre-promotion case is first and is the one that matters most, because it is EVERY LIVE ROW:
+      nothing was migrated and nothing needed to be.
+    */
+
+    @Test
+    fun `an address written before rich text renders exactly as it always did`() {
+        // Identity, not a round trip. `recordDocFromStored` reads a non-JSON string as prose and
+        // `toPlain` writes it back, so what a designer typed in 2025 is what the box shows today —
+        // including the scripts the local-name box is for, and including nothing at all.
+        assertEquals("12 Nagar Road, Bagru", designerProfileAddressText("12 Nagar Road, Bagru"))
+        assertEquals("मीरा नायर, जयपुर", designerProfileAddressText("मीरा नायर, जयपुर"))
+        assertEquals("", designerProfileAddressText(null))
+        assertEquals("", designerProfileAddressText(""))
+        // Prose that merely BEGINS with a brace is prose. `looksLikeRichDocument` demands a "blocks"
+        // key precisely so a stray character in an address is not reinterpreted as a document.
+        assertEquals("{Flat 2} Nagar Road", designerProfileAddressText("{Flat 2} Nagar Road"))
+    }
+
+    @Test
+    fun `a formatted address shows its words and never its braces`() {
+        val document = """{"blocks":[{"kind":"PARAGRAPH","spans":""" +
+            """[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}"""
+        val shown = designerProfileAddressText(document)
+        assertEquals("12 Nagar Road, Bagru", shown)
+        assertFalse(
+            "the address box is showing raw JSON — a designer reads that as a corrupted value and " +
+                "the obvious repair is to delete it and retype, which destroys the web's document",
+            shown.contains("blocks"),
+        )
+        // Two paragraphs flatten to two lines and then fold to one, because [ProfileText] folds a
+        // line break to a space on every keystroke: a box that showed two lines would change the
+        // instant it was touched. The stored value keeps both lines — that is the test below.
+        val twoLines = """{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road"}]},""" +
+            """{"kind":"PARAGRAPH","spans":[{"text":"Bagru 303007"}]}]}"""
+        assertEquals("12 Nagar Road Bagru 303007", designerProfileAddressText(twoLines))
+    }
+
+    @Test
+    fun `saving an untouched profile hands the formatted address back byte for byte`() {
+        /*
+          THE ONE THAT PREVENTS DATA LOSS. `designerProfileUpdateJson` writes every column on every
+          save so that an emptied box can clear a value — so without this rule, a designer opening
+          this screen to correct their DEPARTMENT would post the flattened address over the document,
+          and the formatting they typed in a browser would be gone with nothing said on either
+          client. The body is built from the form the way the screen builds it.
+        */
+        val document = """{"blocks":[{"kind":"PARAGRAPH","spans":""" +
+            """[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}"""
+        val stored = DesignerProfileDto(displayName = "Meera Nair", addressLine = document)
+        val form = stored.toForm()
+
+        assertEquals("12 Nagar Road, Bagru", form.addressLine)
+        assertEquals(
+            "an untouched address must be sent back as the STORED string, not as its flattening",
+            document,
+            form.toBody(form, document).addressLine,
+        )
+
+        // A save that changed something else entirely still leaves it alone — which is the case that
+        // actually happens, and the one a "dirty flag on the whole form" would have got wrong.
+        val elsewhere = form.copy(department = "Textile Design")
+        assertEquals(document, elsewhere.toBody(form, document).addressLine)
+    }
+
+    @Test
+    fun `editing the address on the handset replaces the document with what was typed`() {
+        /*
+          THE OTHER HALF, AND IT IS DELIBERATE RATHER THAN A LIMITATION. A designer who retypes their
+          address on a phone means the address to be what they typed; keeping the old document's
+          marks over new words would be the app deciding it knew better. What must not happen is that
+          this is a SURPRISE, which is why the box prints a line saying so while the stored value
+          carries formatting — pinned by the source check below.
+        */
+        val document = """{"blocks":[{"kind":"PARAGRAPH","spans":""" +
+            """[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}"""
+        val form = DesignerProfileDto(addressLine = document).toForm()
+        val edited = form.copy(addressLine = "14 Nagar Road, Bagru")
+
+        assertEquals("14 Nagar Road, Bagru", edited.toBody(form, document).addressLine)
+
+        val source = screenSource()
+        assertTrue(
+            "the address box no longer warns that editing it here replaces the web's formatting — " +
+                "the replacement is defensible and the surprise is not, so if the wording changed, " +
+                "update this test rather than dropping the sentence",
+            source.contains("This address was formatted on the web."),
+        )
+        assertTrue(
+            "the warning is drawn unconditionally, which makes it a paragraph nobody reads by the " +
+                "second visit — it must be gated on the stored value actually carrying formatting",
+            source.contains("designerProfileAddressIsFormatted(storedAddressLine)"),
+        )
     }
 
     @Test

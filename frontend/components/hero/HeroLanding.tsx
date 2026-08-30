@@ -43,12 +43,18 @@ import { heroEntrance, useHeroReducedMotion } from "@/components/hero/useHeroMot
  *   1. THE HERO is the bare ground — the buti at 96px and 3.2% white, a weave you register without
  *      naming. It replaces the 24px dot grain that used to sit here (that recipe moved onto the
  *      printing bed, so nothing was lost).
- *   2. THE PRINTING BED is the printing itself — 72 individually misregistered impressions that
- *      build as you scroll, with one gold head. That is the signature and the only place with
- *      bespoke geometry or motion.
+ *   2. THE PRINTING BED is the printing itself — 97 individually misregistered impressions that
+ *      build as you scroll, IN GOLD, the whole cloth. That is the signature and the only place
+ *      with bespoke geometry or motion.
  *   3. THE CLOSING BAND is the finished length — the same tile, fully present, STATIC, and with no
  *      gold at all. The moment it moves or takes gold, the bed stops being the one signature
  *      moment and becomes a repeated effect.
+ *
+ * (State 2 read "72 impressions … with one gold head" until the site marks came off. The count was
+ * never 72 — `CLOTH_MASK` has always yielded 97 — and the gold head was Bagru, removed by
+ * direction along with the three unprinted marks and the caption that named all four. Rule 3 is
+ * unchanged and is now doing MORE work, not less: with the bed gold throughout, a closing band
+ * that also took gold would leave nothing for the bed to be the exception to.)
  *
  * Both static states are the CSS tile, which carries four differently-rotated impressions per
  * 96px repeat so it does not read as machine-perfect wallpaper. Only the bed stamps individual
@@ -159,17 +165,278 @@ const SURFACES = [
 ];
 
 /**
+ * ── THE TWO INSTITUTIONAL MARKS, DECLARED ONCE AND RENDERED TWICE ──────────────────────────────
+ *
+ * Each mark is now on two surfaces: the hero's masthead corners, and the colophon band above the
+ * footer. The two surfaces treat them very differently — one recolours the seal and plates the
+ * wordmark, the other plates both and recolours neither — so what is shared is only the pair of
+ * facts that must never disagree: where the file is, and where the link goes. A mark renamed in
+ * `public/logos/` or an institution that moves host would otherwise be corrected on the surface
+ * somebody happened to be looking at and left broken on the other.
+ *
+ * ⚠ AND NEITHER SURFACE REPORTS A MISSING FILE, WHICH IS THE WHOLE REASON THE PATH IS DECLARED
+ * ONCE. This paragraph used to end "a missing logo is silent: an `<img>` with `alt=""` renders
+ * nothing at all rather than a broken-image glyph." That is true in Firefox and FALSE in Chromium,
+ * which is most of this page's traffic, and it was checked rather than reasoned about: with the
+ * PNG aborted at the network layer, Chromium paints its broken-image glyph INSIDE the cream plate
+ * at the masthead's top-left corner. `alt=""` suppresses that glyph only for an image with no
+ * intrinsic box, and this one carries `width`/`height` attributes on purpose (they are what
+ * reserves its space before the file arrives), so the box exists and the glyph is drawn in it.
+ *
+ * The seal fails the opposite way and is genuinely silent: a `mask-image` whose source never
+ * arrives masks the box out completely — verified both mid-flight and after an abort — so the
+ * corner is simply empty, with `alt=""`/`aria-hidden` leaving nothing for a screen reader either.
+ *
+ * So the two marks fail DIFFERENTLY, one loudly and one invisibly, and neither failure reaches a
+ * log or a test. That is not an argument for adding an `onError` handler to a static file in
+ * `public/` that has never once failed to serve; it is the argument for these two paths having
+ * exactly one definition, so that a rename breaks both surfaces at once and is noticed.
+ */
+const IIT_KHARAGPUR = {
+  /** The formal name, verbatim: it is both the visible label in the band and the link's accessible name. */
+  name: "Indian Institute of Technology Kharagpur",
+  href: "https://www.iitkgp.ac.in/",
+  src: "/logos/iit-kharagpur.svg",
+  // Intrinsic dimensions, so the browser reserves the right box before the file arrives. The
+  // `w-auto` in the band's `markClass` is what makes the rendered width follow from the height.
+  width: 268,
+  height: 300
+};
+
+const DC_HANDICRAFTS = {
+  // The office's name as this repository already writes it — `report_templates.py:371` sets
+  // `organisation="Office of the Development Commissioner (Handicrafts)"` on the DCH_STANDARD
+  // template. The Ministry line is in the band's paragraph rather than repeated in the label,
+  // where it would push that caption to five wrapped lines on a phone.
+  name: "Office of the Development Commissioner (Handicrafts)",
+  href: "https://handicrafts.nic.in/",
+  src: "/logos/dc-handicrafts.png",
+  width: 600,
+  height: 253
+};
+
+/**
+ * ── THE MASTHEAD CORNER MARKS, AND THE OBJECTION THEY HAD TO ANSWER FIRST ──────────────────────
+ *
+ * The band's header below used to argue that the marks belonged above the footer and NOWHERE ELSE:
+ * "the masthead is 100px of dark purple carrying a wordmark and one button; three marks up there
+ * would need three light plates in the most visible part of the page and would compete with the
+ * single conversion this page has." The owner asked for them in the hero corners, so that sentence
+ * had to go — but it is quoted here rather than deleted, because its premise was sound and the
+ * layout below is what ANSWERS it rather than what ignores it. Two of its three clauses are now
+ * false by construction:
+ *
+ *   THERE ARE THREE MARKS AND ONLY TWO FILES, WHICH IS NOT THE SAME SENTENCE AND IS THE ONE THAT
+ *   IS TRUE. Two arrive from `public/logos/`; the third is `WorkshopLogo`, drawn in code. The
+ *   masthead carries a seal at each end of a row that spans the whole screen, hundreds of pixels
+ *   apart, so they never read as a cluster competing with the call to action.
+ *
+ *   ⚠ THE THIRD MARK IS THE CENTRE OF EXCELLENCE'S, AND IT IS ALSO THIS APPLICATION'S. Corrected
+ *   here on 2026-08-30 by the owner, because the paragraph that stood in this spot got it backwards
+ *   and its conclusion was being used to refuse a request. It argued that
+ *   `public/logos/centre-of-excellence.svg` had to be deleted because its geometry was
+ *   `app/icon.svg` VERBATIM — the same 108-unit box, the same `M54 14l7 27…` eight-point star, the
+ *   same `#CC785C` on `#FAF9F5`, the same `#181715` disc — and concluded that it was therefore
+ *   "THIS PRODUCT'S OWN LOGO carrying `aria-label="Centre of Excellence"`", which drawn in the
+ *   colophon would attribute this product's mark to another institution.
+ *
+ *   THE OBSERVATION WAS EXACTLY RIGHT AND THE INFERENCE WAS EXACTLY WRONG. The two files are
+ *   identical because the mark is the SAME MARK: this application is a Centre of Excellence
+ *   project and wears the Centre's mark, which is why the Centre's own site serves it as its icon
+ *   and why it sits in this product's navigation bar. There was never a mislabelling to protect
+ *   against. What the reasoning did protect against is real and survives untouched: a FOURTH
+ *   hand-copy of a mark that `WorkshopLogo.tsx:7-10` warns already exists in three places that must
+ *   be edited in lockstep (the Android drawable, that component, and the favicon).
+ *
+ *   SO THE MARK IS RENDERED, AND IT IS RENDERED FROM THE COMPONENT. The colophon draws
+ *   `<WorkshopLogo>` beside the Centre's full name — a sixth render site of one declaration, not a
+ *   sixth copy of a path. `e2e/landing-institutions-unit.spec.ts` still fails on any unrendered file
+ *   in `public/logos/` and on any logo FILE carrying that star path, and both guards are still
+ *   wanted: the thing to refuse was always the duplicated file, never the mark.
+ *
+ *   THERE ARE NOT THREE PLATES. There is one, and the masthead already had it before this change:
+ *   `WorkshopLogo` paints its own `#FAF9F5` tile (`WorkshopLogo.tsx:22`) and sits 24px away. The
+ *   seal needs no plate at all now, for the reason immediately below.
+ *
+ * ── THE SEAL IS MASKED WHITE, NOT FILTERED AND NOT RE-DRAWN ────────────────────────────────────
+ *
+ * `iit-kharagpur.svg` is the best possible case for recolouring, and the file was read rather than
+ * assumed: `<svg>` → ONE `<g fill="#291973" fill-rule="evenodd">` → 110 `<path>`, and nothing else
+ * in it. No `class`, no inline `style`, no `<style>` block, no `<defs>`, no `stroke`, no gradient,
+ * no embedded raster. `grep -o 'fill="[^"]*"'` returns exactly one hit across the whole 99 KB and
+ * so does a sweep for hex literals. All 110 paths inherit that single fill.
+ *
+ * It still cannot be recoloured through the cascade, because it is loaded as an `<img>` and an
+ * `<img>`-loaded SVG is an isolated document: the page's CSS never reaches inside it, and a
+ * `currentColor` written into the file would resolve against that document's own root and come out
+ * black. `buti.ts:94-98` records the same fact about the data URI it exports — "A data URI cannot
+ * see `currentColor`" — and reaches the same conclusion this does.
+ *
+ * So the file is consumed as a **`mask-image`**, exactly as `PageSelvedge.tsx:49-59` consumes the
+ * buti: only the ALPHA of the source is read, and the box behind it is painted with a colour of our
+ * choosing. That is what makes the result GENUINELY white rather than white-ish — the source colour
+ * is discarded rather than lightened, so `#291973`, black and white would all mask identically.
+ * `fill-rule="evenodd"` is what keeps the ring lettering, the "1951" and the motto as real holes:
+ * an evenodd hole is alpha 0, so the purple shows through it and the seal does not flatten into a
+ * white blob. Both the prefixed and unprefixed properties ship, as `PageSelvedge` does.
+ *
+ * The three alternatives, and why each was refused, so nobody re-litigates this:
+ *
+ *   `filter: brightness(0) invert(1)` on the `<img>` — it works, and it has zero precedent in this
+ *   tree. It is also a trick that produces white from ANY input rather than a statement that the
+ *   mark is white, and it cannot be reused for the other mark, so it would be a technique
+ *   introduced for one call site and immediately misapplied to the second.
+ *
+ *   Inlining the SVG and swapping the one fill to `currentColor` — a one-attribute change that
+ *   pushes 99 KB of path data into the prerendered payload of the one route everybody lands on,
+ *   in place of a cacheable static file.
+ *
+ *   A second, white copy of the file — two marks to keep in step, which is the shape of divergence
+ *   `WorkshopLogo.tsx:7-10` already warns about for the hand-transcribed launcher icon.
+ *
+ * ── THE DC MARK GOES AS IS, ON A PLATE, AND THE PLATE IS NOT SYMMETRY ──────────────────────────
+ *
+ * ⚠ IT CANNOT BE MADE WHITE, so "render the logos white" can only ever have meant the seal. The PNG
+ * was decoded chunk by chunk rather than eyeballed: 600 × 253, colour type 3, `PLTE` 256 entries,
+ * `tRNS` 182. **9,510 of its pixels are OPAQUE PURE WHITE** — the emblem's interior is PAINTED
+ * white (a 105 × 116 region, 78% filled, so a shaped ground and not a rectangular plate) rather
+ * than punched out to transparency. Any alpha treatment — a mask, `brightness(0) invert(1)`,
+ * anything that reads coverage instead of colour — collapses that white ground, the blue rule
+ * around it, the yellow rays and the wordmark into one featureless silhouette.
+ *
+ * ⚠ AND IT IS NOT LEGIBLE ON THIS BAND UNAIDED, which is the whole reason for the plate. Measured
+ * against the hero's real background — `bg-purple-950` is `oklch(0.255 0.108 305)` = `#2F0D4B` —
+ * the emblem is fine: 0% of its ink falls under 3:1, with white at 16.41:1, yellow at 10.78:1 and
+ * blue at 4.93:1. The WORDMARK beside it is not. **4,815 of its pixels are the red `#C3161C`,
+ * which is 2.70:1 on that purple**, and that red is the largest single block of lettering in the
+ * file (x 287…546 of 600); 44% of the wordmark's ink is under 3:1. A dark red line on a dark purple
+ * ground is exactly the failure the trap index is full of, and it is invisible to an eye that
+ * checked only the emblem — which is the easy mistake here, because the emblem is the half that
+ * looks like the logo.
+ *
+ * The plate is `bg-logo-cream` — a REAL TOKEN (`tailwind.config.ts:90`, "Brand-native logo colors
+ * (Android launcher icon) — never re-themed"), the same one the band below uses and the same
+ * `#FAF9F5` that `WorkshopLogo` paints into its own tile 24px away in this very row. So it is not
+ * an exception to "never hardcode a neutral" (§1.2); it is the one ladder in the config whose whole
+ * purpose is to NOT invert, and naming it is what makes that legible.
+ *
+ * ⚠ "BOTH THEMES" IS ONE BACKGROUND HERE, WHICH IS WHY THERE IS NO `dark:` ANYWHERE BELOW. The
+ * purple ramp is literal OKLCH and never inverts (`tailwind.config.ts:18` — "The purple and gold
+ * ramps stay literal — brand colour does not invert"), so this band is `#2F0D4B` under
+ * `data-theme="light"` and under `data-theme="dark"` alike. Every contrast figure above is
+ * therefore the figure in BOTH themes rather than an average of two, and a `dark:`-conditional
+ * plate here would be theming machinery that can never fire.
+ *
+ * One mark plated and one bare is the OPPOSITE of the rule the band below follows ("BOTH MARKS GET
+ * THE PLATE, THOUGH ONLY ONE NEEDS IT"), and the difference is deliberate rather than an
+ * inconsistency to tidy away. There, the two sit side by side in one centred row six pixels apart
+ * on cream, where a plate behind one of them reads as a mistake. Here they are at opposite ends of
+ * a full-width masthead and are never seen as a pair — and the treatments differ because the FILES
+ * differ: one is a single-fill silhouette that can be repainted, one is a four-colour mark whose
+ * dominant line survives neither repainting nor the purple.
+ *
+ * ── WHY THEY DISAPPEAR BELOW `md`, WHICH IS THE "DISTURB NOTHING" CLAUSE MADE LITERAL ──────────
+ *
+ * There is no free space in this row on a phone. Measured in Chromium against the page as it stood
+ * before this change: at 360px the wordmark occupies x 66.4…257.8 and the "Sign in" button occupies
+ * x 257.8…336 — they meet at 257.8 with a ZERO-pixel gap, and 336 is exactly the viewport minus the
+ * 24px padding. The row is already over-subscribed: the button is being flex-shrunk from its
+ * natural 86.3px down to 78.2px and the wordmark has already wrapped to two lines, which is why the
+ * header stands 80px tall on a phone and drops to 64px only once it stops wrapping, somewhere
+ * between 414 and 480px. Anything added to that row does not sit beside the existing content, it
+ * pushes it — and the brief's instruction was that nothing existing may move.
+ *
+ * ⚠ THE BREAKPOINT IS `md` AND NOT `sm`, AND IT WAS MOVED BECAUSE A MEASUREMENT SAID SO. At `sm`
+ * the row fits comfortably in normal type — 67px of slack at 640px — and then `data-larger-text`
+ * spends it: the root goes 16px to 18px, EVERY length in this row is rem-based and grows with it,
+ * and the total lands about 22px over the 550px available. The wordmark wrapped to a second line
+ * and the header grew from 72px to 90px, at 640 and 641 and nowhere else. That is the marks pushing
+ * existing content, in a real accessibility mode, in a band two viewport widths wide — precisely
+ * the class of defect that ships because nobody thought to check the preference AND the breakpoint
+ * together, and it is invisible to anyone testing at a round desktop size. The cause was isolated
+ * rather than guessed at: the same build measured twice, once as it renders and once with the two
+ * anchors forced to `display: none`, so the difference IS the two marks and nothing else. `md`
+ * (768px) clears it with about 106px to spare, and the sliver of widths between `sm` and `md` that
+ * loses the marks is worth more as a guarantee than as ornament. Do not "restore" this to `sm`
+ * without re-running that pair of measurements under `data-larger-text="true"`.
+ *
+ * So the marks are `hidden … md:flex`, and below `md` NOTHING RENDERS AND NOTHING MOVES — but that
+ * is a guarantee the markup has to EARN, and the first attempt did not. Wrapping each mark and its
+ * neighbour in a flex group changed how the row distributes its shortfall even with the mark hidden:
+ * one extra level of `min-width: auto` between the header and the wordmark, and the wordmark came
+ * out 5.1px wider and the button 5.9px narrower at 360px. Small, and still a move. The fix is
+ * `contents md:flex` on both groups: below `md` a `display: contents` box is not in the box tree at
+ * all, so the header's flex items are once again exactly the wordmark cluster and the button — the
+ * same two boxes, the same `justify-between`, the same shrink arithmetic — and `max-w-6xl` never
+ * bound below 1152px anyway. Verified twice rather than reasoned about: every box in the row
+ * (header, logo, wordmark, button) is identical to the pixel against the pre-change page at 320,
+ * 360, 390 and 414px, and a screenshot of the whole masthead at 390px is byte-for-byte identical.
+ * At 320 and 360 the screenshots differ by at most ONE unit in one channel, on the mesh-orb
+ * gradient behind the row — that layer drifts continuously, so the two captures caught it a
+ * fraction of a frame apart. Nothing structural differs at any width below `md`.
+ *
+ * They are also scaled rather than fixed (`h-5`→`h-7` for the wordmark, `h-7`→`h-9` for the seal,
+ * stepping up at `lg`), so the first width that shows them is the width at which they are smallest
+ * — the brief's "make the marks scale down rather than moving any existing element", carried as far
+ * as it goes before the row has no room left to give at all. This is the same
+ * answer, for the same reason, as the scroll chevron further down this file: a phone does not need
+ * the ornament, so the fix is to remove it rather than to pad around it.
+ *
+ * ── OPTICAL SIZING, AND THE ACCESSIBLE NAMES ───────────────────────────────────────────────────
+ *
+ * The heights are NOT equal, for the reason the band's own header sets out: the seal is portrait
+ * (0.89:1, solid ink) and the wordmark is landscape (2.37:1, mostly the space between letters), so
+ * mass is equalised instead of height and the wordmark ends about 20% larger by area. The band
+ * lands that at `h-12` DC against `h-16` seal — a ratio of 0.75 — and these two pairs hold it:
+ * `h-5` against `h-7` is 0.71, `h-7` against `h-9` is 0.78.
+ *
+ * Both marks are LINKS, and both carry their destination in the accessible name, because unlike the
+ * band there is no visible institution name inside the anchor to serve as one — an unlabelled logo
+ * link is precisely the `alt="logo"` trap the band's header warns about. The name is `sr-only` text
+ * inside the anchor rather than `alt` on the image, which is the same construction and the same
+ * reason as below: one name per link, announced once. So the image keeps `alt=""`, and the seal's
+ * masked box is `aria-hidden` because a `<span>` painted through a mask has nothing to announce.
+ *
+ * Neither can shift the layout as it loads. The seal's box is `h-7 aspect-[268/300]` — pure CSS,
+ * resolved before any file is fetched — and the DC `<img>` carries its intrinsic `width`/`height`
+ * so the browser reserves its box from that ratio. (`aspect-[268/300]` is the pair declared above,
+ * rounded off the true `267.538 × 299.737`. The 0.08% error is safe because `mask-size: contain`
+ * letterboxes the mark inside its box: the error becomes a 0.02px sliver of dead space and can
+ * never distort the seal. It is spelled out as a literal because Tailwind scans for whole class
+ * names and cannot interpolate one from the constant.)
+ */
+const SEAL_MASK = `url("${IIT_KHARAGPUR.src}")`;
+
+/**
+ * The seal, painted through its own alpha. Declared once at module scope rather than rebuilt per
+ * render: it is a constant, and an object literal in JSX is a new object on every frame the hero's
+ * scroll transforms cause.
+ */
+const SEAL_MASK_STYLE: React.CSSProperties = {
+  maskImage: SEAL_MASK,
+  WebkitMaskImage: SEAL_MASK,
+  maskSize: "contain",
+  WebkitMaskSize: "contain",
+  maskRepeat: "no-repeat",
+  WebkitMaskRepeat: "no-repeat",
+  maskPosition: "center",
+  WebkitMaskPosition: "center",
+  backgroundColor: "#ffffff"
+};
+
+/**
  * ── THE INSTITUTIONAL BAND (requirements 15, 16 and 17) ────────────────────────────────────────
  *
  * Two marks and one outbound link, sitting between the closing call to action and the footer.
  *
- * WHY HERE AND NOWHERE ELSE. The masthead is 100px of dark purple carrying a wordmark and one
- * button; three marks up there would need three light plates in the most visible part of the page
- * and would compete with the single conversion this page has. The closing band is worse for the
- * same reason — a link AWAY from the page, printed next to the sign-in button. Above the footer is
- * where a reader looks for provenance, and it is the only place on this page where LEAVING is the
- * expected gesture. It shares the footer's `bg-card`, so the footer's own `border-t` is the hairline
- * between them and no second rule is drawn.
+ * WHY IT SURVIVED THE MARKS MOVING INTO THE MASTHEAD. The corner marks up there are ORNAMENT with a
+ * destination: no visible name, no institution's role stated, nothing a reader can quote. This band
+ * is the provenance — it names both institutions in full, says what the affiliation IS, and carries
+ * the Centre of Excellence link. It is also the only place on this page where LEAVING is the
+ * expected gesture, and it is where a reader looks for exactly that. Deleting it as "the same thing
+ * twice" would delete the half that carries the meaning and keep the half that carries the picture.
+ * It shares the footer's `bg-card`, so the footer's own `border-t` is the hairline between them and
+ * no second rule is drawn.
  *
  * ⚠ NO MOTION ON THIS BAND, AND THAT IS THE POINT RATHER THAN AN OMISSION. Every other section
  * below the fold is `whileInView`, which means framer-motion writes `opacity: 0` into the
@@ -199,12 +466,18 @@ const SURFACES = [
  * reader would have "fixed" into `bg-card` and broken in dark mode. `tile={false}` has no call site
  * anywhere in the app, so the cream tile is the only precedent there is.
  *
+ * ⚠ THE MASTHEAD DOES THE OPPOSITE AND IS NOT INCONSISTENT WITH THIS. Up there the seal is painted
+ * white through a mask and needs no plate, while the DC mark keeps one; the reasoning, the
+ * measurements and the reason the two surfaces must not be "made to agree" are in the masthead
+ * header above. THIS band is the one whose ground inverts — `bg-card` is a themed token — so the
+ * plate here answers a question the masthead does not have.
+ *
  * BOTH MARKS GET THE PLATE, THOUGH ONLY ONE NEEDS IT. `dc-handicrafts.png` is full colour — a blue,
- * a yellow, a red and a white counter inside the letterform — and it survives both themes on its
- * own. A plate behind one mark and a bare mark beside it reads as a mistake rather than as a
- * treatment, and the alternative (a `dark:`-conditional plate on one of the two) is new theming
- * machinery on a prerendered page for a problem a shared plate solves with one class. It also gives
- * the DC mark's white counter a warm ground to sit on rather than the page's own white.
+ * a yellow, a red and a white ground inside the emblem — and it survives both themes on its own. A
+ * plate behind one mark and a bare mark beside it reads as a mistake rather than as a treatment,
+ * and the alternative (a `dark:`-conditional plate on one of the two) is new theming machinery on a
+ * prerendered page for a problem a shared plate solves with one class. It also gives the DC mark's
+ * white emblem a warm ground to sit on rather than the page's own white.
  *
  * ⚠ THAT PNG IS INDEXED COLOUR, not RGBA — 256 palette entries with a 182-entry `tRNS` alpha table
  * (checked on disk, not assumed). It renders correctly and its quantisation is invisible at this
@@ -241,36 +514,17 @@ const SURFACES = [
  * link. The visible text is therefore the accessible name, and `(opens in a new tab)` is appended
  * `sr-only` AFTER it so the visible label is still a prefix of the accessible one (WCAG 2.5.3,
  * Label in Name). The suffix is the wording this repository already uses in
- * `designworkshop/StageReferenceField.tsx:444`.
+ * `designworkshop/StageReferenceField.tsx:444`. The masthead marks reach the same outcome from the
+ * opposite direction: no visible text, so the WHOLE name is `sr-only` and the image still takes
+ * `alt=""`. Either way it is one name per link.
  *
  * `target="_blank" rel="noreferrer"` is the house form for an outbound anchor — roughly eleven call
  * sites against one each of the three alternatives — and `noreferrer` implies `noopener` in every
  * browser this app supports, so the pair is not needed.
  */
 const INSTITUTIONS = [
-  {
-    /** The formal name, verbatim: it is both the visible label and the link's accessible name. */
-    name: "Indian Institute of Technology Kharagpur",
-    href: "https://www.iitkgp.ac.in/",
-    src: "/logos/iit-kharagpur.svg",
-    // Intrinsic dimensions, so the browser reserves the right box before the file arrives. The
-    // `w-auto` in `markClass` is what makes the rendered width follow from the height.
-    width: 268,
-    height: 300,
-    markClass: "h-12 w-auto sm:h-16"
-  },
-  {
-    // The office's name as this repository already writes it — `report_templates.py:371` sets
-    // `organisation="Office of the Development Commissioner (Handicrafts)"` on the DCH_STANDARD
-    // template. The Ministry line is in the paragraph above rather than repeated in the label,
-    // where it would push this caption to five wrapped lines on a phone.
-    name: "Office of the Development Commissioner (Handicrafts)",
-    href: "https://handicrafts.nic.in/",
-    src: "/logos/dc-handicrafts.png",
-    width: 600,
-    height: 253,
-    markClass: "h-9 w-auto sm:h-12"
-  }
+  { ...IIT_KHARAGPUR, markClass: "h-12 w-auto sm:h-16" },
+  { ...DC_HANDICRAFTS, markClass: "h-9 w-auto sm:h-12" }
 ];
 
 /**
@@ -284,10 +538,43 @@ const INSTITUTIONS = [
  * Centre's own site already names this product as one of its three platform pillars, so a link
  * preserves a deliberate parent/child relationship that collapsing the two would destroy.
  *
- * The host is printed in the link text on purpose. A reader about to leave an application they are
- * being asked to sign in to should be able to see where they are going before they press it.
+ * ⚠ THE HOST IS NO LONGER PRINTED IN THE LINK TEXT, AND THE SENTENCE THAT SAID IT SHOULD BE IS
+ * QUOTED HERE RATHER THAN DELETED, because its reasoning was sound and only its premise expired.
+ * It read: "The host is printed in the link text on purpose. A reader about to leave an application
+ * they are being asked to sign in to should be able to see where they are going before they press
+ * it." That is a good rule and this repository follows it elsewhere.
+ *
+ * It was overturned by direction on 2026-08-30, on a ground the rule does not cover: *"link needs
+ * to be there on click, not in text on the website, as we are soon going to change the link to a
+ * better one."* A host printed in prose is a SECOND copy of the destination, and the moment the
+ * Centre moves to its permanent address that copy becomes a sentence on the landing page confidently
+ * naming somewhere the link no longer goes. The transparency rule protects a reader from being sent
+ * somewhere unexpected; a stale host printed beside a working link does the opposite of that.
+ *
+ * SO THE CONSTANT BELOW IS NOW THE ONLY PLACE THE ADDRESS APPEARS, and swapping it is the whole of
+ * the change when the new one arrives — no copy to find, no accessible name to re-word.
+ * `e2e/landing-institutions-unit.spec.ts` already asserts each institutional destination is written
+ * exactly once, so a second literal fails a test rather than quietly ageing.
+ *
+ * WHAT REPLACED THE HOST IS THE CENTRE'S FULL NAME, which is better transparency than a hostname
+ * was: "cxa-cms.vercel.app" is a deployment slug that tells a reader nothing about who they are
+ * being sent to, while the full legal name does. The anchor still announces the new tab, which is
+ * the part of the rule that actually protects the reader and is kept.
  */
 const CENTRE_OF_EXCELLENCE_HREF = "https://cxa-cms.vercel.app/";
+
+/**
+ * The Centre's full name, as the owner gave it. Declared rather than inlined so the colophon and
+ * any later surface cannot disagree about it, and so the ONE thing a reader is asked to recognise
+ * is not buried in JSX.
+ *
+ * ⚠ IT IS DELIBERATELY NOT TITLE-CASED. "unified AI-enabled craft ecosystem platform" is written
+ * here exactly as it was supplied; an editor tidying it into "Unified AI-Enabled Craft Ecosystem
+ * Platform" would be restyling an institution's own name, which is not a typographic decision this
+ * page gets to make.
+ */
+const CENTRE_OF_EXCELLENCE_NAME =
+  "Centre of Excellence for unified AI-enabled craft ecosystem platform";
 
 /**
  * The public hero — the product's signature dark-purple mesh treatment applied to
@@ -365,23 +652,129 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
           />
         </motion.div>
 
-        {/* Top bar: logo + sign in */}
-        <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 pt-6">
-          <div className="flex items-center gap-2.5">
-            <WorkshopLogo className="h-10 w-10 rounded-xl shadow-md" />
-            <span className="font-display text-lg font-bold tracking-tight text-white">Design Prototype Workshop</span>
+        {/*
+          ── THE MASTHEAD, NOW FULL BLEED, AND WHAT THAT DID AND DID NOT MOVE ───────────────────
+
+          The dark purple always reached both edges — the `<section>` above has never had a cap.
+          What stopped short was the CONTENT: this row and the copy grid below it were each
+          `mx-auto max-w-6xl`, which on a 1920px screen leaves (1920 − 1152) / 2 = 384px of flat
+          purple down each side. That is the margin the brief is about, and those two classes were
+          the whole of it: `<body>` sets `margin: 0` explicitly, all four root providers render a
+          bare context with no wrapper element, no Tailwind `container` is configured, and
+          `app/page.tsx` is a SIBLING of the `(protected)` route group — so `AppShell`'s
+          `mx-auto max-w-7xl px-4 pt-24` never runs on this route and contributed nothing.
+
+          ⚠ THE FIX IS SCOPED TO THESE TWO ELEMENTS AND NOTHING IS ADDED TO `globals.css`. The
+          gutter was two Tailwind classes on two elements in this file, so a global rule would be a
+          page-wide instrument aimed at a component-sized problem — and `AppShell`'s cap is the
+          same shape of class on a container the signed-in app shares, which a global full-bleed
+          rule would widen by accident. Nothing below this hero band is touched either: every
+          section underneath keeps its own `max-w-6xl` — `grep -rn max-w-6xl components/hero` is the
+          list — and `HeroFAQ`'s narrower `max-w-3xl` is deliberate rather than an oversight to
+          bring into line. Widening those would be a page-wide restyle nobody asked for.
+
+          ⚠ AND NOTHING HERE USES `100vw`. That is the classic way to produce a horizontal
+          scrollbar — `100vw` includes the vertical scrollbar's width, so a page tall enough to
+          scroll becomes wider than its own viewport and gains a second scrollbar at right angles
+          to the first. Everything below is `w-full` plus padding, which measures the CONTAINING
+          BLOCK and therefore already excludes the scrollbar; the section's `overflow-hidden` is a
+          second net under the mesh orbs, not the mechanism.
+
+          THE ROW ITSELF IS UNCAPPED, THE GRID BELOW KEEPS A CEILING, and the two are not
+          inconsistent. A masthead is a bar: it wants to be as wide as the screen, and the corner
+          marks are only in the CORNERS if nothing centres them first. Reading content is not a bar
+          — the copy column is already `max-w-2xl` and its paragraph `max-w-xl`, so line length was
+          never at risk, but the two-column grid pulled apart into two islands with a thousand
+          pixels of purple between them on an ultra-wide monitor. So the grid keeps a cap, set high
+          enough (`max-w-[120rem]`, 1920px) that it does not bind on any mainstream desktop width:
+          up to about 2000px the header and the grid are exactly the same width, so the page gains a
+          pair of alignments it did not have before rather than losing the one it had. Measured at
+          1280 / 1536 / 1680 / 1920: the DC mark's left edge and the headline's left edge are both
+          at 40, and the seal's right edge and the transcript card's right edge are the same number
+          at every one of those widths. The corner marks ARE the masthead's outer boundary, and the
+          hero content lines up on them. Past about 2000px the cap starts to bind and the grid
+          centres itself inside 1920 while the bar stays full width — which is the trade this cap
+          exists to make, and the only width band where the two disagree.
+
+          THE TWO CORNER MARKS ARE IN THE FLOW, NOT OVERLAID. An absolutely-positioned pair at
+          `top-6 left-6` / `top-6 right-6` would land on top of the wordmark and the button at
+          every width where the row is already full — which is every width below roughly 1152px
+          plus the marks. Sitting them in the flex row makes the browser reserve their space, so
+          they cannot collide with anything by construction. Each mark rides in a group with the
+          neighbour it belongs to — the wordmark cluster on the left, the button on the right — so
+          `justify-between` still has exactly two things to hold apart and the row is spaced the way
+          it always was. Below `sm` those groups are `display: contents` and the two things it holds
+          apart are once again the cluster and the button themselves; see the marks' own header for
+          why that distinction is the whole of the "nothing moves" guarantee.
+
+          ⚠ NO `gap` ON THIS ROW, and no `min-w-0` on either group. Both are load-bearing absences.
+          At 360px the wordmark's right edge and the button's left edge are the SAME coordinate —
+          a gap of even 4px there would re-wrap the wordmark, and `min-w-0` would remove the
+          min-content floor that is currently the only thing stopping this row overflowing the
+          viewport. The gaps live inside the two groups instead, where a hidden mark makes them
+          vanish along with it.
+        */}
+        <header className="relative z-10 flex w-full items-center justify-between px-6 pt-6 sm:px-10">
+          <div className="contents md:flex md:items-center md:gap-4 lg:gap-6">
+            {/* Top-LEFT corner: the DC Handicrafts mark, in its own colours, on the cream plate its
+                red wordmark needs to survive this purple. See DC_HANDICRAFTS above for the pixel
+                counts behind both halves of that sentence. */}
+            <a
+              href={DC_HANDICRAFTS.href}
+              target="_blank"
+              rel="noreferrer"
+              // Hover is CSS, never a framer prop, so the reduced-motion blocks in globals.css
+              // reach it — the same rule every other interactive element on this page follows.
+              className="hidden shrink-0 rounded-md transition hover:-translate-y-0.5 active:translate-y-0 md:flex"
+            >
+              <span className="flex items-center justify-center rounded-md bg-logo-cream px-2 py-1.5 shadow-md">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={DC_HANDICRAFTS.src}
+                  alt=""
+                  width={DC_HANDICRAFTS.width}
+                  height={DC_HANDICRAFTS.height}
+                  className="h-5 w-auto lg:h-7"
+                />
+              </span>
+              <span className="sr-only">
+                {DC_HANDICRAFTS.name} — handicrafts.nic.in (opens in a new tab)
+              </span>
+            </a>
+            <div className="flex items-center gap-2.5">
+              <WorkshopLogo className="h-10 w-10 rounded-xl shadow-md" />
+              <span className="font-display text-lg font-bold tracking-tight text-white">Design Prototype Workshop</span>
+            </div>
           </div>
-          <Link
-            href={enterHref}
-            className="inline-flex h-10 items-center rounded-md border border-white/25 px-5 font-display text-sm font-bold text-white/90 transition hover:border-white/45 hover:bg-white/5 hover:text-white"
-          >
-            {user ? "Open the app" : "Sign in"}
-          </Link>
+          <div className="contents md:flex md:items-center md:gap-4 lg:gap-6">
+            <Link
+              href={enterHref}
+              className="inline-flex h-10 items-center rounded-md border border-white/25 px-5 font-display text-sm font-bold text-white/90 transition hover:border-white/45 hover:bg-white/5 hover:text-white"
+            >
+              {user ? "Open the app" : "Sign in"}
+            </Link>
+            {/* Top-RIGHT corner: the IIT Kharagpur seal, painted white through its own alpha. The
+                `<span>` is the mark — there is no `<img>` here, because the file is a mask rather
+                than a picture and the page's CSS cannot reach inside an `<img>`-loaded SVG. */}
+            <a
+              href={IIT_KHARAGPUR.href}
+              target="_blank"
+              rel="noreferrer"
+              className="hidden shrink-0 rounded-md transition hover:-translate-y-0.5 active:translate-y-0 md:flex"
+            >
+              <span aria-hidden className="block aspect-[268/300] h-7 lg:h-9" style={SEAL_MASK_STYLE} />
+              <span className="sr-only">
+                {IIT_KHARAGPUR.name} — iitkgp.ac.in (opens in a new tab)
+              </span>
+            </a>
+          </div>
         </header>
 
         <motion.div
           style={{ y: yContent, opacity: fade }}
-          className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-6 pb-24 pt-16"
+          // Capped at 120rem rather than uncapped — see the masthead comment above for why the bar
+          // and the grid are allowed to differ, and why the number is this high.
+          className="mx-auto flex w-full max-w-[120rem] flex-1 flex-col justify-center px-6 pb-24 pt-16 sm:px-10"
         >
           <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10">
             {/* Copy */}
@@ -486,7 +879,21 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
               to name. Printing a tidy "hi-IN → en" chip here would have been a fabricated technical
               claim in place of a fabricated quote.
             */}
-            <div className="relative">
+            {/* `lg:w-full lg:max-w-xl lg:ml-auto` is CONTAINMENT OF THE CHANGE ABOVE, not a new
+                opinion about this card. Widening the grid widened this column with it: measured at
+                1920px the 0.95fr track goes from 505.4px to about 855px, and an 855px-wide card of
+                `text-sm` transcript lines is the "paragraphs become 2000px wide" failure in
+                miniature — the reading content has to stay measured even where the band does not.
+                Each of the three classes is doing one job. `w-full` keeps the card filling its
+                track exactly as it did wherever the track is narrower than the cap, so nothing
+                changes below about 1400px — dropping it would let a grid item shrink to fit its
+                own content and the card would visibly narrow at every width. `max-w-xl` is the
+                ceiling, 576px, which is 70px more than the 505.4px it had rather than a new shape.
+                `ml-auto` spends the leftover on the LEFT, so the card's right edge stays flush with
+                the container's: measured at 1280 / 1536 / 1680 / 1920 it lands on exactly the same
+                x as the seal in the masthead, which is the alignment that replaced the old one
+                against a `max-w-6xl` edge. */}
+            <div className="relative lg:ml-auto lg:w-full lg:max-w-xl">
               <motion.div
                 {...heroEntrance(reduce, 0.5, 0.9, { y: 36, rotate: 1.2 })}
                 className="glass-dark rounded-xl p-5 shadow-lg"
@@ -790,6 +1197,42 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
             ))}
           </ul>
 
+          {/*
+            ── THE CENTRE OF EXCELLENCE, BY ITS FULL NAME AND WITHOUT ITS ADDRESS ─────────────────
+
+            THE DESTINATION IS ON THE ANCHOR AND NOWHERE ELSE — not in the visible copy, and not in
+            the accessible name either. Both halves of that are the requirement: a URL read out to a
+            screen-reader user is as stale as one printed on screen, and the Centre's address is
+            about to change. `CENTRE_OF_EXCELLENCE_HREF` is the single swap point; see its header for
+            the sentence this overturned and why.
+
+            THE FULL NAME IS THE LINK TEXT, which is what keeps this compliant with WCAG 2.4.4 rather
+            than merely shorter: the anchor now reads as a destination on its own in a links list,
+            where "Open the Centre of Excellence site at cxa-cms.vercel.app" was carrying a
+            deployment slug that identified nobody. The new-tab announcement is kept — that is the
+            part of the old transparency rule that actually protects a reader.
+
+            THE MARK IS `<WorkshopLogo>`, AND IT IS THE CENTRE'S OWN — WHICH IS ALSO THIS
+            APPLICATION'S. That is not a substitution and it is not a placeholder: this product is a
+            Centre of Excellence project and wears the Centre's mark, which is why the same
+            eight-point star is in the navigation bar, on the login screen, in the masthead above and
+            on the Android launcher. An earlier revision of this file argued the opposite at length
+            and refused to draw it here; the masthead header carries that correction in full.
+
+            IT IS THE COMPONENT AND NEVER A FILE. `WorkshopLogo.tsx:7-10` warns that the path data is
+            a hand-transcription and exists in three places that must be edited in lockstep — the
+            Android drawable, that component, and the favicon. A copy in `public/logos/` would be a
+            fourth, and one of those did exist and was rightly deleted. Rendering the component adds
+            a call site to ONE declaration, so a redraw of the mark reaches this band for free, and
+            the two guards in `e2e/landing-institutions-unit.spec.ts` — no orphan in `public/logos/`,
+            no FILE carrying that star path — keep holding without being weakened.
+
+            NO `alt`, NO `aria-label`, DELIBERATELY. `WorkshopLogo` marks its own `<svg>`
+            `aria-hidden`, so the mark contributes nothing to the accessible name and the anchor
+            announces exactly the Centre's full name plus the new-tab notice. Naming the institution
+            on the image as well would make a screen reader say it twice — the same failure the two
+            `<img>` marks above avoid with `alt=""`, for the same reason.
+          */}
           <p className="max-w-2xl text-sm leading-relaxed text-ink-500">
             The Centre keeps its own site — its account of itself, its research, and the crafts it
             holds. It is a separate application rather than a section of this one, so this link
@@ -798,9 +1241,12 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
               href={CENTRE_OF_EXCELLENCE_HREF}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 font-medium text-purple-700 underline-offset-2 hover:underline"
+              className="inline-flex items-center gap-2 font-medium text-purple-700 underline-offset-2 hover:underline"
             >
-              Open the Centre of Excellence site at cxa-cms.vercel.app
+              {/* `shrink-0` because the name wraps to two or three lines on a phone and a flex item
+                  with an intrinsic aspect ratio is otherwise squeezed into an oval. */}
+              <WorkshopLogo className="h-5 w-5 shrink-0 rounded-md" />
+              {CENTRE_OF_EXCELLENCE_NAME}
               {/* Text, then a trailing external-link glyph — `settings/MyAiKeysPanel.tsx:176` is the
                   shape this repository already uses for an anchor that leaves the app. */}
               <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -846,6 +1292,35 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
             </a>
           </nav>
           <p className="text-xs text-ink-500">Field documentation for artisans, crafts and living knowledge.</p>
+
+          {/*
+            ── THE BOUNDARY CREDIT WAS REMOVED FROM THIS PAGE ON 2026-08-30, AND IT IS COMPLIANT ──
+
+            Nothing is missing here. This note exists because the next reader will find a footer that
+            renders a boundary and credits nobody, will remember that CC BY requires a credit, and
+            will restore one — so the reason is written where they will be standing.
+
+            THE LICENCE ON THE FILE IS CC-0, NOT CC BY 4.0. `indiaOutline.ts`'s header records both
+            readings: the DATASET'S OWN README states CC-0 for `Country/india-composite.geojson`,
+            while the REPOSITORY README states CC BY 4.0 "for anything not explicitly licensed". A
+            file-level declaration IS explicit licensing, so the blanket clause does not reach this
+            file, and CC-0 waives attribution outright. The credit was rendered anyway on the older
+            reasoning that "attribution costs nothing and satisfies both readings" — which was a
+            reasonable belt-and-braces call, not a legal necessity, and it was removed by direction:
+            *"make it go entirely."*
+
+            WHAT WAS REMOVED IS THE VISIBLE NOTICE, NOT THE PROVENANCE. `indiaOutline.ts` still names
+            the source, the URL, the exact file, how the geometry was assembled and the CC-0 finding
+            above, and still carries the verification that Aksai Chin, Gilgit-Baltistan and Arunachal
+            Pradesh are inside the path. A comment does not discharge a licence obligation — that is
+            true, and it is why this could only be done once the obligation was shown not to exist —
+            but it is exactly the right home for an audit trail that no longer has to be on screen.
+
+            ⚠ IF THE PATH IS EVER REPLACED, RE-DECIDE THIS. The removal rests on ONE fact about ONE
+            file. Swap in geometry from a source that is CC BY, ODbL or share-alike and the credit
+            comes straight back as visible text, because §3(a)(1) requires it to reach the recipient
+            and no source comment ever will. `indiaOutline.ts` says the same thing beside the data.
+          */}
         </div>
       </footer>
     </div>

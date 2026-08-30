@@ -31,9 +31,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
+
 # Importing this module is what installs the twenty-two stages into the registry.
 import app.services.stage_definitions  # noqa: F401
-from app.schemas.designers import DesignerProfileUpdate
+from app.schemas.designers import ADDRESS_LINE_PLAIN_MAX, DesignerProfileUpdate
 from app.services import designers
 from app.services.designers import PREFILL_MAP, PROFILE_FIELDS
 from app.services.stage_schema import (
@@ -532,20 +535,83 @@ KNOWN_PREFILL_GAPS: dict[str, str] = {
 }
 
 
+#: Columns whose ceiling is enforced by a VALIDATOR rather than declared as ``max_length``, against
+#: the number that validator applies.
+#:
+#: ── WHY THIS TABLE EXISTS AT ALL, WHICH IS ONE COLUMN AND ONE REASON ────────────────────────────
+#:
+#: On 2026-08-30 ``addressLine`` became a rich-text column. The COLUMN did not change shape — it is
+#: still ``String?`` and still holds plain prose for every address nobody formatted — but the moment
+#: a word is bolded the stored value is the JSON encoding of a document, and 300 characters of prose
+#: with marks on them is several thousand characters of envelope. So ``DesignerProfileUpdate`` bounds
+#: the RAW string generously (``ADDRESS_LINE_STORED_MAX``, a bound on the payload so a client bug
+#: cannot post a novel) and enforces the real rule in a field validator: the FLATTENED text must fit
+#: ``ADDRESS_LINE_PLAIN_MAX``, which is 300, which is exactly what ``designerAddress`` declares.
+#:
+#: THE TEST BELOW WOULD OTHERWISE READ THE ENVELOPE AND REPORT A GAP THAT IS NOT THERE, and the
+#: repair it suggests — an entry in :data:`KNOWN_PREFILL_GAPS` — would be a false statement in the
+#: code: nothing is dropped, because ``prefill_from_profile`` copies the flattened text and the
+#: flattened text is what the validator measured. The other direction is the one that matters: if
+#: somebody deletes that validator, this table's number stops matching anything the API enforces, so
+#: the assertion in ``test_a_validated_ceiling_is_the_one_the_API_actually_applies`` fails rather
+#: than this file quietly reporting green about a bound nobody checks.
+VALIDATED_BODY_CEILINGS: dict[str, int] = {"addressLine": ADDRESS_LINE_PLAIN_MAX}
+
+
 def _body_max_length(column: str) -> int:
-    """The ``max_length`` ``DesignerProfileUpdate`` declares for one column, or 0 for unbounded.
+    """The bound ``DesignerProfileUpdate`` actually applies to one column, or 0 for unbounded.
 
     Read off the model rather than off a copied table, and read out of ``metadata`` because that is
     where Pydantic v2 keeps an ``annotated_types.MaxLen`` — ``FieldInfo`` has no ``max_length``
     attribute of its own, so the obvious spelling would answer ``None`` for every field and make
     every comparison below vacuously true.
+
+    :data:`VALIDATED_BODY_CEILINGS` comes FIRST, because for a column in it the declared
+    ``max_length`` is the envelope and not the rule — see that table for the whole argument.
     """
+    if column in VALIDATED_BODY_CEILINGS:
+        return VALIDATED_BODY_CEILINGS[column]
     info = DesignerProfileUpdate.model_fields[column]
     for constraint in info.metadata:
         bound = getattr(constraint, "max_length", None)
         if bound is not None:
             return int(bound)
     return 0
+
+
+def test_a_validated_ceiling_is_the_one_the_API_actually_applies():
+    """Every number in :data:`VALIDATED_BODY_CEILINGS` is enforced, in both directions.
+
+    THIS IS THE GUARD ON THE GUARD. The table above tells ``_body_max_length`` to ignore a declared
+    ``max_length`` and trust a validator instead, which is exactly the kind of exemption that turns
+    into a hole: delete the validator and every comparison in this file starts reporting green about
+    a bound nothing applies, on the one column whose overflow is discovered on a printed report.
+
+    So the claim is exercised rather than asserted. One character under the stated ceiling has to be
+    accepted — including through the ENVELOPE, as a formatted document longer than the ceiling in raw
+    characters, which is the whole reason the two numbers are different — and one character over has
+    to be refused whichever shape it arrives in.
+    """
+    for column, ceiling in VALIDATED_BODY_CEILINGS.items():
+        assert DesignerProfileUpdate(**{column: "a" * ceiling})
+        with pytest.raises(ValidationError):
+            DesignerProfileUpdate(**{column: "a" * (ceiling + 1)})
+
+        # The document form, and it is the whole reason the two numbers differ: a value LONGER than
+        # the ceiling in raw characters and far SHORTER than it in words. A `max_length` on the raw
+        # string refuses this — which is the feature refusing its own saves, intermittently, only for
+        # designers who pressed Bold.
+        spans = ",".join('{"text":"word ","marks":["BOLD","ITALIC"]}' for _ in range(12))
+        fits = f'{{"blocks":[{{"kind":"PARAGRAPH","spans":[{spans}]}}]}}'
+        assert len(fits) > ceiling, "this fixture no longer exercises the envelope-versus-words split"
+        assert DesignerProfileUpdate(**{column: fits})
+
+        # And a document whose WORDS are over the line is still refused, or the ceiling would be a
+        # rule a Bold button defeats.
+        long_words = "c" * (ceiling + 1)
+        over = f'{{"blocks":[{{"kind":"PARAGRAPH","spans":[{{"text":"{long_words}"}}]}}]}}'
+        with pytest.raises(ValidationError):
+            DesignerProfileUpdate(**{column: over})
 
 
 def test_no_profile_column_is_bounded_wider_than_the_stage_box_it_seeds():

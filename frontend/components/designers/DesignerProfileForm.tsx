@@ -79,6 +79,7 @@ import {
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
+import { RichTextField } from "@/components/richtext/RichTextField";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { DateField } from "@/components/forms/DateTimeField";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -167,7 +168,14 @@ const EXPERIENCE_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => index)
  * microphone reads as a decision rather than as an oversight.
  *
  * DICTATED (ten): Name · Name in the local script · Designation · Institution · Department ·
- * Qualification · Specialisation · Designer's profile (the biography) · Address · City or town.
+ * Qualification · Specialisation · Designer's profile (the biography) · Address line · City or town.
+ *
+ * NINE OF THE TEN CARRY `DictatedField`/`DictatedTextArea`, WHICH APPEND A COMMITTED PHRASE TO THE
+ * END OF THE BOX. The tenth is the address, whose control became `RichTextField` on 2026-08-30: its
+ * microphone is INSIDE the editor and inserts at the caret with the surrounding run's marks, as one
+ * undoable step, because a button outside a document model can only append a string. The column is
+ * dictated either way and the parity test `DesignerProfileScreenTest` reads all three control names
+ * out of this file — the list above is what must stay true, not the component that implements it.
  *
  * NOT DICTATED, one line each:
  *
@@ -693,30 +701,53 @@ export function DesignerProfileForm({
     ),
     address: (
       <>
-        <div className="md:col-span-2">
-          {/*
-            THE SECOND MICROPHONE, AND IT IS THE SAME BOX `/artisans/new` PUTS ONE ON. `ArtisanForm`
-            mounts `DictatedTextArea` on its address for a reason that holds identically here: an
-            address is the one multi-part answer somebody standing in a courtyard would rather speak
-            than thumb in, and a formatting toolbar on it would be an invitation to store a document
-            in a column four exports print as a delivery address.
+        {/*
+          ── THE ONE RICH-TEXT BOX ON THIS PROFILE, ADDED 2026-08-30 ────────────────────────────
 
-            SINGLE-LINE, THOUGH, WHERE THE ARTISAN'S IS A TEXTAREA. `Artisan.address` has always held
-            newlines; `DesignerProfile.addressLine` has not, and it is copied into a registry field
-            and typeset on a report cover. Changing the shape of what is stored is not what the
-            owner asked for and is not something this form can verify downstream, so the box stays as
-            it was and only gains the button. `DictatedField` is single-line by construction, which
-            is why this is the control it is: the biography above is the only multi-line answer on
-            the profile and it reaches for `DictatedTextArea` instead.
-          */}
-          <DictatedField
-            name="addressLine"
-            label={DESIGNER_PROFILE_LABELS.addressLine}
-            defaultValue={profile.addressLine ?? ""}
-            maxLength={MAX.addressLine}
-            onDirty={markDirty}
-          />
-        </div>
+          THE PARAGRAPH THAT STOOD HERE ARGUED AGAINST THIS AND IS KEPT, INVERTED, RATHER THAN
+          DELETED. It said a formatting toolbar on the address "would be an invitation to store a
+          document in a column four exports print as a delivery address", and that a `DictatedField`
+          was right because `DesignerProfile.addressLine` "has never held newlines". Both sentences
+          described a real hazard; the owner's answer is that they want the address formattable, and
+          the hazard is now CLOSED rather than avoided — which is the only honest way to grant it.
+
+          THE STORAGE SHAPE DOES NOT CHANGE AND THERE IS NO MIGRATION. `RichTextField` writes through
+          `encodeStoredRichText`, whose whole rule is that *a document is only ever stringified when
+          it is not expressible as plain text*: an address nobody formatted is stored as the same
+          prose the `<input>` stored yesterday, byte for byte, and only a bolded word turns the value
+          into `{"blocks":[…]}`. `decodeStoredRichText` reads both back — a bare string is prose, by
+          design, because re-reading it as JSON would blank every address written before today. So
+          the column stays `String?`, the searches, the exports and the wire body are untouched, and
+          the promotion is invisible to every designer who never presses Bold.
+
+          THE DOOR THE OLD COMMENT WAS RIGHT ABOUT IS `PREFILL_MAP`, AND IT IS SHUT SERVER-SIDE.
+          `prefill_from_profile` copies this column into `designerAddress` on stage 3 of every
+          workshop the designer creates. That is a registry `TEXT` field, `format_value` has no
+          RICH_TEXT branch to unwrap a document, and a copy is permanent — hydration only fills
+          blanks and a submitted report never re-resolves. So the braces would have printed on a
+          ministry cover, once, forever. That copy now goes through `rich_text.plain_from_stored`
+          and a line fold before it is written, which is where the "single line on the cover"
+          guarantee moved to: the column holds what the designer typed, the DOCUMENT gets one line.
+          See `backend/app/services/designers.py`, `_SINGLE_LINE_PREFILL_COLUMNS`.
+
+          `maxLength` IS STILL 300 AND IT STILL MEANS 300 WORDS' WORTH. The wire body bounds the raw
+          string at 20 000 so a marked-up address is not refused for the size of its own envelope,
+          and then measures the FLATTENED text against this same 300 — so the count beside the
+          toolbar and the rule the server applies are the same number.
+
+          `explainWhenUnavailable={false}` — `DictationUnavailableNotice` is drawn once at the top of
+          this form, and the microphone here is the one INSIDE the editor, which inserts a dictated
+          phrase at the caret with the surrounding run's marks rather than appending to the end.
+        */}
+        <RichTextField
+          name="addressLine"
+          label={DESIGNER_PROFILE_LABELS.addressLine}
+          defaultValue={profile.addressLine ?? ""}
+          maxLength={MAX.addressLine}
+          className="md:col-span-2"
+          explainWhenUnavailable={false}
+          onDirty={markDirty}
+        />
         {/* A town's name is a free proper noun, so it takes a microphone — unlike the state beside
             it, which is a closed list of 36 answered by picking, and the pincode, which is six
             digits a recogniser would hand back as words. */}
@@ -848,7 +879,7 @@ export function DesignerProfileForm({
             IT IS NOT DECORATION, AND WHAT IT PREVENTS IS A BLANK ADDRESS ON A MINISTRY DOCUMENT.
             From here down the reader meets a SECOND `State` dropdown and a SECOND `PIN code` box —
             `Location`’s own columns, four controls below `DesignerProfile`’s own four, under one
-            “Address” heading. The card even opens by saying “this is what the map, the exports and
+            “Postal address” heading. The card even opens by saying “this is what the map, the exports and
             the research dataset use”, which is true of it and is NOT true of the report: the report
             reads the four boxes above, because `PREFILL_MAP` copies `addressLine`/`city`/`state`/
             `pincode` into stage 3 and there is no pair for anything on this card. So a designer who

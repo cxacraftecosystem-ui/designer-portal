@@ -38,6 +38,7 @@ from fastapi.encoders import jsonable_encoder
 from prisma.errors import UniqueViolationError
 
 from app.core.db import db
+from app.services import rich_text
 
 # Every column of ``DesignerProfile`` a person may write. Named once, here, and consumed by the
 # serializer, the updater and the schema's field list alike — three copies of a twenty-two-name
@@ -272,6 +273,105 @@ DERIVED_EMPANELMENT_NOTE = (
 )
 
 
+async def name_on_the_allow_list(email: Any) -> str | None:
+    """The administrator's own name for this mailbox, read off ``AccessRoster``, or None.
+
+    **THE ONE SOURCE EITHER ROSTER MAY TAKE A NAME FROM.** ``AccessRoster.fullName`` is admin-typed
+    and, by that table's own rule, is *never* written from a login attempt — so a name found here is
+    something a person at this institution entered about a colleague, which is exactly what a roster
+    screen is supposed to be showing. ``User.fullName`` is deliberately NOT consulted: that one is a
+    Google display name, chosen by the account's owner and changeable by them at any moment, and a
+    roster is a record of what the institution decided rather than of what somebody called
+    themselves. ``test_nothing_the_caller_controls_is_stored_beyond_the_address`` pins the half of
+    that rule which keeps the display name out of ``AccessRoster`` in the first place, and this
+    function is only ever downstream of that column.
+
+    **IT ASKS ABOUT THE MAILBOX, NOT ABOUT ONE SPELLING OF IT**, for :func:`ensure_empanelled`'s
+    reason: an admin who typed ``priya.k@gmail.com`` on the allow-list and a designer who signs in
+    as ``priyak@gmail.com`` are one person, and a lookup that could not see across the dot would
+    answer "no name" while the administrator is looking straight at the name.
+
+    **DETERMINISTIC WHEN BOTH SPELLINGS EXIST AS SEPARATE ROWS**, which this table still permits —
+    ``email`` is unique, and two spellings are two different strings. Rows carrying no name are
+    discarded first and the canonical spelling wins the remaining tie, so this cannot answer one
+    name today and the other tomorrow about a table nobody has touched. A blank or whitespace-only
+    value counts as no name rather than being copied across as an empty string, which would leave
+    the roster screen falling back to the email address while the column claimed a name was
+    recorded.
+
+    Reads one indexed column and writes nothing. Importing ``app.services.access_roster`` to do this
+    is not available — that module imports THIS one and the direction is fixed (see its
+    ``mirror_suspension``, which states the rule) — so the query is written out here. What that rule
+    forbids beside :func:`ensure_empanelled` is a WRITER of ``AccessRoster``; a read of one column is
+    a different thing, and duplicates nothing.
+    """
+    keys = email_match_keys(email)
+    if not keys:
+        return None
+    # ``take`` is neither needed nor given: ``AccessRoster.email`` is unique and ``keys`` holds at
+    # most two values, so this can return at most two rows.
+    rows = await db.accessroster.find_many(where={"email": {"in": keys}})
+    named = [row for row in rows if str(getattr(row, "fullName", "") or "").strip()]
+    if not named:
+        return None
+    canonical = canonical_email(email)
+
+    def _order(row: Any) -> tuple[int, str]:
+        spelling = str(getattr(row, "email", "") or "")
+        return (0 if spelling == canonical else 1, spelling)
+
+    named.sort(key=_order)
+    return str(getattr(named[0], "fullName", "") or "").strip()
+
+
+async def adopt_allow_list_name(email: Any, full_name: Any) -> bool:
+    """Give an existing empanelment the allow-list's name — ONLY where it has none of its own.
+
+    Returns True only when this call actually wrote a name, so a caller can report what it changed
+    rather than what it attempted.
+
+    **THIS IS THE OTHER ORDER OF EVENTS.** :func:`ensure_empanelled` carries the name at the moment
+    it creates the row, which covers every empanelment derived from an allow-list row that already
+    had one. This covers the case where the empanelment exists first and the name arrives after: an
+    admin who allow-listed somebody in a hurry and typed their name a week later, or any row created
+    before this behaviour existed. Without it, that admin types a name on one screen, watches it not
+    appear on the other, and has to type it twice for the rest of the row's life — which is the
+    complaint this pair of functions was written for.
+
+    **FILL, NEVER OVERWRITE, AND THAT DISTINCTION IS THE WHOLE SAFETY OF IT.** A name already on the
+    designer roster was typed there by an administrator, on that screen, about that empanelment. The
+    allow-list's copy may be older, may be a different transliteration, may be the initials somebody
+    used to get an invitation out of the door. Letting an edit on one screen silently rewrite a
+    colleague's work on the other is the same shape of harm ``mirror_suspension`` refuses when it
+    declines to revive a standing, in the much smaller currency of a display name — and the smaller
+    currency is precisely why nobody would notice it happening.
+
+    **A BLANK, WHITESPACE-ONLY OR MISSING NAME IS A NO-OP**, never a write of NULL. Clearing a name
+    is an edit an administrator makes deliberately on the roster screen; it is not something that
+    should happen to them as a side effect of tidying a different row next door.
+
+    **IT WRITES TO A SUSPENDED ROW TOO, DELIBERATELY.** A name is not a standing: ``isActive`` and
+    ``revokedAt`` are untouched here, and nothing about this call can let anybody sign in. An admin
+    reading back the record of an empanelment that ENDED is the reader who most needs it to say who
+    it was about, and refusing the write would leave exactly those rows bare.
+    """
+    cleaned = str(full_name or "").strip()
+    if not cleaned:
+        return False
+    keys = email_match_keys(email)
+    if not keys:
+        return False
+    # Both spellings, for the reason every other lookup in this module gives: the roster row may
+    # have been written under the canonical mailbox while the allow-list holds the dotted form.
+    existing = await db.designerroster.find_first(where={"email": {"in": keys}})
+    if existing is None:
+        return False
+    if str(getattr(existing, "fullName", "") or "").strip():
+        return False
+    await db.designerroster.update(where={"id": existing.id}, data={"fullName": cleaned})
+    return True
+
+
 async def ensure_empanelled(
     email: Any, *, actor_id: str | None = None, note: str | None = None
 ) -> bool:
@@ -336,10 +436,30 @@ async def ensure_empanelled(
     row stamped at creation would report every empanelment as accepted on the day it was granted,
     which is worse than no signal at all, because it looks like an answer.
 
-    ``fullName`` and ``institution`` are left NULL too. They are admin-typed columns and this is not
-    an admin typing: the display name on a Google profile is chosen by whoever owns that account,
-    and ``access_roster`` refuses to store it for that reason. A roster screen showing a name nobody
-    entered cannot be read as a record of what an administrator decided.
+    **``fullName`` IS CARRIED ACROSS FROM THE ALLOW-LIST ROW, AND ONLY FROM THERE.** The rule this
+    column has always had is that it holds *what an administrator typed*, and it is worth being
+    exact about why the allow-list is not an exception to it: ``AccessRoster.fullName`` is
+    admin-typed under the same rule, on the neighbouring screen, and its schema comment says in so
+    many words that it is never written from a login attempt. Copying it here moves an
+    administrator's own words from one of their screens to the other. It does not invent a name.
+
+    Leaving it NULL was the previous behaviour, and it was wrong in a way that was invisible from
+    the code: an admin adds ``priya@example.org`` to the allow-list as a designer WITH her name, the
+    empanelment is derived automatically the moment they do — and ``/admin/designers`` then lists a
+    bare email address, beside hand-typed rows that all carry names. The roster reads as though the
+    derived designers are half-registered, and the only repair available was to retype, on a second
+    screen, a name the administrator had already given the product once.
+    :func:`adopt_allow_list_name` closes the same gap for a name that arrives AFTER the empanelment.
+
+    **WHAT STILL MUST NOT REACH THIS COLUMN IS A GOOGLE DISPLAY NAME**, which is the distinction the
+    older rule was really protecting. That string is chosen by whoever owns the account and can be
+    changed by them at any moment; ``access_roster`` refuses to store it for exactly that reason, so
+    it is not on the allow-list row either, and nothing in :func:`name_on_the_allow_list` reads
+    ``User.fullName``. A roster screen showing a name nobody at the institution entered cannot be
+    read as a record of what an administrator decided.
+
+    ``institution`` is still left NULL. ``AccessRoster`` has no such column, so there is nothing to
+    carry, and a guess would be precisely the fabrication the paragraph above refuses.
 
     ``actor_id`` is the administrator whose action caused this — the approver, on the allow-list
     path — and None where the empanelment was derived from the person's own sign-in, in which there
@@ -362,10 +482,18 @@ async def ensure_empanelled(
     # would put a second unmatchable row in the table the moment somebody's Google account and
     # somebody's typing disagree about a dot, which is the failure the whole of Fix 2 is about.
     address = canonical_email(email)
+    # READ ONLY ON THE CREATE PATH, WHICH IS WHY IT SITS BELOW THE EARLY RETURN RATHER THAN BESIDE
+    # the first query. This function runs on every designer sign-in and returns at the check above
+    # on all but the very first one, so the second lookup costs one indexed read once per designer
+    # ever, instead of one per login of every empanelled designer in the product.
+    full_name = await name_on_the_allow_list(email)
     try:
         await db.designerroster.create(
             data={
                 "email": address,
+                # NULL when the allow-list carries no name, which is the honest answer and the same
+                # value this column held before: see the docstring. Never a Google display name.
+                "fullName": full_name,
                 "isActive": True,
                 # Explicitly None, paired with ``isActive: True`` for the reason ``add_to_roster``
                 # states: the roster screen reads the flag and the revocation date together, and
@@ -380,6 +508,142 @@ async def ensure_empanelled(
         # wanted — but this call did not create it, so it must not report that it did.
         return False
     return True
+
+
+def note_recording_a_consequence(existing: Any, sentence: str) -> str:
+    """A row's own note, KEPT, with a sentence after it saying this standing ended as a CONSEQUENCE.
+
+    Used by both halves of the cross-roster mirror (:func:`suspend_empanelment` here and
+    :func:`app.services.access_roster.mirror_suspension`'s other arm), so that "what a mirrored
+    revocation says about itself" is written once. It lives beside :data:`DERIVED_EMPANELMENT_NOTE`
+    because that constant answers the same question from the other end — what a row created by
+    nobody says about itself — and the two must read like one voice on one screen.
+
+    **APPENDED AND NEVER SUBSTITUTED, WHICH IS THE WHOLE FUNCTION.** The obvious implementation is
+    ``data={"notes": sentence}``, one column, one statement, and it destroys the one thing the row
+    exists to preserve: the admin's own note recording which programme this person was empanelled
+    under. ``add_to_roster`` answers a duplicate with a 409 rather than an overwrite for precisely
+    that reason, and ``suspend_roster_entry`` deliberately writes no note at all. A mirror that
+    cleared the note would be a worse version of the overwrite that endpoint refuses — it would
+    happen without anybody clicking anything on the screen the note is on.
+
+    **AND IT IS DEDUPED, BECAUSE THIS IS A STATEMENT AND NOT A LOG.** The sentence says what the
+    row's CURRENT standing is a consequence of. Somebody barred, let back in and barred again would
+    otherwise carry the same paragraph twice, then three times, with the administrator's own note
+    pushed further off the screen each round — a text column growing without bound in a table an
+    admin reads. If the history of a standing is ever wanted it is an audit table with a row per
+    act, not a paragraph appended to a free-text field until nobody reads any of it.
+
+    A blank stored note yields the sentence alone rather than two leading newlines: the roster
+    screens render this text verbatim.
+    """
+    kept = str(existing or "").strip()
+    if not kept:
+        return sentence
+    if sentence in kept:
+        return kept
+    return f"{kept}\n\n{sentence}"
+
+
+async def suspend_empanelment(email: Any, *, because: str) -> int:
+    """End every empanelment this MAILBOX holds — and never touch one that has already ended.
+
+    Returns how many rows this call actually suspended, so a caller can report "I did this" rather
+    than "this is now true", exactly as :func:`ensure_empanelled` returns True only on a real create.
+
+    **CALLED FROM EXACTLY ONE FUNCTION**, ``app.services.access_roster.mirror_suspension``, which is
+    the single place the rule about propagating a revocation between the two rosters is written. Do
+    not call this from a route. The reason is the reason ``record_refused_attempt`` states for its
+    own one-caller rule: everything that makes the propagation SAFE — that it only ever runs in the
+    suspending direction, that the two directions are decided together, that a failure is logged
+    instead of breaking an administrator's primary action — lives in that function and not in this
+    one. A second caller reaching here directly is a second copy of a rule that was written once
+    because two copies of a mirror diverge, which is the class of bug that produced the empanelment
+    gap this family of functions exists to close.
+
+    **IT ONLY EVER SUSPENDS, AND THERE IS NO COUNTERPART THAT RESTORES. THAT ASYMMETRY IS THE
+    FEATURE AND NOT AN OMISSION.** :func:`ensure_empanelled` argues at length that nothing outside
+    an administrator's explicit act on ``/admin/designers`` may hand somebody an empanelment back:
+    reviving a suspended row from the allow-list would silently undo every revocation any
+    administrator has ever made. Every word of that argument still holds, and this function does not
+    weaken it — the safety property being protected is *no path but an admin's own act GRANTS
+    standing*, and a path that only ever TAKES standing away cannot violate it. The two directions
+    are not symmetrical mistakes:
+
+    * **Reactivation grants** what an admin removed, silently, permanently, and at the hands of the
+      revoked party's own next sign-in. Nothing on either screen records it.
+    * **Suspension removes** standing at the moment an administrator deliberately removed the
+      matching standing next door. It fails closed, it cannot undo anybody's decision, and its worst
+      case — a revocation enacted more broadly than intended — is visible on the screen that records
+      it and reversible by the same admin in the same session.
+
+    That is ``access_roster._the_row_that_decides``' asymmetry, stated for writes instead of reads.
+
+    **THE PRICE OF THE ASYMMETRY, WHICH NOBODY MAY DISCOVER BY ACCIDENT.** Restoring the allow-list
+    row does NOT bring the empanelment back, because that would be the revival above wearing a new
+    hat. So an administrator who bars somebody by mistake and immediately un-bars them has
+    permanently ended that person's empanelment, and the designer's next sign-in reads the
+    empanelment sentence for a revocation nobody meant to make. The remedy is one click on
+    ``/admin/designers`` — and the admin has to be TOLD, which is why the restore paths on both
+    screens owe a line naming the suspended empanelment. That is client work; it is named in this
+    change's report and is not done here.
+
+    **IDEMPOTENT IN THE WHERE CLAUSE, NOT IN PYTHON**, which is ``mark_roster_seen``'s rule for
+    ``firstSeenAt`` and it matters here for the same reason it matters there. ``isActive: True`` in
+    the filter means a row that is ALREADY suspended is not matched at all, so a second mirrored
+    suspension cannot move ``revokedAt`` off the date the designer actually lost their standing, and
+    cannot append a second sentence to the note. A Python check between the read and the write would
+    leave a window in which a concurrent direct suspension and this one both decide the row is
+    active, and the later write would rewrite the earlier one's date.
+
+    **THE MAILBOX AND NOT ONE SPELLING OF IT**, and here that is not a nicety. A mirror that missed
+    the dotted twin of a Gmail address would suspend one side and leave the other live — strictly
+    worse than not mirroring at all, because ``/admin/designers`` would then show an active
+    empanelment for somebody the allow-list bars, with the mirror having "run" and an operator
+    having no reason to look. :func:`email_match_keys` covers both spellings in one indexed query.
+    Its one known blind spot is inherited rather than fixed: an address stored CANONICALLY cannot
+    find a counterpart stored with dots, because the canonical form of a dotless address is the
+    literal form and yields a single key. Nothing here closes that; the remedy is canonicalising the
+    rows at rest, which ``scripts/backfill_email_canonicalisation.py`` reports on.
+
+    ``update_many`` and not ``find_first`` + ``update`` for the same reason: where two spellings of
+    one mailbox both have rows, suspending one and leaving its twin looking active is the "two rows
+    disagreeing about whether this person may be here" state both roster modules say an
+    administrator has to settle by hand. The GATE is safe either way — :func:`roster_allows` requires
+    every row to be active — so this is about the record and not about the door.
+    """
+    keys = email_match_keys(email)
+    if not keys:
+        return 0
+    # READ FIRST, THEN ONE GUARDED WRITE PER ROW, BECAUSE THE NOTE HAS TO BE APPENDED. A single
+    # ``update_many`` over the key list would be one round trip and would have to write a constant
+    # into ``notes``, erasing what an administrator wrote there — see
+    # :func:`note_recording_a_consequence` for why that is the one thing this row must not lose.
+    # ``email`` is unique and ``keys`` holds at most two values, so this loop runs at most twice; it
+    # is not the per-row loop over an unbounded set that this repository refuses elsewhere.
+    rows = await db.designerroster.find_many(where={"email": {"in": keys}, "isActive": True})
+    now = datetime.now(UTC)
+    suspended = 0
+    for row in rows:
+        suspended += await db.designerroster.update_many(
+            # ``isActive: True`` REPEATED IN THE WRITE'S OWN FILTER, not merely in the read above.
+            # That is what makes the idempotence atomic rather than optimistic: if a direct
+            # suspension lands between the read and this statement, this one matches nothing and
+            # the date that admin's click wrote stands.
+            where={"id": row.id, "isActive": True},
+            data={
+                "isActive": False,
+                # ``or now`` can only fire on a row that already disagrees with itself — active and
+                # carrying a revocation date — which every writer in this module and in
+                # ``routes/designers.py`` maintains as impossible. Written the way
+                # ``suspend_roster_entry`` writes it so the two cannot drift, and so that if such a
+                # row is ever found the mirror preserves whatever date it holds instead of
+                # inventing today's.
+                "revokedAt": row.revokedAt or now,
+                "notes": note_recording_a_consequence(row.notes, because),
+            },
+        )
+    return suspended
 
 
 async def mark_roster_seen(email: Any) -> None:
@@ -631,6 +895,47 @@ PREFILL_MAP: tuple[tuple[str, str], ...] = (
     ("cvMediaId", "designerCv"),
 )
 
+#: Profile columns that are typeset on a report COVER and must reach it as ONE line.
+#:
+#: ── WHY THIS EXISTS AT ALL, WHICH IS A CONSEQUENCE OF RICH TEXT AND NOT A PRE-EXISTING RULE ────
+#:
+#: ``addressLine`` was a single-line box on both clients and the guarantee was incidental on the
+#: web — an ``<input type="text">``'s value-sanitization algorithm strips CR and LF, so there was
+#: never anything to fold. Android's fold (``designerProfileOneLine``) was the deliberate half,
+#: written when its box moved onto ``RecordProseField``, which has no ``singleLine`` parameter.
+#:
+#: The rich-text editor ends the incidental half: Enter splits a block, so a designer can now type a
+#: two-paragraph address, and ``rich_text.to_plain`` joins blocks with ``"\n"``. Storing that is
+#: correct — it is what they typed, a postal address genuinely has lines, and the profile screens
+#: show it back to them the way they wrote it. Sending it into ``designerAddress`` is not: that is a
+#: registry ``TEXT`` field, rendered by a one-line control on the stage form, and typeset on a report
+#: cover where a bare ``\n`` inside a ``w:t`` collapses to a space in Word anyway — so the line break
+#: buys nothing there and costs a stage box that silently contains an invisible character.
+#:
+#: SO THE FOLD IS AT THE PREFILL AND NOT AT THE COLUMN. The column keeps what the designer typed;
+#: the copy that becomes a historical document is one line, exactly as it is today. A set rather than
+#: a flag on the pair, because ``city``/``state``/``pincode`` are one-line for the same reason and
+#: are the next columns anybody would promote.
+_SINGLE_LINE_PREFILL_COLUMNS: frozenset[str] = frozenset({"addressLine"})
+
+
+def _fold_to_one_line(text: str) -> str:
+    """Every line break in ``text`` as a single space, runs included.
+
+    The Python twin of ``designerProfileOneLine`` on the handset, and deliberately the same
+    character-for-character rule: a lone carriage return counts. A ``\\r`` is invisible in a text
+    box, it survives a save, and a fold that only knew about ``\\n`` would let it through into the
+    document — which is the one failure this is for, because nobody proof-reads a cover page for a
+    control character.
+    """
+    folded = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Collapsed rather than substituted one for one, and each line stripped on the way: a blank line
+    # between two address lines is two newlines, and a line that ended in a space is one more — both
+    # of which would put a double space in the middle of a cover-page address, which reads as a
+    # typing mistake rather than as a fold.
+    lines = [part.strip() for part in folded.split("\n")]
+    return " ".join(part for part in lines if part)
+
 
 async def prefill_from_profile(user_id: str) -> dict[str, Any]:
     """The stage-1 and stage-3 values a workshop this user creates should START with.
@@ -668,6 +973,31 @@ async def prefill_from_profile(user_id: str) -> dict[str, Any]:
     for column, field_key in PREFILL_MAP:
         value = getattr(profile, column, None)
         if isinstance(value, str):
+            # ── THE READ BOUNDARY, AND THIS IS THE ONE DOOR FROM A PROFILE COLUMN TO A REPORT ──
+            #
+            # ``addressLine`` became a RICH-TEXT column on 2026-08-30 without changing shape: it is
+            # still ``String?``, it still holds the designer's prose whenever they have not
+            # formatted anything, and it holds ``{"blocks":[…]}`` the moment they bold a word (see
+            # ``rich_text.to_stored_text`` and ``components/richtext/storedRichText.ts`` for the
+            # whole argument). Every RIGHT-HAND key below is a registry field, and its target
+            # ``designerAddress`` is declared ``TEXT`` — so ``report_builder.format_value`` has no
+            # RICH_TEXT branch to unwrap it and would print the literal characters
+            # ``{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road"}]}]}`` onto the
+            # cover of a document submitted to a ministry. That is the failure written up at
+            # ``report_builder.py``'s RICH_TEXT branch, and it would arrive here through the one
+            # door that had no guard on it: hydration only fills blanks and a submitted report never
+            # re-resolves, so it would be permanent, per workshop, and silent — every emptiness
+            # check upstream reads a JSON-shaped string as a filled field.
+            #
+            # ``plain_from_stored`` is IDENTITY on a plain string — the same object back, not a
+            # round trip through ``from_plain``/``to_plain`` — so every column that is not a
+            # document is copied byte for byte exactly as it was before this line existed. It is
+            # applied to ALL of them rather than to ``addressLine`` alone because it is the read
+            # boundary rather than a special case, and because the next column somebody promotes
+            # (``biography`` is the obvious candidate) must not have to remember to come back here.
+            value = rich_text.plain_from_stored(value)
+            if column in _SINGLE_LINE_PREFILL_COLUMNS:
+                value = _fold_to_one_line(value)
             value = value.strip()
         # A DateTime COLUMN LANDING IN A `DATE` FIELD MUST BE NARROWED HERE, NOT BY `str()` LUCK.
         #

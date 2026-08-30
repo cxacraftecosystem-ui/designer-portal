@@ -1680,6 +1680,58 @@ object WorkshopSyncEngine {
         }
     }
 
+    /**
+     * Put ONE refused file back in the queue, from the row it is drawn on.
+     *
+     * ── WHY THE WORKSHOP-WIDE BUTTON WAS NOT ENOUGH ──────────────────────────────────────────────
+     *
+     * `uploadPending` filters on `it.uploadFailure == null`, so a file the store refused is excluded
+     * from **every** future pass. Until this existed, the only thing that put one back was
+     * [retryWorkshop] — a button on the workshop, which clears the flag on all of the media at once
+     * and is reached from a different screen from the one the photograph is on. So a designer
+     * looking straight at a stuck photograph, on the stage that holds it, had nothing to press; and
+     * pressing the thing that did work re-queued nineteen files they had not asked about, which on a
+     * metered field connection is not a neutral act.
+     *
+     * Worse, a single parked file is not only its own problem. `pushStages` holds a stage back
+     * entirely while any of its media is unresolved — deliberately, because a stage payload written
+     * without the media key DELETES whatever the server already holds under it — so one refused
+     * photograph freezes its whole stage, and the smallest remedy the app offered was a
+     * workshop-wide re-send.
+     *
+     * ── WHAT IT DOES AND DOES NOT ASSERT ─────────────────────────────────────────────────────────
+     *
+     * It clears exactly one file's refusal and nothing else — no stage record, no create failure —
+     * because a tap on one row is a statement about one file. It does NOT start a pass: the caller
+     * decides that, and on a screen with no signal the honest outcome of this tap is "queued again",
+     * not a spinner. The next pass picks the file up by itself, which is the same route every other
+     * file takes.
+     *
+     * Returns false when there was nothing to clear, so a caller never reports a retry it did not
+     * perform.
+     */
+    suspend fun retryOneFile(context: Context, workshopId: String, mediaId: String): Boolean {
+        var cleared = false
+        WorkshopDraftStore.updateBookkeeping(context, workshopId) { draft ->
+            draft.copy(
+                media = draft.media.map { item ->
+                    if (item.id != mediaId || item.uploadFailure == null) item
+                    else {
+                        cleared = true
+                        item.copy(uploadFailure = null, uploadFailedAt = null)
+                    }
+                }
+            )
+        }
+        // Dropped rather than replaced with a "queued" state: an absent entry sends the row back to
+        // reading the durable [DraftMedia.remoteMediaId], which is exactly what a file waiting its
+        // turn should be described by. Cleared even when nothing was on disk, so a non-permanent
+        // in-memory refusal can also be dismissed by the same tap.
+        DwMediaUploadProgress.forget(mediaId)
+        bump()
+        return cleared
+    }
+
     /** Running totals for one pass. A plain holder so the steps below can stay expressions. */
     private class Tally {
         var created = 0
@@ -2216,12 +2268,15 @@ object WorkshopSyncEngine {
                 // ever, and recorded rather than SWEPT: the descriptor is the only surviving record
                 // that the photograph existed, what it was captioned and which stage it answered,
                 // and a designer who finds the file on a backup can still put it back.
-                noteMediaFailure(
-                    context, draft.workshopId, descriptor.id,
-                    "the file is no longer in this workshop's media folder on this device, so there " +
-                        "is nothing to upload. Nothing has been deleted by the app — if you have a " +
-                        "backup of this phone, restore it before removing the attachment."
-                )
+                val missing = "the file is no longer in this workshop's media folder on this device, " +
+                    "so there is nothing to upload. Nothing has been deleted by the app — if you " +
+                    "have a backup of this phone, restore it before removing the attachment."
+                noteMediaFailure(context, draft.workshopId, descriptor.id, missing)
+                // On the row as well as in the draft. This is the one refusal whose cause a designer
+                // can act on immediately — and the attachment row's own "The bytes for this
+                // attachment are no longer on this device." already says the same thing from the
+                // other side, so the two now agree instead of only one of them being visible.
+                DwMediaUploadProgress.refused(descriptor.id, missing, permanent = true)
                 tally.refused++
                 return@forEachIndexed
             }
@@ -2243,23 +2298,88 @@ object WorkshopSyncEngine {
                     longitude = descriptor.longitude,
                     workshopTitle = draft.title,
                     batchIndex = index + 1,
+                    // THE BYTES REPORT THEMSELVES NOW. Keyed by the LOCAL descriptor id, because
+                    // there is no remote id until the file lands and the window this is drawn in is
+                    // precisely the window before that. See [DwMediaUploadProgress] for the throttle
+                    // and for why none of this is written to disk.
+                    onProgress = { sent, total ->
+                        DwMediaUploadProgress.sending(descriptor.id, sent, total)
+                    },
                 )
             } catch (e: CancellationException) {
+                // The pass is being torn down, not the file refused. Leaving a half-finished reading
+                // on the row would have it claim a transfer is running inside a process that has
+                // stopped uploading — and the next pass republishes from zero anyway.
+                DwMediaUploadProgress.forget(descriptor.id)
                 throw e
             } catch (e: Throwable) {
+                /*
+                  OBJECT STORAGE ANSWERING IS NOT THE CONNECTION FAILING, AND UNTIL 2026-08-30 THIS
+                  BRANCH COULD NOT TELL THE TWO APART.
+
+                  The S3 legs raised `IllegalStateException("Object storage upload failed: HTTP 403")`
+                  — the status in the sentence and nowhere a triage function looks. `isTransient` has
+                  no arm for that type, so it answered its `else -> true`; `isConnectionFailure`
+                  defers every non-HttpException to `isTransient`, so it answered true as well; and
+                  this branch therefore took the FIRST arm for a refusal the bucket had composed and
+                  signed. It wrote "The upload could not be completed." and returned false, stopping
+                  the whole pass — so every remaining file and every stage behind this workshop was
+                  skipped, the file was never marked, and the next pass began at the same file and
+                  did it again. For ever, on a phone showing four bars.
+
+                  That is the exact failure the KDoc on [isConnectionFailure] opens by describing,
+                  arriving through the one leg it does not cover. [StorageRefusedError] carries the
+                  status as a NUMBER so it can be asked here, before anything guesses.
+                */
+                val refused = e as? StorageRefusedError
+                if (refused != null) {
+                    if (refused.worthAnotherPass) {
+                        // The store had a bad moment — 5xx, 408, 429. NOT parked (the next pass will
+                        // try it by itself) and NOT a reason to stop the pass either: one file the
+                        // bucket is briefly unhappy about must not hold up the nineteen behind it,
+                        // which is what returning false would do. Recorded in memory only, so the
+                        // row can say what happened without a durable flag that would exclude the
+                        // file from the retry it is waiting for.
+                        DwMediaUploadProgress.refused(
+                            descriptor.id,
+                            "the file store answered HTTP ${refused.status}. Nothing is wrong with " +
+                                "this file — it will be sent again on the next attempt.",
+                            permanent = false,
+                        )
+                        return@forEachIndexed
+                    }
+                    // An answered 4xx that survived a freshly minted signature (see [putToStorage]'s
+                    // `repesign`). Parked, with the status named: "the server refused this file" over
+                    // a 413 is a sentence that cannot be acted on, and the number is the one thing a
+                    // person reporting this can carry to somebody who can fix it. The bytes stay —
+                    // see [DraftMedia.uploadFailure].
+                    val reason = "the file store refused it with HTTP ${refused.status}. This is a " +
+                        "setting on the store rather than your connection, so trying again will not " +
+                        "clear it. The file is still on this device and nothing has been deleted."
+                    noteMediaFailure(context, draft.workshopId, descriptor.id, reason)
+                    DwMediaUploadProgress.refused(descriptor.id, reason, permanent = true)
+                    tally.refused++
+                    return@forEachIndexed
+                }
                 if (repository.isConnectionFailure(e)) {
+                    // Genuinely nobody answered. The reading is dropped rather than left showing a
+                    // percentage: a row frozen at 62% across an evening with no signal claims a
+                    // transfer that is not happening.
+                    DwMediaUploadProgress.forget(descriptor.id)
                     noteSync(context, draft.workshopId) {
                         it.copy(lastError = e.apiErrorMessage("The upload could not be completed."))
                     }
                     return false
                 }
+                val reason = e.refusal("the server refused this file.").message
                 noteMediaFailure(
                     context, draft.workshopId, descriptor.id,
                     // `.message` only: a media upload is multipart form-data rather than an
                     // `APIModel` body, so `extra_forbidden` cannot arise here and there is no skew to
                     // record. The bytes stay on the device either way — see [DraftMedia.uploadFailure].
-                    e.refusal("the server refused this file.").message
+                    reason
                 )
+                DwMediaUploadProgress.refused(descriptor.id, reason, permanent = true)
                 tally.refused++
                 return@forEachIndexed
             }
@@ -2270,12 +2390,11 @@ object WorkshopSyncEngine {
                 // request with its own page is the field case, and this app already knows they exist.
                 // Treating it as success would record a reference to nothing AND — if the bytes were
                 // ever released on the strength of it — throw the photograph away.
-                noteMediaFailure(
-                    context, draft.workshopId, descriptor.id,
-                    "the server accepted the upload but did not say what it stored, so it cannot be " +
-                        "confirmed. The file is still on this device. If you are on a wi-fi network " +
-                        "that asks you to sign in, connect properly and try again."
-                )
+                val unnamed = "the server accepted the upload but did not say what it stored, so it " +
+                    "cannot be confirmed. The file is still on this device. If you are on a wi-fi " +
+                    "network that asks you to sign in, connect properly and try again."
+                noteMediaFailure(context, draft.workshopId, descriptor.id, unnamed)
+                DwMediaUploadProgress.refused(descriptor.id, unnamed, permanent = true)
                 tally.refused++
                 return@forEachIndexed
             }
@@ -2307,6 +2426,12 @@ object WorkshopSyncEngine {
                     )
                 }
             }
+            // Said on the row the moment it is true, rather than waiting for the screen to re-read
+            // the draft. `bump()` below does prompt that re-read, but it is a signal to recompute
+            // and not a value — a stage screen that is mid-composition can be a second behind it,
+            // and "uploaded ✓" arriving a second late over a file the designer is watching is the
+            // one moment the whole indicator exists for.
+            DwMediaUploadProgress.sent(descriptor.id)
             tally.media++
             bump()
         }

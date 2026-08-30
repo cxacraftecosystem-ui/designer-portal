@@ -15,12 +15,9 @@ import {
   CLOTH_COLS,
   CLOTH_MASK,
   INDIA_HEIGHT,
-  INDIA_OUTLINE_ATTRIBUTION,
   INDIA_PATH,
   INDIA_VIEWBOX,
-  INDIA_WIDTH,
-  LIVE_SITE,
-  NEXT_SITES
+  INDIA_WIDTH
 } from "@/components/hero/indiaOutline";
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 
@@ -49,17 +46,27 @@ import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
  * Government of India depiction, it was verified by measurement rather than by trusting a README,
  * and it must not be swapped for a convenient npm dataset.
  *
- * WHAT THE MARKS CLAIM, AND WHAT THEY DO NOT
- * ------------------------------------------
- * There is ONE workshop in this repository today. Bagru is a single gold impression — the block
- * that came down. Dehradun, Jammu and Akola are drawn as open registration marks: blocks that have
- * not been pressed. Four identical dots would read as four live sites and would be a lie told in
- * graphics; the difference between a printed mark and an unprinted one carries the honesty that
- * the copy carries in words, in the same material as everything else here.
+ * WHAT THE MAP CLAIMS, AND WHAT IT DELIBERATELY NO LONGER DOES
+ * ------------------------------------------------------------
+ * IT NAMES NOWHERE. This drawing used to carry four site marks — Bagru as a gold impression, the
+ * block that had come down, with Dehradun, Jammu and Akola as empty printers' registration
+ * targets — and a caption that explained the difference. All four are gone by direction, and the
+ * data behind them (`LIVE_SITE`, `NEXT_SITES`, the `FieldSite` type in `indiaOutline.ts`) went
+ * with them rather than being left exported and unimported, which is precisely the state this
+ * file's own history proves nobody notices for releases at a time.
  *
- * The CLOTH makes no numeric claim at all. 97 impressions do not represent 925 media files and
+ * THE DELETION IS ALLOWED TO BE TOTAL ONLY BECAUSE IT TAKES THE CLAIM WITH IT. A map that printed
+ * one place and outlined three had to keep saying which was which, in words, at every width — four
+ * identical dots would have read as four live sites and been a lie told in graphics. A map that
+ * names nowhere asserts nothing about where work happens and needs no sentence to qualify it.
+ * ⚠ SO DO NOT PUT A SINGLE MARK BACK ON ITS OWN. The instant one lands here the drawing starts
+ * making that claim again, and everything the old caption carried — the printed/unprinted
+ * distinction, the place names as text for a reader who cannot see them, the region for each —
+ * has to come back with it. One dot is not a small change; it is the whole apparatus.
+ *
+ * The CLOTH makes no numeric claim either. 97 impressions do not represent 925 media files and
  * must never be labelled as if they did — the moment it tries, it stops being cloth and becomes a
- * dot-matrix infographic. The <dl> states the numbers; the field states the places.
+ * dot-matrix infographic. The <dl> states the numbers; the cloth states nothing.
  *
  * MOTION. One `useScroll` on the band at the same ["start 65%", "end 65%"] reading line HowItWorks
  * uses, the same useSpring(140/30/0.4), and integer state via `useMotionValueEvent` so this
@@ -68,40 +75,57 @@ import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
  * Each impression is a static `<g>` carrying its misregistration as an attribute, wrapping a `<use>`
  * whose opacity and stamp-scale are plain CSS transitions. Only opacity and transform ever change.
  *
- * GOLD. This is a dark marketing band, which is where the gold ramp is allowed to live. The budget
- * is one gold impression with a soft halo, the place name beside it, and the eyebrow — together
- * well under 1% of a viewport, against a ceiling of 5%. The map itself is NOT a gold shape: the
- * country is white at a few percent, and the gold marks the one place that is real.
+ * GOLD — THE WHOLE CLOTH NOW, AND THE OLD BUDGET DIED WITH THE MARKS.
+ * This paragraph used to read: "the budget is one gold impression with a soft halo … the map
+ * itself is NOT a gold shape: the country is white at a few percent, and the gold marks the one
+ * place that is real." Every clause of that rule existed to serve the site marks — gold was
+ * rationed so that ONE gold thing could be found among ninety-seven white siblings. With no mark
+ * to find, rationing gold protects nothing; it just leaves a white map on a purple band. The
+ * cloth is printed in gold throughout, which is what a block-printed length actually is: one ink,
+ * laid down by one block, over and over. This is still a dark marketing band, which is the only
+ * kind of surface the gold ramp is allowed on at all (hero + auth), and the rest of that rule
+ * stands: no gold on a data screen, and gold never becomes the action colour.
  *
- * (That line read "the four-letter label" until the marks were actually built. The live site is
- * `Bagru` — five letters. It was a description of something that was not on screen to be counted,
- * which is the failure mode this whole section was in: see the paragraph below.)
+ * ⚠ YOU CANNOT GET GOLD BY WASHING GOLD OVER PURPLE. MEASURED, NOT ASSUMED. Composite `gold-300`
+ * (#EEC976) onto this band's own `grad-brand` stops (#762CB1 → #4B1674) and the result crosses a
+ * dead zone on the way: at the OLD ink range it lands at hue 311-324° in OKLCH, which is purple
+ * wearing a warm hint, and around half opacity the chroma bottoms out at 0.056 (#A17575 at
+ * α 0.53, hue 19°) — a muddy rose, the least golden thing that could be on this page. The hue
+ * does not enter the gold arc until roughly α 0.7 (61° on the dark stop) and is unambiguous only
+ * past 0.85. THAT is why `JITTER.inkMin`/`inkRange` moved in the same change as the fill and not
+ * after it: the fill swap ALONE turns #59277E into #572374, eleven units out of 255, and this band
+ * would have shipped looking exactly as it did the day before while the commit claimed it was gold.
  *
- * ⚠ EVERYTHING ABOVE ABOUT THE MARKS WAS DESCRIBED HERE AND NOT RENDERED, FOR SEVERAL RELEASES.
- * The `<svg>` drew the ground, the cloth and the coastline and then closed; `LIVE_SITE` and
- * `NEXT_SITES` had zero importers anywhere in `frontend/`; the `<figcaption>` this header twice
- * calls the accessible twin of the drawing did not exist; the `radialGradient` the halo needs was
- * defined and referenced by nothing; and `.fr-mark` / `.fr-map-label` in `globals.css` styled
- * elements that were never emitted — as did the `.fr-mark` clause in this component's own
- * `<noscript>`. THREE THINGS FOLLOW, and none of them is "the marks were optional".
+ * ⚠ ONE PARAGRAPH OF THIS HEADER HAS ALREADY SHIPPED AS A DEFECT, AND IT IS THE LICENCE ONE.
+ * For several releases everything this header said about the marks was described here and rendered
+ * nowhere: `LIVE_SITE` and `NEXT_SITES` had zero importers anywhere in `frontend/`, the
+ * `<figcaption>` did not exist, the `radialGradient` the halo needed was defined and referenced by
+ * nothing, and `.fr-mark` / `.fr-map-label` styled elements that were never emitted. Two of the
+ * three consequences that recorded are now moot — there are no marks to be missing, and no place
+ * names to be absent from the accessibility tree. THE THIRD OUTLIVED EVERY OTHER THING ON THIS
+ * BAND AND IS THE ONE TO READ TWICE:
  *
- *   1. The map made the claim the header says it must not. With no printed mark and no unprinted
- *      ones, the section showed a country with no places in it at all — and the honesty the header
- *      is proud of ("four identical dots would be a lie told in graphics") was being carried
- *      entirely by prose in a file nobody reads at runtime.
- *   2. The `<figcaption>` is not decoration. The `<svg>` is `aria-hidden` — deliberately, so a
- *      screen reader is not handed 97 `<use>` elements — which means that with the caption missing,
- *      the place names were not merely unlabelled for a non-visual reader, they were ABSENT. The
- *      accessible content of a graphic that opts out of the accessibility tree is whatever sits
- *      beside it, and there was nothing beside it.
- *   3. The boundary credit was a LICENCE problem, not a nicety. `indiaOutline.ts` states the
- *      source is CC-0 by its own README and CC BY 4.0 by its repository's blanket clause, and
- *      resolves the ambiguity by satisfying the stricter reading — "rendered on the page … which
- *      is displayed as visible text beside the map and must not be removed". It was declared, it
- *      was exported, and it was rendered nowhere.
+ *   THE BOUNDARY CREDIT IS GONE FROM THE PAGE ALTOGETHER, AND THE PARAGRAPH THAT STOOD HERE
+ *   ARGUING IT MUST NEVER BE IS KEPT BELOW, because it was right on every point except the one
+ *   that turned out to decide it.
  *
- * So: do not delete the marks, the caption or the credit to "simplify the SVG". Each one is the
- * only thing standing between this band and a specific, named failure.
+ *   It read: "THE BOUNDARY CREDIT IS A LICENCE OBLIGATION, NOT A CAPTION… it now lives in the page
+ *   footer in `HeroLanding.tsx`… Do not delete it from the footer to tidy the footer, and do not
+ *   'move it into a comment next to the path data': the build strips comments and no visitor has
+ *   ever read one." Every clause of that is sound WHILE AN OBLIGATION EXISTS. What it never did was
+ *   settle whether one does. `indiaOutline.ts` recorded two readings — CC-0 by the dataset's own
+ *   README, CC BY 4.0 by the repository's blanket clause for "anything not explicitly licensed" —
+ *   and satisfied the stricter one rather than resolving them. A file-level declaration IS explicit
+ *   licensing, so the blanket clause does not reach this file: it is CC-0, and CC-0 waives
+ *   attribution. The notice was removed by direction on 2026-08-30 on that basis.
+ *
+ *   WHAT IS UNCHANGED IS THE GEOMETRY'S REACH, and it is the reason this note stays on THIS band
+ *   rather than only in the footer. `INDIA_PATH` still cuts the cloth's clip, fills the bare ground
+ *   and strokes the selvedge, and `CLOTH_MASK` — which cells get an impression at all — is computed
+ *   off that same path, so all 97 impressions are DataMeet-derived as well. 100% of the boundary
+ *   geometry is still on screen. If the path is ever swapped for one from a CC BY, ODbL or
+ *   share-alike source, the credit comes back as visible text and the quoted paragraph above
+ *   becomes live guidance again — which is why it is quoted rather than deleted.
  */
 
 /**
@@ -130,71 +154,22 @@ function mulberry32(seed: number): () => number {
  * this direction exists to avoid. These are the tuned values — enough that no two impressions line
  * up, not so much that the cloth looks broken. Shift is a FRACTION OF THE CELL rather than a fixed
  * distance, so the same hand shows at 360px and at 1280px.
+ *
+ * ⚠ `inkMin`/`inkRange` ARE HALF OF "THE MOTIFS ARE GOLD" — THEY ARE NOT A TASTE KNOB. They read
+ * 0.075/0.155 while the cloth was white, which is where a background texture wants to sit: white
+ * at 7.5-23% over the purple bed is a weave you register without naming. Gold at those alphas is
+ * not gold. Composited on `grad-brand`'s dark stop, α 0.075 gold is #572374 against α 0.075
+ * white's #59277E — eleven units apart out of 255 — and everything from there to about α 0.6 comes
+ * out mauve rather than warm (the header carries the full measurement). 0.72-1.00 is the range
+ * whose BOTH ENDS sit inside the gold arc: a thinly-inked impression is #C09775 (hue 61°, 4.76:1
+ * on the bed) and a well-pressed one is #EEC976 (hue 86°, 7.95:1), so under-inking reads as thin
+ * gold instead of as pink. Lower either number and the band quietly stops being gold while still
+ * passing every gate in this repository; re-measure before you touch them.
  */
-const JITTER = { shift: 0.055, rotate: 5, scaleMin: 0.9, scaleRange: 0.14, inkMin: 0.075, inkRange: 0.155 };
+const JITTER = { shift: 0.055, rotate: 5, scaleMin: 0.9, scaleRange: 0.14, inkMin: 0.72, inkRange: 0.28 };
 
 /** The motif is 24 units across its own box and spans 22 of them; this fits it to one cell. */
 const MOTIF_SCALE = CLOTH_CELL / 24;
-
-/**
- * ── THE SITE MARKS ─────────────────────────────────────────────────────────────────────────────
- *
- * Every number below is in viewBox units — the map is `0 0 100 113.68` — so the marks scale with
- * the drawing and never need a breakpoint of their own.
- *
- * THE LIVE MARK IS THE SAME CARVED BLOCK AS THE CLOTH, 15% LARGER AND IN GOLD. Not a dot, not a
- * pin. The whole conceit of this band is that a record IS an impression, so the one place with
- * records has to be an impression too — a different shape would say "here is a map annotation"
- * where the point is "here is where the block came down". The 15% is what makes it findable among
- * ninety-seven siblings without becoming a separate object; the halo does the rest.
- *
- * ⚠ `LIVE_INK` IS `gold-300` WRITTEN AS THE LITERAL OKLCH, and it must stay literal. This is an
- * SVG `fill` attribute, not a class, so there is no Tailwind utility to reach for; the value is
- * the one already spelled out in this file's `radialGradient` stops, which is what the halo
- * samples. The two have to be the same string or the halo is a different gold from the impression
- * it is haloing — and a halo half a hue off its own mark reads as a rendering fault rather than as
- * a colour choice. If the gold ramp ever moves, move both.
- *
- * THE UNPRINTED MARKS ARE PRINTERS' REGISTRATION TARGETS — a ring with a cross through it, which
- * is the thing a block is lined up against before it comes down. Empty, in plain white at half
- * strength: `indiaOutline.ts` is explicit that "an unqualified dot on each would" imply four active
- * sites, and an empty target cannot be mistaken for a filled one at any size. They are NOT gold;
- * the gold budget is one impression (see the header) and three gold targets would spend it four
- * times over and flatten the distinction the marks exist to draw.
- *
- * STROKES ARE `non-scaling-stroke`, THE SAME TREATMENT THE COASTLINE GETS. A stroke width in
- * viewBox units is one value at 360px and four times that at 1280px; the targets would be spidery
- * on a phone and drawn in marker pen on a desktop. `vectorEffect` pins them to a true hairline at
- * every width, exactly as the selvedge below does.
- */
-const LIVE_INK = "oklch(0.85 0.11 86)";
-const LIVE_MARK_SCALE = MOTIF_SCALE * 1.15;
-/** Radius of the halo circle the gold impression sits inside; the gradient fades to nothing at its edge. */
-const HALO_RADIUS = 8;
-const TARGET_RING = 1.7;
-/** Half-length of each crosshair arm, so the cross overshoots the ring the way a real target does. */
-const TARGET_ARM = 3.1;
-const TARGET_INK = "rgba(255,255,255,0.5)";
-
-/**
- * The next sites, as a sentence, derived from the same array the drawing reads.
- *
- * ⚠ NEVER TYPE THESE NAMES OUT IN THE CAPTION. The caption's whole job is to be the accessible
- * twin of an `aria-hidden` graphic, and a hand-typed twin drifts the first time a site is added:
- * the map would grow a fourth target that a screen-reader user is never told about, which is worse
- * than the caption not existing, because it looks maintained. Building the phrase from `NEXT_SITES`
- * means the two cannot disagree — add a site and both the drawing and the sentence gain it.
- *
- * The Oxford-comma-free "A, B and C" is this page's register throughout (`RECORD_TYPES`, the FAQ,
- * the report facts). The region is carried in parentheses because the map's own labels show the
- * NAME only, and a reader who cannot see the map has no other way to learn where Akola is.
- */
-const NEXT_SITE_PHRASE = NEXT_SITES.map((site) => `${site.name} (${site.region})`)
-  .reduce(
-    (sentence, part, index, all) =>
-      index === 0 ? part : `${sentence}${index === all.length - 1 ? " and " : ", "}${part}`,
-    ""
-  );
 
 type Impression = {
   /** Where the block came down, in viewBox units, misregistration already folded in. */
@@ -280,7 +255,6 @@ export default function PrintingBed({ census = CORPUS_CENSUS }: { census?: Corpu
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const spriteId = `fr-buti-${uid}`;
   const clipId = `fr-india-${uid}`;
-  const glowId = `fr-glow-${uid}`;
 
   const { scrollYProgress } = useScroll({ target: sectionRef, offset: ["start 65%", "end 65%"] });
   const smoothed = useSpring(scrollYProgress, { stiffness: 140, damping: 30, mass: 0.4 });
@@ -372,15 +346,26 @@ export default function PrintingBed({ census = CORPUS_CENSUS }: { census?: Corpu
         {/* ── The cloth, cut to the country ─────────────────────────────── */}
         <motion.figure variants={item} className="fr-cloth relative m-0">
           {/*
-            aria-hidden, and everything the drawing says is said again in the <figcaption> below —
-            the country, the one live site, the three that are next. A map is a graphic; a screen
-            reader must not be handed 97 <use> elements, and must not lose a single fact either.
+            `role="img"` WITH A NAME, NOT `aria-hidden`. This was `aria-hidden` for exactly as long
+            as the <figcaption> below it repeated every fact the drawing carried — the country, the
+            one printed site, the three that were next. That caption is gone by direction, and
+            `aria-hidden` left on its own would have handed a screen-reader user a band whose whole
+            right-hand column is silence: not "a decorative image I can skip past", but nothing
+            announced at all, on the page's signature graphic.
+
+            `role="img"` keeps the half `aria-hidden` was there for and repairs the half it broke.
+            Children of an `img` role are presentational, so the 97 <use> elements are still never
+            read out one at a time; the element itself finally gets the one-line name it now needs.
+            The name says what the drawing IS and makes no claim about places, because the drawing
+            no longer does — see the header. If a site mark is ever restored, this label is NOT
+            where its name goes: real text beside the map is.
           */}
           <svg
             viewBox={INDIA_VIEWBOX}
             className="block w-full overflow-visible"
             style={{ aspectRatio: `${INDIA_WIDTH} / ${INDIA_HEIGHT}` }}
-            aria-hidden
+            role="img"
+            aria-label="India, drawn as a length of block-printed cloth"
             focusable="false"
           >
             <defs>
@@ -389,10 +374,6 @@ export default function PrintingBed({ census = CORPUS_CENSUS }: { census?: Corpu
               <clipPath id={clipId}>
                 <path d={INDIA_PATH} clipRule="evenodd" />
               </clipPath>
-              <radialGradient id={glowId}>
-                <stop offset="0%" stopColor="oklch(0.85 0.11 86)" stopOpacity="0.34" />
-                <stop offset="100%" stopColor="oklch(0.85 0.11 86)" stopOpacity="0" />
-              </radialGradient>
             </defs>
 
             {/*
@@ -402,7 +383,23 @@ export default function PrintingBed({ census = CORPUS_CENSUS }: { census?: Corpu
             */}
             <path d={INDIA_PATH} fillRule="evenodd" fill="rgba(255,255,255,0.045)" />
 
-            <g clipPath={`url(#${clipId})`} fill="#ffffff">
+            {/*
+              ONE FILL FOR NINETY-SEVEN IMPRESSIONS, AND IT IS THE TOKEN RATHER THAN A LITERAL.
+              `fill` is an inherited property, so this group's colour reaches every <use> below it
+              and, through the use shadow tree, the sprite <path> in <defs> that carries no fill of
+              its own — the same mechanism the `fill="#ffffff"` attribute used, one layer up the
+              cascade. A Tailwind utility is reachable HERE when it was not for the gold site marks
+              this replaces: their ink had to be spelled out as a literal OKLCH string because
+              `stopColor` on a gradient stop has no utility to reach for, and the two copies then
+              had to be kept identical by hand or the halo was a different gold from the impression
+              it haloed. One class on one element cannot drift from itself.
+
+              The colour lives on this <g> and NOT on the 97 <use> elements, for the same reason
+              their transforms live in an attribute: a scroll tick must touch opacity and transform
+              and nothing else, and 97 fills would be 97 more declarations for the style recalc to
+              walk on a change that only ever alters how many of them are switched on.
+            */}
+            <g clipPath={`url(#${clipId})`} className="fill-gold-300">
               <Cloth printed={printed} spriteId={spriteId} />
             </g>
 
@@ -419,161 +416,26 @@ export default function PrintingBed({ census = CORPUS_CENSUS }: { census?: Corpu
               strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
             />
-
-            {/*
-              ── The marks, above the cloth and outside the clip ──────────────────────────────
-              OUTSIDE `clipPath` ON PURPOSE. The cloth is clipped to the country so the repeat
-              stops at the selvedge; a mark is a mark ON the map rather than a piece of the cloth,
-              and clipping the halo would shave a flat edge off it wherever a site sits near a
-              coast. Bagru is 25 units from the western edge, so this is not hypothetical.
-
-              ONE OPACITY FOR THE WHOLE GROUP, FLIPPED ONCE. `.fr-mark` in globals.css is a single
-              420ms opacity transition and its comment is the specification: "The site marks resolve
-              once, at the end of the print — one fade, not ninety-seven." So the gate is the print
-              being FINISHED (`printed >= TOTAL`), not each mark tracking scroll. That also gives
-              the band its one dramatic beat: the cloth fills, and then the places arrive on it.
-
-              THE INLINE OPACITY IS WHAT THE `<noscript>` RULE OVERRIDES, which is why it is
-              inline and not a class. `.fr-mark{opacity:1!important}` beats an inline style with no
-              `!important` of its own — the identical arrangement `.fr-buti` already relies on. With
-              scripting off `printed` never leaves 0, and without that rule these marks would be the
-              one part of the band that stayed invisible.
-
-              REDUCED MOTION NEEDS NOTHING HERE. The effect above sets `printed` to TOTAL when the
-              preference is on, so the marks are simply present; the fade itself is a CSS transition,
-              which is the half globals.css's reduced-motion block already neutralises. This is also
-              why the gate must not be a framer variant: that would need a JS branch, and the hero's
-              rule forbids branching an `initial` state on a preference that settles after mount.
-            */}
-            <g className="fr-mark" style={{ opacity: printed >= TOTAL ? 1 : 0 }}>
-              <circle cx={LIVE_SITE.x} cy={LIVE_SITE.y} r={HALO_RADIUS} fill={`url(#${glowId})`} />
-              {/*
-                Same `translate → scale → recentre` chain the cloth's impressions use, so this
-                block lands on its coordinate rather than beside it: the motif's box is 24 units
-                wide with its own origin at a corner, and the final `translate(-12 -12)` is what
-                puts its centre on the site.
-              */}
-              <g
-                transform={`translate(${LIVE_SITE.x} ${LIVE_SITE.y}) scale(${LIVE_MARK_SCALE.toFixed(4)}) translate(-12 -12)`}
-              >
-                <use href={`#${spriteId}`} fill={LIVE_INK} />
-              </g>
-              <text
-                className="fr-map-label"
-                x={LIVE_SITE.x + 4.4}
-                y={LIVE_SITE.y + 1.05}
-                fill={LIVE_INK}
-              >
-                {LIVE_SITE.name}
-              </text>
-
-              {NEXT_SITES.map((site) => (
-                <g key={site.id}>
-                  <circle
-                    cx={site.x}
-                    cy={site.y}
-                    r={TARGET_RING}
-                    fill="none"
-                    stroke={TARGET_INK}
-                    strokeWidth={1}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  <path
-                    d={`M${site.x - TARGET_ARM} ${site.y}H${site.x + TARGET_ARM}M${site.x} ${site.y - TARGET_ARM}V${site.y + TARGET_ARM}`}
-                    fill="none"
-                    stroke={TARGET_INK}
-                    strokeWidth={1}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  <text
-                    className="fr-map-label"
-                    x={site.x + TARGET_ARM + 1.1}
-                    y={site.y + 1.05}
-                    fill="rgba(255,255,255,0.55)"
-                  >
-                    {site.name}
-                  </text>
-                </g>
-              ))}
-            </g>
           </svg>
 
           {/*
-            ── The caption: the drawing again, in words ──────────────────────────────────────────
-            The `<svg>` above is `aria-hidden`, so this is not a nicety attached to a graphic — it
-            IS the graphic, for everybody the graphic is hidden from, and for everybody below 640px
-            where `.fr-map-label` withholds the names rather than render them under 9px. Every fact
-            the drawing carries has to be here: the shape, the one printed block, the three that
-            have not come down, and where all four are.
+            THERE IS NO <figcaption> ANY MORE, AND THAT IS THE WHOLE REASON THE SITE MARKS HAD TO
+            GO WITH IT. The caption was never decoration: it was the accessible twin of an
+            `aria-hidden` graphic, and it was the only place the four place names existed below
+            640px, where `.fr-map-label` withholds them rather than render them under 9px. Delete
+            the caption and keep the marks and this band reproduces, verbatim, a bug it has already
+            shipped once — names drawn on screen for sighted desktop readers and absent for
+            everybody else. So the two deletions are one coherent change rather than two that
+            fight: no marks, no names to lose, and the drawing now carries its own accessible name
+            on the <svg> above.
 
-            ⚠ IT DOES NOT SAY "THE ONE WORKSHOP", THOUGH THE SOURCE FILE DOES. `indiaOutline.ts`
-            can write "there is ONE workshop in the repository today" because it is a comment. This
-            sentence sits three inches under a `<dl>` whose Workshops row is fetched live from
-            `GET /api/public/census` — so the day a second workshop is opened, a caption asserting
-            one would contradict the number beside it, on one screen, to one reader. What is stated
-            instead is what the DRAWING claims, which the drawing's own data guarantees: which site
-            is printed and which are next. That is true whatever the census says.
+            What the caption ALSO carried, the DataMeet boundary credit, is a licence obligation
+            and did not go with it. It now sits in the page footer in `HeroLanding.tsx`; read the
+            licence paragraph in this file's header before touching either end of that.
+
+            The <figure> stays a <figure> with no caption, which is valid HTML and is what
+            `.fr-cloth` and the <noscript> rule below both address by name.
           */}
-          {/*
-            A PLAIN `<figcaption>`, NOT A `motion.figcaption`. The figure above already carries
-            `variants={item}` and reveals as one object, so a second variant here would animate the
-            caption's opacity inside the figure's — the product of two fades, which reads as the
-            caption lagging the map it belongs to. It also matters with scripting off: an element
-            framer never touches has no inline `opacity: 0` to undo, so the caption is legible on
-            the server HTML and the `<noscript>` rule only has the figure itself to rescue.
-          */}
-          <figcaption className="mt-5 text-sm leading-relaxed text-white/60">
-            The bed is the outline of India and the cloth is a block-printed repeat, stamped one
-            impression at a time.{" "}
-            <span className="text-gold-300">
-              {LIVE_SITE.name}, {LIVE_SITE.region}
-            </span>{" "}
-            is the live field site — the one block that has come down. {NEXT_SITE_PHRASE} are drawn
-            as open registration marks: blocks that have not been pressed.
-            {/*
-              The credit. `indiaOutline.ts` resolves a genuine licence ambiguity — CC-0 by the
-              dataset's own README, CC BY 4.0 by its repository's blanket clause — by satisfying the
-              stricter reading, and its constant's docstring is an instruction: "Rendered beside the
-              map; removing it breaks the CC BY reading of the licence." Both links are real
-              obligations under CC BY 4.0 (§3(a)): the source it came from, and the licence it came
-              under. `target="_blank" rel="noreferrer"` is this repository's house form for an
-              outbound anchor, and `noreferrer` implies `noopener` everywhere this app runs.
-
-              ⚠ THE FIRST LINK'S VISIBLE WORD IS "source", WHICH IS A NAME THAT SAYS NOTHING. A
-              screen reader offers a links list, and out of the sentence around it this anchor
-              announced itself as the bare word "source" — the "click here" failure with a different
-              noun (WCAG 2.4.4). The two `sr-only` tails below fix that and are NOT decoration: each
-              is appended AFTER the visible word so the visible label stays a prefix of the
-              accessible name (WCAG 2.5.3, Label in Name), which is the same construction and the
-              same "(opens in a new tab)" wording the institutional band uses in `HeroLanding.tsx`.
-              Both outbound anchors on this page's other bands announce the new tab; these two did
-              not, and one page announcing it three times out of five is worse than either habit,
-              because the two silent ones read as links that stay put.
-            */}
-            <span className="mt-2 block text-xs">
-              {INDIA_OUTLINE_ATTRIBUTION.text} ·{" "}
-              <a
-                href={INDIA_OUTLINE_ATTRIBUTION.href}
-                target="_blank"
-                rel="noreferrer"
-                className="text-white/75 underline underline-offset-2 hover:text-white"
-              >
-                source
-                <span className="sr-only"> — the DataMeet maps repository on GitHub (opens in a new tab)</span>
-              </a>{" "}
-              ·{" "}
-              <a
-                href={INDIA_OUTLINE_ATTRIBUTION.licenceHref}
-                target="_blank"
-                rel="noreferrer"
-                className="text-white/75 underline underline-offset-2 hover:text-white"
-              >
-                {INDIA_OUTLINE_ATTRIBUTION.licence}
-                <span className="sr-only"> licence terms at creativecommons.org (opens in a new tab)</span>
-              </a>
-            </span>
-          </figcaption>
-
 
           {/*
             With scripting off, neither the scroll machinery nor framer-motion's reveal ever runs:
@@ -581,10 +443,13 @@ export default function PrintingBed({ census = CORPUS_CENSUS }: { census?: Corpu
             the only place the corpus figures are stated — would sit at the opacity 0 that
             `whileInView` renders into the server HTML.
 
-            So: print the whole cloth, land both kinds of mark, and show the census. The
-            `.fr-ledger > *` rule is scoped to the copy column deliberately, because a blanket
-            `opacity: 1` on the section would also un-hide the unprinted impressions and beat the
-            `.fr-buti` rule on specificity.
+            So: print the whole cloth and show the census. The `.fr-ledger > *` rule is scoped to
+            the copy column deliberately, because a blanket `opacity: 1` on the section would also
+            un-hide the unprinted impressions and beat the `.fr-buti` rule on specificity.
+
+            The `.fr-mark{opacity:1!important}` clause that used to sit in this rule went with the
+            site marks. `.fr-mark` and `.fr-map-label` are still declared in `globals.css` and now
+            match nothing — dead, harmless, and outside this change's territory to delete.
 
             (The rest of the page reveals on scroll the same way and behaves the same with scripting
             off. That is pre-existing and page-wide — every section is built this way, including
@@ -592,7 +457,7 @@ export default function PrintingBed({ census = CORPUS_CENSUS }: { census?: Corpu
             rather than pretending to fix all of them.)
           */}
           <noscript>
-            <style>{`.fr-buti{opacity:var(--fr-ink)!important;transform:none!important}.fr-mark{opacity:1!important}.fr-ledger>*,.fr-cloth{opacity:1!important;transform:none!important}`}</style>
+            <style>{`.fr-buti{opacity:var(--fr-ink)!important;transform:none!important}.fr-ledger>*,.fr-cloth{opacity:1!important;transform:none!important}`}</style>
           </noscript>
         </motion.figure>
       </motion.div>

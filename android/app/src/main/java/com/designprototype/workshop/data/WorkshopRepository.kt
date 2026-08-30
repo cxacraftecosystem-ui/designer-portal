@@ -69,8 +69,90 @@ import kotlin.coroutines.resumeWithException
 /**
  * Files at/under this size upload as one streamed S3 PUT; larger files switch to a chunked S3
  * multipart upload (resilient/resumable, no 5 GB ceiling) that S3 stitches back into one object.
+ *
+ * ── WHY THIS IS ONE PART'S WORTH OF BYTES, AND WAS 64 MiB UNTIL 2026-08-30 ───────────────────────
+ *
+ * The two paths are signed on completely different budgets, and the old threshold ignored that.
+ * `presign_put_url` (backend/app/services/s3.py) signs a whole-file PUT for **900 seconds**;
+ * `presign_multipart_part_urls` signs each part for **3600**, and [putPart] can mint a part a fresh
+ * one mid-transfer when it still runs out. So the single PUT is the path with a quarter of the time
+ * and — until this change — the path carrying the biggest files.
+ *
+ * What that cost in the field. A 40 MB loom video over a village EDGE link at ~30 kB/s needs about
+ * 22 minutes on the wire. Its signature dies at 15, S3 answers 403, and the transfer is thrown away
+ * whole — there is no resuming a single PUT. The next pass mints another 900-second signature,
+ * sends the same 40 MB from byte zero, and dies at exactly the same place. That is not a slow
+ * upload; it is a file that **can never be sent at all**, retrying for ever on a metered connection,
+ * while `WorkshopSyncStatus.summary` says "1 file waiting to upload".
+ *
+ * `MULTIPART_PART_SIZE` on the server is 16 MiB, so this is the honest statement of the rule rather
+ * than a guess about link speed: **a file bigger than one part is sent as parts.** Above it every
+ * chunk is separately signed, separately retried and separately re-signable, and a blip costs one
+ * 16 MiB part instead of the whole video. Below it nothing changes — a 12-megapixel photograph is
+ * 3-6 MB and takes the identical path it took before — so the files that move are exactly the ones
+ * that were failing.
+ *
+ * KEEP IN STEP WITH `frontend/lib/media.ts`'s `MULTIPART_THRESHOLD`, whose comment names this
+ * constant. The two clients disagreeing does not break either of them, but it means a video that
+ * uploads from the phone and fails from the browser has no explanation that reads the same on both.
  */
-private const val MULTIPART_THRESHOLD = 64L * 1024 * 1024
+private const val MULTIPART_THRESHOLD = 16L * 1024 * 1024
+
+/**
+ * OBJECT STORAGE ANSWERED, AND THIS IS WHAT IT SAID — a status code that survives as a NUMBER.
+ *
+ * ── THE DEFECT THIS TYPE EXISTS TO CLOSE, AND IT IS ONE THIS REPOSITORY HAS ALREADY FIXED ONCE ───
+ *
+ * Both S3 legs used to raise `IllegalStateException("Object storage upload failed: HTTP $code")`.
+ * The status was in the sentence and nowhere else, so every triage function in the app — none of
+ * which reads sentences — fell through to its last resort. Follow one 403 through:
+ *
+ *   [isTransient] has no arm for `IllegalStateException`, so it lands on `else -> true` ("anything
+ *   else is worth another try"). `isConnectionFailure` defers every non-[HttpException] to
+ *   [isTransient], so it answers **true**: the connection's fault. `WorkshopSyncEngine.uploadPending`
+ *   reads that, writes `lastError = "The upload could not be completed."`, and **returns false,
+ *   which stops the entire sync pass** — every remaining file and every stage queued behind this one
+ *   workshop, on every future pass, because the parked file is never marked and is therefore first
+ *   in the queue again next time.
+ *
+ * The result is a designer standing in four bars of signal being told their connection is the
+ * problem, for ever, over a file the bucket has already considered and refused. That is, word for
+ * word, the failure `isConnectionFailure` was written to prevent — its own KDoc opens with it — and
+ * it was reproduced one layer down because the object-storage leg speaks a different dialect of
+ * failure from the API leg and nothing translated it.
+ *
+ * ── WHY IT IS NOT AN IOException, DELIBERATELY ───────────────────────────────────────────────────
+ *
+ * [isTransient] answers `is IOException -> true` — "no answer at all: no signal, DNS, a socket
+ * dropped mid-transfer". A refusal S3 composed, signed and sent is the opposite of that, and
+ * inheriting from IOException would put this class straight back into the arm it exists to escape
+ * while looking like it had been fixed. [putToStorage]'s `catch (e: IOException)` also uses that
+ * boundary to decide what to retry, so a 4xx wearing an IOException would silently start being
+ * retried three times.
+ */
+internal class StorageRefusedError(
+    /** The HTTP status object storage answered with. The whole point of the class. */
+    val status: Int,
+    message: String,
+) : Exception(message) {
+
+    /**
+     * Is another attempt — on a later pass, with a signature minted then — worth the bytes?
+     *
+     * TRUE ONLY FOR AN ANSWER THAT DESCRIBES A MOMENT rather than the request. 5xx is the store
+     * having trouble; 408 is a proxy saying the request never completed, so nothing decided anything;
+     * 429 is the store explicitly asking for time. These are the same three exceptions
+     * `isConnectionFailure` grants the API leg, and they are granted here for the same reason.
+     *
+     * **403 IS DELIBERATELY NOT IN THAT LIST, AND ONLY BECAUSE [putToStorage] RE-SIGNS.** An expired
+     * signature is the commonest 403 on this path and it IS the retryable kind — but it is now
+     * retried *inside* the upload, against a signature minted seconds earlier. A 403 that survives
+     * that is the bucket refusing this account or this key, and re-sending 16 MB on a metered field
+     * connection to collect the identical answer costs the designer money for nothing. If the
+     * re-sign is ever removed from [putToStorage], this line has to change with it.
+     */
+    val worthAnotherPass: Boolean get() = status == 408 || status == 429 || status >= 500
+}
 
 /**
  * The `linkedRecordType` tag every design-workshop attachment is filed under.
@@ -5221,23 +5303,69 @@ class WorkshopRepository(
         onProgress: ((sent: Long, total: Long) -> Unit)?
     ): UploadTarget {
         if (source.size <= MULTIPART_THRESHOLD) {
-            val presign = api.presignMedia(
-                MediaPresignRequest(
-                    filename = filename,
-                    mimeType = mimeType,
-                    mediaType = mediaType,
-                    sizeBytes = source.size,
-                    linkedRecordType = linkedRecordType.blankToNull(),
-                    linkedRecordId = linkedRecordId.blankToNull()
+            suspend fun mint(): MediaPresignResponse {
+                val minted = api.presignMedia(
+                    MediaPresignRequest(
+                        filename = filename,
+                        mimeType = mimeType,
+                        mediaType = mediaType,
+                        sizeBytes = source.size,
+                        linkedRecordType = linkedRecordType.blankToNull(),
+                        linkedRecordId = linkedRecordId.blankToNull()
+                    )
                 )
-            )
-            // Journalled before the first byte moves: from here until /media/complete claims the key,
-            // this line on disk is the only thing that would know the bucket holds an unreferenced
-            // object if the process were killed right now.
-            StagedJournal.record(context, presign.objectKey)
+                // Journalled before the first byte moves: from here until /media/complete claims the
+                // key, this line on disk is the only thing that would know the bucket holds an
+                // unreferenced object if the process were killed right now.
+                //
+                // AND EVERY MINTED KEY IS JOURNALLED, not just the first. A presign always allocates
+                // a NEW key, so a re-signed retry abandons the previous one — and abandoning it
+                // without a journal line is exactly how the sweep loses track of an object. In
+                // practice a PUT that never completed leaves nothing at the abandoned key (S3
+                // commits an object only on a finished PUT), so the sweep will find nothing there
+                // and delete nothing; the line costs one row and covers the case where bytes DID
+                // land and the response was the thing that was lost.
+                StagedJournal.record(context, minted.objectKey)
+                return minted
+            }
+
+            // `var`, and captured by the lambda below: the key the caller is told about has to be
+            // the key the bytes actually went to. A re-sign mid-upload moves the object, and
+            // reporting the first key would attach `/media/complete` to an empty one — a media row
+            // pointing at nothing, which is indistinguishable from a lost photograph.
+            var presign = mint()
             val digest = ContentDigest()
             withContext(Dispatchers.IO) {
-                putToStorage(presign.uploadUrl, presign.headers, source.size, mimeType, source.open, onProgress, digest)
+                putToStorage(
+                    uploadUrl = presign.uploadUrl,
+                    headers = presign.headers,
+                    contentLength = source.size,
+                    mimeType = mimeType,
+                    openStream = source.open,
+                    onProgress = onProgress,
+                    digest = digest,
+                    // Null rather than a throw if the presign itself fails: the 403 already in hand
+                    // is a truer account of what happened than a second failure raised while trying
+                    // to explain the first. `putToStorage` re-raises the original.
+                    //
+                    // NOT `runCatching`, AND THE DIFFERENCE IS A PARKED PHOTOGRAPH. `runCatching`
+                    // swallows `CancellationException` along with everything else, so a pass torn
+                    // down while this presign was in flight would come back null, `putToStorage`
+                    // would raise the 403 it was holding, and `uploadPending` — whose
+                    // `catch (e: CancellationException)` no longer matches — would read that as a
+                    // settled refusal and write `uploadFailure` against the file. A shutdown would
+                    // permanently exclude a photograph from every future sync pass. The same hazard
+                    // is called out on `DesignReviewScreen`'s ledger read.
+                    repesign = {
+                        try {
+                            mint().also { presign = it }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            null
+                        }
+                    },
+                )
             }
             return UploadTarget(presign.objectKey, presign.bucket, presign.publicUrl, digest.hex())
         }
@@ -5393,8 +5521,15 @@ class WorkshopRepository(
                             ?: throw IllegalStateException("S3 returned no ETag for the uploaded part")
                     }
                     if (response.code == 403 && !refreshed) expired = true
-                    else if (response.code < 500) throw IllegalStateException("Part upload failed: HTTP ${response.code}")
-                    lastError = IllegalStateException("Part upload failed: HTTP ${response.code}")
+                    // [StorageRefusedError] rather than a bare IllegalStateException, for the reason
+                    // its own KDoc gives: a part refusal reaches the same triage a whole-file refusal
+                    // does, through the same `uploadPending`, and a status buried in a sentence is a
+                    // status no triage function can read.
+                    else if (response.code < 500) throw StorageRefusedError(
+                        response.code,
+                        "Part upload failed: HTTP ${response.code}"
+                    )
+                    lastError = StorageRefusedError(response.code, "Part upload failed: HTTP ${response.code}")
                 }
             } catch (e: IOException) {
                 lastError = e
@@ -6641,7 +6776,18 @@ class WorkshopRepository(
         latitude: Double?,
         longitude: Double?,
         workshopTitle: String?,
-        batchIndex: Int = 1
+        batchIndex: Int = 1,
+        /**
+         * Called as the bytes leave, `(sent, total)`, or null to send them silently.
+         *
+         * DEFAULTED TO NULL SO NOTHING ELSE CHANGES, but a null here is what a designer experiences
+         * as an app that has hung. The plumbing to report this has existed all along —
+         * [StreamingRequestBody] emits every 64 KB and [putToStorage] forwards it — and this call
+         * site passed a literal `null` into it, so a 300 MB loom video was a static "1 file waiting
+         * to upload" for tens of minutes with nothing anywhere distinguishing that from a stall.
+         * See [DwMediaUploadProgress] for where the readings now go and why they are not durable.
+         */
+        onProgress: ((sent: Long, total: Long) -> Unit)? = null,
     ): MediaFileDto {
         val filename = mediaFilename(
             recordType = DESIGN_WORKSHOP_MEDIA_TAG,
@@ -6660,7 +6806,7 @@ class WorkshopRepository(
             source = source,
             linkedRecordType = DESIGN_WORKSHOP_MEDIA_TAG,
             linkedRecordId = workshopRemoteId,
-            onProgress = null
+            onProgress = onProgress
         )
         val media = completeUpload(
             MediaCompleteRequest(
@@ -6869,6 +7015,39 @@ class WorkshopRepository(
      * up — when one file failed, its two siblings were cancelled on paper and went on transferring
      * for real, over the connection that had just been shown to be broken.
      */
+    /**
+     * PUT a whole file to a presigned URL, retrying, and mint a fresh signature for each retry.
+     *
+     * ── WHY [repesign] IS NOT OPTIONAL POLISH — THE SECOND ATTEMPT INHERITS A DYING SIGNATURE ────
+     *
+     * `presign_put_url` signs for 900 seconds and the clock starts when the URL is MINTED, not when
+     * this function begins sending. Consider the ordinary field sequence: attempt 1 pushes a 12 MB
+     * photograph for eleven minutes and the socket drops in a dead spot. Attempt 2 begins with about
+     * four minutes of signature left, spends them, and dies on a **403** — an answer that says
+     * nothing whatever about the photograph, the account or the bucket, and everything about the
+     * fact that this code re-used a URL it had already spent. Attempt 3 does it again, faster.
+     *
+     * The whole upload is then reported as refused, and — before [StorageRefusedError] existed — as
+     * a *connection* failure, which stopped the sync pass. Three attempts, one signature, one
+     * self-inflicted verdict.
+     *
+     * [putPart] has had this repair since it was written, and its KDoc argues the identical case for
+     * a part URL: *"on a field connection the last parts can easily still be waiting when their
+     * signature runs out, and S3 rejects an expired one with 403."* The whole-file path is the one
+     * with a QUARTER of the part path's signature life, and it had nothing. The web client fixed the
+     * same hole on its own single-PUT leg — `uploadWhole` in `frontend/lib/media.ts` takes a fresh
+     * presign at the top of every attempt, with the comment *"A fresh presign per attempt keeps the
+     * 15-minute signature window from expiring under retries."* This is that, in Kotlin.
+     *
+     * A REFUSAL IS ANSWERED WITH A FRESH SIGNATURE EXACTLY ONCE, not on every attempt, so a bucket
+     * that genuinely refuses this account cannot be talked into an unbounded loop of presign calls
+     * on a metered link. A 403 that survives one fresh signature is a real refusal, and
+     * [StorageRefusedError.worthAnotherPass] is written on the strength of that.
+     *
+     * @param repesign mints a new presigned URL for the SAME file and returns it with the object key
+     *   it now points at — a presign always allocates a new key. Null means the caller has no way to
+     *   get one, and the refusal stands as it is.
+     */
     private suspend fun putToStorage(
         uploadUrl: String,
         headers: Map<String, String>,
@@ -6876,32 +7055,82 @@ class WorkshopRepository(
         mimeType: String,
         openStream: () -> InputStream,
         onProgress: ((sent: Long, total: Long) -> Unit)?,
-        digest: ContentDigest? = null
+        digest: ContentDigest? = null,
+        repesign: (suspend () -> MediaPresignResponse?)? = null,
     ) {
         val maxAttempts = 3
         var lastError: Exception? = null
-        for (attempt in 1..maxAttempts) {
+        var target = uploadUrl
+        var targetHeaders = headers
+        var refreshed = false
+        // `while` with an explicit counter rather than `for (attempt in 1..maxAttempts)`, and for the
+        // same reason [putPart] is shaped this way: a `for` over a range advances on `continue`, so
+        // the re-sign below would SPEND one of the three attempts. Charging a file an attempt because
+        // this code re-used a URL it had already spent is how a photograph runs out of tries without
+        // the network having failed once — which is the defect the re-sign is here to fix, arriving
+        // through the loop instead of through the signature.
+        var failures = 0
+        while (true) {
             // A cancelled call surfaces as a plain IOException, which the catch below would retry.
             // Checked here so a cancellation ends the loop as a cancellation rather than as a
             // transport failure the caller would then queue for another try.
             currentCoroutineContext().ensureActive()
+            var expired = false
             try {
                 // A fresh stream per attempt so a retry re-reads from the start.
                 val body = StreamingRequestBody(contentLength, mimeType.toMediaType(), openStream, onProgress, digest)
-                val builder = Request.Builder().url(uploadUrl).put(body)
-                headers.forEach { (name, value) -> builder.header(name, value) }
+                val builder = Request.Builder().url(target).put(body)
+                targetHeaders.forEach { (name, value) -> builder.header(name, value) }
                 executeCancellable(storageClient.newCall(builder.build())).use { response ->
                     if (response.isSuccessful) return
-                    // Client errors (4xx) won't fix themselves — fail immediately.
-                    if (response.code < 500) {
-                        throw IllegalStateException("Object storage upload failed: HTTP ${response.code}")
+                    // A 403 on a signature this code has already spent minutes of is far more likely
+                    // to be an expired one than a permission change mid-transfer. Answered with a
+                    // fresh URL rather than a verdict — once. See the KDoc.
+                    if (response.code == 403 && !refreshed && repesign != null) {
+                        expired = true
+                        lastError = StorageRefusedError(
+                            response.code,
+                            "Object storage upload failed: HTTP ${response.code}"
+                        )
+                    } else if (response.code < 500) {
+                        // Client errors (4xx) won't fix themselves — fail immediately, carrying the
+                        // status as a NUMBER so the queue can tell this from a lost connection.
+                        throw StorageRefusedError(
+                            response.code,
+                            "Object storage upload failed: HTTP ${response.code}"
+                        )
+                    } else {
+                        lastError = StorageRefusedError(
+                            response.code,
+                            "Object storage upload failed: HTTP ${response.code}"
+                        )
                     }
-                    lastError = IllegalStateException("Object storage upload failed: HTTP ${response.code}")
                 }
             } catch (e: IOException) {
                 lastError = e
             }
-            if (attempt < maxAttempts) delay(800L * attempt)
+            if (expired) {
+                refreshed = true
+                // No fresh signature to be had — the presign call itself failed, or the caller
+                // offered no way to mint one. The 403 already in hand stands as the answer, which is
+                // the honest reading: a failure raised while trying to EXPLAIN a failure is a worse
+                // account of what happened than the original.
+                val fresh = repesign?.invoke()
+                    ?: throw (lastError ?: StorageRefusedError(403, "Object storage upload failed: HTTP 403"))
+                target = fresh.uploadUrl
+                targetHeaders = fresh.headers
+                // Re-sending from byte zero against the new signature, so the row must not be left
+                // showing the high-water mark of the attempt that was thrown away — a bar frozen at
+                // 80% over a transfer that is back at the beginning is a lie, and a bar that walks
+                // backwards on its own is confusing. The web does the same at the same point
+                // (`uploadWhole`'s `onProgress?.(0, file.size)`).
+                onProgress?.invoke(0L, contentLength)
+                continue
+            }
+            failures++
+            if (failures >= maxAttempts) break
+            onProgress?.invoke(0L, contentLength)
+            delay(800L * failures)
         }
         throw lastError ?: IllegalStateException("Object storage upload failed")
     }

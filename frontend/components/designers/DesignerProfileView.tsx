@@ -13,6 +13,7 @@
  * saying so is indistinguishable from a place with no records.
  */
 
+import { plainFromStoredAddress } from "@/components/designers/storedAddress";
 import { StoredMediaImage } from "@/components/designers/StoredMediaImage";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
 import {
@@ -227,6 +228,32 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
     // client and in the .docx, so rendering it as anything richer here would show the web reader a
     // document the ministry's copy will not contain.
     return <p className="whitespace-pre-line">{String(raw)}</p>;
+  }
+
+  /*
+    ── THE ADDRESS IS THE ONE COLUMN ON THIS SCREEN THAT MAY NOT BE A STRING ────────────────────
+
+    `addressLine` took rich text on 2026-08-30 without changing shape: it holds the designer's prose
+    whenever nothing is formatted, and `{"blocks":[{"kind":"PARAGRAPH","spans":[…]}]}` the moment a
+    word is bolded. Every other branch on this screen ends in `String(raw)`, and `String(raw)` on a
+    stored document prints the braces — verbatim, silently, on the page an admin opens to check
+    whether a colleague's report cover will have a blank line on it. It would not read as a bug in
+    this component; it would read as a designer who had pasted something strange into their address.
+
+    FLATTENED RATHER THAN RE-RENDERED WITH ITS MARKS, and that is the deliberate half. This screen's
+    job is to show what the report will carry, and what the report carries is the flattened text:
+    `prefill_from_profile` copies this column into `designerAddress`, a registry TEXT field, through
+    `rich_text.plain_from_stored`. Drawing the bold here that the .docx will not print would be this
+    screen telling its reader something about a document it cannot see — §17's "claims about the
+    report" trap, on the one page whose whole purpose is answering a question about the report.
+
+    `whitespace-pre-line` because the flattened form of a two-paragraph address has a newline in it,
+    and an address whose lines run together is harder to check than one that does not.
+    `plainFromStoredAddress` is identity on prose, so an address written before this change renders
+    exactly as it did yesterday — which is the case that matters, since it is every live row.
+  */
+  if (field === "addressLine") {
+    return <p className="whitespace-pre-line break-words">{plainFromStoredAddress(String(raw))}</p>;
   }
 
   if (field === "website") {

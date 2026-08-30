@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,10 +34,14 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,10 +66,13 @@ import coil.request.ImageRequest
 import com.designprototype.workshop.data.AttachedImage
 import com.designprototype.workshop.data.DW_DEFAULT_MAX_ITEMS
 import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.DwMediaUploadProgress
 import com.designprototype.workshop.data.DwPhotoGate
 import com.designprototype.workshop.data.DwQualityFlagLog
+import com.designprototype.workshop.data.DwUploadState
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.WorkshopDraftStore
+import com.designprototype.workshop.data.WorkshopSyncEngine
 import com.designprototype.workshop.data.dwDeclaredMinItems
 import com.designprototype.workshop.data.dwEffectiveMaxItems
 import com.designprototype.workshop.ui.MediaViewerDialog
@@ -76,6 +84,8 @@ import com.designprototype.workshop.ui.rememberMediaImageLoader
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.Instant
@@ -291,6 +301,25 @@ internal fun DwMediaCaptureCard(
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var viewing by remember { mutableStateOf<DwMediaItem?>(null) }
+
+    /**
+     * Bring the refusals this workshop already carries on disk into that store, once per workshop.
+     *
+     * Everything else in [DwMediaUploadProgress] is written by a pass running in this process. A
+     * refusal outlives the process that recorded it, and is the ONE state a designer most needs on
+     * the row, because `uploadPending` excludes a refused file from every future pass — so without
+     * this, closing and reopening the app turns a row explaining why a photograph is stuck back into
+     * a row that says "image · 4.1 MB · on this device only", with the file silently excluded from
+     * the queue and the Try again button gone with the sentence.
+     *
+     * Every capture card on the stage mounts this — a stage carries up to eleven media fields — so
+     * the once-per-workshop guard is inside [DwMediaUploadProgress.seedFrom] rather than here. It
+     * has to be: `LaunchedEffect` is per composable, and eleven of them each reading the file that
+     * holds the whole fortnight is a stage that opens slowly on exactly the phones this app is for.
+     */
+    LaunchedEffect(media.workshopId) {
+        DwMediaUploadProgress.seedFrom(context, media.workshopId)
+    }
 
     /**
      * What a candidate is compared against for duplication: everything this field already holds.
@@ -1054,12 +1083,25 @@ internal fun DwMediaCaptureCard(
             val item = media.resolve(id)
             DwAttachmentRow(
                 item = item,
+                mediaId = id,
                 enabled = enabled,
                 onOpen = { item?.let { viewing = it } },
                 onRemove = {
                     media.detach(id)
                     onIdsChange(if (multiple) ids.filterNot { it == id } else emptyList())
-                }
+                },
+                onRetry = {
+                    // Clears this ONE file's refusal and stops there. No pass is started: on a
+                    // stage screen with no signal the honest outcome of the tap is "queued again",
+                    // and a spinner that could not have sent anything would be the second lie this
+                    // row was drawn to remove. The next pass — the connectivity callback, the
+                    // fallback timer, the workshop's own Try again — picks the file up by the same
+                    // route every other file takes.
+                    logScope.launch {
+                        WorkshopSyncEngine.retryOneFile(context, media.workshopId, id)
+                        onMessage("Queued again — it will upload the next time there is a connection.")
+                    }
+                },
             )
             /*
               DESCRIBE THIS PHOTOGRAPH, OR SUBTITLE THIS RECORDING — DIRECTLY UNDER THE TILE IT IS
@@ -1129,6 +1171,123 @@ internal fun DwMediaCaptureCard(
     }
 }
 
+/** How loudly an attachment's second line should read. Colour only; the words carry the meaning. */
+internal enum class DwAttachmentTone {
+    /** The ordinary condition of a workshop in progress. Must not look like a warning. */
+    NEUTRAL,
+
+    /** Bytes are moving right now. */
+    PROGRESS,
+
+    /** Something is stuck. The only tone that ever appears beside a button. */
+    WARNING,
+}
+
+/** The second line of an attachment row, and whether anything is offered beside it. */
+internal data class DwAttachmentStatus(
+    val line: String,
+    val tone: DwAttachmentTone,
+    /** 0-100 while bytes are moving, null otherwise. Non-null is what draws the bar. */
+    val percent: Int?,
+    /** True only where nothing will happen unless a person acts. */
+    val canRetry: Boolean,
+)
+
+/**
+ * WHAT TO SAY ABOUT ONE ATTACHMENT — the whole of the row's second line, decided here.
+ *
+ * ── WHY THIS IS A PURE FUNCTION AND NOT SIX BRANCHES INSIDE THE COMPOSABLE ───────────────────────
+ *
+ * Every sentence below is a claim about where a designer's photographs are, and getting one wrong
+ * is not a cosmetic bug: "Backed up to the server" over a file the server has never seen is the
+ * sentence that ends with somebody wiping a phone. The rules are subtle enough to be worth pinning
+ * — a missing file outranks a live transfer, an in-memory refusal outranks a stale remote id, an
+ * absent state is *not* an assertion — and a rule that lives inside a `@Composable` can only be
+ * checked by looking at it. As a function it is checked by `DwAttachmentStatusTest` on the JVM.
+ *
+ * ── THE ORDER OF THE ARMS, WHICH IS THE ACTUAL LOGIC ─────────────────────────────────────────────
+ *
+ * 1. **The bytes are gone from this device.** Outranks everything, including a live reading, because
+ *    a transfer of a file that is not there cannot be happening and the descriptor is now the only
+ *    surviving record that the photograph ever existed.
+ * 2. **A live reading**, in flight or refused. It is newer than anything durable by construction —
+ *    the pass that wrote it is the one that just touched this file — so a refusal recorded seconds
+ *    ago must not be overwritten by a [DwMediaItem.remoteMediaId] the row happens to be holding.
+ * 3. **[backedUp]**, which is the durable truth and the only thing entitled to say the server holds
+ *    these bytes. See [DraftMedia.remoteMediaId]: "Null means the bytes are on this phone and
+ *    nowhere else, and this field is the only thing in the app entitled to say otherwise."
+ * 4. **On this device only** — the default, and deliberately the default rather than a fallback for
+ *    an unknown state. An absent [state] means [DwMediaUploadProgress] knows nothing, which for a
+ *    file with no remote id is exactly and only "it has not been sent yet".
+ *
+ * @param backedUp [DwMediaItem.remoteMediaId] is present — the server acknowledged these bytes under
+ *   an id it issued. Nothing else may be passed here.
+ */
+internal fun dwAttachmentStatus(
+    mediaType: String,
+    sizeBytes: Long,
+    bytesPresent: Boolean,
+    backedUp: Boolean,
+    state: DwUploadState?,
+): DwAttachmentStatus {
+    val what = "${mediaType.lowercase()} · ${humanSize(sizeBytes)}"
+    if (!bytesPresent) {
+        return DwAttachmentStatus(
+            // A missing file is REPORTED, never quietly dropped from the list. The descriptor is
+            // the only surviving record that the photograph existed at all, and a store that
+            // silently forgot it would destroy the caption along with it.
+            line = "The bytes for this attachment are no longer on this device.",
+            tone = DwAttachmentTone.WARNING,
+            percent = null,
+            // Nothing to send. A Try again over an absent file is a button that can only fail.
+            canRetry = false,
+        )
+    }
+    return when (state) {
+        is DwUploadState.Sending -> DwAttachmentStatus(
+            // BYTES, NOT JUST A PERCENTAGE. On a village link a 300 MB video spends over a minute
+            // and a half inside every single percent, so the percentage alone is indistinguishable
+            // from a frozen app for minutes at a time — which is the exact complaint this answers.
+            // The byte figure moves every second (see DwMediaUploadProgress.PUBLISH_INTERVAL_MS),
+            // so "slow" and "stalled" finally look different from each other.
+            line = "Uploading… ${state.percent}% · ${humanSize(state.sent)} of ${humanSize(state.total)}",
+            tone = DwAttachmentTone.PROGRESS,
+            percent = state.percent,
+            // Deliberately nothing to press while it is working. A Try again beside a running
+            // transfer invites a designer to restart a 300 MB upload from byte zero at 90%.
+            canRetry = false,
+        )
+        is DwUploadState.Refused -> DwAttachmentStatus(
+            line = if (state.permanent) {
+                "Not uploaded — ${state.reason}"
+            } else {
+                // No button, and the words say why: the app has this one. Offering a retry here
+                // would let a designer spend a metered connection re-sending something that was
+                // already going to be re-sent.
+                "Upload did not go through — ${state.reason}"
+            },
+            tone = DwAttachmentTone.WARNING,
+            percent = null,
+            canRetry = state.permanent,
+        )
+        DwUploadState.Sent -> DwAttachmentStatus(
+            line = "$what · backed up to the server",
+            tone = DwAttachmentTone.NEUTRAL,
+            percent = null,
+            canRetry = false,
+        )
+        null -> if (backedUp) {
+            DwAttachmentStatus("$what · backed up to the server", DwAttachmentTone.NEUTRAL, null, false)
+        } else {
+            // NOT a warning, and the wording is careful. This is the correct and expected state of
+            // every capture in a fortnight-long workshop, and colouring it red would train a
+            // designer to ignore the colour by the second day. It still says plainly that the phone
+            // is the only copy, because that is the fact the gallery counts exist to keep visible.
+            DwAttachmentStatus("$what · on this device only", DwAttachmentTone.NEUTRAL, null, false)
+        }
+    }
+}
+
 @Composable
 private fun CaptureButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -1163,16 +1322,80 @@ private fun CaptureButton(
  * follows the device's light/dark setting, and dropping a black card into a light stage form is the
  * kind of inconsistency that reads as a bug. The pieces that carry real behaviour — the video-frame
  * decoder and the player — ARE reused, so nothing about playback is re-implemented here.
+ *
+ * ── THE LINE THIS ROW WAS MISSING, ADDED 2026-08-30 ──────────────────────────────────────────────
+ *
+ * Everything above describes a row that could say what a file IS and never whether anybody else has
+ * it. Its second line read `"image · 2.1 MB · tap to play"` and nothing else, for every file, in
+ * every state — on device only, in flight, acknowledged by the server, or permanently refused. A
+ * designer looking straight at a photograph could not tell whether it had left the handset.
+ *
+ * That is not a cosmetic gap on this client specifically. The record forms' own capture surface
+ * (`MainActivity.MediaCaptureSection`) has always drawn a bar and said "All uploaded ✓ — ready to
+ * save" / "Uploading… 42% (2/5 files done)", because it uploads eagerly and has the numbers to hand.
+ * This card deliberately does not upload at capture time — the local draft IS the document for a
+ * fortnight, and eagerly pushing a 300 MB loom video would burn a field allowance — and what was
+ * never built alongside that decision was any account of the upload that happens LATER. The
+ * consequence is the one this whole feature is meant to prevent: a designer who reads "25 of 25" in
+ * a courtyard and never learns that none of them have left the phone, which
+ * `DwPhotoGate.GalleryCounts.onDevice` already says in as many words is "one wiped phone away from
+ * losing the lot".
+ *
+ * ── WHY THE FOUR STATES ARE WORDED THE WAY THEY ARE ──────────────────────────────────────────────
+ *
+ * The states a person acts on differently must READ differently, and only two of them mean "do
+ * something". "On this device only" is the normal, correct condition of a workshop in progress and
+ * must not look like a warning. "Uploading" carries BYTES rather than a spinner, because slow and
+ * stalled lead to opposite decisions — wait, or go and find signal — and the only thing that tells
+ * them apart is whether the figure is moving. A non-permanent refusal says the app will try again,
+ * so the row offers nothing to press. A permanent one says it will not, and is the only state that
+ * gets a button, because it is the only state where nothing happens until a person acts.
+ *
+ * @param mediaId the LOCAL descriptor id, which is what [DwMediaUploadProgress] is keyed by. Taken
+ *   as a parameter rather than read off [item] because [item] is null exactly when the descriptor
+ *   has outlived its bytes — the state this row most needs to be able to draw.
+ * @param onRetry queues this one file again. Null where there is nothing to retry.
  */
 @Composable
 private fun DwAttachmentRow(
     item: DwMediaItem?,
+    mediaId: String,
     enabled: Boolean,
     onOpen: () -> Unit,
     onRemove: () -> Unit,
+    onRetry: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val loader = rememberMediaImageLoader()
+
+    /**
+     * WHAT THE SYNC IS DOING TO **THIS** FILE RIGHT NOW.
+     *
+     * ── WHY THIS IS COLLECTED HERE AND NOT ONCE PER CARD ─────────────────────────────────────────
+     *
+     * [DwMediaUploadProgress.states] is one map for the whole process, and its identity changes on
+     * every publish. Collecting the map at the card level therefore recomposes the WHOLE card — every
+     * attachment row, every thumbnail, every caption control in it — once a second for as long as any
+     * upload anywhere is running, on all eleven media fields a stage can carry. That is a second of
+     * recomposition work per second, on the cheapest phone in the room, while a designer is trying to
+     * scroll the form.
+     *
+     * Narrowing to this row's own entry and `distinctUntilChanged` means a publish wakes exactly the
+     * row whose bytes moved. Every other row sees the same value it saw before — usually null — and
+     * is skipped.
+     *
+     * ── WHY IT IS THE STORE AND NOT A PARAMETER ──────────────────────────────────────────────────
+     *
+     * The upload does not happen on this screen. It happens in [WorkshopSyncEngine], from a timer or
+     * a connectivity callback, quite possibly while this card is not composed at all — so there is no
+     * state this card could own that would know about it. Threading it in would mean a parameter on
+     * `DwMediaBridge`, carried through `FieldRenderer` and `StageScreen` to reach every card that
+     * draws an attachment, and each of those hops is a place for one gallery's readings to end up
+     * under another's.
+     */
+    val uploadState by remember(mediaId) {
+        DwMediaUploadProgress.states.map { it[mediaId] }.distinctUntilChanged()
+    }.collectAsState(initial = DwMediaUploadProgress.states.value[mediaId])
     val fileUri = remember(item?.absolutePath) { item?.let { Uri.fromFile(File(it.absolutePath)) } }
     val exists = remember(item?.absolutePath) { item?.let { File(it.absolutePath).exists() } ?: false }
 
@@ -1189,7 +1412,12 @@ private fun DwAttachmentRow(
             modifier = Modifier
                 .size(52.dp)
                 .background(MaterialTheme.field.surface50, RoundedCornerShape(8.dp))
-                .then(if (exists) Modifier.clickable(onClick = onOpen) else Modifier)
+                // `onClickLabel` because the words "tap to play" left the line below when it was
+                // given the upload state to carry. The hint was the only thing announcing that this
+                // thumbnail opens the file, and a screen reader had never had it at all — the label
+                // is now spoken as the action ("double tap to play") rather than buried in a
+                // sentence, and the displaced affordance is not simply gone.
+                .then(if (exists) Modifier.clickable(onClickLabel = "play", onClick = onOpen) else Modifier)
         ) {
             when {
                 !exists || fileUri == null -> Text("?", color = MaterialTheme.field.muted, fontSize = 16.sp)
@@ -1219,6 +1447,13 @@ private fun DwAttachmentRow(
                 )
             }
         }
+        val status = dwAttachmentStatus(
+            mediaType = item?.mediaType ?: "",
+            sizeBytes = item?.sizeBytes ?: 0L,
+            bytesPresent = item != null && exists,
+            backedUp = !item?.remoteMediaId.isNullOrBlank(),
+            state = uploadState,
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 item?.displayName ?: "Missing file",
@@ -1228,18 +1463,48 @@ private fun DwAttachmentRow(
                 maxLines = 1
             )
             Text(
-                // A missing file is REPORTED, never quietly dropped from the list. The descriptor is
-                // the only surviving record that the photograph existed at all, and a store that
-                // silently forgot it would destroy the caption along with it.
-                if (item == null || !exists) {
-                    "The bytes for this attachment are no longer on this device."
-                } else {
-                    "${item.mediaType.lowercase()} · ${humanSize(item.sizeBytes)} · tap to play"
+                status.line,
+                color = when (status.tone) {
+                    DwAttachmentTone.WARNING -> MaterialTheme.colorScheme.error
+                    DwAttachmentTone.PROGRESS -> MaterialTheme.colorScheme.primary
+                    DwAttachmentTone.NEUTRAL -> MaterialTheme.field.muted
                 },
-                color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
-                maxLines = 2
+                // Four lines, not two. A refusal now carries the reason it was refused, and the
+                // reasons are sentences — "the file store refused it with HTTP 413. This is a
+                // setting on the store rather than your connection…". Clipped at two lines, the
+                // half that says what to do about it is the half that disappears.
+                maxLines = 4,
+                // Announced when it changes rather than only when the row is next focused. A
+                // designer using TalkBack gets the same account of a transfer as one watching the
+                // bar, which is the point of drawing it at all.
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
+            status.percent?.let { percent ->
+                LinearProgressIndicator(
+                    progress = { percent / 100f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, end = 4.dp),
+                )
+            }
+            // ONLY where nothing happens unless a person acts — see [dwAttachmentStatus]. `enabled`
+            // is honoured as well as `canRetry`: a read-only stage must not offer an action that
+            // writes to the draft.
+            if (status.canRetry && onRetry != null) {
+                TextButton(
+                    onClick = onRetry,
+                    enabled = enabled,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) {
+                    Text(
+                        "Try this file again",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
         }
         IconButton(onClick = onRemove, enabled = enabled) {
             Icon(Icons.Filled.Close, contentDescription = "Remove attachment", tint = MaterialTheme.field.muted)

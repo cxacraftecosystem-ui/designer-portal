@@ -285,6 +285,61 @@ model User {
   /// are what the SYSTEM noticed about a person rather than anything the person entered, so an
   /// account deletion must take them with it and must never be blocked by them. See UsageEvent.
   usageEvents                 UsageEvent[]                @relation("UsageEventUser")
+
+  /// ── WHETHER THIS ACCOUNT AGREED TO BE OBSERVED, AND UNDER WHAT CIRCUMSTANCES ──────────────
+  ///
+  /// THE COLUMN NAME IS NOT FREE. `app/services/usage.py::CONSENT_ATTRIBUTE` is the literal
+  /// `"usageConsent"`, written down as a constant a year before this column existed precisely so
+  /// that the day it landed there was one line to change and one grep to find it. `resolve_consent`
+  /// reads it off the `User` row the dependency layer has ALREADY loaded to authenticate the
+  /// request, so the whole consent lookup costs no extra round trip on the hot path. Rename this
+  /// column and that function silently answers NOT_RECORDED for everybody — which is to say
+  /// collection quietly reverts to anonymous for the entire fleet with no test going red.
+  ///
+  /// THREE STATES AND NOT A BOOLEAN, and its own enum rather than `DwDictationConsent`, for the
+  /// reason `UsageEvent.consentState` already sets out: that one is scoped to an ARTISAN'S AUDIO
+  /// leaving a device in a named workshop, and filing a designer's browsing consent and an artisan's
+  /// recording consent as one fact means the day either meaning moves the other moves with it.
+  /// NOT_RECORDED is the default and it is what every account already in the database carries: a
+  /// boolean would have had to default to false for all of them, making every never-asked colleague
+  /// indistinguishable from a refusal nobody ever made.
+  usageConsent       UsageConsent       @default(NOT_RECORDED)
+  /// WHEN THE PERSON ANSWERED — the device's clock where one reported it, this server's where the
+  /// answer was given straight against it. `DesignWorkshop.dictationConsentAt`'s exact shape and
+  /// exact argument: when the server HEARD it is the decision row's own `createdAt`, and collapsing
+  /// the two fabricates one of them.
+  usageConsentAt     DateTime?
+  /// **THE COLUMN THAT KEEPS THE RECORD HONEST, AND THE ONLY ONE HERE WITHOUT A PRECEDENT.**
+  ///
+  /// The sign-in gate makes agreeing a CONDITION OF ACCESS: a person who will not agree cannot use
+  /// the product. Under GDPR Art. 7(4) and the DPDP-style regimes this deployment sits under, that
+  /// is not freely-given consent — consent is not free where performance of the service is made
+  /// conditional on it and the processing is not necessary for the service. Storing GRANTED for such
+  /// an answer and nothing else would be this schema forging exactly the distinction the three-state
+  /// enum above exists to preserve: it would record nine thousand turnstiles as nine thousand free
+  /// choices, and no later reader — a colleague, an ethics board, a methods section — could tell
+  /// them apart.
+  ///
+  /// So the CIRCUMSTANCE is stored beside the answer, on this row and on every decision-log row.
+  /// REQUIRED_AT_SIGN_IN is the turnstile; OFFERED_IN_SETTINGS is the free choice, which is where
+  /// every WITHDRAWAL is made and which is what stops the turnstile from being indefensible: the
+  /// gate makes you agree to get in, and the settings card lets you take it back and keep working.
+  /// A fourth `UsageConsent` member was the alternative and it is refused — it would break
+  /// `usage.collection_plan`'s three-way rule and the documented meaning of `UsageEvent.consentState`
+  /// at the same time. NULL where nobody has answered at all.
+  usageConsentBasis  UsageConsentBasis?
+  /// WHICH VERSION OF THE TEXT THIS ACCOUNT AGREED TO. `usage.NOTICE_VERSION` mints it.
+  ///
+  /// A consent record that cannot say WHAT WAS AGREED TO is worse than none, because it invites the
+  /// one claim it cannot support: that the people on file agreed to whatever the notice says today.
+  /// Reword the notice, bump the version, and this column is what separates the accounts who saw the
+  /// new wording from the accounts who saw the old — and `usage.consent_gate` is what asks the
+  /// second group again. NULL where nobody has answered.
+  usageConsentVersion String?
+  /// The append-only history. See `UsageConsentDecision` — a withdrawal must not erase the answer
+  /// the collection was made under, which is the same argument `DwWorkshopConsentDecision` carries
+  /// one consent question over.
+  usageConsentDecisions UsageConsentDecision[] @relation("UsageConsentDecisionUser")
   designerRosterEntries  DesignerRoster[] @relation("DesignerRosterAddedBy")
   designerProfile        DesignerProfile? @relation("DesignerProfileUser")
   // Custom questionnaires this designer built from the .xlsx pro-forma, and the answer sheets they
@@ -4113,6 +4168,34 @@ model DesignerProfile {
   /// and where it goes is a decision, not a rename. And until the move happens a profile may carry
   /// an address in either place, so a reader that shows only one of the two will show some
   /// designers a blank where their address is.
+  ///
+  /// ── `addressLine` HOLDS RICH TEXT SINCE 2026-08-30, AND THAT NEEDED NO MIGRATION ─────────────
+  ///
+  /// Read this before writing anything that reads this column. It is the same `String?` it has
+  /// always been — the Postgres type is `TEXT`, with no length constraint, exactly as
+  /// `20260807120000_designer_role_roster_profile` created it — and that is precisely why the web's
+  /// rich-text editor could be pointed at it without a schema change. What changed is what the
+  /// bytes may BE. `components/richtext/storedRichText.ts` and `app/services/rich_text.py` share one
+  /// rule: **a document is only ever stringified when it is not expressible as plain text.** So this
+  /// column holds one of three things, and all three occur —
+  ///
+  ///   * NULL, for a designer who has not filled it in;
+  ///   * the designer's prose, for every row written before the change and every one since that
+  ///     nobody formatted (which is the overwhelming majority, and is byte-for-byte what was stored
+  ///     before — no backfill was needed and none was written);
+  ///   * `{"blocks":[{"kind":"PARAGRAPH","spans":[…]}]}`, once somebody applies a mark.
+  ///
+  /// A reader that has not learnt the third case does not crash; it prints the braces. Go through
+  /// `rich_text.plain_from_stored` (Python), `plainFromStoredAddress` (web) or `recordDocFromStored`
+  /// + `toPlain` (Android), all of which are IDENTITY on prose so the common case is untouched.
+  /// `prefill_from_profile` already does, which is what keeps a document off a report cover.
+  ///
+  /// THE WIRE BOUND IS TWO NUMBERS AND ONLY ONE IS A RULE: `DesignerProfileUpdate` bounds the raw
+  /// string at `ADDRESS_LINE_STORED_MAX` so a marked-up address is not refused for the size of its
+  /// own envelope, and enforces `ADDRESS_LINE_PLAIN_MAX` (300, the same 300 the registry's
+  /// `designerAddress` declares) on the FLATTENED text. Do not add a `@db.VarChar` here to "match"
+  /// either of them — the envelope is not a fact about the designer's address, and a column-level
+  /// cap would refuse a formatted value the API has already accepted.
   addressLine    String?
   city           String?
   state          String?
@@ -4452,20 +4535,36 @@ model AccessRoster {
 /// ORDER somebody moved through the app. A rollup is derivable from these rows; these rows are not
 /// derivable from a rollup.
 ///
-/// ── CONSENT IS AN OPEN QUESTION, AND IT IS NOT ANSWERED HERE ────────────────────────────────
+/// ── CONSENT: ANSWERED 2026-08-30, AND THE NULLs BELOW STAY LOAD-BEARING ─────────────────────
 ///
 /// OBSERVING DESIGNERS IS A NEW CATEGORY OF PERSONAL DATA IN THIS REPOSITORY. Everything else it
 /// holds about a person is something that person typed in; this is something the system noticed
 /// about them without being asked. The codebase already models consent explicitly wherever it
 /// collects a recording — `DwDictationConsent` is three states and not a boolean precisely so that
 /// "not asked" can never be read as "no", and `DwWorkshopConsentDecision` keeps every answer for
-/// ever because a withdrawal must not erase the answer that earlier sends were made under. There is
-/// no equivalent for watching a colleague navigate, and this model does not invent one:
-/// `consentState` below is somewhere to RECORD an answer, not a flow that asks the question.
-/// Somebody still has to decide what is asked, when it is asked, whether a refusal stops collection
-/// or only stops attribution, and what happens to the rows gathered before it was ever asked.
-/// FLAGGED, NOT SETTLED — and the flag is a column rather than a comment alone so that the rows
-/// collected before the decision are findable afterwards.
+/// ever because a withdrawal must not erase the answer that earlier sends were made under.
+///
+/// THAT EQUIVALENT NOW EXISTS: `User.usageConsent` / `usageConsentAt` / `usageConsentBasis` /
+/// `usageConsentVersion` plus the append-only `UsageConsentDecision` log below, wired to a gate at
+/// sign-in. `consentState` on this model is still what it always was — somewhere to RECORD the
+/// answer this row was collected under — and its rules have not moved an inch:
+///
+///   * NULL still means NOBODY WAS ASKED. Every row written before 2026-08-30 carries it, and that
+///     is the ONLY thing that keeps those rows findable and deletable as a set. **THE CONSENT FLOW
+///     DOES NOT BACKFILL THEM AND MUST NOT.** Whether they are deleted on the day the flow ships is
+///     a decision for the owner, recorded as an open item in
+///     `docs/DECISION-usage-consent-at-sign-in.md`.
+///   * The token "GRANTED" is still written in exactly one circumstance: an account whose recorded
+///     answer is GRANTED. It is not a default and never an optimistic guess.
+///   * A REFUSED account still produces no row at all, so "REFUSED" never appears here — there is no
+///     row to put it on.
+///
+/// STILL A String AND STILL NOT AN FK to `UsageConsentDecision`, although that log now exists. A
+/// foreign key would put a per-row lookup into the highest-write table in this schema to store a
+/// value that is one of two tokens, and — decisively — it would make deleting a decision row a
+/// referential problem on a hundred million observations. What a reader wants from this column is
+/// "was this row collected under an agreement", and one token answers that; WHICH agreement is
+/// answerable from the log by account and date, which is what the log is for.
 model UsageEvent {
   /// A surrogate id, unlike the two daily meters' composite keys, and for the opposite reason to
   /// theirs: nothing about a request identifies it, two requests can agree on every column below,
@@ -4543,9 +4642,23 @@ model UsageEvent {
   /// A String and NOT the `DwDictationConsent` enum, whose three states are otherwise the right
   /// shape. That enum is scoped to an ARTISAN'S AUDIO leaving a device in a named workshop; reusing
   /// it would file a designer's browsing consent and an artisan's recording consent as one fact, and
-  /// the day either meaning moves the other moves with it. When the flow is designed this column
-  /// takes its tokens, or is replaced by a real FK to whatever decision log that flow writes, on
-  /// `DwWorkshopConsentDecision`'s model. Until then: FLAGGED, NOT SETTLED.
+  /// the day either meaning moves the other moves with it. The flow shipped on 2026-08-30 with its
+  /// OWN enum for exactly that reason — `UsageConsent` — and this column carries that enum's tokens
+  /// as text.
+  ///
+  /// IT STAYED A String, AND BECAME NEITHER THE ENUM NOR AN FK. This comment used to offer both as
+  /// the settlement; both were weighed when the flow landed and both were refused, so the offer is
+  /// withdrawn here rather than left standing as an instruction to a later reader. Retyping to
+  /// `UsageConsent` would force a decision about what the existing NULLs become, in the very
+  /// migration that introduced the type — and those NULLs are the only handle anyone has on the rows
+  /// gathered before a person could be asked, which is the whole point of the paragraph above. An FK
+  /// to `UsageConsentDecision` would put a lookup, and a row that must already exist, in front of
+  /// every insert into the highest-write table in this schema — on the one path that is batched
+  /// precisely because it cannot afford a round trip per row.
+  ///
+  /// IN PRACTICE IT HOLDS ONLY "GRANTED" OR NULL, and that is not a gap in the tokens. A REFUSED
+  /// account is not recorded at all, so it never writes a row for the token to sit on;
+  /// `usage.collection_plan` is the only writer and is where that rule is stated.
   consentState String?
 
   /// WHEN. The only clock this table has, deliberately — there is no `updatedAt`, because a row here
@@ -4585,4 +4698,124 @@ model UsageEvent {
   /// about an index nothing probes, made at the one place in this file where the write rate makes it
   /// expensive rather than merely untidy.
   @@index([routeTemplate, createdAt])
+}
+
+/// Whether ONE ACCOUNT has agreed to have its own navigation recorded. Three states, never a
+/// boolean, and deliberately NOT `DwDictationConsent`.
+///
+/// **THE TOKENS READ THE SAME AS `DwDictationConsent`'s AND THE FACT IS DIFFERENT.** That enum is
+/// scoped to an ARTISAN'S AUDIO leaving a device in a named workshop; this one is a DESIGNER'S
+/// BROWSING of the platform they work in. Filing the two as one enum would mean the day either
+/// meaning moves — a fourth state, a rename, a semantic tightening — the other moves with it, and
+/// the two are decided by different people for different reasons. `UsageEvent.consentState` already
+/// records that refusal in prose; this is the same refusal as a type.
+///
+/// NOT_RECORDED IS THE DEFAULT AND IT IS WHAT EVERY PRE-EXISTING ROW CARRIES. It means NOBODY HAS
+/// ASKED, which is a third fact and not a shading of "no": the next move for a NOT_RECORDED account
+/// is to ask it, and the next move for a REFUSED one is nothing at all, because it has already
+/// answered. A boolean would have had to default to false for every account already in the database,
+/// making every never-asked colleague indistinguishable from a refusal nobody ever made.
+///
+/// REFUSED IS ALSO HOW A CONSENT IS WITHDRAWN — another decision, another log row, and the gate
+/// closes on the next request. There is deliberately NO route that un-records an answer back to
+/// NOT_RECORDED, exactly as there is none for the audio path and for the same reason: a gate cannot
+/// tell a withdrawn consent from an account nobody has opened if the two are stored the same way.
+enum UsageConsent {
+  NOT_RECORDED
+  GRANTED
+  REFUSED
+}
+
+/// UNDER WHAT CIRCUMSTANCES an answer was given. **The column that stops this system from recording
+/// a turnstile as a free choice.**
+///
+/// The requirement is a blocking agreement at sign-in: refuse and you cannot use the product. That
+/// is a CONDITION OF ACCESS, and under GDPR Art. 7(4) and the DPDP-style regimes this deployment
+/// sits under, consent obtained that way is not freely given — consent is not free where performance
+/// of the service is made conditional on it and the processing is not necessary for the service.
+///
+/// The requirement is not refused; it is recorded HONESTLY. A row that says GRANTED and nothing else
+/// invites precisely the claim it cannot support. With this column, a later reader can see that the
+/// nine thousand grants on file were a turnstile and that the withdrawals in settings were the free
+/// choices — which is the difference between a consent record and a consent-shaped one.
+///
+/// A FOURTH `UsageConsent` MEMBER WAS THE OBVIOUS ALTERNATIVE AND IS REFUSED. It would break
+/// `usage.collection_plan`'s three-way rule (the whole of the collection policy, in one function)
+/// and the documented meaning of `UsageEvent.consentState` in the same edit. The circumstance is a
+/// second fact about one answer, so it is a second column.
+enum UsageConsentBasis {
+  /// The blocking agreement at the door. The account could not proceed without it.
+  REQUIRED_AT_SIGN_IN
+  /// Answered or changed on the account's own settings screen, where saying no costs nothing. Every
+  /// WITHDRAWAL is one of these, and the asymmetry is what makes the turnstile above defensible.
+  OFFERED_IN_SETTINGS
+}
+
+/// The append-only history of one account's answers about being observed.
+///
+/// **WHY A LOG AND NOT ONLY THE FOUR COLUMNS ON `User`.** `DwWorkshopConsentDecision`'s argument,
+/// transferred without alteration: consent can be WITHDRAWN, and a withdrawal would erase the answer
+/// the collection was made under. A designer agrees on the 3rd, four weeks of navigation is recorded
+/// and read back into a methods section, they change their mind on the 9th — with columns alone the
+/// database now says this account never permitted anything, and nothing is left that explains the
+/// figures already quoted. "Granted on the 3rd, withdrawn on the 9th" is only answerable from a log.
+///
+/// It matters MORE here than it does for the audio path, not less, because `usage.withdraw()`
+/// DELETES the stored rows. After a withdrawal the observations are gone; this log is then the only
+/// surviving evidence that they were ever collected with an agreement behind them.
+///
+/// **THE SUBJECT IS THE ACTOR, WHICH IS THE ONE STRUCTURAL DIFFERENCE FROM THE AUDIO LOG.** There,
+/// a designer records an ARTISAN'S answer, so `actorId` names somebody other than the subject and is
+/// RESTRICT — the row says a named person took responsibility for somebody else's voice leaving a
+/// device. Here the person answering is the person being observed, so there is exactly one account
+/// on the row and no responsibility is being taken on anyone else's behalf. There is deliberately no
+/// route by which an administrator records somebody else's usage consent: a consent an admin can
+/// enter for a colleague is not a consent.
+model UsageConsentDecision {
+  id     String @id @default(cuid())
+  userId String
+
+  /// GRANTED or REFUSED. NOT_RECORDED is refused as a decision by `usage.consent_decision_plan` —
+  /// it is the absence of an answer, and "somebody deliberately recorded that nobody has been asked"
+  /// is not a state a person can be in.
+  decision UsageConsent
+  /// The turnstile or the free choice. See `UsageConsentBasis` — this is the column that makes the
+  /// record honest, and it is on EVERY row rather than only on the `User` cache so that a history
+  /// read can tell which of a person's answers were freely given.
+  basis    UsageConsentBasis
+  /// WHICH TEXT WAS ON SCREEN. `usage.NOTICE_VERSION` at the moment of the answer.
+  ///
+  /// Not derivable from the date afterwards: a deployment can be rolled back, two versions can be
+  /// live at once behind a CDN, and a handset can hold a cached notice for a fortnight. Storing what
+  /// the client says it showed is the only way this row can answer "what did they agree to" without
+  /// a reader reconstructing a release timeline.
+  noticeVersion String
+  /// Why, or under what circumstances. Optional. A grant at the door needs no note; a withdrawal
+  /// often has a reason worth keeping.
+  note          String?
+
+  /// WHAT THE CLIENT SAID, as distinct from when this server heard it — `DwWorkshopConsentDecision`
+  /// `.recordedAt`, same shape, same argument. Android signs people in offline-capable contexts and
+  /// syncs later, so the moment the box was ticked and the moment the row appeared can differ by a
+  /// fortnight. NULL when the answer was recorded straight against the server, where `createdAt` is
+  /// the same moment and repeating it here would add nothing — and where a copy would later read as
+  /// "a device reported this", which would be false.
+  recordedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  /// CASCADE, joining `UsageEvent` rather than `DwWorkshopConsentDecision`, and the split is
+  /// deliberate. That log is RESTRICT because it records one person taking responsibility for
+  /// ANOTHER person's data; deleting the actor would leave a record saying an artisan's recordings
+  /// were cleared for export by nobody. This log records a person's answer about THEMSELVES. When
+  /// the account goes, `UsageEvent` takes every observation with it (CASCADE, argued at length on
+  /// that model), and a surviving consent row would then be a statement about data that no longer
+  /// exists, attached to a person who no longer exists — while adding one more permanently
+  /// unclearable reason an admin cannot delete an account (`_undeletable_detail` in
+  /// api/routes/users.py names that failure mode).
+  user User @relation("UsageConsentDecisionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One account's answers, in order — which is the only read this table has, and the index Postgres
+  /// probes for the CASCADE above. Equality column first, range last, the same shape and the same
+  /// reason as `UsageEvent`'s two.
+  @@index([userId, createdAt])
 }

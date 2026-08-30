@@ -50,7 +50,47 @@ data class UserDto(
     val canReview: Boolean = false,
     val canViewProvenance: Boolean = false,
     val canDownloadDataset: Boolean = false,
-    val authProvider: String? = null
+    val authProvider: String? = null,
+    /**
+     * WHETHER THIS ACCOUNT MUST BE ASKED ABOUT USAGE RECORDING BEFORE IT MAY USE THE PRODUCT.
+     *
+     * ── WHY IT ARRIVES ON THE ACCOUNT AND NOT FROM A SECOND REQUEST ───────────────────────────
+     *
+     * `auth.serialize_user` is `jsonable_encoder` over the whole `User` row minus the password hash,
+     * plus this one derived field, and it is where **all four doors converge**: `POST /auth/login` on
+     * the password path, the same route on the Google path, `GET /auth/me` and `GET /me`. So a client
+     * that signs in learns the answer in the same payload that gave it a token, a client that
+     * refreshes its session learns it again, and NEITHER CAN BE GIVEN A SESSION WITHOUT BEING TOLD.
+     * That is the plumbing fact that lets the whole consent gate cost the sign-in path nothing.
+     *
+     * ── AND WHY NOTHING HERE MAY COMPUTE IT ───────────────────────────────────────────────────
+     *
+     * `required` folds two facts into one answer — have they agreed, and did they agree to the
+     * CURRENT text — and the version comparison behind the second half is deliberately server-owned.
+     * The moment the web client and this one each fold it for themselves, the two disagree on the
+     * first deploy that bumps `usage.NOTICE_VERSION` while only one of them is redeployed, and only
+     * one of the two then asks. Render [UsageConsentGateDto.required]; never derive it from the four
+     * `usageConsent*` columns beside it.
+     *
+     * NULLABLE, and the null means "this server is older than the consent flow". A handset talking to
+     * a deployment that predates it must read that as "there is no gate here", never as "the gate is
+     * open" or "the gate is shut" — both of which would be a claim about an account nobody has asked.
+     *
+     * The name is `auth.USAGE_CONSENT_GATE_KEY`, which exists as a constant on the server precisely
+     * because two clients branch on it; this is one of the two copies it was written for.
+     */
+    val usageConsentGate: UsageConsentGateDto? = null,
+    /**
+     * The four stored columns, straight off the row.
+     *
+     * They reach every client for free (see above) and are read only to SHOW a person their own
+     * answer — the settings screen prints "granted on the 3rd, at sign-in, against notice
+     * 2026-08-30.1" from these. They are never a gate: [usageConsentGate] is.
+     */
+    val usageConsent: String? = null,
+    val usageConsentAt: String? = null,
+    val usageConsentBasis: String? = null,
+    val usageConsentVersion: String? = null
 )
 
 /**

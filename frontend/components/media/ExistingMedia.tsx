@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { MediaCardGrid } from "@/components/media/MediaCardGrid";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { TranscriptBlock } from "@/components/media/TranscriptBlock";
 import { MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
@@ -362,7 +363,23 @@ export function ExistingMedia({
           )}
         </div>
       ) : null}
-      <div className="grid gap-3">
+      {/*
+        ONE COLUMN OF CARDS WAS THE DEPTH PROBLEM, AND THE 200px RAIL WAS WHY IT HAD TO BE ONE.
+
+        This list was a single `grid gap-3` stack whose every card was `sm:grid-cols-[200px_1fr]`:
+        a fixed 200px tile rail beside the provenance and the transcript. That is a horizontal card
+        already, and the right shape — what it could not do is sit beside another one, because a
+        rail measured in pixels leaves a half-width card about 90px for everything else. So a
+        record carrying a bulk import (the /media form takes a multi-file selection against one
+        linked record, and this panel pages to 100 at a time) was a hundred cards of vertical
+        scrolling on a laptop with room for two abreast — "the depth grows too long", exactly.
+
+        `MediaPreviewTile` now sizes its own thumbnail against the space it is handed rather than
+        against a fixed track, so the rail is gone and the card can be laid out two-up. TWO and not
+        three or four: each of these carries a `TranscriptBlock`, which is paragraphs of transcribed
+        speech and not a caption, and the column count has to be chosen for what a card holds.
+      */}
+      <MediaCardGrid label={title} maxColumns={2}>
         {shown.map((media) => {
           const preview: PreviewMedia = {
             key: media.id,
@@ -378,7 +395,10 @@ export function ExistingMedia({
             transcriptError: media.transcriptError
           };
           return (
-            <div key={media.id} className="grid gap-2 rounded-md border border-line-200 bg-field-50 p-2 sm:grid-cols-[200px_1fr] sm:items-start">
+            // `content-start` because the wrapping <li> stretches this card to its row's height so
+            // neighbours line up; without it the rows inside would stretch with it and float the
+            // transcript away from the file it belongs to.
+            <div key={media.id} className="grid content-start gap-2 rounded-md border border-line-200 bg-field-50 p-2">
               <MediaPreviewTile
                 item={preview}
                 onOpen={() => setActive(preview)}
@@ -404,7 +424,7 @@ export function ExistingMedia({
             </div>
           );
         })}
-      </div>
+      </MediaCardGrid>
       {active ? <MediaLightbox item={active} onClose={() => setActive(null)} /> : null}
     </section>
   );

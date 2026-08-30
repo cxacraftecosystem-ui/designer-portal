@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ExternalLink, KeyRound, Loader2, Trash2 } from "lucide-react";
 
 import { apiFetch } from "@/lib/api";
+import { Dropdown } from "@/components/ui/Dropdown";
+import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 
 /**
  * **A designer's OWN provider keys.** One card, one row per provider, and an accordion per provider
@@ -271,34 +273,74 @@ function ProviderRow({
         className="mt-1 w-full rounded-md border border-line-200 bg-card px-3 py-2 font-mono text-sm text-ink-900"
       />
 
-      <label className="mt-3 block text-xs font-medium text-ink-700" htmlFor={`model-${provider.provider}`}>
+      {/*
+        ── THE THEMED DROPDOWN, AND WHY THE ARGUMENT FOR THE NATIVE `<select>` DID NOT SURVIVE ─────
+
+        This was a native `<select>` until 2026-08-30, defended on a real accessibility point that
+        turned out to have a better answer than "keep the native control". The old note read: "the
+        `htmlFor` above and the price/task sentence below are both bound to this control by id, and
+        the themed dropdown renders a <button> that accepts neither an id nor a ref, so converting
+        would trade a properly named and described field for a filter box over five rows."
+
+        HALF OF THAT WAS TRUE AND IS WHY THIS IS NOT A ONE-LINE SWAP. A `<label htmlFor>` genuinely
+        cannot name a `<button>` — HTML-AAM computes a button's name from its own contents and the
+        label association plays no part — so replacing the `<select>` with a bare `<Dropdown>` under
+        that `<label>` would have announced "Claude Sonnet 4.5, combobox": the answer, and never the
+        question. That is the exact failure `ui/fieldLabel.tsx` was written to end, at forty-four
+        call sites at once.
+
+        THE OTHER HALF WAS NOT. The trigger DOES take an id — it publishes its own (`triggerId`) —
+        and it takes `describedBy`. `FieldLabelProvider` hands the label's id down through context,
+        and `SearchableSelect` composes `aria-labelledby="<label id> <trigger id>"`, which the
+        accname algorithm concatenates into "Model Claude Sonnet 4.5" — the question AND the answer,
+        which is strictly better than what the `<select>` announced. `ariaLabel` is deliberately NOT
+        passed: it would REPLACE name-from-content and drop the value again.
+
+        THE DESCRIPTION IS NOW ACTUALLY BOUND, which the old note claimed and the old markup did not
+        do — that `<select>` carried no `aria-describedby` at all, so the price and capability
+        sentence below reached a sighted reader and nobody else. It has an id now and the control
+        points at it.
+
+        WHAT THE VISIBLE LABEL BECAME. A `<span>`, not a `<label>`, because a `<label>` that names
+        nothing is worse than no label element: it looks correct in review and does nothing. The
+        class list is unchanged, so the card still reads as a pair with "Paste your key" above it —
+        `Field` was not used here for exactly that reason; its `field-label` styling would have made
+        the two labels in this one card disagree.
+
+        NO `searchable`: `provider.models` is the server's declared catalogue for ONE provider, a
+        handful of rows and a vocabulary rather than a corpus. §11.5's threshold would withdraw the
+        filter box anyway; this is the case it was calibrated on.
+      */}
+      <span id={`model-label-${provider.provider}`} className="mt-3 block text-xs font-medium text-ink-700">
         Model
-      </label>
-      {/* A native <select>, and left that way on purpose. `provider.models` is the server's declared
-          catalogue for ONE provider — a handful of rows, and a vocabulary rather than a corpus: it
-          changes when Anthropic or OpenAI publish a model, not as this repository fills up. The
-          `htmlFor` above and the price/task sentence below are both bound to this control by id, and
-          the themed dropdown renders a <button> that accepts neither an id nor a ref, so converting
-          would trade a properly named and described field for a filter box over five rows. */}
-      <select
-        id={`model-${provider.provider}`}
-        value={model}
-        onChange={(event) => setModel(event.target.value)}
-        className="mt-1 w-full rounded-md border border-line-200 bg-card px-3 py-2 text-sm text-ink-900"
-      >
-        {provider.models.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-            {option.id === provider.defaultModel ? " (recommended)" : ""}
-          </option>
-        ))}
-      </select>
+      </span>
+      <div className="mt-1">
+        <FieldLabelProvider value={`model-label-${provider.provider}`}>
+          <Dropdown
+            value={model}
+            onChange={setModel}
+            options={provider.models.map((option) => ({
+              value: option.id,
+              // Kept in the LABEL rather than moved to `SelectOption.hint`, which is where secondary
+              // text belongs. `hint` is drawn in the open panel only, and "(recommended)" has to
+              // stay legible on the CLOSED trigger — that is the state a designer reads when they
+              // come back to check what their key is set to.
+              label: `${option.label}${option.id === provider.defaultModel ? " (recommended)" : ""}`
+            }))}
+            describedBy={`model-hint-${provider.provider}`}
+          />
+        </FieldLabelProvider>
+      </div>
       {(() => {
         const chosen = provider.models.find((m) => m.id === model);
         if (!chosen) return null;
         const price = priceLine(chosen, checkedOn);
         return (
-          <p className="mt-1.5 text-xs leading-5 text-ink-500">
+          // The id the dropdown's `aria-describedby` points at. A dangling reference is harmless on
+          // the branch above that renders nothing — assistive technology ignores an id that resolves
+          // to no element — and that branch only fires when the saved model is one this app no
+          // longer offers, which already has its own warning above the field.
+          <p id={`model-hint-${provider.provider}`} className="mt-1.5 text-xs leading-5 text-ink-500">
             {chosen.note} <span className="block">Used for: {taskList(chosen.tasks)}.</span>
             {price ? <span className="block">{price}</span> : null}
           </p>

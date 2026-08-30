@@ -138,19 +138,15 @@ def _probe_app() -> FastAPI:
     ) -> dict[str, Any]:  # pragma: no cover - exercised over HTTP
         return {"id": deps.get_value(current_user, "id")}
 
-    async def _record_a_grant(request: Request) -> None:
-        """Stands in for the consent flow nobody has built yet: it writes the answer the middleware
-        reads, under the key the service declares, exactly as a real flow would have to."""
-        setattr(request.state, usage.USAGE_CONSENT_KEY, usage.UsageConsent.GRANTED)
-
-    @application.get(
-        "/design-workshops/{workshop_id}/consented", dependencies=[Depends(_record_a_grant)]
-    )
-    async def consented(
-        workshop_id: str,
-        current_user: Any = Depends(deps.get_current_user),
-    ) -> dict[str, Any]:  # pragma: no cover - exercised over HTTP
-        return {"id": deps.get_value(current_user, "id")}
+    # THE "/consented" PROBE AND ITS HAND-WRITTEN GRANT ARE GONE, AND THE DELETION IS THE POINT.
+    # Until 2026-08-30 this file carried a dependency that wrote `UsageConsent.GRANTED` straight into
+    # `scope["state"]`, standing in for a consent flow nobody had built. The flow exists now, so the
+    # stand-in is not merely redundant — it is WRONG: `get_current_user` writes the consent key
+    # itself, from the account row, and runs AFTER a route-level dependency. A hand-written grant is
+    # overwritten before the handler is reached, so a test relying on one would assert that the
+    # middleware records anonymously and call it a stitch failure. The honest expression of "this
+    # account has agreed" is now a `usageConsent` column on the row, which is what
+    # `test_the_signed_in_account_reaches_the_middleware_through_scope_state` supplies.
 
     @application.get("/design-workshops/{workshop_id}/boom")
     async def boom(workshop_id: str) -> dict[str, Any]:  # pragma: no cover - exercised over HTTP
@@ -466,24 +462,32 @@ async def test_the_signed_in_account_reaches_the_middleware_through_scope_state(
     ``get_current_user`` never sees a status code or a duration. They meet in ``scope["state"]``,
     which Starlette's ``request.state`` writes into by reference.
 
-    The request here also carries a recorded GRANT, because that is the only circumstance in which
-    the identity survives into the row — see the next test for what the default does. Asserting on a
-    granted request is what makes this a test of the STITCH rather than of the consent rule.
+    The account here carries a recorded GRANT — the ``usageConsent`` column, exactly as a real row
+    does — because that is the only circumstance in which the identity survives into the written row.
+    See the next test for what an unanswered account produces. Asserting on a granted request is what
+    makes this a test of the STITCH rather than of the consent rule.
+
+    **BOTH HALVES OF THE STITCH ARE EXERCISED HERE AND NEITHER IS SIMULATED.** Until 2026-08-30 the
+    consent half was a hand-written value pushed into ``scope["state"]`` by a probe dependency,
+    because no column existed to read. It is now ``usage.resolve_consent`` reading the column off the
+    row ``get_current_user`` already loaded — so this test now fails if the column is renamed, which
+    is the failure that would otherwise be silent: a ``getattr`` miss resolves to NOT_RECORDED and
+    the whole fleet reverts to anonymous with nothing going red.
     """
 
     async def _user(credentials: Any, *, allowed_scopes: Any) -> Any:
-        return SimpleNamespace(id="u-42", role="DESIGNER")
+        return SimpleNamespace(id="u-42", role="DESIGNER", usageConsent="GRANTED")
 
     monkeypatch.setattr(deps, "_user_from_bearer", _user)
 
-    response = await _get(_probe_app(), f"/design-workshops/{WORKSHOP_ID}/consented")
+    response = await _get(_probe_app(), f"/design-workshops/{WORKSHOP_ID}/signed-in")
     rows = await _written(table)
 
     assert response.status_code == 200
     assert len(rows) == 1
     assert rows[0]["userId"] == "u-42"
     assert rows[0]["consentState"] == "GRANTED"
-    assert rows[0]["routeTemplate"] == "/design-workshops/{workshop_id}/consented"
+    assert rows[0]["routeTemplate"] == "/design-workshops/{workshop_id}/signed-in"
 
 
 async def test_an_anonymous_request_carries_no_account(table: _UsageEventTable) -> None:
@@ -514,7 +518,9 @@ async def test_the_default_policy_records_the_request_and_drops_the_name(
     """
 
     async def _user(credentials: Any, *, allowed_scopes: Any) -> Any:
-        return SimpleNamespace(id="u-42", role="DESIGNER")
+        # NOT_RECORDED, which is what an account that has not answered carries — and what a row
+        # restored from before the consent column existed resolves to. Never GRANTED by omission.
+        return SimpleNamespace(id="u-42", role="DESIGNER", usageConsent="NOT_RECORDED")
 
     monkeypatch.setattr(deps, "_user_from_bearer", _user)
 
@@ -697,11 +703,19 @@ async def test_get_current_user_writes_only_the_identity_into_scope_state(
 ) -> None:
     """THE DEPENDENCY HALF OF THE STITCH, ON ITS OWN, WITH NO WEB SERVER AND NO DATABASE.
 
-    Two claims, and the second is the one that will decay. First: the id lands under the key the
-    service declares — not a key spelled the same way in two files, which is how a stitch goes quietly
+    Two claims, and the second is the one that will decay. First: both values land under the keys the
+    service declares — not keys spelled the same way in two files, which is how a stitch goes quietly
     dead and files every request as anonymous. Second: it writes NOTHING ELSE. This function runs on
     every authenticated request in the product, and the pressure to add "just one more" lookup to it
     is exactly why the assertion is on the whole dict rather than on one key.
+
+    **THE SECOND KEY ARRIVED WITH THE CONSENT FLOW ON 2026-08-30 AND COSTS THE SAME AS THE FIRST:
+    nothing.** ``usage.resolve_consent`` is a ``getattr`` off the row that has already been loaded to
+    authenticate the request plus an enum lookup — no query, no await, no branch that can raise. It
+    was written with that signature a migration before the column existed, precisely so that wiring
+    it up here would not put a round trip on the hot path. This account carries no consent column at
+    all, which is what a row hand-built in a test looks like and also what a row restored from before
+    the migration looks like: both resolve to NOT_RECORDED, never to GRANTED.
     """
 
     async def _user(credentials: Any, *, allowed_scopes: Any) -> Any:
@@ -713,7 +727,10 @@ async def test_get_current_user_writes_only_the_identity_into_scope_state(
     user = await deps.get_current_user(Request(scope), credentials=None)
 
     assert deps.get_value(user, "id") == "u-42"
-    assert scope["state"] == {usage.USAGE_USER_ID_KEY: "u-42"}
+    assert scope["state"] == {
+        usage.USAGE_USER_ID_KEY: "u-42",
+        usage.USAGE_CONSENT_KEY: usage.UsageConsent.NOT_RECORDED,
+    }
 
 
 async def test_the_stitch_asks_for_a_connection_and_not_for_a_request(
@@ -758,7 +775,10 @@ async def test_the_stitch_asks_for_a_connection_and_not_for_a_request(
     user = await deps.get_current_user(HTTPConnection(scope), credentials=None)
 
     assert deps.get_value(user, "id") == "u-42"
-    assert scope["state"] == {usage.USAGE_USER_ID_KEY: "u-42"}
+    assert scope["state"] == {
+        usage.USAGE_USER_ID_KEY: "u-42",
+        usage.USAGE_CONSENT_KEY: usage.UsageConsent.NOT_RECORDED,
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -1003,7 +1023,19 @@ async def test_the_collection_method_states_the_consent_default_and_the_losses(
     body = (await _get(_read_app(), "/usage/collection")).json()
 
     assert body["consent"]["unaskedPolicy"] == usage.DEFAULT_UNASKED_COLLECTION.value
-    assert body["consent"]["flowExists"] is False
+    # TRUE SINCE 2026-08-30. It was False for as long as there was no column, no route and no
+    # screen, and a reader who quoted this endpoint in a methods section during that period was
+    # quoting an honest No. `unaskedPolicy` above is a SEPARATE fact and did not move with it: it
+    # governs an account that has not yet answered, which is now overwhelmingly a request with no
+    # account at all.
+    assert body["consent"]["flowExists"] is True
+    assert body["consent"]["noticeVersion"] == usage.NOTICE_VERSION
+    assert "CONDITION OF ACCESS" in body["consent"]["askedAt"], (
+        "the published method must say that a grant at the door is not a free choice — a "
+        "methodology that reports the answer without the circumstance is the defect this whole "
+        "endpoint exists to prevent"
+    )
+    assert set(body["consent"]["bases"]) == {"REQUIRED_AT_SIGN_IN", "OFFERED_IN_SETTINGS"}
     assert set(body["losses"]) >= {"droppedAtCeiling", "abandonedAfterFailedWrites", "written"}
     assert body["limits"]["maxWindowDays"] == usage.MAX_RANGE_DAYS
     assert sorted(usage_routes.UNRECORDED_TEMPLATES) == body["notMeasured"]

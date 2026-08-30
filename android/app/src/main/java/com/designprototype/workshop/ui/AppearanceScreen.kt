@@ -31,6 +31,10 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
+// The usage-recording row's glyph. A document under a shield rather than a chart, because the row
+// leads to a CONSENT and its withdrawal — the figures behind it are the smaller half. A chart glyph
+// here would read as the admin's aggregate, which is a different screen at a different rank.
+import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.CardDefaults
@@ -91,6 +95,36 @@ import kotlinx.coroutines.launch
  * last and only corrects it. An empty `{}` from the GET (decoded as `null` by
  * WorkshopRepository.myPreferences) means "this account has no opinion yet" — seed the server from this
  * device rather than snapping the user back to the defaults.
+ *
+ * ── THREE PANELS THE WEB'S /settings HAS AND THIS SCREEN DOES NOT, AND WHY EACH IS NOT A GAP ─────
+ *
+ * Written down because "there is no Android counterpart" reads as work outstanding, and a reader who
+ * comes here looking for one of these should find the argument rather than start building it. Said
+ * precisely and not one tier more, which is the failure mode this repository's frontend contract
+ * spends a section on: over-claiming a gap sends every later reader hunting for something that is
+ * not missing.
+ *
+ * 1. **`GetTheAppPanel`** — the web's "download the Android APK" card. On the handset this IS the
+ *    app. The honest equivalent is the in-app update check, which already exists (`MainActivity`'s
+ *    update watcher), and a second door onto it here would be one room with two signs.
+ *
+ * 2. **The upload half of `PublishAppUpdatePanel`** — pushing a signed APK from the browser. That
+ *    panel's own docstring is the argument: the person holding the signed APK has just built it and
+ *    is at a laptop, and the flow it replaced forced them to sideload onto a phone first. Rebuilding
+ *    the upload on the phone would recreate the exact problem the web panel was written to end.
+ *    Android's own "Push update to all" — which publishes the build the publisher is running — is
+ *    the correct handset shape and stays as it is.
+ *
+ * 3. **"Request workshop access"** — present on the web's /settings and absent from this screen.
+ *    This one is not a gap in either direction: it lives on this app's dashboard tile
+ *    (`EntryMode.WORKSHOP_ACCESS`), and `frontend/app/(protected)/workshop-access/page.tsx` records
+ *    that **Android had this arrangement first and the web was changed to match**. Moving it here to
+ *    "restore parity" would put the two clients out of step in the other direction.
+ *
+ * The one real gap the same audit found — the web's `/settings/usage` — is not on this screen at all
+ * and should not be: it is the CROSS-ACCOUNT aggregate at `require_usage_reader`, so it is
+ * `AdminHubEntry.USAGE` in the admin hub, where this app already keeps the web's `ADMIN_LINKS`. What
+ * belongs here is the account's own half of that feature, which is the "Usage recording" row below.
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -370,6 +404,11 @@ fun AppearanceScreen(
     onOpenSpeechAndAi: () -> Unit,
     onOpenMyAiKeys: () -> Unit,
     /**
+     * Open this account's own usage-recording answer, its record and the withdrawal. See the row
+     * near the bottom of this screen for why a settings page carries it at all.
+     */
+    onOpenUsageRecording: () -> Unit,
+    /**
      * Re-open the first-run walkthrough. See the row at the bottom of this screen for why a settings
      * page carries it at all.
      */
@@ -548,6 +587,37 @@ fun AppearanceScreen(
             title = "My AI keys",
             summary = "Use your own OpenAI, Gemini or Claude key for AI work, billed to you",
             onClick = onOpenMyAiKeys,
+        )
+
+        /*
+         * ---- USAGE RECORDING ---------------------------------------------------------------------
+         *
+         * ON THIS SIDE OF THE BOUNDARY FOR THE SAME REASON THE AI-KEY ROW IS: the answer belongs to
+         * the ACCOUNT and follows the person to every device they sign in on and to the web. It is
+         * emphatically NOT the admin hub's "Usage" tile, which is the aggregate across every account
+         * at `require_usage_reader`; this is one person's own answer, their own record, and the way
+         * to take the answer back.
+         *
+         * WHY A SETTINGS ROW AND NOT ONLY A SIGN-IN CHECKBOX. Agreeing is a condition of using the
+         * product, asked at a turnstile nobody can get past without answering. That is defensible for
+         * exactly one reason and it is not that it is documented: it is that the agreement can be
+         * withdrawn, at no cost, by the person who gave it. If the withdrawal lived only on the web,
+         * then for the designers who work from a phone in a courtyard — most of them, and the ones
+         * the recording is mostly about — the turnstile would be one-way, and "you can withdraw at
+         * any time" would be a sentence about somebody else's device.
+         *
+         * THE SUMMARY DOES NOT STATE THE ANSWER, and that is deliberate rather than lazy. Every other
+         * row here carries a true state summary because it can compute one for free; this one's state
+         * is `GET /usage/consent`, a network read, and a row that said "Agreed" from a stale cached
+         * account — or said nothing at all with no signal — would be the row telling somebody their
+         * consent stands at the moment they came here to check it. So it says what the screen IS, and
+         * the screen itself says what the answer is and whether it could reach the server to find out.
+         */
+        SettingsRow(
+            icon = Icons.Filled.Policy,
+            title = "Usage recording",
+            summary = "What is recorded about how you use this app, what is held, and how to withdraw",
+            onClick = onOpenUsageRecording,
         )
 
         /*

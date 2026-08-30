@@ -11,6 +11,7 @@ import { GetTheAppPanel } from "@/components/settings/GetTheAppPanel";
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
 import { MyAiKeysPanel } from "@/components/settings/MyAiKeysPanel";
 import { AccessibilityCard, AppearanceCard } from "@/components/settings/PersonalSettingsCards";
+import { UsageConsentCard } from "@/components/settings/UsageConsentCard";
 import { WorkshopAccessRequestPanel } from "@/components/settings/WorkshopAccessRequestPanel";
 import { isAdmin, isMasterAdmin } from "@/lib/permissions";
 import type { User } from "@/lib/types";
@@ -129,6 +130,21 @@ export default function SettingsPage() {
           <AppearanceCard />
           <AccessibilityCard />
         </div>
+
+        {/*
+          NO ROLE GATE, AND HIGH UP, WITH THE OTHER TWO THINGS THIS ACCOUNT OWNS.
+
+          `GET`/`POST /api/usage/consent` are `get_current_user` and nothing more — reading and
+          changing your own answer about your own data needs permission from nobody — so this belongs
+          exactly where Appearance and Accessibility are and not on `/settings/usage`, which is the
+          admin aggregate. Filing a person's own consent behind an admin page would mean asking an
+          administrator what you had agreed to.
+
+          It sits above the app download rather than at the bottom because it is the door out of a
+          turnstile: `/login` will not let anybody in without agreeing, and an agreement that is hard
+          to find your way back to is an agreement that cannot really be withdrawn.
+        */}
+        <UsageConsentCard />
 
         {/* Everyone sees this: the two apps are one product and each is better at half the job. */}
         <GetTheAppPanel />

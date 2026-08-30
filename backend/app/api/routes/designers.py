@@ -18,6 +18,15 @@ programme, and a deleted row answers "nobody". Restoring is ``PATCH`` with ``isA
 which is also why a DELETE here answers 200 with the suspended row rather than 204 with nothing —
 there is something left to show.
 
+**AND ENDING AN EMPANELMENT ALSO ENDS THE PLATFORM ADMISSION THAT RESTED ON IT — RESTORING IT DOES
+NOT BRING THAT BACK.** Both endpoints that suspend a row (the ``DELETE`` and a ``PATCH`` carrying
+``isActive: false``) call ``app.services.access_roster.mirror_suspension``; the restore path calls
+nothing. The mirror is guarded so that a professor or an admin who is on this roster because they
+run workshops keeps their access to the application — see
+``access_roster.admissions_an_empanelment_carries``, and ``auth.assert_roster_admits`` for why that
+guard is not optional. The asymmetry costs an administrator something real and both screens owe a
+sentence about it; that is named in the mirror's docstring.
+
 **ROUTE ORDER IS LOAD-BEARING.** ``/me/profile`` and ``/directory`` are declared before
 ``/{user_id}/profile``. FastAPI matches in declaration order, so the other way round the literal
 paths would be swallowed by the parameterised one and ``GET /designers/me/profile`` would look up
@@ -45,6 +54,15 @@ from app.schemas.designers import (
     DesignerRosterCreate,
     DesignerRosterUpdate,
 )
+
+# THE PLATFORM ALLOW-LIST, REACHED FOR BY EXACTLY ONE THING IN THIS FILE: the cross-roster mirror
+# on the two endpoints that END an empanelment. The import direction is the only one available and
+# it is worth saying why, because the instinct is to put the mirror in ``services/designers.py``
+# beside ``ensure_empanelled`` and that is not possible: ``services/access_roster.py`` already
+# imports from ``services/designers.py``, so ``designers`` cannot import ``access_roster`` back. The
+# rule therefore lives in ``access_roster.mirror_suspension``, which both roster route modules call,
+# and route modules are leaves that may import either service.
+from app.services import access_roster
 from app.services.design_workshop_viewers import active_roster_emails
 from app.services.designers import (
     canonical_email,
@@ -596,13 +614,21 @@ async def add_to_roster(
 async def update_roster_entry(
     roster_id: str,
     payload: DesignerRosterUpdate,
-    _: Any = Depends(require_designer_roster_manager),
+    current_user: Any = Depends(require_designer_roster_manager),
 ) -> dict[str, Any]:
     """Correct a roster row, or restore a suspended one with ``isActive: true``.
 
     Restoring CLEARS ``revokedAt``. Leaving the old timestamp behind would produce a row that is
     active and carries a revocation date, and the next admin reading it has no way to tell
     whether the person may sign in — the flag or the date, and they disagree.
+
+    **``isActive: false`` HERE IS THE SAME ACT AS ``DELETE`` BELOW, AND MIRRORS THE SAME WAY.** This
+    endpoint is the other door onto one decision — the web client's roster screen sends the DELETE
+    and an admin editing a row sends this — and a rule enforced at one of two doors is the shape of
+    bug this whole feature exists to correct. ``isActive: true`` mirrors NOTHING: restoring an
+    empanelment must not restore an admission an administrator ended for some unrelated reason. See
+    :func:`app.services.access_roster.mirror_suspension` for the full argument, which is
+    ``ensure_empanelled``'s create-only rule read in the other direction.
     """
     row = await db.designerroster.find_unique(where={"id": roster_id})
     if row is None:
@@ -634,18 +660,48 @@ async def update_roster_entry(
         data["revokedAt"] = None if data["isActive"] else datetime.now(UTC)
     if not data:
         return roster_payload(row)
-    return roster_payload(await db.designerroster.update(where={"id": roster_id}, data=data))
+    updated = await db.designerroster.update(where={"id": roster_id}, data=data)
+    # THE TRANSITION AND NOT THE STATE. ``row.isActive`` is what the row was BEFORE this write, so an
+    # edit that merely restates ``isActive: false`` on an already-suspended row mirrors nothing —
+    # the same rule ``suspend_roster_entry`` and ``access.suspend_access_entry`` both apply, for the
+    # same reason: an administrator who ended this empanelment, then deliberately restored the
+    # person's platform access on the other screen, must not have that undone by somebody saving an
+    # unrelated correction to the institution field.
+    #
+    # ``updated.email`` AND NOT ``row.email``, WHICH DECIDES ONE REAL EDGE CASE. A single PATCH may
+    # both move the address and end the empanelment. Afterwards the row says "this address is not an
+    # empanelled designer", so the address it now names is the one whose admission rested on it, and
+    # the allow-list row for the address it used to name is deliberately left alone — nothing on the
+    # designer roster says anything about that address any more.
+    if data.get("isActive") is False and row.isActive:
+        await access_roster.mirror_suspension(
+            updated.email,
+            access_roster.MIRROR_EMPANELMENT_ENDED,
+            actor_id=current_user.id,
+        )
+    return roster_payload(updated)
 
 
 @router.delete("/roster/{roster_id}")
 async def suspend_roster_entry(
-    roster_id: str, _: Any = Depends(require_designer_roster_manager)
+    roster_id: str, current_user: Any = Depends(require_designer_roster_manager)
 ) -> dict[str, Any]:
     """SUSPEND, never delete. See the module docstring.
 
     Idempotent: suspending an already-suspended row keeps the ORIGINAL ``revokedAt``, because
     that date is the answer to "when did this designer lose access", and a second click on the
-    button would otherwise move it to today and destroy it.
+    button would otherwise move it to today and destroy it. The early return below carries the
+    mirror with it: a second click must not re-enact a consequence on the other roster either — see
+    the note on ``access.suspend_access_entry``, which returns early for the same reason.
+
+    **AND IT NOW ENDS THE PLATFORM ADMISSION THAT RESTED ON THIS EMPANELMENT, WHICH IS A NARROWER
+    STATEMENT THAN IT SOUNDS.** A professor or an admin who is on this roster because they run
+    workshops too keeps their access to the application, and so does anybody admitted at any other
+    tier: :func:`app.services.access_roster.admissions_an_empanelment_carries` is the guard, and it
+    exists because ``auth.assert_roster_admits`` argues at length that ending an empanelment must
+    not lock somebody out of the whole product. Restoring this row does NOT bring the admission
+    back — see :func:`app.services.access_roster.mirror_suspension` for why reactivation is the one
+    direction that never propagates, and for what that costs.
     """
     row = await db.designerroster.find_unique(where={"id": roster_id})
     if row is None:
@@ -655,6 +711,9 @@ async def suspend_roster_entry(
     updated = await db.designerroster.update(
         where={"id": roster_id},
         data={"isActive": False, "revokedAt": row.revokedAt or datetime.now(UTC)},
+    )
+    await access_roster.mirror_suspension(
+        updated.email, access_roster.MIRROR_EMPANELMENT_ENDED, actor_id=current_user.id
     )
     return roster_payload(updated)
 

@@ -18,11 +18,12 @@ from app.core.security import decode_access_token
 # `core.db` and `services/designers`, and none of those reaches back for this module.
 from app.services import access_roster
 
-# The one string that joins the two halves of the usage stitch — see ``get_current_user``. Imported
-# rather than retyped, on ``feedback.FEEDBACK_FIELDS``' rule: a contract that lives in two files is a
-# contract that will one day disagree with itself. No cycle to avoid: ``services/usage`` reaches for
-# ``core.db`` and ``services/concurrency`` and neither of those reaches back for this module.
-from app.services.usage import USAGE_USER_ID_KEY
+# The two strings that join the two halves of the usage stitch, and the one synchronous function
+# that fills the second — see ``get_current_user``. Imported rather than retyped, on
+# ``feedback.FEEDBACK_FIELDS``' rule: a contract that lives in two files is a contract that will one
+# day disagree with itself. No cycle to avoid: ``services/usage`` reaches for ``core.db`` and
+# ``services/concurrency`` and neither of those reaches back for this module.
+from app.services.usage import USAGE_CONSENT_KEY, USAGE_USER_ID_KEY, resolve_consent
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -347,6 +348,51 @@ def can_read_usage(user: Any) -> bool:
     tier names. If a grant is wanted it is a new column and a deliberate migration.
     """
     return is_admin(user)
+
+
+def can_read_person_usage(user: Any) -> bool:
+    """Read ONE NAMED COLLEAGUE'S request-by-request trail: **the master admin, and nobody else.**
+
+    ── WHY THIS IS A SECOND PREDICATE AND NOT A WIDENED :func:`can_read_usage` ──────────────────
+
+    ``can_read_usage`` gates AGGREGATES: how often a screen was reached, how slow it was, how often
+    it broke. This gates a LOG — what one named person opened, in what order, at what hour. Those are
+    different powers over different data, and the module docstring in ``api/routes/usage.py`` already
+    refuses to let the second arrive as a parameter on the first: *"If that is ever wanted it is a
+    new route with its own dependency and its own written argument, NOT a query parameter added to
+    the three above. A parameter is how a boundary gets crossed by somebody who never read the
+    paragraph explaining it."* This is that dependency, and this docstring is that argument.
+
+    ── WHY MASTER ADMIN AND NOT ADMIN, WHICH IS WHERE THE AGGREGATES SIT ────────────────────────
+
+    :func:`can_read_usage` sets Admin as the floor for the aggregates on an argument that decides
+    this one too, one rung further up. It reasons from :func:`can_manage_designer_roster` — a READ
+    gated at Admin purely because the roster reveals colleagues' institutional standing — that "a
+    usage table is strictly more revealing than that, because it is a record of what people did
+    rather than of what an administrator wrote down about them", and from
+    ``/analytics/design-workshops``, an admin-only comparison of CRAFT OUTCOMES, that "a feature that
+    observes colleagues cannot be gated more loosely than one that observes cloth."
+
+    A named person's minute-by-minute trail is strictly more revealing again than the aggregate that
+    argument was made about — the aggregate cannot say who, and this says nothing else. So it cannot
+    sit at the same rank, and the ladder already has the precedent for the rung above: the master
+    admin is the one account that reviews everyone's work (:func:`can_review_record`), and the one
+    the platform allow-list can never bar (:func:`is_break_glass_master`). One account, in one
+    institution, answerable for the read.
+
+    NO GRANT FLAG, for :func:`can_read_usage`'s reason applied harder. The three grantable booleans
+    on ``User`` are ``canReview``, ``canDownloadDataset`` and ``canViewProvenance``; none of them
+    means this, and a checkbox on an admin screen that silently conferred the power to read a
+    colleague's browsing history would be the worst instance in this codebase of the "one word
+    meaning two things" failure the role ladder above warns about.
+
+    **AND THE RANK IS NOT THE WHOLE GATE.** :func:`require_person_usage_reader` is the rank; the
+    route additionally refuses unless the SUBJECT'S OWN CONSENT IS GRANTED, and refuses with a
+    sentence rather than an empty list. Rank says who may ask; the subject's answer says whether
+    there is anything they may be told. Neither is sufficient alone, and the second is the one that
+    cannot be granted by anybody in this file.
+    """
+    return is_master_admin(user)
 
 
 def can_manage_workshops(user: Any) -> bool:
@@ -706,18 +752,22 @@ async def get_current_user(
     ``Request`` and ``WebSocket``, carries the same ``.state`` (it is defined there, not on
     ``Request``), and costs nothing on the HTTP path.
 
-    **ONE LINE, AND IT STAYS ONE LINE.** This function runs on every authenticated request in the
-    product. The write is a dict assignment: no query, no await, no branch, and nothing that can
-    raise. Anything the usage feature needs beyond an id — a consent lookup, a rank, a client label —
-    belongs where it can be paid for once rather than on this path; ``usage.resolve_consent`` is
-    deliberately synchronous and column-based for exactly that reason, so that wiring it up later
-    costs no round trip here either. The key name is imported rather than typed, because a stitch is a
-    pair of string literals that must agree and this repository has already been bitten by one
-    contract living in two files.
+    **TWO LINES, AND THEY STAY TWO LINES.** This function runs on every authenticated request in the
+    product. Both writes are dict assignments: no query, no await, no branch, and nothing that can
+    raise. ``usage.resolve_consent`` is a ``getattr`` off the row that has ALREADY been loaded to
+    authenticate the request plus an enum lookup — it was written with that signature a migration
+    before the column existed, precisely so that wiring it up here cost no round trip. Anything the
+    usage feature needs beyond these two — a rank, a client label, a history read — belongs where it
+    can be paid for once rather than on this path. The key names are imported rather than typed,
+    because a stitch is a pair of string literals that must agree and this repository has already
+    been bitten by one contract living in two files.
 
     **IT ATTRIBUTES NOTHING BY ITSELF.** Whether the id written here reaches the database is decided
-    in ``usage.collection_plan``, and today it does not: with nobody yet asked for consent, the default
-    is to record the request and drop the identity. This is the wiring, not the policy.
+    in ``usage.collection_plan``, from the consent written beside it. This is the wiring, not the
+    policy: an account that has agreed is recorded with its name, an account that has refused is not
+    recorded at all, and an account nobody has asked — every unauthenticated request, and the few
+    requests between a session being minted and the consent screen being answered — is recorded
+    without one.
 
     **WHAT THIS DOES NOT COVER, named so it is not rediscovered as a bug.**
     ``require_dataset_admin`` below calls ``_user_from_bearer`` directly rather than depending on this
@@ -735,6 +785,14 @@ async def get_current_user(
     # here, where a typo would be invisible — the middleware would simply find nothing and file every
     # request as anonymous, and no test that did not already know both spellings could tell.
     setattr(connection.state, USAGE_USER_ID_KEY, get_value(user, "id"))
+    # THE SECOND HALF OF THE STITCH, AND IT IS THE HALF THAT DECIDES WHETHER THE FIRST ONE MATTERS.
+    # The middleware reads this key and hands it to ``usage.record_event``, which asks
+    # ``collection_plan`` what may be kept; with nothing here every request resolves to "nobody was
+    # asked" and every recorded row is anonymous — which is what happened, correctly, for as long as
+    # there was no column to read. Enum in, enum out: ``main.UsageEventMiddleware`` drops anything
+    # that is not a ``UsageConsent`` rather than coercing it, so a wrong type here fails towards
+    # "nobody was asked" rather than towards a claimed consent.
+    setattr(connection.state, USAGE_CONSENT_KEY, resolve_consent(user))
     return user
 
 
@@ -853,6 +911,33 @@ async def require_usage_reader(current_user: Any = Depends(get_current_user)) ->
             detail=(
                 "Reading how the platform is used requires Admin access or above. Your own usage is "
                 "at /api/usage/me and needs no permission."
+            ),
+        )
+    return current_user
+
+
+async def require_person_usage_reader(current_user: Any = Depends(get_current_user)) -> Any:
+    """Gates ``GET /api/usage/accounts/{user_id}/trail`` — see :func:`can_read_person_usage`.
+
+    ITS OWN DEPENDENCY, NEXT TO ``require_usage_reader`` AND NOT INSTEAD OF IT. The two look alike
+    and guard different things: that one admits every Admin to figures about screens, this one admits
+    one account to a log about a person. Collapsing them — or "simplifying" this to a call to that —
+    would hand every administrator in the institution a colleague's browsing history in a diff whose
+    only visible change was the removal of a function.
+
+    THE REFUSAL NAMES THE TWO PLACES THIS DATA LEGITIMATELY LIVES, because a bare "403" teaches an
+    administrator nothing and the next thing they do is ask an engineer to make an exception. The
+    aggregates answer nearly every question anybody actually has, and the person themselves can
+    always read their own trail.
+    """
+    if not can_read_person_usage(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Reading another person's request-by-request trail is restricted to the master "
+                "admin. Per-screen aggregates, which answer almost every question about how the "
+                "platform is used, are at /api/usage/routes and need Admin. Anybody can read their "
+                "own trail at /api/usage/me/trail."
             ),
         )
     return current_user

@@ -442,12 +442,22 @@ test("the orphan sweeper cannot eject a researcher either — it is a five-minut
   ]);
 });
 
-test("the multipart leg is threaded too, and a 64 MiB video is the realistic drain case", async () => {
+test("the multipart leg is threaded too, and an over-threshold video is the realistic drain case", async () => {
   // The three tests above all send a 3-byte photo, so all three go through `uploadWhole` and none of
   // them touches `uploadInParts` — whose `/media/multipart/create` is the FIRST request a queued
-  // video makes, and therefore the one that would have navigated. `size` is stubbed rather than
-  // allocated: the 401 lands on the create call, long before anything slices the blob, and
-  // `computeChecksum` skips a file this large on its own.
+  // video makes, and therefore the one that would have navigated.
+  //
+  // THE SIZE IS WRITTEN AS `MULTIPART_THRESHOLD + 1` AND MUST STAY THAT WAY. What this test needs is
+  // "one byte over whichever threshold the module currently declares", and the threshold moved on
+  // 2026-08-30 (64 MiB → 16 MiB, so that a file needing longer than the 900-second whole-PUT
+  // signature is never sent down a path that cannot resume — see the constant's note). A literal
+  // here would have gone on passing while testing the wrong branch.
+  //
+  // `size` is stubbed rather than allocated: the 401 lands on the create call, long before anything
+  // slices the blob. Note that at 16 MiB + 1 the file is now UNDER `CHECKSUM_MAX_BYTES`, so
+  // `computeChecksum` no longer skips it on size — it is simply never awaited, because
+  // `uploadInParts` throws first, and it is safe regardless (the real blob is three bytes, and the
+  // function returns null rather than throwing when `crypto.subtle` is absent).
   const recorded = installFakeWindow("/products", "stale-token-from-six-weeks-ago");
   const paths: string[] = [];
   (globalThis as Record<string, unknown>).fetch = async (input: unknown) => {

@@ -27,7 +27,7 @@ variable "project" {
   #
   # Renaming this is a migration, not an edit: create the new IAM user, roll the new key into the
   # box's .env, confirm uploads, then remove the old one.
-  default     = "fieldrepo"
+  default = "fieldrepo"
 }
 
 variable "bucket_name" {
@@ -41,12 +41,59 @@ variable "ssh_key_name" {
 }
 
 variable "ssh_ingress_cidr" {
-  description = "CIDR allowed to SSH (use YOUR.IP/32, not 0.0.0.0/0)."
+  description = "CIDR allowed to SSH. EMPTY (the default) means port 22 is closed — use SSM instead."
   type        = string
+
+  # EMPTY BY DEFAULT SINCE 2026-08-30, WHICH MEANS NO PORT-22 RULE IS CREATED AT ALL.
+  #
+  # It used to be REQUIRED — no default, so every apply had to name a network — and the value it was
+  # applied with was the operator's home address of the day, `49.47.131.192/32`. Two failures came
+  # out of that. GitHub's runners are in Azure ranges, so every scheduled deploy died at
+  # `ssh-keyscan` and that workflow had never once succeeded; and the operator travels, so the
+  # address stopped matching whenever they moved, with nothing on screen connecting "cannot reach
+  # the box" to "you are on a different network". Deployability was a property of where somebody was
+  # standing.
+  #
+  # The box is now reached through SSM Session Manager — no inbound port, IAM-authorised, audited in
+  # CloudTrail — and `main.tf` makes the argument in full beside the security group. The rule is
+  # emitted by a `dynamic "ingress"` block that produces nothing for an empty string, so the default
+  # state is CLOSED and reopening SSH is an explicit act:
+  #
+  #     terraform apply -var="ssh_ingress_cidr=YOUR.IP/32"
+  #
+  # Kept rather than deleted for two reasons. Every runbook and command line that still passes it
+  # keeps working — Terraform hard-errors on a value for an undeclared variable, so removing it
+  # would break `backend/DEPLOY_AWS.md`'s documented invocation. And SSM is a dependency like any
+  # other: the emergency where it is the broken thing is exactly when an operator needs a door that
+  # does not go through it.
+  #
+  # DO NOT SET THIS TO "0.0.0.0/0". It would work, it would satisfy "deploy from anywhere", and it
+  # would leave a permanently open SSH port on the box holding the production API's credentials. CI
+  # already solves the same problem correctly by opening a /32 for its own runner and revoking it in
+  # an `if: always()` step.
+  default = ""
 }
 
 variable "cors_allowed_origins" {
   description = "Origins allowed to PUT/GET media from the browser (the web frontend URL)."
   type        = list(string)
-  default     = ["*"]
+
+  # THE DEFAULT IS THE REAL PAIR, NOT `["*"]`, AND BOTH HALVES OF THAT CHANGE ARE DELIBERATE.
+  #
+  # It read `["*"]` until 2026-08-30. Two problems with that as a default. First, a wildcard means
+  # any page on the internet that gets hold of a presigned URL can spend it from a victim's browser
+  # — the URL carries its own authorisation, so the origin list is the only thing narrowing who may
+  # use one. Second, and the reason it changed on this particular day: the live bucket was found
+  # allowing `https://design-repository.vercel.app` — one word off from the site's real host — which
+  # refused every upload in production. A default of `["*"]` would have masked that class of typo
+  # forever rather than making the correct value the obvious one.
+  #
+  # KEEP THIS IN STEP WITH `BACKEND_CORS_ORIGINS`, which `.github/workflows/deploy-backend.yml` pins
+  # to the same two origins. They are two enforcement points for one question — "which browser is
+  # the web client" — and the outage on 2026-08-30 was precisely what happens when one is corrected
+  # and the other is not. Adding a frontend deployment means adding it in BOTH places, in one change.
+  default = [
+    "https://designer-repository.vercel.app",
+    "http://localhost:3000",
+  ]
 }

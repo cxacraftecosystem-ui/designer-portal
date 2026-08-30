@@ -665,6 +665,20 @@ async def test_suspending_a_row_ends_access_and_restoring_gives_it_back(world, c
     Restoring must CLEAR ``revokedAt``. A row that is active and still carries a revocation date
     leaves the next admin reading it with two facts that disagree and no way to tell whether the
     person may sign in.
+
+    **AND SINCE THE CROSS-ROSTER MIRROR LANDED, THIS TEST IS ALSO EVIDENCE THAT ITS GUARD WORKS —
+    WHICH IS WORTH KNOWING BEFORE SOMEBODY "FIXES" THE FIXTURE.** Ending an empanelment now suspends
+    the allow-list row that admission rested on, and reactivation deliberately never propagates
+    back, so on an account whose admission DID rest on the empanelment the restore below would not
+    be enough to sign in — the person would be refused by the platform gate instead, in its own
+    sentence. That does not happen here because this module's fixture admits every account with
+    ``admitRole`` left NULL, which is the platform default and not a designer admission: these
+    people are on the allow-list as ordinary members of the institution, so
+    ``access_roster.admissions_an_empanelment_carries`` finds nothing to bar and the mirror is a
+    silent no-op. Giving this fixture ``admitRole: "DESIGNER"`` would therefore turn this test red,
+    and the correct reading of that would be the mirror working rather than the roster breaking. See
+    ``tests/test_designer_empanelment_auto.py`` section 6, where the mirrored case is pinned on
+    fixtures built for it.
     """
     roster_id = _roster_rows(client, world)[world["address"]("barren")]["id"]
 
