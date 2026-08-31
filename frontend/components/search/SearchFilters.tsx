@@ -11,18 +11,47 @@
  * the two screens cannot disagree again.
  */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { SlidersHorizontal } from "lucide-react";
 
 import { DateField } from "@/components/forms/DateTimeField";
 import { Dropdown } from "@/components/ui/Dropdown";
 
-/** The five buckets `GET /search` returns, in the order the results are rendered. */
+/**
+ * The five buckets EVERY search-shaped screen has, in the order the results are rendered.
+ *
+ * The map's vocabulary as well as the search box's, which is why the sixth bucket below is not in
+ * here: `GET /map/points` groups by `locationId`/`place` and a design workshop has neither column,
+ * so sending it there is a 422 rather than an empty bucket. Mirrors
+ * `backend/app/services/record_filters.py::RECORD_TYPES`.
+ */
 export const RECORD_TYPES = ["artisans", "workshops", "products", "tools", "media"] as const;
 export type RecordType = (typeof RECORD_TYPES)[number];
 
-/** Chip vocabulary: the five buckets plus "all". Also the `?type=` values the dashboard links use. */
-export const CHIP_IDS = ["all", ...RECORD_TYPES] as const;
+/**
+ * The SIXTH bucket, on `GET /search` only.
+ *
+ * The "workshops" bucket above is the LEGACY `Workshop` table — a different model from
+ * `DesignWorkshop`, with no join between them — so until this existed neither a design workshop,
+ * nor its stages, nor its fields was reachable from the screen labelled "Search". Mirrors
+ * `backend/app/services/record_filters.py::DESIGN_WORKSHOP_TYPE`, spelling included: the API's
+ * `types` parameter folds case for the comparison and echoes back its own spelling, so a client that
+ * sent `designworkshops` would get `designWorkshops` back and fail its own `types.includes` test.
+ */
+export const DESIGN_WORKSHOP_TYPE = "designWorkshops" as const;
+
+/** The six buckets `GET /search` returns. `SEARCH_TYPES` on the server. */
+export const SEARCH_RECORD_TYPES = [...RECORD_TYPES, DESIGN_WORKSHOP_TYPE] as const;
+export type SearchRecordType = (typeof SEARCH_RECORD_TYPES)[number];
+
+/**
+ * Chip vocabulary: the buckets plus "all". Also the `?type=` values the dashboard links use.
+ *
+ * WHICH buckets a given bar offers is the CALL SITE's answer (`SearchFilterBar`'s `offeredTypes`),
+ * not this constant's: the map may not offer the sixth, and neither may a screen whose reader has
+ * no design-workshop access. This list is the widest set that exists, so a label is never missing.
+ */
+export const CHIP_IDS = ["all", ...SEARCH_RECORD_TYPES] as const;
 export type ChipId = (typeof CHIP_IDS)[number];
 
 export const TYPE_LABEL: Record<ChipId, string> = {
@@ -31,8 +60,17 @@ export const TYPE_LABEL: Record<ChipId, string> = {
   workshops: "Workshops",
   products: "Products",
   tools: "Tools",
-  media: "Media"
+  media: "Media",
+  // Android's `SearchRecordTypes` label for the same bucket. Plural, and NOT "Workshops" — the two
+  // buckets are different tables and a reader has to be able to tell which one a heading counts.
+  designWorkshops: "Design workshops"
 };
+
+/**
+ * Media types `GET /search` accepts for `mediaType`, in the backend enum's own order.
+ * `android/.../ui/SearchScreen.kt::SEARCH_MEDIA_TYPES` is the same list in the same order.
+ */
+export const SEARCH_MEDIA_TYPES = ["IMAGE", "VIDEO", "AUDIO", "PDF", "DOCUMENT", "OTHER"] as const;
 
 export const RANGE_IDS = ["any", "today", "7d", "30d", "90d", "month", "year", "custom"] as const;
 export type RangeId = (typeof RANGE_IDS)[number];
@@ -50,18 +88,49 @@ const RANGE_OPTIONS: Array<{ value: RangeId; label: string }> = [
 
 export type SearchFilters = {
   /**
-   * The record types to search. EMPTY MEANS EVERYTHING — the set never lists all five explicitly,
-   * so "nothing ticked" and "everything ticked" cannot both exist and mean the same thing.
+   * The record types to search. EMPTY MEANS EVERYTHING — the set never lists every bucket
+   * explicitly, so "nothing ticked" and "everything ticked" cannot both exist and mean the same
+   * thing.
    */
-  types: RecordType[];
+  types: SearchRecordType[];
   place: string;
   range: RangeId;
   /** `yyyy-mm-dd` from the two date inputs; only read when `range` is "custom". */
   from: string;
   to: string;
+  /**
+   * THE THREE FILTERS THE API AND ANDROID BOTH HAD AND THE WEB DID NOT (added 2026-08-31).
+   *
+   * `GET /search` has taken `craftId`, `artisanId` and `mediaType` all along
+   * (`backend/app/api/routes/search.py`), and `android/.../ui/SearchScreen.kt` has had real pickers
+   * for all three. The web sent none of them, so the same three questions had two different answers
+   * depending on which client the researcher was holding — which is the exact drift the header of
+   * this file says it exists to prevent, occurring inside the vocabulary it defines.
+   *
+   * THEY LIVE IN THE SHARED VALUE AND THE CONTROLS DO NOT, which is Android's shape exactly: its
+   * `SearchFilters` data class carries all three and its screen renders the pickers through an
+   * `extraFilters` slot. The reason is that the pickers need the craft and artisan LISTS, and a
+   * shared bar that fetched them would make every consumer — the map, the View Data panel — pay two
+   * requests for controls they do not draw.
+   *
+   * Empty string means "do not filter", the same way a blank place box does, and `buildQuery` drops
+   * it. An id is a cuid, so there is no reserved value to collide with.
+   */
+  craftId: string;
+  artisanId: string;
+  mediaType: string;
 };
 
-export const EMPTY_SEARCH_FILTERS: SearchFilters = { types: [], place: "", range: "any", from: "", to: "" };
+export const EMPTY_SEARCH_FILTERS: SearchFilters = {
+  types: [],
+  place: "",
+  range: "any",
+  from: "",
+  to: "",
+  craftId: "",
+  artisanId: "",
+  mediaType: ""
+};
 
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -134,6 +203,11 @@ export function searchFilterParams(filters: SearchFilters) {
   return {
     place: filters.place.trim() || undefined,
     types: typeList(filters),
+    // `GET /map/points` takes all three as well, so a map opened from a filtered search narrows the
+    // same way. A screen that draws no picker leaves them blank and sends nothing.
+    craftId: filters.craftId || undefined,
+    artisanId: filters.artisanId || undefined,
+    mediaType: filters.mediaType || undefined,
     ...resolveRange(filters)
   };
 }
@@ -144,12 +218,12 @@ export function searchFilterParams(filters: SearchFilters) {
  * and two "why did that reload?" — depending on which control the researcher ticked first.
  */
 function typeList(filters: SearchFilters): string | undefined {
-  const ordered = RECORD_TYPES.filter((type) => filters.types.includes(type));
+  const ordered = SEARCH_RECORD_TYPES.filter((type) => filters.types.includes(type));
   return ordered.length ? ordered.join(",") : undefined;
 }
 
 /** Whether a bucket survives the type filter — the client half of the `types` contract. */
-export function typeVisible(filters: SearchFilters, type: RecordType) {
+export function typeVisible(filters: SearchFilters, type: SearchRecordType) {
   return filters.types.length === 0 || filters.types.includes(type);
 }
 
@@ -159,7 +233,13 @@ export function typeVisible(filters: SearchFilters, type: RecordType) {
  * as a second, disagreeing filter.
  */
 export function activeFilterCount(filters: SearchFilters) {
-  return (filters.place.trim() ? 1 : 0) + (filters.range !== "any" ? 1 : 0);
+  return (
+    (filters.place.trim() ? 1 : 0) +
+    (filters.range !== "any" ? 1 : 0) +
+    (filters.craftId ? 1 : 0) +
+    (filters.artisanId ? 1 : 0) +
+    (filters.mediaType ? 1 : 0)
+  );
 }
 
 /** True when anything at all is narrowing the search — used to decide whether a bare filter searches. */
@@ -172,11 +252,18 @@ export function hasActiveFilters(filters: SearchFilters) {
  * totals already link with (`/search?type=tools`), and simply accepts a comma list as well, so every
  * link that exists today still resolves.
  */
-export function filtersFromSearchParams(params: URLSearchParams): SearchFilters {
+export function filtersFromSearchParams(
+  params: URLSearchParams,
+  offeredTypes: readonly SearchRecordType[] = RECORD_TYPES
+): SearchFilters {
+  // CASE IS FOLDED FOR THE COMPARISON AND THE VOCABULARY'S OWN SPELLING IS KEPT, which the plain
+  // `.toLowerCase()` filter did not need while every bucket name was lower-case. `designWorkshops`
+  // is the first that is not, and lowering it would drop the one link the search page itself writes.
+  // Same rule, same reason, as `resolve_types` on the server.
   const requested = (params.get("type") ?? "")
     .split(",")
     .map((value) => value.trim().toLowerCase())
-    .filter((value): value is RecordType => (RECORD_TYPES as readonly string[]).includes(value));
+    .filter(Boolean);
   const fromParam = params.get("from") ?? "";
   const toParam = params.get("to") ?? "";
   const from = parseDateInput(fromParam) ? fromParam : "";
@@ -188,11 +275,17 @@ export function filtersFromSearchParams(params: URLSearchParams): SearchFilters 
       ? "custom"
       : "any";
   return {
-    types: RECORD_TYPES.filter((type) => requested.includes(type)),
+    // ``offeredTypes`` and not the widest list: reading a bucket a screen does not offer would put
+    // the map into a state its own chips cannot express or undo, and would send the map endpoint a
+    // bucket it answers 422 for.
+    types: offeredTypes.filter((type) => requested.includes(type.toLowerCase())),
     place: params.get("place") ?? "",
     range,
     from,
-    to
+    to,
+    craftId: params.get("craftId") ?? "",
+    artisanId: params.get("artisanId") ?? "",
+    mediaType: params.get("mediaType") ?? ""
   };
 }
 
@@ -203,7 +296,10 @@ export function filtersToLinkParams(filters: SearchFilters) {
     place: filters.place.trim() || undefined,
     range: filters.range !== "any" ? filters.range : undefined,
     from: filters.range === "custom" ? filters.from || undefined : undefined,
-    to: filters.range === "custom" ? filters.to || undefined : undefined
+    to: filters.range === "custom" ? filters.to || undefined : undefined,
+    craftId: filters.craftId || undefined,
+    artisanId: filters.artisanId || undefined,
+    mediaType: filters.mediaType || undefined
   };
 }
 
@@ -233,45 +329,64 @@ export function SearchFilterBar({
   value,
   onChange,
   className = "mb-4",
-  showPlace = true
+  showPlace = true,
+  offeredTypes = RECORD_TYPES,
+  extraFilters
 }: {
   value: SearchFilters;
   onChange: (next: SearchFilters) => void;
   className?: string;
   /** False where the screen already has its own place box, so the field is not asked for twice. */
   showPlace?: boolean;
+  /**
+   * Which buckets this screen offers. Defaults to the five every screen has; the search page passes
+   * six, and passes five again for a reader without design-workshop access — the UI never offers
+   * what the API refuses.
+   */
+  offeredTypes?: readonly SearchRecordType[];
+  /**
+   * Extra controls for the advanced panel, rendered under the shared ones.
+   *
+   * A SLOT AND NOT THREE MORE PROPS, which is `android/.../ui/SearchScreen.kt`'s shape exactly and
+   * for its stated reason: the shared filters above are ONE implementation, and an addition
+   * declared at the call site cannot quietly become a second copy that drifts. The craft and artisan
+   * pickers need record LISTS, and a shared bar that fetched them would make the map and the View
+   * Data panel pay two requests for controls they do not draw.
+   */
+  extraFilters?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const hidden = activeFilterCount(value);
   const multiple = value.types.length > 1;
+  const chipIds: ChipId[] = ["all", ...offeredTypes];
 
   function chipClass(id: ChipId) {
     if (id === "all") return value.types.length === 0 ? CHIP_ON : CHIP_OFF;
     if (value.types.length === 1 && value.types[0] === id) return CHIP_ON;
-    return value.types.includes(id as RecordType) ? CHIP_PART : CHIP_OFF;
+    return value.types.includes(id as SearchRecordType) ? CHIP_PART : CHIP_OFF;
   }
 
   function pickChip(id: ChipId) {
-    onChange({ ...value, types: id === "all" ? [] : [id as RecordType] });
+    onChange({ ...value, types: id === "all" ? [] : [id as SearchRecordType] });
   }
 
-  function toggleType(type: RecordType) {
+  function toggleType(type: SearchRecordType) {
     const next = value.types.includes(type)
       ? value.types.filter((current) => current !== type)
       : [...value.types, type];
     // Held in bucket order so the state reads the same as the row of chips above it, whatever order
     // the ticks went in. `typeList` re-derives it anyway; this keeps what is stored honest too.
-    onChange({ ...value, types: RECORD_TYPES.filter((current) => next.includes(current)) });
+    onChange({ ...value, types: offeredTypes.filter((current) => next.includes(current)) });
   }
 
   return (
     <div className={className}>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter results by record type">
-        {CHIP_IDS.map((id) => (
+        {chipIds.map((id) => (
           <button
             key={id}
             type="button"
-            aria-pressed={id === "all" ? value.types.length === 0 : value.types.includes(id as RecordType)}
+            aria-pressed={id === "all" ? value.types.length === 0 : value.types.includes(id as SearchRecordType)}
             onClick={() => pickChip(id)}
             className={`${CHIP_BASE} ${chipClass(id)}`}
           >
@@ -356,7 +471,7 @@ export function SearchFilterBar({
               The same setting as the chips above. Tick any number; nothing ticked searches everything.
             </p>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-              {RECORD_TYPES.map((type) => (
+              {offeredTypes.map((type) => (
                 <label key={type} className="flex items-center gap-2 text-sm text-ink-700">
                   <input
                     type="checkbox"
@@ -369,6 +484,23 @@ export function SearchFilterBar({
               ))}
             </div>
           </fieldset>
+
+          {extraFilters ? <div className="grid gap-3">{extraFilters}</div> : null}
+
+          {/* A FILTER WITH NO CONTROL ON THIS SCREEN STILL HAS TO BE NAMED. `filtersFromSearchParams`
+              reads craft, artisan and media type out of the URL for every consumer, and only the
+              screen that passes `extraFilters` draws pickers for them — so a /search link pasted into
+              /map arrives narrowed by three filters that screen has no box for. The count badge
+              would say "Filters · 3" and nothing would say by what. Clear all below removes them. */}
+          {!extraFilters && (value.craftId || value.artisanId || value.mediaType) ? (
+            <p className="text-xs text-ink-500">
+              Also narrowed by{" "}
+              {[value.craftId ? "craft" : null, value.artisanId ? "artisan" : null, value.mediaType ? "media type" : null]
+                .filter(Boolean)
+                .join(", ")}{" "}
+              from the link that opened this page. Clear all filters removes them.
+            </p>
+          ) : null}
 
           {hasActiveFilters(value) ? (
             <div>

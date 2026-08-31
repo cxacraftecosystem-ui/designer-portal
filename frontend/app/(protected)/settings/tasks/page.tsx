@@ -374,6 +374,12 @@ export default function TaskAssignmentBoardPage() {
         <AssignmentBuilder
           options={options}
           loading={optionsLoading}
+          // WHETHER THE READ FAILED, not just whether it is done. Without it the builder's three
+          // pickers turned a failed `/tasks/options` into "Nobody ranked below you", "No active
+          // questionnaire sections" and "No artisans yet" -- three confident claims about the
+          // repository produced by a request that never arrived. The banner above says what went
+          // wrong; the pickers have to stop saying something else.
+          optionsFailed={Boolean(optionsError)}
           workshopId={workshopId}
           workshopTitle={workshopTitle}
           // The settled term, not `pickerSearch`: the builder only uses it to word its truncation

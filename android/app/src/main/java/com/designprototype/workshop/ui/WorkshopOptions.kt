@@ -274,6 +274,160 @@ internal fun unscopedEmptyLine(noun: String): String = "No $noun have been recor
 internal fun loadingListLine(noun: String): String = "Looking for your $noun…"
 
 // ---------------------------------------------------------------------------------------------
+// The four REGISTERS, and the provenance that makes their cached sentence sayable
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * WHERE A REGISTER'S OPTIONS CAME FROM — and, when they came off the disk, WHEN.
+ *
+ * ── WHY THIS EXISTS AT ALL: A SENTENCE WITH EXACTLY ONE CALLER ─────────────────────
+ *
+ * [cachedListLine] is written for the register-scoped lists — artisans, crafts, tools, products —
+ * and until this type existed it could not be reached from a single one of them. The record forms
+ * load their registers through `loadCachedRegister`, which returned a bare `Boolean` and DISCARDED
+ * the [com.designprototype.workshop.data.DwReferenceList] it had just read, `fetchedAt` and all.
+ * `DwReferenceStore` stamps that date on every write, for a reason its own header spends a paragraph
+ * on — *"A list last refreshed an hour ago that does not contain Ram Kumar means Ram Kumar has no
+ * artisan record and one should be created; the same list refreshed nine days ago means nothing of
+ * the kind"* — and the stage REF fields have printed it since that store landed
+ * (`DwReferenceField`'s provenance block). The record forms could not, because the one value that
+ * makes the sentence true was thrown away one function short of the screen.
+ *
+ * So this is the return type `loadCachedRegister` should always have had: not "did it work" but
+ * "what answered, and how old is it".
+ *
+ * ── AND WHY [online] IS A CLASSIFICATION RATHER THAN A PROBE ──────────────────────
+ *
+ * `WorkshopRepository.isTransient` is the app's one reading of a failure, and it is the outbox's:
+ * an `IOException` or a 401/408/429/5xx means this device could not reach the server, and anything
+ * else means the server answered and refused. §3.5 says so in as many words — *"Not from a network
+ * probe. It is the classification the outbox already makes."* A second idea of what offline means is
+ * how one screen comes to call a dead tunnel a server fault while the queue behind it calls the same
+ * throwable worth retrying.
+ */
+internal enum class RegisterSource {
+    /** No answer yet from either source. The one state in which "Looking for your …" is true. */
+    PENDING,
+
+    /** The network answered this session. Nothing to report and nothing to apologise for. */
+    LIVE,
+
+    /**
+     * Only the device's own copy answered. The rows are real and pickable and the field stays
+     * REQUIRED — it is answerable — but a name missing from them proves nothing, so the date is owed.
+     */
+    CACHED,
+
+    /** Neither answered. The field stands down (R2) and says which of the two silences this is. */
+    NONE
+}
+
+/**
+ * One register's provenance. See [RegisterSource].
+ *
+ * DEFAULTED TO PENDING so a composable can hold one from its first frame, before the coroutine that
+ * fills it has been scheduled — which is the frame in which "Looking for your crafts…" is the only
+ * true sentence available.
+ */
+internal data class RegisterLoad(
+    val source: RegisterSource = RegisterSource.PENDING,
+    /** ISO-8601 from `DwReferenceList.fetchedAt`; null unless [source] is [RegisterSource.CACHED]. */
+    val fetchedAt: String? = null,
+    /**
+     * The last failure was an ANSWERED refusal rather than a device that could not reach the server.
+     * False while nothing has failed, which is the safe direction: it picks [offlineListLine], whose
+     * next move is a connection, over [couldNotListLine], whose next move is to wonder what broke.
+     */
+    val online: Boolean = false
+) {
+    /**
+     * Did EITHER source produce a list?
+     *
+     * The old `Boolean` return, kept under a name that says which question it answers, so the three
+     * call sites that only ever asked "may I treat this scope as loaded" read exactly as they did.
+     */
+    val loaded: Boolean
+        get() = source == RegisterSource.LIVE || source == RegisterSource.CACHED
+}
+
+/**
+ * The §3.5 sentence for the state one of the four REGISTERS is in, or null when it has nothing to
+ * say. The register twin of [addressListNotice], which is the same five branches over class (b).
+ *
+ * ── THE CACHED BRANCH IS THE POINT, AND IT IS THE ONE THE ADDRESS CARD ALREADY HAD ─────────
+ *
+ * A register with rows in it that came off the disk is NOT a picker with nothing to say. It is the
+ * one state where a designer needs a sentence over a control that is working perfectly: the list is
+ * complete as of a date, and whether a missing name means "create this artisan" or "refresh first"
+ * turns entirely on what that date is. Everything else here is the four empty states, worded exactly
+ * as every other picker in this app words them.
+ *
+ * ── AND WHY IT IS NOT PRINTED FROM `emptyMessage` ─────────────────────────────
+ *
+ * `SearchableSelectField` draws `emptyMessage` when the list is EMPTY, which is right for the four
+ * branches below it and is exactly wrong for the cached one — a list with forty artisans in it is
+ * not empty and its sentence must still be read. A caller therefore hands the whole result to
+ * `emptyMessage` (harmless: with rows, that slot is never reached) AND prints it beside the field.
+ *
+ * @param rows how many options the picker is actually offering.
+ * @param load what this device knows, from `loadCachedRegister`.
+ */
+internal fun registerListNotice(noun: String, rows: Int, load: RegisterLoad): String? = when {
+    // The list arrived this session. The only branch allowed to say nothing.
+    rows > 0 && load.source == RegisterSource.LIVE -> null
+    /*
+     * CACHED, AND ONLY WHERE A REAL DATE CAN BE PRINTED. [cachedListLine]'s own note refuses the
+     * sentence without one and is right to: the date IS the sentence. A list described as "last
+     * refreshed" with no date is the one form of this that stops a designer judging it. Every
+     * register cached by a build older than `DwReferenceList.fetchedAt` is in exactly that state,
+     * and it says nothing rather than guessing.
+     */
+    rows > 0 -> load.fetchedAt
+        ?.let { readableStamp(it) }
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { cachedListLine(rows, noun, it) }
+    // Nothing to offer. WHICH of the three empty states this is decides both the sentence and
+    // whether the field stands down, so it may not be collapsed into one "no options" branch.
+    load.source == RegisterSource.PENDING -> loadingListLine(noun)
+    load.online -> couldNotListLine(noun)
+    else -> offlineListLine(noun)
+}
+
+/**
+ * A stored ISO-8601 stamp as a person would read it, or "" when the string is not a timestamp.
+ *
+ * MOVED HERE FROM `LocationFields.kt`, WHERE IT WAS PRIVATE, and the move is what makes the sentence
+ * above sayable at all: [cachedListLine] takes a FORMATTED date, the address card had the only
+ * formatter, and a second copy of the parsing below is a second chance to get the fraction wrong in
+ * the way the block comment inside it describes. One formatter, two classes of list, one date shape.
+ *
+ * Tolerant on the way in on purpose: these values are round-tripped through Postgres, JSON and a
+ * file on disk, and a provenance line is not worth an exception.
+ */
+internal fun readableStamp(iso: String?): String {
+    val raw = iso?.trim().orEmpty()
+    if (raw.length < 19) return ""
+    /*
+     * The fraction is dropped rather than parsed. Postgres hands back MICROseconds
+     * ("2026-06-20T06:22:56.518000Z") and SimpleDateFormat's `S` is milliseconds however many digits
+     * it is given, so "518000" reads as 518 seconds and the line would quietly claim the list was
+     * refreshed eight and a half minutes later than it was. Nothing here needs sub-second
+     * resolution, and a wrong minute on a provenance line is worse than no fraction at all.
+     */
+    val instant = raw.substring(0, 19)
+    val tail = raw.substring(19)
+    val zone = when {
+        tail.endsWith("Z") || tail.isEmpty() -> java.util.TimeZone.getTimeZone("UTC")
+        else -> java.util.TimeZone.getTimeZone("GMT" + tail.takeLast(6))
+    }
+    val parser = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.UK).apply { timeZone = zone }
+    val parsed = runCatching { parser.parse(instant) }.getOrNull() ?: return ""
+    // Shown in the reader's own zone: a designer checking a Kutch register in Kolkata wants the time
+    // they would have looked at a watch and seen.
+    return java.text.SimpleDateFormat("d MMM yyyy, HH:mm", java.util.Locale.UK).format(parsed)
+}
+
+// ---------------------------------------------------------------------------------------------
 // The one sentence a workshop picker prints
 // ---------------------------------------------------------------------------------------------
 

@@ -48,14 +48,45 @@
  * the box is above the picker, wired to the server, and the picker's own filter is off with a
  * `capHint` naming the box that DOES reach the rest.
  *
- * ── IT WORKS WITH NO CONNECTION, WHICH IS THE POINT OF THE WHOLE FEATURE ─────────────────────────
+ * ── IT READS WITH NO CONNECTION. IT DOES NOT WRITE WITH NO CONNECTION ───────────────────────────
  *
  * With no connection there is no scoped answer to be had, so the picker falls back to the workshops
  * THIS DEVICE has already seen and says, in words, that the list is partial AND that a workshop on
- * it may since have been closed to this account. A designer in a cluster with one bar of signal,
- * holding a stranded workshop, must not be told to come back when they have wifi — that is the
- * exact situation this app exists to work in. What it must not do is present that fallback as the
- * scoped answer.
+ * it may since have been closed to this account. That much is unchanged.
+ *
+ * WHAT CHANGED IS THAT THE MOVE IS NOW HELD THERE, and the sentence this replaces is the argument
+ * it overrules. It read: "A designer in a cluster with one bar of signal, holding a stranded
+ * workshop, must not be told to come back when they have wifi — that is the exact situation this
+ * app exists to work in." True of CAPTURE, and not true here, because adoption sends nothing. The
+ * draft is safe on this device either way; nothing automatic may delete it (`Offline.kt:709`); and
+ * not one stage can leave for the chosen workshop until there is a connection — the same moment the
+ * live list becomes available. So the wait costs nothing, while acting on the cached list risks
+ * everything: it is stale in the PERMISSIVE direction, and this write is one-way and unrepeatable.
+ * `DROPDOWN_DESIGN.md` R6 is the general form and cites the paragraph above it; the fallback branch
+ * was quietly the exception to the rule it was being quoted for. See {@link verified}.
+ *
+ * ── WHAT HAPPENS WHERE BOTH SIDES ANSWERED THE SAME BOX ─────────────────────────────────────────
+ *
+ * The target workshop is very often not empty. `POST /design-workshops` seeds stage 1 and stage 3
+ * with a designer block the moment it is created, and a second designer may have been working in it
+ * for a week. So "merge" has to have a stated rule, and it does — it is just not stated anywhere a
+ * designer could read it, which is what this paragraph and the sentence on screen fix.
+ *
+ * THE RULE: `adoptedIntoWorkshop` clears `serverLoadedAt` on every stage, so the first PUT carries
+ * `merge: true`, and `save_stage` folds the row as `{**previous, **clean}` — **a key this device
+ * holds wins, a key only the workshop holds is kept, and nothing is deleted.** It also clears
+ * `removedFrom`, so `replaceCollections` is off and collection rows are merged by `entryId` with no
+ * sweep: a row somebody else added to the target survives.
+ *
+ * WHY LOCAL-WINS IS THE RIGHT WAY ROUND HERE, and it is not obvious. The draft is a fortnight
+ * captured in the room, with the artisans in front of the designer; the target's colliding value is
+ * either a seed the create wrote automatically or an answer typed at a desk. Losing the room's
+ * answer to a seed is the worse error of the two, and it is the one that cannot be re-derived.
+ *
+ * AND IT IS SAID ON SCREEN RATHER THAN LEFT TO THE READER, because the sentence that used to stand
+ * there — *"the workshop keeps whatever is already in it"* — was flatly untrue of a colliding key,
+ * and a promise the code does not keep is worse than no promise. A move is one-way, so the moment
+ * to say it is before the button, not after.
  *
  * ── WHY IT IS NOT A `useConfirm` PROMPT ─────────────────────────────────────────────────────────
  *
@@ -111,15 +142,33 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
   /** True while the list on screen is this DEVICE'S memory rather than the repository's answer. */
   const [partial, setPartial] = useState(false);
   /**
-   * Has the repository answered ONCE for this opening of the dialog?
+   * Is the list on screen the repository's LIVE answer to "which workshops may this account open"?
    *
-   * THE MOVE IS HELD UNTIL IT HAS, and that is not a spinner — it is the same rule as the removed
-   * merge, applied to the fraction of a second before the first answer lands. The picker's first
-   * paint is this device's cached list, so that somebody with no signal is not staring at "Loading…"
-   * through a request that is going to time out; but a cached row is the server's answer as of the
-   * last sync and stale in the permissive direction, and adoption is one-way. So the list may be
-   * READ early and may not be ACTED ON early. Set by both arms — a failure is an answer too, and
-   * the partial notice then says what the list is.
+   * THE MOVE IS HELD UNTIL IT IS, and that is not a spinner. The picker's first paint is this
+   * device's cached list, so that somebody with no signal is not staring at "Loading…" through a
+   * request that is going to time out; but a cached row is the server's answer as of the last sync
+   * and stale in the PERMISSIVE direction, and adoption is one-way. So the list may be READ early
+   * and may not be ACTED ON early.
+   *
+   * ── IT USED TO BE SET BY BOTH ARMS, AND THAT WAS THE DEFECT ──────────────────────────────────
+   *
+   * The old note here read "Set by both arms — a failure is an answer too, and the partial notice
+   * then says what the list is", and the catch below stamped it. That made a FAILED fetch unlock
+   * the button over the cached list: the exact write this file's header spends four paragraphs
+   * forbidding. The header removed the cached rows from the MERGE and then handed them back as
+   * DESTINATIONS one branch later, so a grant revoked in March was still choosable in September —
+   * and adoption is one-way and unrepeatable, so a fortnight would be filed against an id this
+   * account cannot open with nothing in either client able to undo it. `DROPDOWN_DESIGN.md`'s R6
+   * names this dialog as its own authority and calls caching an ACCESS list FORBIDDEN rather than
+   * unattractive; the code disagreed with the document that cited it.
+   *
+   * WHAT THE OLD ARM WAS PROTECTING, AND WHY IT COSTS NOTHING TO WITHDRAW IT. The argument was that
+   * a designer with one bar of signal must not be told to come back when they have wifi. That is
+   * right about CAPTURE and wrong about this: adoption sends nothing. The draft is safe here either
+   * way, nothing automatic may delete it (`Offline.kt:709`), and the stages cannot leave this
+   * device until there is a connection — which is the same moment the live list becomes available.
+   * So waiting costs the designer nothing at all and removes the one write on this screen that
+   * cannot be taken back. The list itself is still shown offline, and still says what it is.
    */
   const [verified, setVerified] = useState(false);
   /** How many workshops the repository has in scope for this account, or null when it did not answer. */
@@ -191,7 +240,12 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
         setCandidates(knownRef.current);
         setTotal(null);
         setPartial(true);
-        setVerified(true);
+        // FALSE, AND THIS IS THE ONE LINE THAT DECIDES THE RULE — see {@link verified}. A failure is
+        // an answer about the NETWORK and no answer at all about ACCESS, so the cached rows above
+        // may be read and may not be chosen. Written on every failure and not only the first: a
+        // search that fails after a successful open has replaced the live list with the cached one,
+        // and the button must go back down with it.
+        setVerified(false);
       } finally {
         if (generation.current === mine) setSearching(false);
       }
@@ -322,9 +376,10 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
             <button
               type="button"
               className="field-button"
-              // `!verified` HOLDS THE ONE-WAY WRITE until the repository has answered — see the
-              // state's own note. Nothing else on this dialog waits for it; the list is readable
-              // from the first frame.
+              // `!verified` HOLDS THE ONE-WAY WRITE until the repository's LIVE answer is what is on
+              // screen — see the state's own note, which records the failed-fetch arm that used to
+              // unlock this over the cached list. Nothing else on this dialog waits for it; the list
+              // is readable from the first frame and stays readable with no connection at all.
               disabled={busy || !chosen || !verified}
               onClick={move}
             >
@@ -337,18 +392,26 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
       <div className="grid gap-3 text-sm text-ink-700">
         {/*
           WHAT MOVING ACTUALLY DOES, IN THE ORDER IT MATTERS: everything here goes there, nothing is
-          deleted, nothing is retyped, and the workshop keeps its own designers. The last clause is
-          new and it is the one somebody standing in a courtyard needs: a design workshop is visible
-          only to the designers on it, so a designer who cannot see the workshop they were told to
-          move into has not been named on it yet, and the fix is a sentence to an admin rather than
-          anything on this screen.
+          deleted, and this is what happens where both sides answered the same box.
+
+          TWO SENTENCES THAT USED TO BE FOUR. The paragraph opened by telling the reader that
+          starting a workshop is an admin's job and to go and ask for one — which is the right
+          sentence for an account with NOTHING to move into, and that account is already answered by
+          `nothingToMoveInto` below, which is the one branch that KNOWS it. On this branch there is a
+          list of the designer's own workshops on screen and the next move is to pick one, so the
+          admin sentence was two lines of reading between a person and the control they came for.
+          The owner's 2026-08-30 ruling on UI copy; the reasoning is in the file header.
+
+          THE LAST CLAUSE REPLACES A CLAIM THAT WAS NOT TRUE. It read "the workshop keeps whatever is
+          already in it", and `save_stage`'s merge is `{**previous, **clean}` — this device wins a
+          box both sides answered. See the header for the rule and for why local-wins is the right
+          way round; what matters here is that a designer reads it BEFORE a one-way move.
         */}
         <p className="leading-6">
-          Starting a new design workshop is now done by an admin or the master admin. Ask an admin to create the workshop
-          for this cluster and name you as one of its designers, then choose it here — everything saved on this device
+          Everything saved on this device
           {stageCount ? ` (${stageCount} stage${stageCount === 1 ? "" : "s"}, with their photographs and recordings)` : ""} is
-          sent into it on the next sync. Nothing is deleted by this and nothing is retyped, and the workshop keeps whatever
-          is already in it.
+          sent into the workshop you choose, on the next sync. Nothing is deleted and nothing is retyped: answers already in
+          that workshop are kept, and where both have the same box, this device’s answer wins.
         </p>
 
         {nothingToMoveInto ? (
@@ -387,10 +450,16 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
         )}
 
         {partial ? (
+          /*
+            IT NOW SAYS THE MOVE IS HELD, because the button below it is disabled and a disabled
+            control whose reason is nowhere is the control people press repeatedly. Two sentences:
+            what the list is, and why waiting costs nothing. TERSE per the owner's 2026-08-30 ruling
+            — the reasoning lives on {@link verified}, not on screen.
+          */
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-            There is no connection, so this lists only the workshops already open on this device, and the repository
-            cannot be asked whether you are still on them. If the one you want is not here, move it when you next have
-            signal — nothing on this device expires and nothing will be lost in the meantime.
+            There is no connection, so this lists only the workshops already open on this device and cannot check whether
+            you are still on them. Moving waits for signal — nothing would be sent before then anyway. Nothing on this
+            device expires in the meantime.
           </p>
         ) : null}
 

@@ -52,6 +52,7 @@ import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictatio
 import { TextInput } from "@/components/FormControls";
 import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { appendDictatedPhrase, clampToColumn, columnFullSentence } from "@/components/richtext/dictatedValue";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 export function DictatedTextInput({
   name,
@@ -161,7 +162,7 @@ export function DictatedTextInput({
     <div className={`grid min-w-0 gap-1 ${className ?? ""}`}>
       <label className="field-label" htmlFor={boxId}>
         {label}
-        {required ? " *" : ""}
+        <RequiredMark when={required} />
       </label>
       {helper ? (
         <p id={helpId} className="text-xs leading-5 text-ink-muted">

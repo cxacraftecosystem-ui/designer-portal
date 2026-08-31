@@ -151,8 +151,16 @@ export default function AdminHubPage() {
       icon: Undo2
     },
     {
+      // THIS TILE POINTED AT A LIST THIS ACCOUNT COULD NOT READ, for as long as it has existed. It
+      // is ungated (every ADMIN sees it) and `/feedback`'s only list was `require_master_admin` on
+      // the server and `isMasterAdmin` on the client, so an admin who followed it arrived at the
+      // feedback FORM with no inbox under it and no explanation. The grievance register behind it
+      // is `require_admin`, which is what finally makes the tile true — and the description now
+      // names what an admin will actually be able to act on there, rather than promising "the
+      // feedback users sent" and delivering the half of it they still cannot see (the satisfaction
+      // ratings remain master-admin, deliberately; see routes/feedback.py).
       label: "User feedback",
-      description: "Read the feedback users sent from the apps.",
+      description: "Grievances, suggestions, recommendations and bug reports — read them, and answer them.",
       href: "/feedback",
       icon: MessageSquare
     },

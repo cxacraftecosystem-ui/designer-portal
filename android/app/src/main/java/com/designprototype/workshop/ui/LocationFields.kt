@@ -41,6 +41,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.focus.onFocusChanged
+// The 36 states, derived from the report map's seat table rather than typed out again — see
+// BUNDLED_STATES for why a second copy of these names is the thing to avoid.
+import com.designprototype.workshop.report.INDIAN_STATES_AND_UNION_TERRITORIES
 import com.designprototype.workshop.PINCODE_LENGTH
 import com.designprototype.workshop.data.AddressReferenceDto
 import com.designprototype.workshop.data.WorkshopRepository
@@ -63,7 +66,6 @@ import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
-import java.util.TimeZone
 
 /*
  * ---------------------------------------------------------------------------
@@ -293,6 +295,45 @@ private const val REFERENCE_CACHE_FILE = "address-reference.json"
  */
 private const val REFERENCE_CACHE_STAMP_FILE = "address-reference-fetched-at.txt"
 
+/**
+ * THE 36 STATES AND UNION TERRITORIES, COMPILED INTO THE APK — DROPDOWN_DESIGN §3.2's cheapest gap.
+ *
+ * ── WHAT WAS BROKEN, AND FOR WHOM ───────────────────────────────────────────
+ *
+ * The state box on this card was fed by [AddressReferenceCache] and nothing else, so A FRESH INSTALL
+ * WITH NO SIGNAL COULD NOT ANSWER "State / union territory" AT ALL. That is not an exotic case on
+ * this fleet: a handset is set up at the office and taken to a cluster, and the first thing it is
+ * asked to do is record an artisan. The web has never had that failure — `OFFLINE_STATES` in
+ * `frontend/.../LocationFields.tsx` has been bundled since the incident that produced it, in which a
+ * required closed list with no members refused a submit, `saveOrQueue` was never reached, and *"the
+ * interview and its photographs died with the tab"*.
+ *
+ * ── DERIVED, NOT HAND-COPIED, WHICH IS THE WHOLE OF WHY THIS IS SAFE ─────────────────
+ *
+ * Thirty-six names typed into a second file are thirty-six names that can drift from the list the
+ * API validates against, and the drift is silent until a researcher picks a state the server
+ * refuses. The web avoids that by deriving `OFFLINE_STATES` from `POSTAL_ZONES`, a table it already
+ * had and already depended on — *"there is one list in this file, not two, and it cannot drift from
+ * the zone check that sits beside it"*.
+ *
+ * This client has no postal-zone table. What it has is `report/ReportMap.STATE_SEATS`: the seat of
+ * every one of the 36, ported from `services/geography.STATE_SEATS`, declared in the order
+ * `address.INDIAN_STATES` lists them, and already load-bearing — the report map TINTS by it, and a
+ * name out of step with the server produces a state the figure refuses to shade, which is a defect
+ * somebody chases. [INDIAN_STATES_AND_UNION_TERRITORIES] is that table read out. One list on this
+ * client, not two.
+ *
+ * ── AND WHY THE DISTRICTS ARE NOT HERE, WHICH IS NOT AN OVERSIGHT ───────────────────
+ *
+ * 795 names, revised several times a year, meaningful only per state. The web makes the same split
+ * for the same reason and stands the district DOWN from required instead. The states change on the
+ * order of once a decade, which is what makes bundling them honest.
+ *
+ * THE SERVED LIST STILL WINS WHENEVER IT EXISTS ([stateOptions] prefers it), so the day the register
+ * changes the deployed API is the authority and no APK needs shipping.
+ */
+internal val BUNDLED_STATES: List<String> = INDIAN_STATES_AND_UNION_TERRITORIES
+
 private val referenceJson = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
@@ -307,11 +348,40 @@ internal object AddressReferenceCache {
         referenceJson.decodeFromString(AddressReferenceDto.serializer(), file.readText())
     }.getOrNull()
 
-    /** Overwrite when the served payload differs. Returns true when the cache changed. */
+    /**
+     * Overwrite when the served payload differs. Returns true when the cache changed.
+     *
+     * ── THE SERVER'S `version` DECIDES, AND UNTIL NOW NOTHING READ IT ───────────────────
+     *
+     * `backend/app/api/routes/reference.py` asks for exactly this in the route's own docstring —
+     * *"The payload is a pure constant — no database read — so a client should cache it and re-fetch
+     * only when `version` changes."* It is the ONE server-provided invalidation signal anywhere in
+     * this API, and both clients were paying for it and throwing it away: the web stored nothing at
+     * all, and this method reached the right ANSWER by the expensive route — encode 11.7 KB, read
+     * 11.7 KB back off the disk, compare 11.7 KB of JSON, on every successful fetch, for a document
+     * that may go a year without moving.
+     *
+     * [AddressReferenceDto.version] is compared first and settles it in two integers. The byte
+     * compare is KEPT as the tie-break rather than deleted, and that is not belt-and-braces: the DTO
+     * defaults `version` to 1, so a deployment that stops sending the key, or a proxy that rewrites
+     * the body, would make every payload look unchanged and freeze this cache at whatever it holds.
+     * Two payloads at the same version are compared as they always were; two at different versions
+     * skip the read entirely.
+     *
+     * NOTHING HERE EXPIRES, and the stamp is written by [stamp] on every ANSWER rather than on every
+     * change — see [REFERENCE_CACHE_STAMP_FILE], which spends a paragraph on why those are different
+     * dates and why the researcher needs the first one.
+     */
     fun write(context: Context, value: AddressReferenceDto): Boolean = runCatching {
         val file = File(context.filesDir, REFERENCE_CACHE_FILE)
         val encoded = referenceJson.encodeToString(AddressReferenceDto.serializer(), value)
-        if (file.exists() && file.readText() == encoded) return false
+        if (file.exists()) {
+            val existing = read(context)
+            // Same version, same document — the route's own promise. Fall through to the byte
+            // compare only where that promise cannot be checked (see the KDoc's second paragraph).
+            if (existing != null && existing.version == value.version) return false
+            if (file.readText() == encoded) return false
+        }
         file.writeText(encoded)
         true
     }.getOrDefault(false)
@@ -495,18 +565,41 @@ private fun requiredLabel(label: String, required: Boolean): String =
  * @param rows how many options the picker is actually offering.
  * @param state what this device knows, from [rememberAddressReference].
  */
-internal fun addressListNotice(noun: String, rows: Int, state: AddressReferenceState): String? = when {
+internal fun addressListNotice(
+    noun: String,
+    rows: Int,
+    state: AddressReferenceState,
+    /**
+     * These rows are [BUNDLED_STATES], not a served or cached list — so there is nothing to report.
+     *
+     * PASSED IN RATHER THAN DERIVED, because this one function serves both pickers and only one of
+     * them has a floor: 795 districts genuinely cannot be compiled in, and a bundled arm that
+     * guessed from a row count would eventually claim a district list was compiled in because a
+     * state happened to have 36 of them.
+     */
+    bundled: Boolean = false
+): String? = when {
     /*
      * THE LIST ARRIVED THIS SESSION. There is nothing to report and nothing to apologise for, and
-     * this is the only branch that may say nothing.
+     * this is one of the two branches that may say nothing.
      *
-     * Deliberately NOT [BUNDLED_LIST_HAS_NO_SENTENCE], although the answer is the same null. That
-     * constant names a vocabulary compiled into the APK, which is always answerable; ANDROID HAS NO
-     * BUNDLED STATE LIST — the web derives one from POSTAL_ZONES and this client has only the disk
-     * cache below it. Borrowing the name would put a claim in the code that a reader would carry
-     * into their next decision about offline behaviour on this screen.
+     * Deliberately NOT [BUNDLED_LIST_HAS_NO_SENTENCE], although the answer is the same null: that
+     * constant names a vocabulary compiled into the APK, and this branch is about a list that came
+     * off a server a moment ago. The distinction is worth keeping even now that the two can both
+     * occur here — a reader who conflates them will next conclude the cached branch is unnecessary.
      */
     rows > 0 && state.servedThisSession -> null
+    /*
+     * BUNDLED — and this branch is NEW, because until [BUNDLED_STATES] landed this client had no
+     * compiled-in list and this paragraph said so in as many words. It read: *"ANDROID HAS NO
+     * BUNDLED STATE LIST — the web derives one from POSTAL_ZONES and this client has only the disk
+     * cache below it"*, and it was right when it was written. §3.2 named the gap; the gap is closed.
+     *
+     * A vocabulary compiled into the APK has no fact to report: it is always answerable and always
+     * current on the timescale it moves. Saying "last refreshed" over it would be worse than
+     * silence, because the date would describe a cache the reader is not looking at.
+     */
+    rows > 0 && bundled -> BUNDLED_LIST_HAS_NO_SENTENCE
     /*
      * CACHED, AND ONLY WHERE A REAL DATE CAN BE PRINTED. `cachedListLine`'s own note refuses the
      * sentence without one, and it is right to: the date IS the sentence. A list described as "last
@@ -525,9 +618,18 @@ internal fun addressListNotice(noun: String, rows: Int, state: AddressReferenceS
     else -> offlineListLine(noun)
 }
 
-/** The states the dropdown offers, with a stored value kept at the front until the list arrives. */
+/**
+ * The states the dropdown offers, with a stored value kept at the front until the list arrives.
+ *
+ * [BUNDLED_STATES] IS THE FLOOR AND THE SERVED LIST IS THE AUTHORITY, in that order — the shape
+ * `MainActivity`'s `workshopLevelOptions` already uses for a served vocabulary with a compiled-in
+ * fallback, and the shape the web's own `stateOptions` uses for this exact list. It is what lets a
+ * fresh install in a courtyard answer this box at all; see [BUNDLED_STATES].
+ */
 private fun stateOptions(current: String, reference: AddressReferenceDto): List<Pair<String, String>> {
-    val served = reference.statesAndUnionTerritories.ifEmpty { reference.states }
+    val served = reference.statesAndUnionTerritories
+        .ifEmpty { reference.states }
+        .ifEmpty { BUNDLED_STATES }
     val known = served.any { it.equals(current, ignoreCase = true) }
     // An edit form whose record holds a state must not show "Select state" over it: that reads as
     // "not answered" and invites the researcher to answer it again, differently.
@@ -814,35 +916,20 @@ private fun radiusLabel(metres: Double): String =
 private fun isoNow(): String =
     SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.UK).format(Date())
 
-/**
- * A stored `capturedAt` as a researcher would read it, or "" when the string is not a timestamp.
+/*
+ * `readableStamp` USED TO LIVE HERE, PRIVATE, AND IT NOW LIVES IN `WorkshopOptions.kt`.
  *
- * Tolerant on the way in on purpose: the value is round-tripped through Postgres and JSON, and a
- * provenance line is not worth an exception. Every stored coordinate written before this change is
- * undated, and "" is how the card says so.
+ * It was the only formatter in the app that could turn a stored ISO stamp into the date
+ * [cachedListLine] asks for, and that sentence is written for the four REGISTERS as well as for this
+ * card. Leaving it private here meant the record forms had the sentence and no way to build its one
+ * load-bearing argument, so they printed nothing at all — DROPDOWN_DESIGN §3.3's cached case,
+ * unreachable on the four controls it was written for. MOVED rather than copied: the block comment
+ * inside it is about a fraction that reads as eight and a half minutes of drift, and a second copy
+ * is a second chance to reintroduce exactly that.
+ *
+ * Every stored coordinate written before the `capturedAt` change is undated, and "" is still how
+ * this card says so.
  */
-private fun readableStamp(iso: String?): String {
-    val raw = iso?.trim().orEmpty()
-    if (raw.length < 19) return ""
-    /*
-     * The fraction is dropped rather than parsed. Postgres hands back MICROseconds
-     * ("2026-06-20T06:22:56.518000Z") and SimpleDateFormat's `S` is milliseconds however many
-     * digits it is given, so "518000" reads as 518 seconds and the card would quietly claim the fix
-     * was taken eight and a half minutes later than it was. Nothing here needs sub-second
-     * resolution, and a wrong minute on a provenance line is worse than no fraction at all.
-     */
-    val instant = raw.substring(0, 19)
-    val tail = raw.substring(19)
-    val zone = when {
-        tail.endsWith("Z") || tail.isEmpty() -> TimeZone.getTimeZone("UTC")
-        else -> TimeZone.getTimeZone("GMT" + tail.takeLast(6))
-    }
-    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.UK).apply { timeZone = zone }
-    val parsed = runCatching { parser.parse(instant) }.getOrNull() ?: return ""
-    // Shown in the reader's own zone: a researcher checking a Kutch record in Kolkata wants the
-    // time they would have looked at a watch and seen.
-    return SimpleDateFormat("d MMM yyyy, HH:mm", Locale.UK).format(parsed)
-}
 
 /** A group heading, marked as one so TalkBack's heading navigation can jump between the two. */
 @Composable
@@ -1195,7 +1282,16 @@ fun LocationFieldsSection(
      * almost always "this device has not been given the list yet". Those are opposite facts with
      * opposite next moves and until now they looked identical here.
      */
-    val stateNotice = addressListNotice("states", stateRows.size, referenceState)
+    val stateNotice = addressListNotice(
+        "states",
+        stateRows.size,
+        referenceState,
+        // The rows are the compiled-in floor exactly when neither served list arrived, which is what
+        // [stateOptions]'s `ifEmpty` chain falls through to. Derived from the same condition rather
+        // than from a count, so the two cannot disagree about which list is on screen.
+        bundled = referenceState.reference.statesAndUnionTerritories.isEmpty() &&
+            referenceState.reference.states.isEmpty()
+    )
     val districtNotice = when {
         // NOT AN EMPTY-LIST CLAIM AT ALL. With no state chosen there is no list to be empty; the
         // placeholder below says what to do and this must not talk over it with a sentence about

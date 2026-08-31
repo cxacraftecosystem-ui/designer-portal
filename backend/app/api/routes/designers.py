@@ -69,9 +69,11 @@ from app.services.designers import (
     email_match_keys,
     get_or_create_profile,
     normalise_email,
+    profile_has_content,
     profile_payload,
     roster_payload,
     update_profile,
+    values_carry_content,
 )
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_filters import enum_filter_list_or_422
@@ -875,6 +877,61 @@ async def designer_directory(
 # --------------------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------------------
+# The empanelment number is required to save — with a grace path for profiles that predate it
+# --------------------------------------------------------------------------------------
+
+#: Owner's decision, 2026-08-30, and both halves of it matter.
+#:
+#: **A NEW PROFILE CANNOT BE CREATED WITHOUT ONE.** The number is what a ministry report is filed
+#: under and what a designer may now SIGN IN with, so a profile made today without one is a
+#: profile that has to be chased later, by somebody, through a channel this product does not have.
+#:
+#: **AN EXISTING PROFILE THAT ALREADY HAS CONTENT MAY GO ON SAVING WITHOUT ONE**, showing a
+#: persistent one-line banner instead. There are live profiles here with biographies, photographs
+#: and addresses and no number; refusing their next save would mean a designer correcting a typo in
+#: their own name is told to produce a document they may not have to hand, and the practical
+#: outcome of that is not a filled-in field, it is an abandoned edit and a lost correction.
+#:
+#: THE TEST IS "DID THIS SAVE CREATE THE PROFILE", NOT "IS THE PROFILE NEW" — `get_or_create_profile`
+#: writes an empty row on the first GET, so a row existing proves nothing. See
+#: `designers.profile_has_content`.
+_EMPANELMENT_REQUIRED = (
+    "An empanelment number is required to create a designer profile. Enter the number the "
+    "institution issued you."
+)
+
+
+async def _assert_empanelment_number(user_id: str, values: dict[str, Any]) -> None:
+    """Refuse a save that would CREATE a profile with no empanelment number.
+
+    Silent on every other save, which is the grace path. A profile that already has content keeps
+    saving; `profile_payload` sets `empanelmentNoMissing` on the way back out and the two clients
+    render one terse line from it.
+    """
+    number = values.get("empanelmentNo", _UNSET)
+    if number is not _UNSET and str(number or "").strip():
+        return
+    stored = await db.designerprofile.find_unique(where={"userId": user_id})
+    if number is _UNSET and str(getattr(stored, "empanelmentNo", "") or "").strip():
+        # Absent from the body means "leave it alone", and there is one stored. Nothing to ask.
+        return
+    if profile_has_content(stored):
+        # THE GRACE PATH. Say nothing here; the banner is the whole of the ask.
+        return
+    if not values_carry_content(values):
+        # A save that puts nothing in the profile is not creating one either. An empty PUT is a
+        # no-op, and refusing it would mean a client that saves on blur cannot open the form.
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_EMPANELMENT_REQUIRED
+    )
+
+
+#: A sentinel, because `None` is a real value on this body — it is how a designer clears a field.
+_UNSET = object()
+
+
 @router.get("/me/profile")
 async def get_my_profile(current_user: Any = Depends(require_designer)) -> dict[str, Any]:
     """The signed-in account's own profile, created empty on first read.
@@ -923,6 +980,7 @@ async def put_my_profile(
     """
     values = payload.model_dump(exclude_unset=True)
     values = await attach_location(values)
+    await _assert_empanelment_number(current_user.id, values)
     return profile_payload(await update_profile(current_user.id, values))
 
 
@@ -954,6 +1012,7 @@ async def put_designer_profile(
     await _assert_may_touch_profile(user_id, current_user)
     values = payload.model_dump(exclude_unset=True)
     values = await attach_location(values)
+    await _assert_empanelment_number(user_id, values)
     return profile_payload(await update_profile(user_id, values))
 
 

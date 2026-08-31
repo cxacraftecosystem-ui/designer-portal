@@ -1,0 +1,68 @@
+-- "Type of workshop" — the first controlled vocabulary in this product that classifies the
+-- DesignWorkshop record itself.
+--
+-- =============================================================================================
+-- WHAT WAS ASKED FOR, AND WHAT WAS ACTUALLY MISSING
+-- =============================================================================================
+--
+-- The owner, 2026-08-30: "I had asked you to have two dropdowns of type of workshop and name of
+-- workshop, how come it has not been facilitated properly."
+--
+-- The answer is that `DesignWorkshop` had no type of any kind: not a column, not an API field, not
+-- a registry field, and no vocabulary. Stage 1's thirty-three fields contained zero ENUMs. The only
+-- `workshopType` in the product is on the OTHER table -- `Workshop`, the legacy field-documentation
+-- visit -- where it has exactly two members and one narrow documented job: deciding whether a
+-- legacy row appears in the design-workshop prefill picker. It is also PROFESSOR-gated, so a
+-- DESIGNER (rank 35) cannot operate it. Reading it as a taxonomy of workshop kinds is a mistake
+-- this migration exists partly to stop the next reader making.
+--
+-- What made it read as half-built rather than absent: both create forms already draw a six-value
+-- dropdown immediately under the title box. That control is REPORT TEMPLATE -- the output document
+-- format -- so the screen has looked like it carried a type/name pair for as long as it has
+-- existed, and carried neither half.
+--
+-- =============================================================================================
+-- WHY A `TEXT` COLUMN AND NOT A POSTGRES ENUM
+-- =============================================================================================
+--
+-- The vocabulary lives in `stage_schema.ENUMS["WORKSHOP_KIND"]`, which is the registry BOTH clients
+-- read and the only place it may be defined. A Postgres enum beside it would be a second list that
+-- can disagree with the first, and the one that would win is the one that refuses the write --
+-- i.e. a designer would be shown an option the database then rejected. It would also make adding a
+-- member a migration on every deployment before anybody could file under it, which is exactly the
+-- friction that leaves a vocabulary stale.
+--
+-- `coerce_value` validates the token against the registry before it reaches this column, and
+-- `enum_label` falls back to printing the raw token rather than failing an export, so a value
+-- written by a client one release ahead is stored, printed and countable rather than lost.
+--
+-- Every other promoted column on this table is a bare `TEXT` for the same reasons.
+--
+-- =============================================================================================
+-- NULLABLE, AND THERE IS DELIBERATELY NO BACKFILL
+-- =============================================================================================
+--
+-- Nothing in the existing data says which of the six kinds an existing workshop was. Defaulting
+-- them all to DESIGN_PROTOTYPE_DEVELOPMENT -- because most of them probably are -- would write an
+-- assertion nobody made into a field the report prints on its cover page. So every existing row is
+-- NULL, which means "not yet stated" and never a kind, and every list that filters on this column
+-- must treat it that way.
+--
+-- The stage field is declared `required=True`, and that is safe for exactly the same reason: this
+-- registry enforces `required` only at SUBMISSION (`validate_entry(..., enforce_required=payload.
+-- submit)`), never on an ordinary save. An existing workshop therefore goes on saving exactly as it
+-- did yesterday and is asked for the answer once, at the point the answer is needed.
+--
+-- =============================================================================================
+-- THE INDEX IS COMPOSITE WITH `deletedAt`, AND THAT IS NOT DECORATION
+-- =============================================================================================
+--
+-- Every read of this table filters `deletedAt IS NULL` -- nothing here is ever hard-deleted. A bare
+-- index on the kind alone would still leave Postgres testing the soft-delete predicate on every row
+-- it returned, on the one screen a designer opens first. `craftName` and `status` above it are bare
+-- for historical reasons and are not a precedent worth copying.
+
+ALTER TABLE "DesignWorkshop" ADD COLUMN "workshopKind" TEXT;
+
+CREATE INDEX "DesignWorkshop_workshopKind_deletedAt_idx"
+  ON "DesignWorkshop" ("workshopKind", "deletedAt");

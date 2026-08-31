@@ -247,7 +247,9 @@ fun ArtisanPhoneField(
     }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(if (required) "Phone *" else "Phone", color = Muted, fontSize = 12.sp)
+        // The inner caption `DesignerProfileScreen` relies on rather than drawing its own — see the
+        // note at its `ArtisanPhoneField` call. [requiredMarked] puts the mark in the error colour.
+        Text(requiredMarked(if (required) "Phone *" else "Phone"), color = Muted, fontSize = 12.sp)
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val dialWidth = rememberDialFieldWidth(maxWidth)
             // Top, not CenterVertically: an error hangs its supporting text BELOW the number field's

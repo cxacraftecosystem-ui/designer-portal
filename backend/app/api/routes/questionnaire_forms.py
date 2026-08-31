@@ -45,7 +45,7 @@ retires. The database agrees with both: see the ``ON DELETE RESTRICT`` on
 ``QuestionnaireFormAnswer.questionId``.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -87,6 +87,7 @@ from app.services.questionnaire_forms import (
     save_answers,
     supersede_question,
 )
+from app.services.questionnaire_kinds import coerce_kind, label_for
 from app.services.questionnaire_xlsx import (
     PRO_FORMA_FILENAME,
     XLSX_MIME,
@@ -144,7 +145,15 @@ _XLSX_SUFFIXES = (".xlsx", ".xlsm", ".xltx")
 #: next reader would take for the mechanism. Detaching a questionnaire from its workshop still
 #: works, and ``test_a_questionnaire_patch_detaches_the_workshop_it_was_filed_under`` still drives
 #: it; the null now arrives through the global door instead of this one.
-_QUESTIONNAIRE_CLEARABLE_COLUMNS = ("description",)
+#:
+#: ``kind`` IS HERE BECAUSE "NOT STATED" IS A REAL STATE AND HAS TO BE REACHABLE. The picker on both
+#: clients carries a blank row, and choosing it sends ``kind: null``; without the name in this tuple
+#: ``clean_data`` would drop that null and the PATCH would answer 200 having changed nothing, leaving
+#: a designer who had un-set a kind looking at the kind they thought they had removed — and leaving
+#: the report still filing the form under a stage the designer no longer claims it belongs to.
+#: ``test_record_patch_clearing`` derives this list from ``schema.prisma`` and would have failed on
+#: the omission, which is the point of deriving it.
+_QUESTIONNAIRE_CLEARABLE_COLUMNS = ("description", "kind")
 
 #: ``QuestionnaireFormQuestion``. ``retiredAt`` and ``supersededById`` are nullable as well, but they
 #: belong to the retirement machinery — written by the supersede branch in ``update_question``, never
@@ -184,10 +193,38 @@ _SECTION_CLEARABLE_COLUMNS: tuple[str, ...] = ()
 
 
 def _require_designer(user: Any) -> None:
+    """The designer set in front of every route in this file. NOT a rank floor — read the message.
+
+    ── WHY THE SENTENCE BELOW NAMES ROLES INSTEAD OF A THRESHOLD ────────────────────────────────
+
+    It used to read *"Building a questionnaire requires Designer access or above."* and that was
+    false in the one case where anybody reads a 403: ``can_run_design_workshops`` is the SET
+    ``{DESIGNER, ADMIN, MASTER_ADMIN}`` and not a floor over ``ROLE_RANK``, so a PROFESSOR — rank
+    40, ABOVE Designer's 35 — is refused by it and was then told they lacked a rank they exceed.
+    Measured on this build, 2026-08-30: ``POST /api/questionnaires`` as a PROFESSOR answered
+    ``403 {"detail":"Building a questionnaire requires Designer access or above."}``. A professor
+    reading that has no move available: they cannot be promoted to a tier they already outrank, and
+    nothing on any screen says the gate is a set.
+
+    So the refusal now NAMES THE THREE ROLES and NAMES WHO TO ASK. Naming the roles is what makes
+    the non-monotonic rule legible — a reader can see their own role is simply not on the list,
+    rather than concluding the app is broken — and naming the administrator is what turns the
+    sentence into something actionable, because an admin is exactly who can widen it (by role, or
+    by putting the account on a workshop with a ``DesignWorkshopViewer`` grant).
+
+    IT DOES NOT APOLOGISE AND IT DOES NOT EXPLAIN THE LADDER. UI copy in this repository is terse by
+    house rule; the whole argument for why a professor is outside the set lives in
+    ``deps.can_run_design_workshops`` and is not repeated at the person being refused.
+    """
     if not can_run_design_workshops(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Building a questionnaire requires Designer access or above.",
+            detail=(
+                "Questionnaires are for Designer, Admin and Master Admin accounts. This is a set of "
+                "roles rather than a seniority level, so other roles are outside it whatever their "
+                "rank. Ask an administrator to change your role or to add you to the design "
+                "workshop this questionnaire belongs to."
+            ),
         )
 
 
@@ -388,6 +425,24 @@ async def _require_recordable_questionnaire(record: Any, user: Any) -> None:
     await load_workshop_or_404(workshop_id, user, for_edit=True)
 
 
+def _kind_or_422(value: str | None) -> str | None:
+    """``coerce_kind`` with its ``ValueError`` turned into the 422 the rest of this API answers.
+
+    The JSON routes get this for free — ``QuestionnaireCreate``/``QuestionnaireUpdate`` carry a
+    pydantic validator, and pydantic renders a raised ``ValueError`` as a 422 naming the field. The
+    UPLOAD route takes multipart ``Form`` fields, which have no model behind them, so without this
+    an unknown token would travel straight into the column and the report would later try to file the
+    questionnaire under a stage that does not exist. One helper rather than a try/except at the call
+    site, so a second multipart door added later cannot forget the check.
+    """
+    try:
+        return coerce_kind(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
 async def _read_upload(file: UploadFile) -> bytes:
     """The uploaded bytes, or a 4xx a designer can act on rather than a 500 from openpyxl."""
     name = (file.filename or "").lower()
@@ -547,6 +602,7 @@ async def upload_questionnaire(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     designWorkshopId: str | None = Form(default=None),
+    kind: str | None = Form(default=None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Create a questionnaire from a filled-in pro-forma.
@@ -582,6 +638,12 @@ async def upload_questionnaire(
         owner_id=current_user.id,
         title=title,
         design_workshop_id=designWorkshopId,
+        # VALIDATED HERE AND NOT BY A PYDANTIC MODEL, because this route takes multipart form fields
+        # rather than a JSON body and so has no model to hang a validator on. ``coerce_kind`` raises
+        # ``ValueError``; the wrapper turns it into the 422 a bad enum gets everywhere else in this
+        # API, rather than letting an unknown token reach the column and be filed under a stage that
+        # does not exist. An empty field — the picker untouched — is "not stated", not an error.
+        kind=_kind_or_422(kind),
         source_filename=file.filename,
     )
     form = await load_form(questionnaire_id)
@@ -697,9 +759,25 @@ async def list_questionnaires(
             where=where,
             skip=skip,
             take=clean_size,
-            # Paged over a non-unique sort key, so the ``id`` tiebreak is what stops a questionnaire
-            # appearing on two pages while another appears on none. See ``records.with_id_tiebreak``.
-            order=with_id_tiebreak({"createdAt": "desc"}),
+            # ── THE PUBLISHED DEFAULT SORTS FIRST, AND THAT IS A BUG FIX RATHER THAN A PREFERENCE ──
+            #
+            # This was ``{"createdAt": "desc"}`` alone, and the standard instrument is by definition
+            # the OLDEST row a designer can see: an administrator seeds it once, and every form the
+            # designer builds afterwards is newer. So the one row published to everybody sorted LAST
+            # — below every draft they had made themselves — and a designer with more than a page of
+            # questionnaires never reached it. The `isShared` badge this list already draws was
+            # therefore a badge on a page nobody opens, which is the same defect Android's own list
+            # comment describes for a grant-holder's row ("the one row a grant exists to reveal is
+            # the one row a single page cannot reach").
+            #
+            # A SORT AND NOT A FILTER, deliberately. A "standard forms" filter would be a control a
+            # designer has to know to press before the feature exists for them; this puts the form in
+            # front of them without asking them to look for it, and costs nothing when there is no
+            # shared form at all — every row has ``isShared = false`` and the order is what it was.
+            #
+            # STILL TOTAL, so paging is still stable: ``with_id_tiebreak`` appends ``id`` to whatever
+            # it is given, and a list is what it takes when the ordering has more than one clause.
+            order=with_id_tiebreak([{"isShared": "desc"}, {"createdAt": "desc"}]),
             include={"owner": True, "designWorkshop": True},
         ),
     )
@@ -716,6 +794,14 @@ async def list_questionnaires(
             # See the same key on `/options`: a designer's list can now contain a form they did not
             # upload, and a row that cannot say why reads as somebody else's work leaking in.
             "isShared": row.isShared,
+            # THE KIND, AND ITS LABEL BESIDE IT. The token is what a client filters and PATCHes on;
+            # the label is what it prints. Both are sent because the alternative is each client
+            # carrying its own translation of a server vocabulary, which is how the two of them come
+            # to word one value differently — and the owner asked for identical wording. The clients
+            # DO still carry the list (they have to draw a picker before any row exists to label),
+            # and `tests/test_questionnaire_kinds.py` holds those copies to the server's.
+            "kind": row.kind,
+            "kindLabel": label_for(row.kind),
             "version": row.version,
             "sourceFilename": row.sourceFilename,
             "createdAt": row.createdAt,
@@ -767,6 +853,13 @@ async def questionnaire_options(
             # anybody but its owner or an admin, and a control that offers an edit it cannot perform
             # is worse than one that says whose form this is.
             "isShared": row.isShared,
+            # So the attach dropdown on the design-workshop screen can say WHICH of the several forms
+            # now attachable to one workshop this row is. That screen is the whole reason the kind
+            # exists: a designer running a workshop interview and a market survey at one cluster sees
+            # two rows here, and before this key the only thing telling them apart was whatever the
+            # designer happened to type into the title.
+            "kind": row.kind,
+            "kindLabel": label_for(row.kind),
             # So the dropdown can mark "already attached to another workshop" rather than letting a
             # designer reattach one mid-fieldwork and wonder where it went.
             "attachedElsewhere": bool(
@@ -909,6 +1002,16 @@ async def reuse_questionnaire_route(
         design_workshop_id=payload.designWorkshopId,
         title=payload.title,
         description=description,
+        # The same unset/null/value tri-state ``description`` gets two lines up, and read the same
+        # way: a key the client did not send leaves the service on its inherit sentinel, so the copy
+        # keeps the source's kind. Spelled with ``model_fields_set`` rather than a truthiness test
+        # because an explicit ``null`` — "copy it, but I have not decided what this one is" — is a
+        # different instruction from silence and must reach the service as one.
+        **(
+            {"kind": payload.kind}
+            if "kind" in payload.model_fields_set
+            else {}
+        ),
     )
     if made is None:
         # ``_require_questionnaire`` already read the row, so this is the source disappearing between
@@ -928,46 +1031,101 @@ async def reuse_questionnaire_route(
 async def create_questionnaire(
     payload: QuestionnaireCreate, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Start a questionnaire by hand. The .xlsx upload is the other door into the same tables."""
+    """Start a questionnaire by hand. The .xlsx upload is the other door into the same tables.
+
+    ── ALL OF IT OR NONE OF IT (D2) ──────────────────────────────────────────
+
+    This wrote the ``Questionnaire`` row, then each section, then each question, on SEPARATE awaits
+    with no transaction around them. A failure part way — a dropped connection, a statement timeout
+    against the cross-region database ``services/records.py`` describes, a constraint violation on
+    one section code — left the row and everything written before the failure COMMITTED while the
+    client got a 500. The designer sees "it failed", presses the button again, and now owns two
+    questionnaires: one truncated, one whole, with nothing on any screen able to say which is which.
+    A half-written instrument is worse than none, because it is indistinguishable from a complete
+    one — the identical argument ``reuse_questionnaire`` makes at length, and this is the same tree
+    of tables written by a third door.
+
+    THE PATTERN IS ``reuse_questionnaire``'s, DELIBERATELY, DOWN TO THE BOUNDS. One ``db.tx()``,
+    ``create_many`` for the sections, one read-back keyed on ``@@unique([questionnaireId, code])``
+    for their ids, and ``create_many`` for every question — four statements whatever the size of the
+    instrument, instead of one per row. Batching is not a micro-optimisation here: it is what keeps
+    the transaction short enough to be an honest transaction rather than a lock held open across a
+    thousand sequential round trips to a database in another region.
+
+    WHY THE WORKSHOP CHECK STAYS OUTSIDE THE TRANSACTION. It is a read that decides whether to write
+    at all, and it already refuses BEFORE anything exists — the comment below has said so since the
+    attach hole was closed. Pulling it inside would buy nothing and would hold the transaction open
+    across an extra round trip.
+
+    THE WEB CLIENT SENDS NO SECTIONS AT ALL (``QFormCreateBody`` is ``{title, description?,
+    designWorkshopId?}``), so on that path the loop never ran and this defect could not be triggered
+    from the browser — measured 2026-08-30 while reproducing the reported create failure. It is
+    fixed anyway: the API is public, the Android create body is the same shape only by convention,
+    and "unreachable from today's client" is the state every reachable defect was in the day before
+    somebody added a field.
+    """
     _require_designer(current_user)
     if payload.designWorkshopId:
         # Checked BEFORE the row is created, so a refused attachment leaves nothing behind. Creating
         # the questionnaire first and attaching second would hand back a 404 with an orphan
         # questionnaire already written, which reads to the designer as "it failed" and is not.
         await _require_attachable_workshop(payload.designWorkshopId, current_user)
-    record = await db.questionnaire.create(
-        data={
-            "title": payload.title.strip(),
-            "description": payload.description,
-            "ownerId": current_user.id,
-            "designWorkshopId": payload.designWorkshopId,
-        }
-    )
+
+    # The codes are derived BEFORE the transaction opens, because deriving one is pure string work
+    # over a set this loop owns — ``derive_section_code`` mutates ``codes`` itself, which is what
+    # makes two sections with the same title land on ``X`` and ``X_2`` rather than colliding on the
+    # ``@@unique([questionnaireId, code])`` the read-back below depends on.
     codes: set[str] = set()
+    section_data: list[dict[str, Any]] = []
+    questions_by_code: dict[str, list[Any]] = {}
     for index, section in enumerate(payload.sections, start=1):
         code = (section.code or "").strip()
         if not code or code.lower() in codes:
             code = derive_section_code(section.title, codes)
         else:
             codes.add(code.lower())
-        made = await db.questionnaireformsection.create(
-            data={
-                "questionnaireId": record.id,
+        section_data.append(
+            {
                 "code": code,
                 "title": section.title.strip(),
                 "sortOrder": section.sortOrder or index,
             }
         )
-        for position, question in enumerate(section.questions, start=1):
-            await db.questionnaireformquestion.create(
-                data={
-                    "sectionId": made.id,
+        questions_by_code[code] = list(section.questions)
+
+    async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        record = await tx.questionnaire.create(
+            data={
+                "title": payload.title.strip(),
+                "description": payload.description,
+                "ownerId": current_user.id,
+                "designWorkshopId": payload.designWorkshopId,
+                # Validated into a token (or None) by ``QuestionnaireCreate``; see
+                # ``app/services/questionnaire_kinds.py`` for what it decides in the report.
+                "kind": payload.kind,
+            }
+        )
+        if section_data:
+            await tx.questionnaireformsection.create_many(
+                data=[row | {"questionnaireId": record.id} for row in section_data]
+            )
+            written = await tx.questionnaireformsection.find_many(
+                where={"questionnaireId": record.id}
+            )
+            id_by_code = {row.code: row.id for row in written}
+            question_data = [
+                {
+                    "sectionId": id_by_code[code],
                     "prompt": question.prompt.strip(),
                     "helpText": question.helpText,
                     "isRequired": question.isRequired,
                     "sortOrder": question.sortOrder or position,
                 }
-            )
+                for code, questions in questions_by_code.items()
+                for position, question in enumerate(questions, start=1)
+            ]
+            if question_data:
+                await tx.questionnaireformquestion.create_many(data=question_data)
     return public_encode(await load_form(record.id))
 
 

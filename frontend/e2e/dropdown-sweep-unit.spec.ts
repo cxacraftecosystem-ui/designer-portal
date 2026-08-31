@@ -588,11 +588,25 @@ test("`serverQuery` forces the box on, and takes the local filter pass off", () 
     off a join card would have the server find it and the panel hide it.
   */
   expect(source).toContain("searchable && !serverAnswered ? filterOptions(options, query) : options");
-  // And a server query with no box is a fetch nobody can reach, so it overrules `searchable={false}`.
+  /*
+    And a server query with no box is a fetch nobody can reach, so it overrules `searchable={false}`.
+
+    THE TWO COMPONENTS NO LONGER SPELL THIS LINE THE SAME WAY, and the difference is the point rather
+    than drift. `createAction` — the creatable-combo affordance the single-select grew on 2026-08-31 —
+    forces the box on for the same reason `serverQuery` does: the typed TERM is the answer, so a
+    create action behind `searchable={false}` is an answer nobody can reach. There is deliberately no
+    `createAction` on the multi-select (a create commits one name and closes, which is not a thing to
+    do to a selection somebody is still assembling), so its line is unchanged. Asserted as two
+    separate literals rather than one count, so that adding the prop to the multi-select some day
+    fails HERE and has to be argued for, instead of quietly satisfying a tally of two.
+  */
+  expect(source).toContain(
+    "const withSearch = serverDriven || createAction != null || (searchable ?? options.length >= SEARCH_THRESHOLD);"
+  );
   const forced = source.match(
     /const withSearch = serverDriven \|\| \(searchable \?\? options\.length >= SEARCH_THRESHOLD\);/g
   );
-  expect(forced?.length, "both components").toBe(2);
+  expect(forced?.length, "the multi-select only").toBe(1);
   // The caller's term is the caller's: closing the panel clears the LOCAL box only, never theirs.
   expect(source.match(/setOwnQuery\(""\);/g)?.length, "one `close` per component").toBe(2);
   expect(source, "the panel must not re-fetch an unnarrowed list on every dismissal").not.toContain(
@@ -1523,33 +1537,81 @@ test("the sentinel row is drawn LAST, and its heading is the only thing keeping 
   expect(buckets[1].rows[0].option.value).toBe("none");
 });
 
-test("the filter's failure sentence keeps §3.5's opening and drops the clause about saving a record", () => {
+/*
+  WHAT THIS TEST USED TO ASSERT, AND WHY THE PREMISE MOVED ON 2026-08-31.
+
+  It was called "the filter's failure sentence keeps §3.5's opening and drops the clause about
+  saving a record", and it checked that a hand-written literal inside `WorkshopScopeSelect.tsx` —
+  the whole sentence, opening included — still matched `workshopListNotice`'s byte for byte. That
+  assertion was the ONLY thing holding a duplicated opening in step, which `workshopOptions.ts`'s
+  own header calls "six label shapes for one question, one layer down". The filter now passes the
+  half-sentence it owns as `WorkshopListVoice.reassurance` and the module composes the rest, so
+  there is one copy of the opening and nothing left to keep in step.
+
+  THE OBLIGATION IS UNCHANGED AND IS WHAT THE CASES BELOW STILL CHECK: the sentence a reader sees
+  must be byte-identical to what it was, must not close on a record-form clause, and must say what
+  the screen is showing on BOTH failure arms — because a filter whose list did not arrive has
+  silently widened its scope from "the most recent workshop" to the whole repository. What changed
+  is that those facts are now asserted against the COMPOSITION rather than against a copy.
+*/
+test("the filter's failure sentence is composed from §3.5's opening plus the clause it owns", () => {
   const source = read(...SCOPE_SELECT);
-  const shared = workshopListNotice({ kind: "failed" }, voice({ table: "field", scoped: false, online: true }));
-  const sharedOffline = workshopListNotice({ kind: "failed" }, voice({ table: "field", scoped: false, online: false }));
+  const code = withoutComments(source);
+  // The clause the control owns, and the only sentence fragment it is entitled to write.
+  const clause = "Nothing is hidden by it — with no workshop chosen, this screen is showing every record.";
+  const filterVoice = voice({ table: "field", scoped: false, online: true, reassurance: clause });
+  const shared = workshopListNotice({ kind: "failed" }, filterVoice);
 
-  // The first sentence is the shared one, byte for byte, so a researcher who has met the record
-  // form's picker recognises this one.
-  const opening = shared.slice(0, shared.indexOf(". ") + 1);
-  expect(opening).toBe("The workshops list could not be loaded, so this is not showing what exists.");
-  expect(source).toContain(opening);
-  const keptOffline = "That is not a claim that there are none.";
-  expect(sharedOffline).toContain(keptOffline);
-  expect(source).toContain(keptOffline);
+  // BYTE FOR BYTE WHAT THE LITERAL USED TO SAY. This is the assertion that makes the migration a
+  // migration rather than an incidental copy change on a screen whose failure mode is a silently
+  // widened scope.
+  expect(shared).toBe(
+    "The workshops list could not be loaded, so this is not showing what exists. " +
+      "Nothing is hidden by it — with no workshop chosen, this screen is showing every record."
+  );
 
-  // The last clause is not, and could not be. Both shared sentences end on saving a record against a
-  // workshop — "this record can be saved without it", "a stored copy of who may file where reads a
-  // revoked grant as a grant" — and nothing is saved from a filter. What a reader needs here is what
-  // the screen is therefore showing, which is everything, because "no workshop chosen" is spelled as
-  // an absence and an absence is what a failed load leaves behind.
-  expect(shared).toContain("this record can be saved without it");
-  expect(source, "a record-form clause on a filter").not.toContain("this record can be saved without it");
-  expect(source).toContain("with no workshop chosen, this screen is showing every record.");
+  /*
+    ONE OWNER FOR THE OPENING. The control must no longer hold a copy of it — that copy is exactly
+    what this test used to exist to police.
+
+    COMMENT-STRIPPED, WHICH THE OLD VERSION OF THESE TWO ASSERTIONS DID NOT NEED TO BE. They read the
+    raw source, and could, because the control's prose had no occasion to quote a sentence it was
+    also printing. It has one now: the argument for handing a CLAUSE in rather than restating the
+    whole notice is only readable if it quotes the clause it is not allowed to print, and a raw read
+    cannot tell a shipped string from a sentence explaining why that string is wrong here. What must
+    be true is about the COPY a designer reads, so that is what is measured.
+  */
+  const opening = "The workshops list could not be loaded, so this is not showing what exists.";
+  expect(code, "the opening is the module's, not a second copy here").not.toContain(opening);
+  expect(code).toContain("reassurance: SCOPE_SHOWS_EVERYTHING");
+  expect(code).toContain(clause);
+
+  // The shared closing clause is not, and could not be, this control's. Both of the module's
+  // failure sentences close on saving a record against a workshop — "this record can be saved
+  // without it", "a stored copy of who may file where reads a revoked grant as a grant" — and
+  // nothing is saved from a filter.
+  expect(workshopListNotice({ kind: "failed" }, voice({ table: "field", scoped: false }))).toContain(
+    "this record can be saved without it"
+  );
+  expect(code, "a record-form clause on a filter").not.toContain("this record can be saved without it");
+
+  // THE OFFLINE ARM CARRIES BOTH FACTS, and it is the arm where the widened scope is easiest to
+  // miss. `reassurance` closes the ONLINE failure only, by its own declaration, so the control
+  // appends its clause after the module's offline sentence rather than telling the module this is
+  // not one of the two workshop tables (which it is, and which `accessList` owns).
+  const sharedOffline = workshopListNotice({ kind: "failed" }, voice({ ...filterVoice, online: false }));
+  expect(sharedOffline).toContain("That is not a claim that there are none.");
+  expect(`${sharedOffline} ${clause}`).toContain("this screen is showing every record.");
+  expect(code).toContain(
+    'const notice = list.kind === "failed" && !online ? `${shared} ${SCOPE_SHOWS_EVERYTHING}` : shared;'
+  );
 
   // The genuinely-empty arm stays the shared one, and `scoped: false` is what picks the right half of
   // it: this request carries no `accessibleOnly`, so an empty answer means the repository is empty
   // and never that nothing is open to this account.
-  expect(withoutComments(source)).toContain('workshopListNotice(list, { table: "field", scoped: false, online })');
+  expect(code).toContain("const shared = workshopListNotice(list, voice);");
+  expect(code).toContain('table: "field",');
+  expect(code).toContain("scoped: false,");
   expect(workshopListNotice(fwList([]), voice({ table: "field", scoped: false }))).toBe(
     "No workshops have been recorded yet."
   );
@@ -2072,4 +2134,212 @@ test("a recovered row cannot push the list past the number the panel draws", () 
   expect(fieldSet.options.length).toBe(RENDER_CAP);
   expect(fieldSet.drawn).toBe(RENDER_CAP - 1);
   expect(fieldSet.options[0].value).toBe("f-off");
+});
+/* ────────────────────────────────────────────────────────────────────────────
+ * 14. R2 AND R2b ON THE RECORD FORMS, and the noun that let the sentences travel
+ *
+ * Section 11 pins the four sentences for the two WORKSHOP tables. This section pins the two things
+ * that had to become true before the same four could reach the eight controls that are not
+ * workshops at all, and the one control where their absence cost a whole record.
+ *
+ * A NOTE ON HOW THE SOURCE READS ARE WRITTEN. Anything spanning a line break is a `toMatch` with
+ * `\s`, never a literal newline: `.gitattributes` marks these files as text, so they are checked
+ * out CRLF on Windows and LF on the runner, and an assertion carrying a literal `\n` is true of the
+ * file on exactly one of the two. `read` normalises, but a pattern costs nothing and cannot be
+ * copied into a spec that does not.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("the four state sentences take a caller's noun, and drop R6's reason where R6 does not apply", () => {
+  const register = (over: Partial<WorkshopListVoice> = {}): WorkshopListVoice => ({
+    table: "field",
+    noun: "artisans",
+    scoped: false,
+    accessList: false,
+    online: true,
+    ...over
+  });
+
+  // THE NOUN. Section 3.5 writes these strings with a `{noun}` hole in them and calls it "the
+  // caller's plural"; without it every non-workshop picker had to write the sentence out itself,
+  // which is how one fact comes to have eight wordings.
+  expect(workshopListNotice({ kind: "failed" }, register())).toBe(
+    "The artisans list could not be loaded, so this is not showing what exists. Nothing you have entered is at risk — this record can be saved without it."
+  );
+  expect(workshopListNotice(fwList([]), register())).toBe("No artisans have been recorded yet.");
+  // Absent, the noun still comes from the table, so no caller that predates the field moved.
+  expect(workshopListNotice(fwList([]), { table: "design", scoped: true, online: true })).toBe(
+    "No design workshops are open to this account. An administrator can give you access to one."
+  );
+
+  // R6'S REASON IS ABOUT GRANTS, so it may not be printed over a register. Both workshop tables are
+  // access lists and keep it; an artisan list is not one, and quoting it there would explain an
+  // absence with a rule that does not govern it — the same error as a wrong claim, one clause later.
+  const offlineRegister = workshopListNotice({ kind: "failed" }, register({ online: false }));
+  expect(offlineRegister).toContain("That is not a claim that there are none.");
+  expect(offlineRegister).toContain("Connect and it will load.");
+  expect(offlineRegister, "a grant rule quoted over a register").not.toContain("revoked grant");
+  // …and the default is unchanged, which is what keeps every earlier caller honest.
+  expect(workshopListNotice({ kind: "failed" }, { table: "field", scoped: true, online: false })).toContain(
+    "reads a revoked grant as a grant"
+  );
+
+  // THE CLOSING CLAUSE IS THE CALLER'S WHERE "this record" NAMES NOTHING. The opening stays shared,
+  // byte for byte, so a reader recognises it from the last picker they met — `WorkshopScopeSelect`
+  // had to duplicate the whole sentence to reach this, and its own test then has to assert that the
+  // copy still matches.
+  const filed = workshopListNotice(
+    { kind: "failed" },
+    register({ noun: "workshops", reassurance: "Nothing you have typed is lost. The message above says what happened." })
+  );
+  expect(filed).toBe(
+    "The workshops list could not be loaded, so this is not showing what exists. Nothing you have typed is lost. The message above says what happened."
+  );
+  expect(filed, "a record clause on a surface with no record").not.toContain("this record can be saved without it");
+  // The offline arm takes no such parameter and needs none: its trailer is true on any surface.
+  expect(
+    workshopListNotice({ kind: "failed" }, register({ online: false, reassurance: "Not used offline." }))
+  ).not.toContain("Not used offline.");
+});
+
+test("the process form's two pickers stand down when their list is empty, and stop claiming to be required", () => {
+  const source = read("components", "forms", "ProcessForm.tsx");
+
+  /*
+    THE INCIDENT. `/artisans` is one `listResource` whose `.catch` leaves the array empty, and
+    `submit()` set `artisanError`/`productError` on a blank id UNCONDITIONALLY and returned before
+    `saveOrQueue`. With no signal the picker was empty, the client-side validator refused, the save
+    never reached the outbox, and the process record and every step capture died with the tab. It is
+    `LocationFields.tsx:176-179` again — the same shape and the same loss — which is why that file's
+    two required flags have ended in `&& options.length > 0` ever since. Android closed the identical
+    defect at `MainActivity.kt:10129-10130`, and `DROPDOWN_DESIGN.md` names it R2b.
+  */
+  expect(source, "R2: a field may only be mandatory where it is answerable").toContain(
+    "const artisanRequired = artisanOptions.length > 0;"
+  );
+  expect(source).toContain("const productRequired = artisanProducts.length > 0;");
+  expect(source, "R2b: the validator stands down").toContain("if (artisanRequired && !artisanId) {");
+  expect(source).toContain("if (productRequired && !productId) {");
+  const bare = withoutComments(source);
+  expect(bare, "the unconditional refusal is gone").not.toMatch(/if\s*\(!artisanId\)\s*\{\s*setArtisanError/);
+  expect(bare).not.toMatch(/if\s*\(!productId\)/);
+
+  // R2a: A FIELD THAT HAS STOOD DOWN MUST NOT STILL BE MARKED REQUIRED. The asterisk is computed
+  // from the same booleans, or the form asks in its label for an answer it will not ask for on
+  // submit — the two halves of one rule disagreeing on one screen.
+  expect(bare).toContain('<Field label="Artisan" required={artisanRequired}>');
+  expect(bare).toContain('<Field label="Product" required={productRequired}>');
+  expect(bare, "a typed asterisk over a stood-down field").not.toContain('<Field label="Artisan" required>');
+  expect(bare).not.toContain('<Field label="Product" required>');
+
+  // R3: DISABLED **AND** SAID. A silently empty picker reads as "there are none", so the artisan
+  // control takes the shared sentences rather than the primitive's literal "No options", and the
+  // page carries the notice as well as the panel.
+  expect(bare).toContain("emptyLabel={workshopEmptyLabel(artisanList, artisanVoice)}");
+  expect(bare).toContain("const artisanNotice = workshopListNotice(artisanList, artisanVoice);");
+  expect(bare).toContain("{artisanNotice ?");
+  // Never while LOADING — the panel covers that wait in its own slot, and a control that disables
+  // itself for a second on every mount reads as broken.
+  expect(bare).toContain('disabled={artisanList.kind !== "loading" && artisanOptions.length === 0}');
+  // The noun and the two flags that make the shared sentences true of a register rather than of a
+  // grant set. `scoped: false` is what keeps "No artisans have been recorded yet" from becoming a
+  // claim about this account's access, which would send a researcher to an administrator for a day.
+  expect(bare).toContain('noun: "artisans"');
+  expect(bare).toContain("scoped: false");
+  expect(bare).toContain("accessList: false");
+});
+
+test("the record pickers say a failed read failed, on both forms, from one place", () => {
+  const hook = read("components", "forms", "recordPickers.ts");
+
+  // The roster catch used to be silent as well as harmless: it deliberately leaves the mount load's
+  // artisans on screen and deliberately does not move `artisansLoadedForCraft`, so nothing at all
+  // was printed and "this roster never arrived" looked exactly like "this craft has few artisans".
+  expect(hook).toContain("setArtisansFailedForCraft(craftId);");
+  // A craft id, not a boolean, for the same reason `artisansLoadedForCraft` is one: a stale flag
+  // would describe this craft's roster with the previous craft's outcome.
+  expect(hook).toContain("const [artisansFailedForCraft, setArtisansFailedForCraft] = useState<string | null>(null);");
+  expect(hook).toContain("craftNotice: workshopListNotice(craftList, craftVoice)");
+
+  // ONE HOOK, BOTH FORMS. ProductForm and ToolForm ask the identical question of the API and had the
+  // identical bug in it, which is why the hook exists at all; the wording of a failed read belongs
+  // in it too, or it is one sentence written twice and eventually two sentences about one fact.
+  for (const form of ["ProductForm.tsx", "ToolForm.tsx"]) {
+    const formSource = withoutComments(read("components", "forms", form));
+    expect(formSource, form).toContain("emptyLabel={craftEmptyLabel || undefined}");
+    expect(formSource, form).toContain("emptyLabel={craftArtisanEmptyLabel || undefined}");
+    expect(formSource, form).toContain("{craftNotice ?");
+    expect(formSource, form).toContain("{craftArtisanNotice ?");
+    // The claim about the craft still waits for the craft's own answer — unchanged, and pinned here
+    // because the new sentence sits directly beneath it and the two are easy to conflate.
+    expect(formSource, form).toContain("artisansLoadedForCraft === craftId && artisansForCraft.length === 0");
+  }
+});
+
+test("the pickers that used to assert non-existence now name the state they are in", () => {
+  // Every one of these drew a confident sentence about the repository out of a read that may never
+  // have arrived. The fix is the same in each: hold three states, not an array that collapsed to [].
+  const workshops = withoutComments(read("app", "(protected)", "workshops", "page.tsx"));
+  expect(workshops, "a claim about the register").not.toContain('emptyLabel="No artisans recorded yet"');
+  expect(workshops).not.toContain('emptyLabel="No crafts available yet"');
+  expect(workshops).toContain("emptyLabel={workshopEmptyLabel(artisanList, artisanVoice)}");
+  expect(workshops).toContain("emptyLabel={workshopEmptyLabel(craftList, craftVoice)}");
+  // "Create a craft first." is the right sentence for an empty register and the wrong one for a
+  // request still in flight; it is now gated on the read having answered.
+  expect(workshops).toContain('{craftList.kind === "ok" && crafts.length === 0 ? (');
+
+  const tasks = withoutComments(read("components", "tasks", "AssignmentBuilder.tsx"));
+  expect(tasks, "three claims from one failed read").not.toContain('emptyLabel="No active questionnaire sections"');
+  expect(tasks).toContain('emptyLabelFor("people", "Nobody ranked below you")');
+  expect(tasks).toContain('emptyLabelFor("questionnaire sections", "No active questionnaire sections")');
+  expect(tasks).toMatch(/emptyLabelFor\(\s*"artisans",/);
+  // The page has to hand the failure down; `loading` alone cannot say it.
+  expect(withoutComments(read("app", "(protected)", "settings", "tasks", "page.tsx"))).toContain(
+    "optionsFailed={Boolean(optionsError)}"
+  );
+
+  const tools = withoutComments(read("components", "forms", "ToolAssignmentSection.tsx"));
+  expect(tools).not.toContain('emptyLabel={craftIds.length ? "No artisans for these crafts" : "Select crafts first"}');
+  expect(tools).toMatch(/emptyLabelFor\(\s*"artisans",/);
+
+  const access = withoutComments(read("components", "settings", "WorkshopAccessRequestPanel.tsx"));
+  expect(access, "an empty array standing in for a failed read").not.toContain(
+    'emptyLabel="No workshops have been recorded yet"'
+  );
+  expect(access).toContain("emptyLabel={workshopEmptyLabel(workshopList, workshopVoice)}");
+  expect(access).toContain("setWorkshopsFailed(true);");
+
+  const designers = withoutComments(read("components", "designworkshop", "WorkshopDesignerPicker.tsx"));
+  expect(designers).toContain("workshopEmptyLabel(eligibleList, eligibleVoice)");
+  // The genuinely-empty sentence stays this file's own: it names the next move (empanel a designer
+  // first), which the shared one does not.
+  expect(designers).toContain('eligibleList.kind === "ok"');
+});
+
+test("a picker's fetch asks for exactly the number of rows the panel can draw", () => {
+  /*
+    THE DEAD BAND. A hundred rows into a control that draws `RENDER_CAP` means rows 81-100 are on the
+    wire and unreachable, and the panel's truncation sentence and any notice beside it are two
+    different totals about one list. `WORKSHOP_OPTION_PAGE_SIZE` is the same alias under the workshop
+    pickers, and it is `RENDER_CAP` for this reason and no other.
+  */
+  const questionnaire = withoutComments(read("app", "(protected)", "questionnaire", "page.tsx"));
+  expect(questionnaire).toContain('listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })');
+  const workshops = withoutComments(read("app", "(protected)", "workshops", "page.tsx"));
+  expect(workshops).toContain('listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })');
+  expect(workshops).toContain('listResource<Craft>("/crafts", { pageSize: RENDER_CAP })');
+
+  /*
+    AND WHERE THERE IS NO DROPDOWN, `RENDER_CAP` IS THE WRONG NUMBER AND CUTTING TO IT WOULD BE A
+    FRESH INSTANCE OF THE BUG ABOVE. These three render one row per record — checkboxes in the assign
+    dialog, checkboxes in the bulk grants panel, a card grid on the consolidated index — so nothing
+    draws only eighty, and asking for eighty would silently hide twenty records that are reachable
+    today. They take the SERVER's ceiling by name instead of the bare literal.
+  */
+  expect(workshops).toContain('listResource<User>("/users", { pageSize: LIST_PAGE_CEILING })');
+  expect(withoutComments(read("app", "(protected)", "users", "page.tsx"))).toContain(
+    'listResource<User>("/users", { pageSize: LIST_PAGE_CEILING })'
+  );
+  expect(withoutComments(read("app", "(protected)", "questionnaire", "consolidated", "page.tsx"))).toContain(
+    "pageSize: LIST_PAGE_CEILING, workshopIds: scope.queryValue"
+  );
 });

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -206,6 +207,24 @@ async def create_user(
             "email": payload.email.lower(),
             "name": payload.name,
             "passwordHash": hash_password(payload.password),
+            # ── THE FIRST-LOGIN PASSWORD ─────────────────────────────────────────────────
+            #
+            # An admin typing a password for somebody else is a shared secret by construction:
+            # it was chosen by one person, typed into a form, and read out or messaged to
+            # another. `mustChangePassword` is what makes it temporary — the account signs in
+            # with it and both clients then send the person to the change-password screen and
+            # nowhere else.
+            #
+            # IT REPORTS AND DOES NOT REFUSE (see the column's own comment in schema.prisma):
+            # the only route that can change a password needs a bearer token, so refusing the
+            # sign-in would leave the account permanently unable to comply. It is the same
+            # decision the usage-consent gate took, for the same reason.
+            "mustChangePassword": True,
+            # Stamped so that "has never had a password" stays distinguishable from "signs in
+            # with Google" — the whole reason this column exists. `datetime.now(UTC)` rather
+            # than letting it default, because there is no default: a column that is NULL for
+            # an account that demonstrably has a hash would be worse than not having it.
+            "passwordSetAt": datetime.now(UTC),
             "role": role,
             "authProvider": "LOCAL",
             "canManageQuestionnaire": is_master or payload.canManageQuestionnaire,
@@ -259,6 +278,10 @@ async def update_user(
         data["email"] = data["email"].lower()
     if "password" in data:
         data["passwordHash"] = hash_password(data.pop("password"))
+        data["passwordSetAt"] = datetime.now(UTC)
+        # WHOSE PASSWORD IT IS DECIDES WHETHER IT MUST BE CHANGED, and the branch is below
+        # rather than here because `user` has not been loaded yet at this line. See
+        # `_password_was_set_by_somebody_else` further down.
     user = await db.user.find_unique(where={"id": user_id})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -272,6 +295,12 @@ async def update_user(
             )
     else:
         assert_can_manage_target(current_user, user)
+        if "passwordHash" in data:
+            # AN ADMIN TYPED THIS PASSWORD FOR SOMEBODY ELSE, so it is a shared secret exactly
+            # as it is at account creation, and it is temporary for the same reason. The
+            # self-service branch above deliberately does NOT set this: a person who changed
+            # their own password has already chosen one.
+            data["mustChangePassword"] = True
     assert_not_demoting_master(user, data.get("role"), current_user)
     if "email" in data and data["email"] != user.email:
         if is_master_email(data["email"]) and not is_master_admin(current_user):

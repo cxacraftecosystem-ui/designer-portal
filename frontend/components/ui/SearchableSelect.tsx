@@ -87,6 +87,7 @@ import {
   SEARCH_THRESHOLD,
   emptyListSentence,
   filterOptions,
+  fold,
   groupRows,
   listAnnouncement,
   selectionSummarySentence,
@@ -145,6 +146,69 @@ export type { SelectOption };
  * from the live selection on every tick, and on a multi-select that is exactly the renumbering that
  * makes the next Enter toggle the neighbour.
  */
+/**
+ * THE ROW UNDER THE LIST THAT ACCEPTS A NAME THE LIST DOES NOT HOLD.
+ *
+ * ── THE OBJECTION THIS ANSWERS, WHICH WAS CORRECT ABOUT WHAT IT REFUSED ─────────────────────────
+ *
+ * `components/designworkshop/stageFieldRoles.ts` refuses, by name, to put a dropdown on the design
+ * workshop's OWN title: *"a dropdown there would refuse a workshop that has no `Workshop` record
+ * yet, which is most of them on the day they start."* That defeats "make the title a PICKER of
+ * existing rows" and it is still true. It does not defeat a control that OFFERS the existing names
+ * and ACCEPTS a new one typed straight in, because such a control refuses nothing: whatever is in
+ * the box is committable. This prop is that second control, and it lives here rather than at the
+ * call site so that the next field which needs it does not become a fourth hand-rolled
+ * "…or type your own" toggle with its own wording and its own keyboard route.
+ *
+ * ── BELOW THE LIST, NEVER IN IT ─────────────────────────────────────────────────────────────────
+ *
+ * `android/.../ui/SearchableSelect.kt`'s `SelectCreateAction` states the rule this copies, and the
+ * reason survives the platform: a row among the options is a row the commit key can take while the
+ * reader is still typing, so a designer typing "Bagru" and pressing Enter would land on the create
+ * row instead of on the Bagru workshop sitting right there. It is drawn UNDER the options and is
+ * not in `rendered`, so every index rule in this file — `highlight` indexes `rendered`, the render
+ * cap, the pin snapshot — applies unchanged, and the live region's "N of M match" goes on counting
+ * records only, because the create row is not one of the records being matched.
+ *
+ * ── ENTER REACHES IT ONLY WHEN NOTHING ELSE IS ON SCREEN ────────────────────────────────────────
+ *
+ * With any row highlightable, Enter still takes the top match, byte for byte as before. With none —
+ * a term that matched nothing — Enter previously did nothing at all, which on a control whose whole
+ * point is that it accepts new names reads as a dead key on the one keystroke a reader will try.
+ * That arm, and only that arm, commits the term.
+ *
+ * ── AND IT FORCES THE FILTER BOX ON ─────────────────────────────────────────────────────────────
+ *
+ * The term IS the typing, so a create action on a control with no box to type into is an affordance
+ * nobody can reach. Same rule and same reason as `serverQuery`, and it overrules `searchable={false}`
+ * for the same reason: there is no sensible reading of a call site that asks for both.
+ *
+ * ── OFFERED WHETHER OR NOT THE SEARCH FOUND ANYTHING ────────────────────────────────────────────
+ *
+ * Android's argument, unchanged: a designer usually knows the name is absent before they have
+ * finished typing it, and a control that only appears after an empty result is one they have to
+ * discover twice. It is withheld in exactly two cases — an empty box, where there is nothing to
+ * create, and a term that already IS an option's label, where it would offer to create a duplicate
+ * of a row the reader can see.
+ */
+export type SelectCreateAction = {
+  /**
+   * The row's words, built from the term. Put the term in quotation marks: a reader has to be able
+   * to see exactly what would be stored, trailing spaces and capitals included, and a summary is
+   * the one thing that cannot show them.
+   */
+  label: (term: string) => string;
+  /**
+   * Commit the typed term. It arrives trimmed.
+   *
+   * NOT written through `onChange` by this file, deliberately. A caller may have a value to fold, a
+   * list to append the new name to, or a `markDirty` to call by hand (a themed control fires no
+   * native input event), and a primitive that guessed would be guessing once for every future call
+   * site. Most callers will pass `onChange` and that is fine; it has to be their sentence.
+   */
+  onCreate: (term: string) => void;
+};
+
 export type SelectServerQuery = {
   /** The live term. The panel renders this box; it does not keep a copy. */
   value: string;
@@ -776,6 +840,17 @@ export type SearchableSelectProps = {
    * counted in any sentence under the list — `noneOptionFor` says why for each.
    */
   noneLabel?: string;
+  /**
+   * Offer the term the reader typed as an answer of its own, under the list.
+   *
+   * **Absent — the default — is exactly today's behaviour** and every existing call site keeps the
+   * DOM it has. Present turns this from a picker into a CREATABLE COMBO: the list is still the
+   * fast path and a name that is not on it is still answerable. The whole contract, and the
+   * objection it answers, is on `SelectCreateAction`.
+   *
+   * It forces the filter box on, because the box is where the term comes from.
+   */
+  createAction?: SelectCreateAction;
 };
 
 export function SearchableSelect({
@@ -792,7 +867,8 @@ export function SearchableSelect({
   capHint,
   advanceOnSelect = true,
   serverQuery,
-  noneLabel
+  noneLabel,
+  createAction
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   /**
@@ -849,13 +925,15 @@ export function SearchableSelect({
   }
 
   /**
-   * `serverQuery` FORCES the box on, ahead of both `searchable` and the count.
+   * `serverQuery` AND `createAction` BOTH FORCE the box on, ahead of `searchable` and the count.
    *
-   * A server query with no box to type into is a fetch the reader cannot reach, and there is no
-   * sensible reading of a call site that asks for both. Stated here rather than left to the `??`
-   * chain, because "the panel decided" is the answer this file exists to stop giving.
+   * A server query with no box to type into is a fetch the reader cannot reach; a create action
+   * with no box is an answer nobody can type, because the term IS the answer. Neither has a
+   * sensible reading alongside `searchable={false}`, so both win over it. Stated here rather than
+   * left to the `??` chain, because "the panel decided" is the answer this file exists to stop
+   * giving.
    */
-  const withSearch = serverDriven || (searchable ?? options.length >= SEARCH_THRESHOLD);
+  const withSearch = serverDriven || createAction != null || (searchable ?? options.length >= SEARCH_THRESHOLD);
   const { filtered, windowed, pinned, capped } = useSelectList(
     options,
     query,
@@ -884,6 +962,29 @@ export function SearchableSelect({
     () => (noneRow ? [noneRow, ...windowed] : windowed),
     [noneRow, windowed]
   );
+
+  /**
+   * The name this control would create, or null when it must not offer to.
+   *
+   * FOLDED ON BOTH SIDES for the comparison, never raw. `fold` collapses runs of whitespace and
+   * strips diacritics, so a reader who typed the name of a workshop that is already on screen with
+   * one stray double space, or with "Ahmedabad" where the row reads "Ahmedābād", is not offered a
+   * second row that stores a string the repository will never group with the first. That is the
+   * whole failure a name-shaped free-text field has, arriving through the control that was supposed
+   * to close it.
+   *
+   * Compared against `options` and not `filtered`: what makes an offer a duplicate is that the name
+   * EXISTS, not that the current query happens to have matched it — and the two differ the moment
+   * the render cap bites or a server answer lags the box.
+   */
+  const createTerm = useMemo(() => {
+    if (!createAction) return null;
+    const term = query.trim();
+    if (!term) return null;
+    const folded = fold(term);
+    if (options.some((option) => fold(option.label) === folded)) return null;
+    return term;
+  }, [createAction, query, options]);
 
   // Derived, not stored — the stored index is only ever a hint. See the file header.
   const safeHighlight =
@@ -944,6 +1045,19 @@ export function SearchableSelect({
     const option = rendered[index];
     if (!option || option.disabled) return;
     onChange(option.value);
+    closeAndMoveOn(advanceOnSelect);
+  }
+
+  /**
+   * Take the typed term as the answer, and then behave exactly as a picked row does.
+   *
+   * `closeAndMoveOn(advanceOnSelect)` and not a bare `close()`: to the reader this WAS the answer,
+   * so a form that advanced on every other field and parked on this one would be teaching two
+   * different things about the same keystroke.
+   */
+  function create() {
+    if (!createAction || !createTerm) return;
+    createAction.onCreate(createTerm);
     closeAndMoveOn(advanceOnSelect);
   }
 
@@ -1119,6 +1233,12 @@ export function SearchableSelect({
         event.preventDefault();
         // Guarded on the DERIVED index, so Enter can only ever take a row that is on screen.
         if (safeHighlight >= 0) choose(safeHighlight);
+        // THE ONLY ARM THAT REACHES THE CREATE ROW, and the guard is what keeps it safe. With any
+        // row highlightable Enter still means "take the top match", unchanged for every control in
+        // the app; with none — the term matched nothing — it used to mean nothing at all, which on a
+        // creatable combo is a dead key on the one keystroke a reader will try after typing a name
+        // the list does not hold. See `SelectCreateAction`.
+        else if (createTerm) create();
         return true;
       default:
         return false;
@@ -1434,6 +1554,41 @@ export function SearchableSelect({
               </li>
             ) : null}
           </ul>
+          {/*
+            THE CREATE ROW — a real <button>, OUTSIDE the listbox, drawn under the options.
+
+            Outside `<ul role="listbox">` and not merely outside `rendered`: an interactive element
+            that is not a `role="option"` sitting inside a listbox is a child the ownership model has
+            no name for, and a screen reader announcing it as one of N options would be describing a
+            record that does not exist. As a sibling it is simply the panel's last control, which is
+            what it is.
+
+            It lands last in `useEdgeTab`'s DOM-order scan, so on a control that offers it the panel
+            has two tab stops rather than one: Tab out of the filter box now reaches this button
+            instead of leaving. That is the right order — the reader has just typed the thing the
+            button is offering — and Enter in the box still commits without ever visiting it.
+
+            `onMouseDown` is prevented for the same reason every option row prevents it: the click
+            must not pull focus out of the filter box before the click itself lands.
+          */}
+          {createTerm && createAction ? (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={create}
+              /*
+                THE ROW'S OWN COLOURS, NOT A NEW SET. `bg-purple-50 dark:bg-purple-950` on hover and
+                `text-purple-700 dark:text-purple-300` are exactly what `optionClass` paints on a
+                highlighted and on a selected row, so the create row reads as part of the same list
+                even though it is not in it. Brand purple does not invert, so the `dark:` pair is the
+                exception mechanism doing its one legitimate job: without it a purple-50 wash under
+                purple-700 text is a near-white band on a dark panel.
+              */
+              className="shrink-0 truncate border-t border-line-200 px-3.5 py-2 text-left text-sm font-medium text-purple-700 transition hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-950"
+            >
+              {createAction.label(createTerm)}
+            </button>
+          ) : null}
           {capSentence ? <CapNotice sentence={capSentence} /> : null}
           <p className="sr-only" role="status" aria-live="polite">
             {announcement}
@@ -1514,6 +1669,12 @@ export type SearchableMultiSelectProps = {
    * One extra consequence is the multi's alone: with `serverQuery.truncated` set, the bulk button
    * stops saying "all" and says "the N shown", because the rows it can act on are one page of an
    * answer the server has told us is incomplete. See `bulkLabel`.
+   *
+   * There is deliberately no `createAction` companion either, and for a related reason: a create
+   * action commits ONE name and closes, which on a multi-select is a fifth thing the panel does with
+   * a selection the reader is still assembling. `SelectCreateAction` is a single-select prop until
+   * a call site turns up that genuinely needs to add a name to a set, and that call site owes an
+   * argument about what happens to the ticks.
    *
    * There is deliberately no `noneLabel` companion here — a multi-select says "none" by holding an
    * empty array, and a second spelling of that state is the thing `bulk` above exists to prevent.

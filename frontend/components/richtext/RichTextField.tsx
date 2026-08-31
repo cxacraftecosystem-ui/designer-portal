@@ -60,7 +60,8 @@ export function RichTextField({
   className,
   explainWhenUnavailable,
   onDirty,
-  onValueChange
+  onValueChange,
+  labelledBy
 }: {
   /** The FormData key the containing form already reads. Unchanged from the `<TextArea>` it replaces. */
   name: string;
@@ -109,9 +110,27 @@ export function RichTextField({
    * read the note on `initialValue` below for the caret it would throw to position zero.
    */
   onValueChange?: (value: string) => void;
+  /**
+   * The id of a heading the CALLER already draws for this box, when there is one.
+   *
+   * Passed, this component draws no label of its own and the editor is named by that heading
+   * instead. It exists for `/questionnaire`, where the thing that names an answer box is the
+   * question — `"7. How many hours does one piece take?"` — printed above a block that also holds a
+   * recorder and an upload readout, all three of which belong under that one heading. Drawing this
+   * component's own label as well would print the question twice; passing the question as `label`
+   * and dropping the heading would leave the recorder unnamed and move a two-thousand-character
+   * prompt into the microphone's accessible name, which a screen reader then reads out in full
+   * before saying what the button does.
+   *
+   * `label` STAYS REQUIRED AND STAYS SHORT WHEN THIS IS PASSED, because it is still the name the
+   * dictation button reads out — "Dictate Answer in English (India)". The two are different jobs:
+   * one names the box in the page's structure, the other names the act in a sentence.
+   */
+  labelledBy?: string;
 }) {
   const reactId = useId();
-  const labelId = `rtf-${reactId}-label`;
+  const ownLabelId = `rtf-${reactId}-label`;
+  const labelId = labelledBy ?? ownLabelId;
   const helpId = `rtf-${reactId}-help`;
 
   /**
@@ -130,9 +149,12 @@ export function RichTextField({
 
   return (
     <div className={`grid min-w-0 gap-1 ${className ?? ""}`}>
-      <span id={labelId} className="field-label">
-        {label}
-      </span>
+      {/* Suppressed when the caller names the box with its own heading — see `labelledBy`. */}
+      {labelledBy ? null : (
+        <span id={ownLabelId} className="field-label">
+          {label}
+        </span>
+      )}
       {helper ? (
         <p id={helpId} className="text-xs text-ink-muted">
           {helper}

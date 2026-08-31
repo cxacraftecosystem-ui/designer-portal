@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
+import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
 import { useToast } from "@/components/ui/Toast";
 import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
@@ -116,6 +117,8 @@ export function ApiKeysPanel() {
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  /** Per-render only, never persisted: this is a shared machine. See `PasswordRevealButton`. */
+  const [revealDraft, setRevealDraft] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -434,23 +437,39 @@ export function ApiKeysPanel() {
                               <span className="field-label">
                                 {secret.source === "unset" ? `New ${secret.label} key` : `Replace the ${secret.label} key`}
                               </span>
-                              <input
-                                autoComplete="off"
-                                autoFocus
-                                className="field-input font-mono text-xs"
-                                onChange={(event) => setDraft(event.target.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    event.preventDefault();
-                                    void save(secret);
-                                  }
-                                  if (event.key === "Escape") setEditing(null);
-                                }}
-                                placeholder="Paste the key — whitespace is trimmed"
-                                spellCheck={false}
-                                type="password"
-                                value={draft}
-                              />
+                              {/*
+                                THE EYE, ADDED 2026-08-30. A repository API key is a 50-plus
+                                character string pasted from a provider's console, and a masked box
+                                is where a truncated paste hides: the key saves, and the failure
+                                surfaces hours later as "the provider rejected this" on somebody
+                                else's screen. Revealing is per-render and never persisted — this
+                                is a shared machine.
+                              */}
+                              <div className="relative">
+                                <input
+                                  autoComplete="off"
+                                  autoFocus
+                                  className="field-input pr-10 font-mono text-xs"
+                                  onChange={(event) => setDraft(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      void save(secret);
+                                    }
+                                    if (event.key === "Escape") setEditing(null);
+                                  }}
+                                  placeholder="Paste the key — whitespace is trimmed"
+                                  spellCheck={false}
+                                  type={revealDraft ? "text" : "password"}
+                                  value={draft}
+                                />
+                                <PasswordRevealButton
+                                  revealed={revealDraft}
+                                  onToggle={() => setRevealDraft((value) => !value)}
+                                  size={16}
+                                  noun="key"
+                                />
+                              </div>
                             </label>
                             <p className="mt-2 text-[0.6875rem] leading-4 text-ink-500">
                               Saving replaces the value for the whole repository at once, effective immediately.

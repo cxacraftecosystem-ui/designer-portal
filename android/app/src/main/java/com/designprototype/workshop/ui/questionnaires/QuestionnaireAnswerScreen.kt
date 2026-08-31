@@ -44,6 +44,7 @@ import com.designprototype.workshop.data.cachedQuestionnaireNotice
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
+import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.RecordProseField
 import com.designprototype.workshop.ui.field
@@ -609,7 +610,7 @@ private fun AnswerField(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
-            question.prompt + if (question.isRequired) " *" else "",
+            requiredMarked(question.prompt + if (question.isRequired) " *" else ""),
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium

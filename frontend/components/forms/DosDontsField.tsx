@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 
 import { NumberedPointRows, joinNumbered, splitNumbered } from "@/components/forms/NumberedListInput";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 /**
  * Web twin of Android's NumberedListInput (MainActivity.kt): a required, numbered multi-point input
@@ -58,7 +59,7 @@ export function DosDontsField({
     <div className="relative grid content-start gap-1.5" role="group" aria-labelledby={groupId} aria-describedby={helper ? helperId : undefined}>
       <span id={groupId} className="field-label">
         {label}
-        {required ? " *" : ""}
+        <RequiredMark when={required} />
       </span>
       {helper ? (
         <p id={helperId} className="text-xs text-ink-muted">

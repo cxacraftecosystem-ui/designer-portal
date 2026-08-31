@@ -3,7 +3,12 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { addressListRole, identityNumberField, workshopTitleRole } from "@/components/designworkshop/stageFieldRoles";
+import {
+  addressListRole,
+  identityNumberField,
+  ownWorkshopTitleRole,
+  workshopTitleRole
+} from "@/components/designworkshop/stageFieldRoles";
 import { joinNumbered, splitNumbered } from "@/components/forms/NumberedListInput";
 import type { DwEntity, DwField } from "@/lib/designWorkshops";
 
@@ -492,9 +497,24 @@ test("the boxes that hold a workshop's TITLE get the list, and the one that hold
   // siblings are lists. The tripwire below is what named it.
   expect(workshopTitleRole(field("interviewDocumentedAtWorkshop", "TEXT"))).toBe(true);
 
-  // THE TRAP, PINNED. `workshopSetup.workshopTitle` is the DESIGN workshop's own title — a required
-  // cover field a designer types, and not a reference to a `Workshop` row at all. A dropdown there
-  // would refuse a workshop that has no `Workshop` record yet, which is most of them on day one.
+  /*
+    THE TRAP, PINNED — AND STILL PINNED, THOUGH THE BOX IS NO LONGER A BARE TEXT FIELD.
+
+    `workshopSetup.workshopTitle` is the DESIGN workshop's own title — a required cover field a
+    designer types, and not a reference to a `Workshop` row at all. A closed dropdown there would
+    refuse a workshop that has no `Workshop` record yet, which is most of them on day one. That is
+    unchanged and this expectation is unchanged with it.
+
+    WHAT CHANGED ON 2026-08-31, said here because this line is where a reader will come looking. The
+    owner asked for the workshop's name to OFFER the names already on record while still accepting a
+    new one typed straight in, and the sentence above was being read as a ruling against that too. It
+    is not: it refuses a control that can REFUSE AN ANSWER, and a creatable combo cannot — whatever is
+    in its box is committable in one keystroke. So a SECOND role, `ownWorkshopTitleRole`, now matches
+    this key and mounts `StageWorkshopNameField`, which offers `DesignWorkshop` NAMES (not `Workshop`
+    rows) and stores the same plain string this field has always stored. The two roles are disjoint
+    and the case below is what holds them apart; folding them into one key list would put the
+    reference control on this box, which is the thing the sentence above forbids.
+  */
   expect(workshopTitleRole(field("workshopTitle", "TEXT"))).toBe(false);
   expect(workshopTitleRole(field("workshopCode", "TEXT"))).toBe(false);
 
@@ -504,6 +524,82 @@ test("the boxes that hold a workshop's TITLE get the list, and the one that hold
   // A deprecated field keeps whatever it had, and a non-TEXT field is somebody else's branch.
   expect(workshopTitleRole(field("documentedAtWorkshop", "TEXT", { deprecated: true }))).toBe(false);
   expect(workshopTitleRole(field("documentedAtWorkshop", "LONG_TEXT"))).toBe(false);
+});
+
+test("the workshop's OWN name gets the creatable combo, and the two title roles stay disjoint", () => {
+  // The one key, and only that key. `PROMOTED_COLUMNS` copies `workshopSetup.workshopTitle` onto
+  // `DesignWorkshop.title`, so this is the workshop's name and not a reference to anything.
+  expect(ownWorkshopTitleRole(field("workshopTitle", "TEXT"))).toBe(true);
+
+  // DISJOINT FROM THE REFERENCE ROLE, in both directions. A key that answered to both would mount two
+  // controls for one box, and the branch that wins would be decided by the order of two `if`s in
+  // `FieldInput` rather than by anything a reader can see.
+  expect(workshopTitleRole(field("workshopTitle", "TEXT"))).toBe(false);
+  expect(ownWorkshopTitleRole(field("documentedAtWorkshop", "TEXT"))).toBe(false);
+  expect(ownWorkshopTitleRole(field("craftDocumentedAtWorkshop", "TEXT"))).toBe(false);
+  expect(ownWorkshopTitleRole(field("interviewDocumentedAtWorkshop", "TEXT"))).toBe(false);
+
+  // Exact key, not a pattern: the workshop CODE sits beside the name on the same entity and is a
+  // different fact with a different vocabulary.
+  expect(ownWorkshopTitleRole(field("workshopCode", "TEXT"))).toBe(false);
+  expect(ownWorkshopTitleRole(field("workshopTitleNotes", "TEXT"))).toBe(false);
+  // A deprecated field keeps whatever it had, and a non-TEXT field is somebody else's branch.
+  expect(ownWorkshopTitleRole(field("workshopTitle", "TEXT", { deprecated: true }))).toBe(false);
+  expect(ownWorkshopTitleRole(field("workshopTitle", "LONG_TEXT"))).toBe(false);
+});
+
+test("the creatable combo is the PRIMITIVE's affordance, not a toggle rebuilt at the call site", () => {
+  /*
+    THE POINT OF THE PROP, ASSERTED WHERE IT CAN BE. Android's `SearchableSelect.kt` has had
+    `createAction` since the beginning and the web had no equivalent, so "offer the list and take
+    anything typed" was reachable only by hand-rolling an "…or type your own" toggle per call site —
+    which is how one question ends up with four wordings and four keyboard routes. The affordance
+    lives in `components/ui/SearchableSelect.tsx` and is forwarded by `Dropdown`; the call site
+    passes a label and a commit and nothing else.
+  */
+  const primitive = read("components/ui/SearchableSelect.tsx");
+  expect(primitive).toContain("export type SelectCreateAction");
+  // It forces the filter box on, because the box is where the typed term comes from. A create action
+  // behind `searchable={false}` is an answer nobody can reach.
+  expect(primitive).toContain("serverDriven || createAction != null");
+  // Under the options and never among them: a row in the list is a row Enter can take while the
+  // reader is still typing. Same rule, same words, as the handset's.
+  expect(primitive).toContain("else if (createTerm) create();");
+
+  expect(read("components/ui/Dropdown.tsx")).toContain("createAction={createAction}");
+
+  const control = read("components/designworkshop/StageWorkshopNameField.tsx");
+  expect(control).toContain("createAction={{ label: workshopNameCreateLabel, onCreate: onChange }}");
+  /*
+    THE ROW'S WORDS HAVE ONE OWNER, AND ON 2026-08-31 THEY ACQUIRED A SECOND CALLER.
+
+    This assertion named a local `createRowLabel` until the design workshop's own name became a
+    creatable combo on the HEADER form as well. The two boxes write the same column — stage 1's
+    value is promoted onto `DesignWorkshop.title` and wins the moment stage 1 is saved — so a
+    designer meets both, and a second wording of one row is a second row as far as a reader is
+    concerned. Exported rather than copied, for the same reason `workshopListNotice` owns the
+    sentence under every one of these controls. `dwWorkshopNameCreateLabel` is the Kotlin twin, and
+    `DwWorkshopNameFieldTest` pins the quoting on that side.
+  */
+  expect(control).toContain("export function workshopNameCreateLabel");
+  const header = read("components/designworkshop/DesignWorkshopHeaderForm.tsx");
+  expect(header).toContain("createAction={{ label: workshopNameCreateLabel, onCreate: commitTitle }}");
+  expect(header, "a second wording of the create row").not.toContain("as the name`");
+  // The box is the SERVER's, not a client-side filter over one truncated page: a name that sits past
+  // the cut would otherwise be answered "No matches", and the next thing a person does after that is
+  // type the name again slightly differently — the exact divergence this control was added to end.
+  expect(control).toContain("serverQuery={{ value: term, onChange: setTerm, pending }}");
+  /*
+    R2 IS SATISFIED BY THE BOX, NOT BY DISABLING ANYTHING, and this is the one place the difference
+    can be checked. Every other design-workshop picker calls `workshopListStandsDown` and goes grey
+    when its list is empty, because there the list IS the only answer. Here the list is a
+    convenience over a box that always works, so standing the control down over a dropped connection
+    would take away an answer the designer can give — which is R2 read backwards. The CALL is what
+    is asserted absent; the header names the function while ruling it out, and a bare substring test
+    would fail on the sentence that explains the decision.
+  */
+  expect(control).not.toContain("workshopListStandsDown(");
+  expect(control).toContain("this control never stands down");
 });
 
 test("STANDING TRIPWIRE: the registry declares exactly those three workshop-title fields, all TEXT", () => {

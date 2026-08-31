@@ -390,6 +390,44 @@ class DwDesignerTeamTest {
     }
 
     /**
+     * THE OFFLINE SENTENCE ALSO EXPLAINS A DISABLED BUTTON, AND THE OTHER TWO MUST NOT.
+     *
+     * Offline is the one state where "Move it" is switched off. The candidates are then this phone's
+     * remembered rows; a remembered grant is stale in the PERMISSIVE direction; and adoption is
+     * one-way — so a grant revoked in March would file a fortnight against a workshop this account
+     * cannot open, with nothing in either client able to undo it (`DROPDOWN_DESIGN.md` R6, argued at
+     * `AdoptIntoWorkshopDialog` and at `AdoptLocalDraftDialog.tsx`). A disabled control whose reason
+     * is nowhere is the control people tap repeatedly, so the reason rides on this sentence rather
+     * than on a second amber paragraph beside it.
+     *
+     * AND IT SAYS WHY THE WAIT IS FREE, which is the half that stops it reading as obstruction:
+     * adoption transmits nothing, so the stages could not have moved before signal in any case.
+     * Without that clause a designer reads this as the app refusing them at the worst moment.
+     *
+     * The other two arms describe a SHORT list under a LIVE button, so borrowing this wording into
+     * them would tell somebody whose only problem is a typed search term to go and find a connection.
+     */
+    @Test
+    fun `only the offline caveat explains the held move, and it says the wait is free`() {
+        val offline = dwAdoptCandidateNotice(offline = true, searched = false, listTruncated = false)!!
+        assertTrue("it must say the move is held", offline.contains("Moving waits for signal"))
+        assertTrue(
+            "and that nothing was going anywhere before signal in any case",
+            offline.contains("nothing would be sent before then anyway"),
+        )
+
+        for (live in listOf(
+            dwAdoptCandidateNotice(offline = false, searched = true, listTruncated = false)!!,
+            dwAdoptCandidateNotice(offline = false, searched = false, listTruncated = true)!!,
+        )) {
+            assertFalse(
+                "the button is live in this state; do not tell them to wait for signal",
+                live.contains("waits for signal"),
+            )
+        }
+    }
+
+    /**
      * OFFLINE WINS, because it is the only state under which the list is not the server's answer at
      * all. A designer with no signal who is told "clear your search" would clear it and see the same
      * rows.

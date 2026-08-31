@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import (
     APIModel,
@@ -9,6 +9,19 @@ from app.schemas.common import (
     forbid_clearing_location,
     require_location,
 )
+from app.services.questionnaire_kinds import KIND_TOKENS, coerce_kind
+
+
+def _validate_kind(value: str | None) -> str | None:
+    """Shared by the three payloads that accept a questionnaire kind.
+
+    ``coerce_kind`` raises ``ValueError``, which pydantic turns into a 422 naming the field and
+    listing the allowed tokens — the same shape a designer gets for any other bad value, rather than
+    the 500 an unvalidated token would become when the report tried to file it under a stage that
+    does not exist. Written once and reused because three payloads that each validated a vocabulary
+    their own way is three chances for one of them to stop.
+    """
+    return coerce_kind(value)
 
 
 class QuestionnaireSectionCreate(APIModel):
@@ -147,7 +160,14 @@ class QuestionnaireCreate(APIModel):
     # so no orphan survives — but a 500 tells a client to retry something that cannot succeed.
     # ``None`` still means "not attached"; only the empty string is refused.
     designWorkshopId: str | None = Field(default=None, min_length=1)
+    #: WHAT KIND OF QUESTIONNAIRE THIS IS — see ``app/services/questionnaire_kinds.py``, which owns
+    #: the vocabulary and the report-stage mapping. Optional, and an omitted or empty value means
+    #: "not stated" rather than a validation error: a picker sitting on its blank row is a real
+    #: answer, and every questionnaire that existed before this field was added is in that state.
+    kind: str | None = Field(default=None, examples=sorted(KIND_TOKENS))
     sections: list[CustomSectionCreate] = Field(default_factory=list)
+
+    _kind_is_a_token = field_validator("kind")(_validate_kind)
 
 
 class QuestionnaireUpdate(APIModel):
@@ -158,6 +178,11 @@ class QuestionnaireUpdate(APIModel):
     # AND NEVER "", which is what makes ``min_length=1`` safe here: see ``QuestionnaireCreate`` for
     # the 500 the empty string produced on all three of the routes that take this field.
     designWorkshopId: str | None = Field(default=None, min_length=1)
+    #: The kind, changed or CLEARED. An explicit ``null`` puts the questionnaire back to "not
+    #: stated" — which is why ``kind`` is in the route's ``_QUESTIONNAIRE_CLEARABLE_COLUMNS``:
+    #: without it ``clean_data`` would drop the null and the PATCH would answer 200 having changed
+    #: nothing, the exact silent no-op that tuple exists to prevent. Omitted leaves it alone.
+    kind: str | None = None
     isActive: bool | None = None
     #: PUBLISH THIS FORM TO EVERY DESIGNER — the "default questionnaire". **Admin only**, enforced in
     #: :func:`update_questionnaire` and not here, because a schema cannot see who is calling.
@@ -167,6 +192,8 @@ class QuestionnaireUpdate(APIModel):
     #: "is it everybody's". A retired shared form is a real state — it disappears from every
     #: designer's picker and keeps its recorded sittings — and one boolean could not express it.
     isShared: bool | None = None
+
+    _kind_is_a_token = field_validator("kind")(_validate_kind)
 
 
 class QuestionnaireReuse(APIModel):
@@ -204,6 +231,15 @@ class QuestionnaireReuse(APIModel):
     designWorkshopId: str | None = Field(default=None, min_length=1)
     title: str | None = Field(default=None, min_length=1, max_length=220)
     description: str | None = None
+    #: The copy's kind. UNSET CARRIES THE SOURCE'S KIND ACROSS, which is this model's ``description``
+    #: convention and not its ``designWorkshopId`` one — and the split is deliberate. A workshop is
+    #: the one thing a copy must NOT inherit (see this class's docstring: inheriting it would make
+    #: the default outcome "a second copy at the workshop that already has one"), whereas the kind is
+    #: a property of the INSTRUMENT: a market survey lifted for another cluster is still a market
+    #: survey. An explicit value overrides; an explicit ``null`` makes the copy's kind unstated.
+    kind: str | None = None
+
+    _kind_is_a_token = field_validator("kind")(_validate_kind)
 
 
 class QuestionnaireEntryCreate(APIModel):

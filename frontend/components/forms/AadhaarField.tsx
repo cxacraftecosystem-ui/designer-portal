@@ -7,6 +7,7 @@ import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import type { UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import { apiFetch, buildQuery } from "@/lib/api";
 import type { AadhaarLookupResult, ArtisanIdentityMatch } from "@/lib/types";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 /** UIDAI numbers are always 12 digits — the box refuses to hold a 13th. */
 const AADHAAR_LENGTH = 12;
@@ -301,7 +302,7 @@ export function AadhaarField({
   return (
     <div className="relative grid content-start gap-1">
       <label className="field-label" htmlFor={inputId}>
-        Aadhaar number{required ? " *" : ""}
+        Aadhaar number<RequiredMark when={required} />
       </label>
       <input
         ref={inputRef}

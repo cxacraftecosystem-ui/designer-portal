@@ -44,6 +44,7 @@ from app.services.report_questionnaires import (
     questionnaires_of,
 )
 from app.services.report_templates import TEMPLATES, SpecialSection
+from app.services.rich_text import Mark, RichBlock, RichDoc, RichSpan, to_stored_text
 
 # --------------------------------------------------------------------------------------
 # Fixtures
@@ -368,3 +369,118 @@ def test_a_sitting_with_no_respondent_name_is_still_titled_by_something_a_reader
     item = _item([_sitting("", title="Interview at the co-operative hall",
                            answers=[_answer("How many looms do you own?", "12")])])
     assert "Interview at the co-operative hall" in _text(_document([item])[0])
+
+
+# --------------------------------------------------------------------------------------
+# A rich-text answer, printed as prose and never as its own JSON
+# --------------------------------------------------------------------------------------
+#
+# WHAT THIS DEFENDS AGAINST, AND IT IS THE FAILURE ``report_builder.format_value`` ALREADY RECORDS
+# AT ITS OWN RICH_TEXT BRANCH. A ``String?`` column in this repository can hold one of three things —
+# NULL, prose, or a whole serialised document as ``{"blocks":[…]}`` — told apart only by looking at
+# the value (``rich_text``'s "rich text inside a plain String column" section carries the encoding).
+# This module read the third with ``runs_of(answer.answer_text.strip())``, which stringifies whatever
+# it is given, so a stored document printed as the literal text
+# ``{"blocks": [{"kind": "PARAGRAPH", …}]}`` where the artisan's answer should have been — inside a
+# .docx handed to an officer.
+#
+# AND NOTHING WOULD HAVE REPORTED A PROBLEM, which is the half that makes it dangerous rather than
+# merely ugly: ``has_answer`` was ``bool(answer_text.strip())``, and a JSON-shaped string is not
+# blank, so every emptiness check above it read the field as FILLED. The count on the sitting's
+# provenance line, the "Answers recorded" column of the index table and ``questionnaire_warnings``
+# would all have agreed the fieldwork was there.
+#
+# WHICH COLUMN, PRECISELY. The annexure renders ``QuestionnaireFormAnswer.answerText`` — the
+# designer's own uploaded form. The box that became a ``RichTextField`` on 2026-08-31 is its sibling,
+# ``QuestionnaireResponse.answerText`` on ``/questionnaire`` (singular), and as of that date no
+# client writes a document into the column tested here. :attr:`QuestionnaireAnswer.plain_answer`
+# argues why the guard belongs at this render boundary anyway; these tests pin the behaviour, so the
+# day the two boxes converge nobody has to notice.
+
+
+class _Doc:
+    """A stand-in document, so ``_text`` above can be reused over a bare block tuple.
+
+    ``questionnaire_annexure_blocks`` returns blocks rather than a document (deliberately — see its
+    docstring), and ``_text`` reads only ``.blocks``.
+    """
+
+    def __init__(self, blocks) -> None:
+        self.blocks = blocks
+
+
+def _all_text(blocks) -> str:
+    return _text(_Doc(blocks))
+
+
+def _stored(*paragraphs: str) -> str:
+    """What the web editor actually writes into the column for a FORMATTED answer.
+
+    Built through ``rich_text`` rather than hand-typed, so this fixture cannot drift from the shape
+    the encoder produces — ``test_rich_text_stored_columns`` pins that the two agree.
+    """
+    return to_stored_text(
+        RichDoc(
+            blocks=tuple(
+                RichBlock(spans=(RichSpan(text, marks=frozenset({Mark.BOLD})),))
+                for text in paragraphs
+            )
+        )
+    )
+
+
+class TestRichTextAnswers:
+    def test_a_formatted_answer_prints_its_prose(self):
+        item = _item(sittings=[_sitting(answers=[_answer("How many looms?", _stored("Twelve looms"))])])
+        text = _all_text(questionnaire_annexure_blocks([item]))
+        assert "Twelve looms" in text
+
+    def test_and_never_prints_the_documents_own_json(self):
+        """The single assertion this whole section exists for. ``{'blocks'`` in either quoting — a
+        Python dict repr or the stored JSON — is the string a reader would have met in the file."""
+        item = _item(sittings=[_sitting(answers=[_answer("How many looms?", _stored("Twelve looms"))])])
+        text = _all_text(questionnaire_annexure_blocks([item]))
+        assert "{'blocks'" not in text
+        assert '{"blocks"' not in text
+        assert "PARAGRAPH" not in text
+
+    def test_a_multi_paragraph_answer_keeps_both_paragraphs(self):
+        """``plain_runs`` collapses paragraph breaks to single spaces — the trade a table cell forces,
+        documented at that function — but it must not DROP one."""
+        item = _item(
+            sittings=[
+                _sitting(answers=[_answer("Tell me about the loom", _stored("It was my mother's", "She wove on it"))])
+            ]
+        )
+        text = _all_text(questionnaire_annexure_blocks([item]))
+        assert "It was my mother's" in text
+        assert "She wove on it" in text
+
+    def test_plain_prose_is_untouched(self):
+        """The identity guarantee. Every answer recorded before the editor existed must render
+        byte-for-byte as it did, which is why the flattening goes through ``plain_from_stored`` and
+        the runs branch on ``stored_text_document`` rather than pushing prose through the document
+        model."""
+        item = _item(sittings=[_sitting(answers=[_answer("How many looms?", "Twelve looms")])])
+        text = _all_text(questionnaire_annexure_blocks([item]))
+        assert "Twelve looms" in text
+
+    def test_an_empty_document_counts_as_unanswered(self):
+        """A rich-text box that was focused and left alone still saves
+        ``{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}``. Read raw that string is truthy, so the row
+        printed an empty answer cell AND was counted as answered — a claim about fieldwork that never
+        happened, in a document nobody can check against the sitting."""
+        blank = _answer("How many looms?", '{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}')
+        assert blank.has_answer is False
+        sitting = _sitting(answers=[blank])
+        assert sitting.answered_count == 0
+        # An unanswered OPTIONAL question prints nothing at all, so the whole sitting drops out and
+        # the annexure renders no heading — exactly as it does for a sitting nobody filled in.
+        assert questionnaire_annexure_blocks([_item(sittings=[sitting])]) == ()
+
+    def test_a_formatted_answer_is_counted_as_one(self):
+        """The counts read the flattened text too, so the index table and the provenance line agree
+        with what is printed under them."""
+        sitting = _sitting(answers=[_answer("How many looms?", _stored("Twelve looms"))])
+        assert sitting.answered_count == 1
+        assert _item(sittings=[sitting]).answered_total == 1

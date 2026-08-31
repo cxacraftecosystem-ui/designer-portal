@@ -86,10 +86,32 @@ type Props = {
    * order, so it is not printed as one.
    */
   showPlaced: boolean;
+  /**
+   * The registry's word for the tentative flag when this piece carries it, or null.
+   *
+   * A STRING RATHER THAN A BOOLEAN, so the word on screen is `stage_definitions.py`'s label and no
+   * component in either client owns a copy of it. NULL COVERS TWO DIFFERENT FACTS and deliberately
+   * does not distinguish them, because the card draws nothing for either: the maker has not ticked
+   * the box, and this surface cannot read the rows at all (the pool round). What matters is that
+   * neither is drawn as "settled" — the card makes no claim where it has none.
+   *
+   * IT DOES NOT MOVE THE CARD. The list this sits in is the arrangement that gets saved; see
+   * `ReviewPanel`'s header for the three reasons ordering by this flag here would be a write.
+   */
+  tentative: string | null;
   onRated: (rating: DesignRating) => void;
 };
 
-export function ReviewCard({ item, subtitle, round, openHref, fixedOrder, showPlaced, onRated }: Props) {
+export function ReviewCard({
+  item,
+  subtitle,
+  round,
+  openHref,
+  fixedOrder,
+  showPlaced,
+  tentative,
+  onRated
+}: Props) {
   const groupName = useId();
   const ledgerId = useId();
   const mine = item.myRating;
@@ -275,7 +297,23 @@ export function ReviewCard({ item, subtitle, round, openHref, fixedOrder, showPl
     <article className="panel p-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="font-display text-base font-bold text-ink-900">{item.label || "Untitled piece"}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-display text-base font-bold text-ink-900">{item.label || "Untitled piece"}</h3>
+            {/*
+              ONE WORD BESIDE THE NAME, in the same amber this app uses for "wants attention, nothing
+              is wrong" — which is what an unfinalised sketch is, and the same pair the stage form's
+              row chip uses so one concept does not have two colours across two screens.
+
+              IT IS INSIDE THE HEADING ROW AND NOT IN THE SUBTITLE because the subtitle is the piece's
+              IDENTITY (its sketch number, its designer), and folding a working state into an
+              identifier line makes it read as part of the name.
+            */}
+            {tentative ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                {tentative}
+              </span>
+            ) : null}
+          </div>
           {subtitle ? <p className="mt-0.5 text-xs text-ink-muted">{subtitle}</p> : null}
           <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
             <span className="inline-flex items-center gap-1 font-medium text-ink-700">

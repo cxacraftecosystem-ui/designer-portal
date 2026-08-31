@@ -72,6 +72,12 @@ import { changedKeys, EDITABLE_KEY_SET, type EditableKey } from "@/components/de
 // offers and which of the four sentences it prints. `e2e/design-workshop-link-picker-unit.spec.ts`
 // is what checks that a failed read stops claiming this account has no workshops.
 import { linkedWorkshopView } from "@/components/designworkshop/linkedWorkshopPicker";
+// The two strings the design workshop's own name is offered by. Imported rather than restated
+// because stage 1's box and this one write the SAME column — see `TITLE_MAX_LENGTH` below.
+import {
+  WORKSHOP_NAME_REASSURANCE,
+  workshopNameCreateLabel
+} from "@/components/designworkshop/StageWorkshopNameField";
 import { DateRangePicker, fromIsoDate, toIsoDate } from "@/components/forms/DateTimeField";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
@@ -81,6 +87,7 @@ import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { ApiError, listResource } from "@/lib/api";
 import {
+  listDesignWorkshops,
   listReportTemplates,
   patchDesignWorkshop,
   type DwSummary,
@@ -95,7 +102,10 @@ import {
   NO_FIELD_WORKSHOP,
   WORKSHOP_OPTION_PAGE_SIZE,
   deviceLooksOffline,
-  type WorkshopListState
+  workshopEmptyLabel,
+  workshopListNotice,
+  type WorkshopListState,
+  type WorkshopListVoice
 } from "@/lib/workshopOptions";
 
 /**
@@ -109,6 +119,18 @@ import {
  * design workshop's header — importing it for one number would drag both in.
  */
 const LINK_SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * The longest title this form will send. The number the box has always carried.
+ *
+ * ENFORCED IN CODE NOW RATHER THAN BY THE BROWSER, and that is the one thing the title box LOST by
+ * becoming a themed control: `maxLength` is an attribute of an `<input>` and a dropdown trigger is a
+ * `<button>`. So the create row's term is measured here instead, and an over-long one is refused
+ * with a sentence under the box rather than truncated — silently keeping the first 220 characters of
+ * a name somebody typed is the "saved, and it is not what you wrote" failure this repository refuses
+ * everywhere else.
+ */
+const TITLE_MAX_LENGTH = 220;
 
 /* ────────────────────────────────────────────────────────────────────────────
  * What this form may write, and what it may only show
@@ -339,6 +361,44 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
   const [nothingToSend, setNothingToSend] = useState(false);
 
   const [templates, setTemplates] = useState<DwTemplate[]>([]);
+  /**
+   * THE WORKSHOP'S OWN NAME, IN REACT STATE RATHER THAN IN THE FORM — and that move is the whole of
+   * the risk this box carried, so it is worth being explicit about what holds it shut.
+   *
+   * The previous lane left this box a plain `<input name="title">` on purpose and said why:
+   * *"converting it means a themed control inside `changedKeys`' value diff on a PATCH that can
+   * clear NOT NULL columns."* That hazard is real and is answered by three things rather than by
+   * hope:
+   *
+   *   1. **AN UNTOUCHED TITLE IS STILL ABSENT FROM THE BODY.** This state is SEEDED from
+   *      `initial.title`, and `changedKeys` compares `title.trim()` against
+   *      `storedText(initial.title)` — which is the same trim. Untouched means equal means the key
+   *      is not in `changed` means `body.title` is never assigned means `JSON.stringify` drops it
+   *      means `exclude_unset` leaves the column alone. The diff never learns that this control
+   *      changed shape, which is exactly the property that makes a diff safer than a dirty flag.
+   *   2. **A CLEARED TITLE CANNOT REACH THE COLUMN.** It cannot be cleared at all: there is no
+   *      `noneLabel` on the picker, so no row carries `value: ""`, and `workshopNameCreateLabel` is
+   *      only offered for a non-empty term. The blank guard in `submit` is kept anyway — see it for
+   *      why a refusal that "cannot fire" is still the right thing to have.
+   *   3. **IT ARMS THE GUARD BY HAND.** SKILL §12.1: a themed dropdown is a `<button>` and fires no
+   *      native input event, so the form's `onInput` cannot see it. `commitTitle` calls `noteEdit`.
+   *
+   * WHAT IS DIFFERENT FROM THE TEMPLATE PICKER BESIDE IT: nothing. `templateId` has been React state
+   * on this form since it was written, for the same reason and read by the same `onScreenValues`.
+   */
+  const [title, setTitle] = useState(initial.title ?? "");
+  /**
+   * WHAT THE NAME LIST'S READ ANSWERED — three states, for the reason `linkList` below is three.
+   *
+   * This one has never been anything else: the box is new, so there was no `[]` to migrate off. It
+   * is written as a `WorkshopListState` rather than as rows-plus-a-flag so that the four sentences
+   * come from `workshopListNotice` and cannot be spelled a fifth way on this screen.
+   */
+  const [nameList, setNameList] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
+  /** The name panel's own filter box, wired to the server. `namePending` covers the debounce too. */
+  const [nameTerm, setNameTerm] = useState("");
+  const [nameApplied, setNameApplied] = useState("");
+  const [namePending, setNamePending] = useState(true);
   const [templateId, setTemplateId] = useState(initial.templateId);
   const [workshopId, setWorkshopId] = useState(initial.workshopId ?? "");
   /**
@@ -527,6 +587,138 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
     */
   }, [linkTerm]);
 
+  /*
+    THE NAMES ALREADY ON RECORD, for the title box. One request, one debounce, one shape — the link
+    picker's above, deliberately, because two server-backed boxes on one form that respond at
+    visibly different speeds read as one of them being broken.
+
+    A DIFFERENT LIST FROM THE ONE ABOVE, AND THAT IS THE POINT OF THE TWO BOXES BEING TWO. This is
+    `GET /design-workshops` — the 22-stage records, whose TITLES are what a designer is naming this
+    workshop consistently with. The picker below it is `GET /workshops` — the field/training
+    workshop this record is FILED AGAINST. Two tables, two scopes, two access systems, as
+    `forms/DesignWorkshopSelect.tsx` sets out at length.
+  */
+  useEffect(() => {
+    let cancelled = false;
+    const trimmed = nameTerm.trim();
+    // Announced BEFORE the timer, for the reason `linkPending` gives: the third of a second between
+    // the last keystroke and the fetch would otherwise draw the PREVIOUS term's rows with no filter
+    // over them, which is a list that looks like an answer and is not one.
+    setNamePending(true);
+    const timer = window.setTimeout(() => {
+      listDesignWorkshops({
+        page: 1,
+        // `RENDER_CAP` under another name — one number for the fetch and the render, so two
+        // truncation sentences with two different totals cannot both be true at once.
+        pageSize: WORKSHOP_OPTION_PAGE_SIZE,
+        search: trimmed || undefined
+      })
+        .then((page) => {
+          if (cancelled) return;
+          setNameList({ kind: "ok", rows: page.items ?? [], total: page.total });
+          setNameApplied(trimmed);
+        })
+        .catch(() => {
+          // A FAILED READ IS NOT AN EMPTY ANSWER. Holding it as `[]` is what turns a dropped
+          // connection into a claim that this account is on no design workshop. Nothing else
+          // changes: the control stays usable, because typing was always the answer here.
+          if (!cancelled) setNameList({ kind: "failed" });
+        })
+        .finally(() => {
+          if (!cancelled) setNamePending(false);
+        });
+      // Clearing the box does NOT wait: an empty term is the unnarrowed list, the one request that
+      // is always about to be wanted and never about to be superseded by the next letter.
+    }, trimmed ? LINK_SEARCH_DEBOUNCE_MS : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [nameTerm]);
+
+  /**
+   * The title rows: this workshop's own name FIRST and always, then the distinct names on record.
+   *
+   * A PICKER THAT CANNOT DRAW ITS OWN CURRENT VALUE READS AS BLANK. With the box wired to the
+   * server the options ARE the answer to the term, so typing three letters that do not match this
+   * workshop's name would drop it out of the list — and the obvious repair for a blank title box is
+   * to answer it again, which on this form is a PATCH that renames the workshop. Same rule, same
+   * reason, as `seenLink` above and as `useRecordOffPage` on the pickers that hold an id.
+   *
+   * DEDUPLICATED because only the NAME is offered: two workshops may legitimately share one, and a
+   * row drawn twice is a control that appears to distinguish two answers it cannot. The server's
+   * order is kept — `GET /design-workshops` answers newest first, which is the workshop a designer
+   * naming one today almost always means.
+   */
+  const titleOptions = useMemo(() => {
+    const rows = nameList.kind === "ok" ? nameList.rows : [];
+    const current = title.trim();
+    const seen = new Set<string>();
+    const options: { value: string; label: string; hint?: string }[] = [];
+    if (current) {
+      seen.add(current);
+      options.push({ value: current, label: current, hint: "the name on this workshop now" });
+    }
+    for (const row of rows) {
+      const name = row.title?.trim();
+      // An over-long name is not offered: `_header_patch_data` would refuse it, so offering it would
+      // offer an option that turns the box into a refused save.
+      if (!name || name.length > TITLE_MAX_LENGTH || seen.has(name)) continue;
+      seen.add(name);
+      options.push({ value: name, label: name });
+    }
+    return options;
+  }, [nameList, title]);
+
+  /**
+   * WHY THIS SENTENCE IS SUPPRESSED WHILE A TERM IS APPLIED, and only the genuinely-empty one.
+   *
+   * With the box wired to the server, an `ok` answer with no rows means one of two completely
+   * different things: nothing at all is open to this account, or the letters just typed matched
+   * nothing. `workshopListNotice` cannot see the term and answers the first, so a designer hunting
+   * for "Sambalpuri" would be told no design workshops are open to them — a false claim about a
+   * grant table produced by a search. The panel already says the true thing in that case. A FAILED
+   * read still speaks with a term applied, because that fact is about the connection and is true
+   * whatever was typed.
+   */
+  const nameVoice: WorkshopListVoice = {
+    table: "design",
+    // The value here is a NAME, not a grant-bearing reference, so R6's reason for never keeping the
+    // list on the device is not this control's reason. `StageWorkshopNameField` carries the ruling.
+    accessList: false,
+    scoped: true,
+    reassurance: WORKSHOP_NAME_REASSURANCE,
+    online: !deviceLooksOffline()
+  };
+  const nameSearchedToNothing =
+    nameList.kind === "ok" && nameList.rows.length === 0 && nameApplied.length > 0;
+  const nameNotice = nameSearchedToNothing ? "" : workshopListNotice(nameList, nameVoice);
+
+  /**
+   * The one door the title is written through — a picked row, or a term committed from the box.
+   *
+   * `noteEdit` FIRST, because a themed control fires no native input event and the form's `onInput`
+   * therefore never sees this (SKILL §12.1); it also retires the last save's answer, which is the
+   * reason it is one function rather than a bare `markDirty`.
+   *
+   * THE LENGTH IS REFUSED, NOT TRIMMED. `maxLength` was an attribute of the `<input>` this box used
+   * to be and a dropdown trigger is a `<button>`, so the bound has to be applied here — and applied
+   * as a refusal, because silently keeping the first 220 characters of a name somebody typed stores
+   * something they did not write on the field the report cover reads. The refusal is set AFTER
+   * `noteEdit`, which clears the previous one.
+   */
+  function commitTitle(next: string) {
+    noteEdit();
+    if (next.trim().length > TITLE_MAX_LENGTH) {
+      setFieldProblem((current) => ({
+        ...current,
+        title: `That name is ${next.trim().length} characters and the longest this field stores is ${TITLE_MAX_LENGTH}. Shorten it and try again.`
+      }));
+      return;
+    }
+    setTitle(next);
+  }
+
   /** The rows of the current answer, with a stable identity so the by-id recovery below settles. */
   const linkRows = useMemo<Workshop[]>(() => (linkList.kind === "ok" ? [...linkList.rows] : []), [linkList]);
 
@@ -594,8 +786,9 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
   function onScreenValues(form: FormData): Record<EditableKey, string> {
     const box = (key: EditableKey) => String(form.get(key) ?? "").trim();
     return {
-      title: box("title"),
-      // React state, not a form control: a themed dropdown is a `<button>` and submits nothing.
+      // React state, not a form control: a themed dropdown is a `<button>` and submits nothing. Two
+      // of these now, and the `box` helper below is what the other eight still read through.
+      title: title.trim(),
       templateId: templateId.trim(),
       craftName: box("craftName"),
       clusterName: box("clusterName"),
@@ -622,26 +815,37 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
     setNothingToSend(false);
 
     /*
-      A TITLE OF THREE SPACES IS REFUSED HERE RATHER THAN ON THE WIRE, against the box.
+      AN EMPTY OR WHITESPACE TITLE IS REFUSED HERE RATHER THAN ON THE WIRE, against the box.
 
-      `required` blocks a genuinely empty box natively and names it, but `min_length=1` on the server
-      catches `""` and not `"   "` — so whitespace reaches `_header_patch_data`, which strips it,
-      finds the column is NOT NULL and answers a 422 the reader has to match to a box themselves. A
-      workshop titled with three spaces would render as a blank heading on every screen that lists
-      it and could then only be found by its id, so refusing it is right; refusing it HERE, through
-      the browser's own constraint validation, is what puts the sentence on the box.
+      `min_length=1` on the server catches `""` and not `"   "` — so whitespace reaches
+      `_header_patch_data`, which strips it, finds the column is NOT NULL and answers a 422 the
+      reader has to match to a box themselves. A workshop titled with three spaces would render as a
+      blank heading on every screen that lists it and could then only be found by its id.
+
+      ── IT CANNOT FIRE TODAY, AND IT STAYS ─────────────────────────────────────────────────────
+
+      The box is a creatable combo now, and neither of its two doors can produce a blank: the picker
+      carries no `noneLabel`, so no row holds `value: ""`, and `SelectCreateAction` is offered only
+      for a non-empty term. `title` is also seeded from a NOT NULL column. So this is a guard over a
+      state that has no route to it — which is exactly why it must not be deleted: what it defends is
+      a NOT NULL column on a PATCH whose whole contract is that `""` means CLEAR, and the cost of
+      being wrong once about "that cannot happen" is a 422 the designer cannot place, or worse.
+
+      ── AND IT IS A RENDERED REFUSAL NOW, NOT `reportValidity` ─────────────────────────────────
+
+      It used to reach `formElement.elements.namedItem("title")` and call `setCustomValidity` +
+      `reportValidity` on it. Constraint validation is a property of form CONTROLS, and a themed
+      dropdown is a `<button>` that submits nothing and validates nothing — so that route is simply
+      gone. The message goes to `fieldProblem.title`, which is treatment 1 of §12.11 rendered as
+      treatment 2: a `role="alert"` sentence under the box, pointed at by `aria-describedby`, in the
+      same slot a 422 naming this field would land in. One place, one shape, whichever end refused.
     */
     if (!onScreen.title) {
-      // Reached through the form's own element list rather than through a ref: `TextInput` is a
-      // plain function component over `InputHTMLAttributes`, which declares no `ref`, and adding one
-      // for this would be a change to a primitive forty other forms share.
-      const titleBox = formElement.elements.namedItem("title");
-      if (titleBox instanceof HTMLInputElement) {
-        titleBox.setCustomValidity(
+      setFieldProblem((current) => ({
+        ...current,
+        title:
           "Every workshop has a title — it is the heading every list, search result and report cover shows it by."
-        );
-        titleBox.reportValidity();
-      }
+      }));
       return;
     }
 
@@ -779,10 +983,17 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
         against[refusal.field] = refusal.message;
         setFieldProblem(against);
         /*
-          AND THE FOCUS GOES TO THE BOX THAT WAS REFUSED. A sentence under a control the reader has
-          scrolled past is a sentence they will not find; moving the caret there is what makes "show
-          it against the field" true rather than merely rendered. Hidden inputs are skipped — the two
-          date keys are written by a picker and there is nothing focusable under that name.
+          AND THE FOCUS GOES TO THE BOX THAT WAS REFUSED, WHERE THERE IS ONE. A sentence under a
+          control the reader has scrolled past is a sentence they will not find; moving the caret
+          there is what makes "show it against the field" true rather than merely rendered.
+
+          THREE KEYS HAVE NOTHING TO FOCUS AND ALL THREE FALL THROUGH QUIETLY. `startDate`/`endDate`
+          are hidden inputs written by the picker, and the `type === "hidden"` test skips them
+          explicitly. `templateId` and — since the title became a creatable combo — `title` are
+          themed dropdowns, i.e. `<button>`s that submit nothing, so `namedItem` finds no element
+          under those names at all and the `instanceof` guard is what catches them. The refusal is
+          still RENDERED against each of the three (`fieldProblem`), which is the half that matters;
+          what is lost is only the caret move, and there is no element to move it to.
         */
         const control = formElement.elements.namedItem(refusal.field);
         if (control instanceof HTMLElement && !(control instanceof HTMLInputElement && control.type === "hidden")) {
@@ -823,6 +1034,9 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
   }, [templates, initial.templateId]);
 
   const titleErrorId = `${baseId}-title-error`;
+  /* Two more ids for two more facts about one list — see the link picker's trio for the argument. */
+  const titleListId = `${baseId}-title-list`;
+  const titleScopeId = `${baseId}-title-scope`;
   const templateErrorId = `${baseId}-templateId-error`;
   const linkErrorId = `${baseId}-workshopId-error`;
   /*
@@ -857,49 +1071,90 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
 
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {/*
-            THE REFUSAL IS A SIBLING OF THE `Field` AND NOT A CHILD OF IT, and the difference is not
-            cosmetic.
+            "NAME OF WORKSHOP" GETS THE NAMES ALREADY ON RECORD, AND STILL TAKES ANYTHING TYPED.
 
-            `Field` is a real `<label>` WRAPPED AROUND its control, with no `for`. For that shape the
-            accessible-name algorithm builds the input's name from the label's whole text content
-            (minus the control itself) — so a refusal rendered inside it stops being a description
-            and becomes part of the field's NAME. The box a screen reader announced as "Workshop
-            title, edit text" would announce itself as "Workshop title * title cannot be emptied.
-            Every workshop has one, the column is NOT NULL…, edit text", and it would go on saying
-            the whole sentence every time the reader tabbed back to check what they had typed —
-            while `aria-describedby` read it out a second time. The one field on this form with a
-            refusal under it would be the one field whose question could no longer be heard.
+            THE SAME CONTROL AS STAGE 1'S, BECAUSE IT IS THE SAME COLUMN. `promoted_values` copies
+            `workshopSetup.workshopTitle` onto `DesignWorkshop.title`, and the amber note further
+            down this form says which of the two writers wins. A designer who meets a creatable combo
+            on the stage form and a plain box here is being asked one question by two controls, on
+            the field a ministry reads off the cover — which is exactly the divergence the offer
+            exists to close. `StageWorkshopNameField` carries the whole argument, including the
+            standing objection to putting a dropdown on this fact and why it does not reach a control
+            that cannot refuse an answer.
 
-            Outside the label, the association is unchanged: `aria-describedby` is an ID reference
-            and does not care where in the document the target sits. The wrapper carries `Field`'s
-            own `min-w-0` because it takes over its place in the grid, and without it a long refusal
-            widens this column and spills over the field beside it.
+            `FieldBlock` AND NOT `Field`, and this is what changed structurally. `Field` is a real
+            `<label>` wrapped around its control: it cannot name a `<button>` at all, and it forwards
+            a stray click into the menu, which slams it shut after one pick. `FieldBlock` is a
+            `<div>` named by `aria-labelledby` pointing at its own label span, and it publishes that
+            id through `FieldLabelProvider` so the trigger announces "Workshop title, Bagru 2026"
+            rather than the value alone.
 
-            `FieldBlock` needs none of this and its hints are left where they are: it is a `<div>`
-            named by `aria-labelledby` pointing at its label span alone, so nothing else inside it
-            can reach the name.
+            THE REFUSAL MOVES INTO `hint` FOR THE SAME REASON IT WAS A SIBLING BEFORE — the note that
+            used to sit here explained at length that a refusal rendered INSIDE a `Field` becomes
+            part of the input's accessible NAME, because that wrapper is a label with no `for`.
+            `FieldBlock` does not have that problem: nothing inside it can reach the name, and its
+            `hint` slot is the ordinary home for a described-by paragraph. The `min-w-0` wrapper is
+            gone with the same change — `FieldBlock` is itself a grid cell here.
           */}
-          <div className="grid min-w-0 gap-1">
-            <Field label="Workshop title" required>
-              <TextInput
-                name="title"
-                required
-                maxLength={220}
-                defaultValue={initial.title}
-                aria-invalid={fieldProblem.title ? true : undefined}
-                aria-describedby={fieldProblem.title ? titleErrorId : undefined}
-                // Clears the custom refusal set above the moment the reader starts fixing it —
-                // otherwise the browser goes on refusing the submit with a sentence about the text
-                // that is no longer in the box.
-                onInput={(event) => event.currentTarget.setCustomValidity("")}
-              />
-            </Field>
-            {fieldProblem.title ? (
-              <p id={titleErrorId} role="alert" className="text-xs text-error-600">
-                {fieldProblem.title}
-              </p>
-            ) : null}
-          </div>
+          <FieldBlock
+            label="Workshop title"
+            required
+            hint={
+              <>
+                {fieldProblem.title ? (
+                  <p id={titleErrorId} role="alert" className="text-xs text-error-600">
+                    {fieldProblem.title}
+                  </p>
+                ) : null}
+                {/*
+                  WHICH OF THE FOUR EMPTY STATES THIS IS — never one sentence for all of them. It is
+                  the only place on this box that can say the list failed, and the box stays fully
+                  usable in every one of them, so the sentence describes the LIST and never what the
+                  designer may not do.
+                */}
+                {nameNotice ? (
+                  <p id={titleListId} className="text-xs leading-5 text-ink-500" aria-live="polite">
+                    {nameNotice}
+                  </p>
+                ) : null}
+                <p id={titleScopeId} className="text-xs leading-5 text-ink-500">
+                  Names from workshops you can open. Type a new one if it is not here.
+                </p>
+              </>
+            }
+          >
+            <Dropdown
+              value={title.trim()}
+              onChange={commitTitle}
+              options={titleOptions}
+              placeholder="Type the name, or pick one already on record"
+              /*
+                NEVER STOOD DOWN, on an empty list or a failed one. R2 — a field may only be
+                mandatory where it is answerable — is satisfied without disabling anything, because
+                the box IS the answer. `saving` is this form's own and nothing else.
+              */
+              disabled={saving}
+              emptyLabel={workshopEmptyLabel(nameList, nameVoice)}
+              describedBy={`${fieldProblem.title ? `${titleErrorId} ` : ""}${titleListId} ${titleScopeId}`}
+              /*
+                THE BOX IS THE SERVER'S, so a name on page four is reachable by typing it. A local
+                filter over one fetched page answers "No matches" about a workshop that exists, and
+                the next thing a person does after "no matches" is type the name again slightly
+                differently — the exact divergence this offer was added to prevent. `truncated` is
+                deliberately absent: `/design-workshops` reports a real total.
+              */
+              serverQuery={{ value: nameTerm, onChange: setNameTerm, pending: namePending }}
+              /*
+                THE HALF THE STANDING OBJECTION COULD NOT REFUSE. Whatever is in the box is
+                committable, so a workshop that exists nowhere yet is answered as fast as one with a
+                history — and the row NAMES IT BACK, quoted, so the reader can see the capitals and
+                the stray double space before they store them. No `noneLabel` beside it: this column
+                is NOT NULL, and a row offering to leave a document unnamed is a row the server
+                refuses.
+              */
+              createAction={{ label: workshopNameCreateLabel, onCreate: commitTitle }}
+            />
+          </FieldBlock>
 
           {/* FieldBlock, not Field: `Field` is a `<label>`, and a `<label>` cannot name a `<button>`
               — every themed dropdown in this app is one. See `FormControls.Field`'s header. */}

@@ -17,11 +17,8 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.AiCatalogueDto
 import com.designprototype.workshop.data.AiProviderDto
@@ -259,8 +255,10 @@ private fun ProviderKeyCard(
     onRemove: () -> Unit,
 ) {
     var typedKey by remember(state.provider) { mutableStateOf("") }
+    // Per-composition only, and re-masked whenever the provider changes — a reveal that
+    // survived switching provider would put one key on screen under another one's label.
+    var revealKey by remember(state.provider) { mutableStateOf(false) }
     var chosenModel by remember(state.provider, state.model) { mutableStateOf(state.model) }
-    var modelMenuOpen by remember { mutableStateOf(false) }
     var howToOpen by remember { mutableStateOf(false) }
 
     val chosen = provider.models.firstOrNull { it.id == chosenModel }
@@ -333,47 +331,70 @@ private fun ProviderKeyCard(
                 label = { Text(if (state.configured) "Replace the key" else "Paste your key") },
                 placeholder = { Text(provider.keyPrefix?.let { "$it…" } ?: "Your API key") },
                 singleLine = true,
-                // The one control on this screen that must never echo: a key typed in a courtyard
-                // is typed in front of whoever is standing there.
-                visualTransformation = PasswordVisualTransformation(),
+                // ── THE COMMENT ABOVE THIS LINE SAID "MUST NEVER ECHO", AND THAT RULE WAS
+                //    CHANGED ON 2026-08-30 ──────────────────────────────────────────────────
+                //
+                // The old argument — a key typed in a courtyard is typed in front of whoever is
+                // standing there — is real and is why the box is still MASKED BY DEFAULT and why
+                // the reveal is never persisted (ui/PasswordReveal.kt). What it got wrong is
+                // treating "never" as the safe direction. The person cannot see what they typed
+                // at all, so a key mistyped on a soft keyboard is saved wrong and reported as
+                // "the provider rejected this" much later, and the fix is to paste it again
+                // blind. The reveal is a deliberate press, by the person holding the phone, who
+                // is the one who knows who is standing behind them.
+                visualTransformation = passwordTransformation(revealKey),
+                trailingIcon = {
+                    PasswordRevealIcon(
+                        revealed = revealKey,
+                        onToggle = { revealKey = !revealKey },
+                        noun = "key"
+                    )
+                },
                 modifier = Modifier.fillMaxWidth()
             )
 
             Spacer(Modifier.height(12.dp))
-            ExposedDropdownMenuBox(
-                expanded = modelMenuOpen,
-                onExpandedChange = { modelMenuOpen = it }
-            ) {
-                OutlinedTextField(
-                    value = chosen?.label ?: chosenModel,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Model") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(modelMenuOpen) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(
-                        androidx.compose.material3.MenuAnchorType.PrimaryNotEditable, true
+            /*
+              THIS WAS THE APP'S ONLY `ExposedDropdownMenuBox` — DROPDOWN_DESIGN §3.4, closed.
+
+              ── WHAT WAS WRONG WITH IT, WHICH IS NOT THAT IT LOOKED DIFFERENT ────────────────
+
+              It sat outside the shared picker entirely: no [SEARCH_THRESHOLD], no [SelectOption], and
+              — the part §3.4 is actually about — no way to say which of the four empty states it was
+              in. `provider.models` is a constant compiled into this APK, so today it cannot be
+              empty and none of those sentences would ever fire; that is a fact about the CURRENT
+              vocabulary and not about the control, and §3.4's rule is that a control which cannot
+              say which state it is in reads as "there are none" the day it can be empty. Routing it
+              through the shared field means the day these models come off the server — which is
+              exactly what §3.1's `workshopLevelOptions` pattern anticipates — the sentences are
+              already there.
+
+              It also gains the things every other picker on this handset has and this one did not:
+              the sheet above eight options (there are more than eight models on some providers), the
+              "N options / M of N match" live region, IME commit, and a trigger whose accessible name
+              is the LABEL plus the value rather than the value alone.
+
+              CLASS (a), so [BUNDLED_LIST_HAS_NO_SENTENCE] and nothing further: a vocabulary compiled
+              into the APK is always answerable and §3.1 gives it no sentence to say.
+            */
+            SearchableSelectField(
+                label = "Model",
+                options = provider.models.map { model ->
+                    SelectOption(
+                        value = model.id,
+                        // The "(recommended)" marker stays in the LABEL rather than moving to `hint`.
+                        // It is not a second fact that tells two models apart; it is part of how this
+                        // screen names one of them, and `hint` is drawn on its own line.
+                        label = model.label + if (model.id == provider.defaultModel) " (recommended)" else ""
                     )
-                )
-                ExposedDropdownMenu(
-                    expanded = modelMenuOpen,
-                    onDismissRequest = { modelMenuOpen = false }
-                ) {
-                    provider.models.forEach { model ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    model.label +
-                                        if (model.id == provider.defaultModel) " (recommended)" else ""
-                                )
-                            },
-                            onClick = {
-                                chosenModel = model.id
-                                modelMenuOpen = false
-                            }
-                        )
-                    }
-                }
-            }
+                },
+                selectedValue = chosenModel,
+                // A model must always be chosen; the "not one this app offers any more" case is
+                // reported by the sentence above this box, not by an empty row inside it.
+                includeNone = false,
+                emptyMessage = BUNDLED_LIST_HAS_NO_SENTENCE,
+                onSelect = { chosenModel = it }
+            )
 
             if (chosen != null) {
                 Spacer(Modifier.height(6.dp))

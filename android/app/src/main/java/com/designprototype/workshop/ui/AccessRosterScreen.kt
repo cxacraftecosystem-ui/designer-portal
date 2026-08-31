@@ -1025,7 +1025,9 @@ private fun AccessEditDialog(
                     value = email,
                     onValueChange = { if (existing == null) email = it },
                     readOnly = existing != null,
-                    label = { Text(if (existing == null) "Email *" else "Email (cannot be changed here)") },
+                    label = {
+                        Text(requiredMarked(if (existing == null) "Email *" else "Email (cannot be changed here)"))
+                    },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     modifier = Modifier.fillMaxWidth()

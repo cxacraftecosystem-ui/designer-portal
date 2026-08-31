@@ -31,7 +31,7 @@ import org.junit.Test
  * ruling worth pinning was therefore lifted out of the composables into pure functions, and the ones
  * below are pinned here because each is a defect that would be **invisible on a developer's desk**:
  *
- *  * three of the four door policies only occur when a fetch fails or a device is offline;
+ *  * the door's one-line hint only says anything but "tick the box" when a fetch failed;
  *  * the "never re-ask a refusal" rule only fires for an account somebody withdrew on ANOTHER day;
  *  * the withheld branch only fires on a route fewer than five identified accounts used;
  *  * and the two-clock decision line only differs on a device that answered before it synced.
@@ -41,74 +41,174 @@ import org.junit.Test
 class UsageConsentCopyTest {
 
     // -----------------------------------------------------------------------------------------
-    // The door
+    // The door, since 2026-08-30
+    // -----------------------------------------------------------------------------------------
+    //
+    // WHAT THESE FOUR TESTS REPLACED, AND WHY THE REPLACEMENT IS NOT A WEAKENING.
+    //
+    // There used to be five tests here, over a `UsageDoorPolicy` with three arms and a
+    // `usageSignInBlockedReason` with four. One of them was captioned "THE MOST IMPORTANT ASSERTION
+    // IN THIS FILE": that a door which could not read the recording notice let the person through
+    // rather than holding them at a permanently disabled button — a fleet-wide lockout out of one
+    // bad deploy of `GET /usage/consent/notice`.
+    //
+    // That property is now structural rather than asserted, and it is stronger for it. The box no
+    // longer agrees to the notice; it agrees to the TERMS, and `TERMS_CLAUSES` is nine constants
+    // compiled into the binary. There is no fetch that can fail to produce the question, so there is
+    // no state in which the door cannot be answered — which is why `UsageDoorState.mayProceed` is
+    // now `agreed` and nothing else, exactly as `frontend/app/login/page.tsx` states it.
+    //
+    // What is left to pin is that the notice's ABSENCE changes nothing about the gate and is still
+    // said out loud, so nobody re-derives the old escape hatch from a screen that looks stuck.
+
+    @Test
+    fun `the missing notice changes what is said and never what is required`() {
+        // The same sentence with a notice and without one. THIS IS THE ASSERTION THE OLD POLICY
+        // ENUM EXISTED FOR, inverted: a door that could not read the notice used to stop requiring
+        // the tick, and now it requires exactly the same tick and says exactly the same thing,
+        // because the terms it agrees to are in the binary either way.
+        assertEquals(
+            usageDoorHint(agreed = false, noticeReady = true, stillFetching = false),
+            usageDoorHint(agreed = false, noticeReady = false, stillFetching = false)
+        )
+
+        // A disabled button announces "disabled" and nothing else, so this sentence IS the
+        // accessibility affordance and must name the control that clears it. The web can say only
+        // "Required to sign in." because its live region is bound to the checkbox by
+        // `aria-describedby`; a Compose live region is a separate node with no such binding.
+        val unticked = usageDoorHint(agreed = false, noticeReady = true, stillFetching = false)
+        // Lower-cased on both sides: the sentence opens with the verb, so a case-sensitive test
+        // here would pass only by accident of where the clause happens to sit.
+        assertTrue(
+            "must name the control that unblocks it",
+            unticked.orEmpty().lowercase().contains("tick the box")
+        )
+    }
+
+    @Test
+    fun `a tick with no notice to file it against says so and does not claim to be filed`() {
+        val filed = usageDoorHint(agreed = true, noticeReady = true, stillFetching = false)
+        assertNull("nothing to say once the answer can be recorded", filed)
+
+        val unfiled = usageDoorHint(agreed = true, noticeReady = false, stillFetching = false)
+        // Somebody let past the door must not conclude the question has been answered on their
+        // behalf, or `UsageConsentGateScreen` a moment later reads as the app asking twice.
+        assertEquals(USAGE_NOTICE_NOT_FILED_LINE, unfiled)
+        assertTrue(USAGE_NOTICE_NOT_FILED_LINE.contains("not filed yet"))
+        assertTrue(USAGE_NOTICE_NOT_FILED_LINE.contains("asked again after signing in"))
+    }
+
+    @Test
+    fun `the first fetch says nothing at all while it is in flight`() {
+        // It lasts a second or two on a fresh install, and a line that appears and vanishes on its
+        // own is read as a fault. It blocks nothing either — there is nothing left to block on.
+        assertNull(usageDoorHint(agreed = true, noticeReady = false, stillFetching = true))
+        // Still the tick, though: "fetching" is not an excuse to skip the question.
+        assertEquals(
+            USAGE_TICK_TO_SIGN_IN,
+            usageDoorHint(agreed = false, noticeReady = false, stillFetching = true)
+        )
+    }
+
+    @Test
+    fun `the label and the link read as one sentence, and the link is the tail of it`() {
+        // The owner's instruction on 2026-08-30, word for word: "Keep an I agree to terms and
+        // conditions with terms and conditions underlined." The two halves are separate constants
+        // because they are separate controls — see `UsageAgreeRow` for why a link inside a
+        // `toggleable` row would tick the box instead of opening the terms — so the one thing a
+        // test can check is that they still compose back into the sentence that was asked for.
+        assertEquals("I agree to the terms and conditions", "$USAGE_AGREE_LABEL $USAGE_TERMS_LINK")
+        // Mid-sentence, so lower case and no full stop. `TERMS_TITLE` is the heading.
+        assertEquals(USAGE_TERMS_LINK, USAGE_TERMS_LINK.lowercase())
+        assertFalse(USAGE_AGREE_LABEL.endsWith("."))
+        assertNotEquals(TERMS_TITLE, USAGE_TERMS_LINK)
+
+        // The gate screen asks the same question and is not signing anybody in, so its one-word
+        // difference is deliberate and must not be collapsed into the door's sentence.
+        assertNotEquals(USAGE_TICK_TO_SIGN_IN, USAGE_TICK_TO_CONTINUE)
+        assertTrue(USAGE_TICK_TO_CONTINUE.lowercase().contains("tick the box"))
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The terms themselves
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun `a notice in hand makes the tick required`() {
-        assertEquals(
-            UsageDoorPolicy.Blocking,
-            usageDoorPolicy(noticeReady = true, stillFetching = false)
-        )
-        // Still fetching but ALREADY HOLDING a stored copy: the stored copy is what is on screen, so
-        // the question can be put and the tick is required. This is the ordinary offline case.
-        assertEquals(
-            UsageDoorPolicy.Blocking,
-            usageDoorPolicy(noticeReady = true, stillFetching = true)
-        )
+    fun `the terms are nine numbered clauses and the served notice is the tenth`() {
+        assertEquals(9, TERMS_CLAUSES.size)
+        // Numbered in order with no gaps and no repeats: the number is drawn from the data, so a
+        // clause inserted without renumbering would put two 4s on a legal agreement.
+        assertEquals((1..9).toList(), TERMS_CLAUSES.map { it.number })
+        // Derived, never a literal 10 — this is the same rule the guide page's step count is held
+        // to on the web, for the same reason: a number written down twice is a number that drifts.
+        assertEquals(10, TERMS_RECORDING_CLAUSE_NUMBER)
+
+        TERMS_CLAUSES.forEach { clause ->
+            assertTrue("clause ${clause.number} has no title", clause.title.isNotBlank())
+            assertTrue("clause ${clause.number} has no body", clause.body.isNotBlank())
+        }
     }
 
     @Test
-    fun `no notice from any source lets sign-in through rather than locking the fleet out`() {
-        // THE MOST IMPORTANT ASSERTION IN THIS FILE, and the least obvious. `consent_notice()` is
-        // computed on the server from the running collection policy, so one bad deploy can break
-        // `GET /usage/consent/notice` while `POST /auth/login` beside it keeps working. A door that
-        // insisted on a tick it could not put in front of anybody would be a permanently disabled
-        // button on the one screen that has no other controls — every handset in every village.
-        //
-        // The requirement is NOT weakened by this: `UsageConsentGateScreen` blocks after sign-in,
-        // where a token exists, `GET /usage/consent` carries the notice inline as a second source,
-        // and the person can actually answer. The enforcement moves one screen later; it does not go
-        // away. Anyone tightening this to `Blocking` must first say what happens to a fleet that
-        // cannot read the notice.
-        assertEquals(
-            UsageDoorPolicy.AskLater,
-            usageDoorPolicy(noticeReady = false, stillFetching = false)
+    fun `the clauses are the web's, verbatim`() {
+        // THE POINT OF THIS TEST IS THE COMMENT ON IT. `frontend/app/terms/page.tsx` carries the
+        // identical nine, and the tick that accepts them is the same tick on both clients — so two
+        // wordings would not be an inconsistency, they would be two different agreements, one of
+        // which somebody accepted without ever seeing it. Nothing can diff two repositories from
+        // here, so what is pinned is the load-bearing clause of each of the two that a well-meaning
+        // editor is most likely to "improve": the one about regulated identity numbers, and the one
+        // about work still sitting in an outbox.
+        val identity = TERMS_CLAUSES.first { it.number == 4 }
+        assertEquals("Identity numbers", identity.title)
+        assertTrue(identity.body.contains("Aadhaar and Pehchan card numbers are stored masked"))
+        assertTrue(identity.body.contains("never shown in lists, exports or reports"))
+
+        val offline = TERMS_CLAUSES.first { it.number == 6 }
+        assertEquals("Offline use", offline.title)
+        assertTrue(offline.body.contains("do not uninstall the app or clear its data"))
+        assertTrue(offline.body.contains("outbox"))
+
+        // Clause 9 is the one that makes the version column mean something to a reader.
+        val changes = TERMS_CLAUSES.first { it.number == 9 }
+        assertTrue(changes.body.contains("The version you agreed to is recorded against your account"))
+    }
+
+    @Test
+    fun `no clause writes a sentence the server owns`() {
+        // The boundary `UsageCopy.kt`'s header draws, enforced where it is easiest to cross by
+        // accident. What is collected, what is not, the retention answer and the withdrawal terms
+        // arrive in `GET /usage/consent/notice` and are rendered by `UsageNoticeBody` as clause 10.
+        // A clause here that paraphrased any of them would be the same decision described twice —
+        // and on a consent screen that is not an inconsistency, it is two different consents.
+        val headings = listOf(
+            "What is recorded",
+            "What is never recorded",
+            "How long it is kept",
+            "Who can read it",
+            "Taking it back",
         )
+        TERMS_CLAUSES.forEach { clause ->
+            headings.forEach { heading ->
+                assertFalse(
+                    "clause ${clause.number} restates the served notice's \"$heading\"",
+                    clause.body.contains(heading) || clause.title == heading
+                )
+            }
+        }
     }
 
     @Test
-    fun `the door waits while the first fetch is in flight`() {
-        assertEquals(
-            UsageDoorPolicy.Waiting,
-            usageDoorPolicy(noticeReady = false, stillFetching = true)
-        )
-    }
-
-    @Test
-    fun `the blocked reason names the checkbox, and says something different with no signal`() {
-        val unticked = usageSignInBlockedReason(UsageDoorPolicy.Blocking, agreed = false, online = true)
-        assertTrue("must name the control that unblocks it", unticked.orEmpty().contains("tick the box"))
-
-        // A disabled button announces "disabled" and nothing else, so this sentence IS the
-        // accessibility affordance. Nothing may return null while sign-in is actually blocked.
-        assertNull(usageSignInBlockedReason(UsageDoorPolicy.Blocking, agreed = true, online = true))
-        assertNull(usageSignInBlockedReason(UsageDoorPolicy.AskLater, agreed = false, online = true))
-
-        // Two different sentences for waiting, on `outboxDeviceBanner`'s rule: telling somebody with
-        // four bars to go and find a signal sends them up a hill that cannot help.
-        val waitingOnline = usageSignInBlockedReason(UsageDoorPolicy.Waiting, agreed = false, online = true)
-        val waitingOffline = usageSignInBlockedReason(UsageDoorPolicy.Waiting, agreed = false, online = false)
-        assertNotEquals(waitingOnline, waitingOffline)
-        assertTrue(waitingOffline.orEmpty().contains("no connection"))
-    }
-
-    @Test
-    fun `the ask-later line says the question is coming and not that it was waived`() {
-        // Somebody let past the door must not conclude the question has been answered on their
-        // behalf, or the gate screen a moment later reads as the app asking twice.
-        assertTrue(USAGE_ASK_LATER_LINE.contains("after signing in"))
-        assertTrue(USAGE_ASK_LATER_LINE.contains("not be able to use the app until you have answered"))
+    fun `a missing notice hides one clause and never the agreement`() {
+        // Nine of the ten clauses need no network at all, which is the whole reason the terms are a
+        // screen in this app rather than a link to the web: the handsets are used where there is no
+        // signal, and a link to a page a phone cannot load is worse than no link. So the sentence
+        // clause 10 falls back to must not claim the TERMS are unavailable while nine of them are on
+        // the screen underneath it — a reader told that stops trusting either statement.
+        assertFalse(TERMS_NOTICE_UNAVAILABLE_LINE.contains("terms could not"))
+        assertTrue(TERMS_NOTICE_UNAVAILABLE_LINE.contains("Everything above still applies"))
+        // And it names the other place the same text lives, because "later, in Settings" is the
+        // honest next move for somebody with no signal and "try harder now" is not.
+        assertTrue(TERMS_NOTICE_UNAVAILABLE_LINE.contains("Settings"))
     }
 
     // -----------------------------------------------------------------------------------------

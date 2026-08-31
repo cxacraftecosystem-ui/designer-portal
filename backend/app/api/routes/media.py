@@ -1269,7 +1269,45 @@ async def set_media_transcript(
     """Replace a media file's stored transcript with approved text (e.g. an AI-refined transcript the
     user accepted). Allowed for the uploader or an admin, mirroring the media-delete permission. Marks
     the transcript COMPLETED and clears any prior error. Declared before ``GET /{media_id}`` so the
-    two-segment path resolves here."""
+    two-segment path resolves here.
+
+    **IT IS ALSO WHERE THE EDITED FLAG IS SET, BECAUSE THIS IS THE ONLY ROUTE BY WHICH A HUMAN'S WORDS
+    REPLACE A MACHINE'S.** Owner, 2026-08-30: *"it should appear in the rich text box with the flag of
+    whether it has been edited by the user or not"*. Until 2026-08-31 this route wrote the words and
+    recorded neither that an edit had happened nor who made it, so a transcript a researcher had
+    rewritten line by line and one straight off ElevenLabs were byte-indistinguishable to the
+    consolidated interview page, the report annexures and both handsets.
+
+    ``transcriptEditedAt`` IS the flag and it is stamped from the SERVER's clock, not from anything
+    the caller sends: an edit stamp a client could choose is not an audit stamp. ``transcriptEditedById``
+    is likewise ``current_user.id`` and never a field on the payload, so the pair cannot be attributed
+    to somebody who was not at the keyboard.
+
+    NEITHER COLUMN IS REACHABLE FROM ``POST /media/complete``, and that needs no code: they are absent
+    from ``MediaCompleteRequest``, whose ``APIModel`` sets ``extra="forbid"``, so an upload that tried
+    to arrive pre-stamped as human-edited is refused outright rather than dropped the way
+    :data:`SERVER_WRITTEN_TRANSCRIPT_FIELDS` drops the four it does list. The distinction is worth
+    keeping: those four are dropped precisely because a shipped client once sent them, and these two
+    have never been on the wire.
+
+    **ACCEPTING AN AI REFINEMENT ALSO STAMPS IT, AND THAT IS THE CONSERVATIVE ANSWER RATHER THAN A
+    PRECISE ONE.** ``POST /media/{id}/refine-transcript`` returns text without persisting it, so a
+    designer who accepts a refinement arrives here with words that are a MODEL's rather than their
+    own — strictly, "a person corrected this" overclaims. This route cannot tell the two apart: it
+    receives a string. Given that, it flags, because the two errors are not the same size. Flagging
+    an accepted refinement says "a person was involved in the words on screen", which is true — they
+    chose them over what was there. NOT flagging would say "this is what the transcription provider
+    returned" about text that provider never produced, and that is the single claim this column was
+    added to stop being made silently.
+
+    THE QUEUE NEVER CLEARS THE FLAG, and that asymmetry is deliberate. ``media_queue`` writes
+    ``transcriptText`` on every provider result — including the refined, translated pass that lands
+    hours after a quick transcript — and if it also blanked ``transcriptEditedAt`` a designer's
+    corrections would be recorded as the machine's own words at the moment they were overwritten. The
+    two clients resolve that collision the other way round, in the place where the person can be asked:
+    a refined transcript is OFFERED against an edited box and never imposed on it. See
+    ``frontend/app/(protected)/questionnaire/page.tsx``.
+    """
     media = await require_record(db.mediafile, media_id)
     if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
         raise HTTPException(
@@ -1282,6 +1320,11 @@ async def set_media_transcript(
             "transcriptText": payload.text,
             "transcriptStatus": "COMPLETED",
             "transcriptError": None,
+            # Server clock and server-resolved identity — see the docstring. ``datetime.now(UTC)``
+            # rather than a Prisma default because this column has no default: it must stay NULL for
+            # every row the queue writes, and only ever gain a value here.
+            "transcriptEditedAt": datetime.now(UTC),
+            "transcriptEditedById": current_user.id,
         },
         include=INCLUDE,
     )

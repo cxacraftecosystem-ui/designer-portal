@@ -513,6 +513,76 @@ def gate_refusal(consent: DictationConsent, send: Send = DICTATION) -> str | Non
 #: that attaches it to a stage names the workshop outright.
 MEDIA_TAG = "designWorkshop"
 
+#: The tag a QUESTIONNAIRE clip carries, written by both clients at upload time.
+#:
+#: ── WHY THIS MODULE NOW KNOWS ABOUT INTERVIEWS AT ALL ─────────────────────────────────────────
+#: :func:`stage_attached_workshop_ids` says in as many words that of the 528 AUDIO rows on this
+#: deployment, "279 of them are transcribed questionnaire material this consent says nothing about".
+#: That was true and it stayed true for a reason worth keeping: a questionnaire interview is a
+#: repository record in its own right, taken by researchers who are not running a design workshop at
+#: all, and sweeping every one of them into a workshop's consent regime would have made the archive's
+#: interviews un-transcribable until somebody answered a question about a workshop they were never
+#: part of.
+#:
+#: WHAT CHANGED ON 2026-08-31 IS NOT THAT, AND THE DIFFERENCE IS THE WHOLE OF THE RULE.
+#: ``QuestionnaireInterview.designWorkshopId`` is a nullable column the interview form fills in from a
+#: picker, so an interview can now SAY it is a design workshop's material. Where it says so, the clip
+#: is that workshop's material and the artisan's answer about that workshop governs it. Where it says
+#: nothing — which is every interview in this deployment today, measured: ``SELECT count(*) FILTER
+#: (WHERE "designWorkshopId" IS NOT NULL) FROM "QuestionnaireInterview"`` answers 0 of 99 — the verdict
+#: is exactly what it has always been, :data:`SendDecision.NOT_WORKSHOP_MATERIAL`, and nothing already
+#: in the repository changes.
+#:
+#: ── AND WITHOUT IT THE NEW SYNCHRONOUS GATE WOULD BE THEATRE ─────────────────────────────────
+#: The questionnaire page now posts a voice note to ``POST /design-workshops/{id}/dictate`` for an
+#: immediate transcript, which IS gated. The very same bytes then go through ``/media/complete`` into
+#: the queue. With only the tag read, a clip on a REFUSED workshop was refused at the microphone and
+#: handed to ElevenLabs by the drain two hours later — one artisan's voice, one consent answer, two
+#: opposite outcomes, and the second one silent. A gate that one of two paths honours is not a gate.
+INTERVIEW_TAG = "questionnaire"
+
+
+async def interview_workshop_id(media: Any) -> str | None:
+    """The design workshop a questionnaire clip's own INTERVIEW names, or None.
+
+    THE FOURTH WAY A RECORDING BELONGS TO A WORKSHOP, and unlike
+    :func:`stage_attached_workshop_ids` it is not a scan: the link is on the row being gated, so this
+    is one lookup by primary key and it is issued only for rows that are questionnaire material.
+    Every other media row — a stage photograph, a miscellaneous upload, an artisan portrait — returns
+    at the first branch having touched no database at all.
+
+    IT READS THE TYPED FK FIRST AND THE FREE-TEXT TAG SECOND. ``MediaFile.questionnaireInterviewId``
+    is set by ``media_relation_data`` on the server from the same request that carries the tag, so it
+    is the more trustworthy of the two; the tag is the fallback for a row that predates the FK or was
+    attached by a path that only wrote the pair. :func:`tagged_workshop_id`'s case-insensitive
+    comparison is reused for the same reason it gives — the tag is a free string nothing normalises,
+    and matching loosely can only ever ADD a consent check.
+
+    **A FAILED READ RAISES RATHER THAN RETURNING None, and that is the opposite of what it looks
+    like.** None here means "this interview names no workshop", which resolves to
+    NOT_WORKSHOP_MATERIAL and therefore to a SEND. So swallowing an exception into None would turn a
+    database blink into permission, which is the one direction this module's fail-closed rule forbids.
+    Raising leaves the question unanswered instead of guessed: the caller's ordinary retry ladder
+    handles it and nothing is sent either way — the identical ruling, for the identical reason, that
+    :func:`stage_attached_workshop_ids` records at length for its own read.
+    """
+    interview_id = str(_attr(media, "questionnaireInterviewId") or "").strip()
+    if not interview_id:
+        tag = str(_attr(media, "linkedRecordType") or "").strip().lower()
+        if tag != INTERVIEW_TAG.lower():
+            return None
+        interview_id = str(_attr(media, "linkedRecordId") or "").strip()
+    if not interview_id:
+        return None
+    row = await db.questionnaireinterview.find_unique(where={"id": interview_id})
+    if row is None:
+        # The interview is gone. That is not a refusal: a clip whose parent was deleted is an orphan,
+        # and orphans are exactly what `NOT_WORKSHOP_MATERIAL` has always meant for this tag. A
+        # workshop it might once have named cannot be recovered from here, and inventing a refusal
+        # would strand the recording permanently — `_finalize_refused_job` does not retry.
+        return None
+    return str(getattr(row, "designWorkshopId", None) or "").strip() or None
+
 
 class SendDecision(str, Enum):
     """What this server was able to establish about one stored file, in three states and not two.
@@ -1011,6 +1081,12 @@ async def transcription_verdict(
     would be spent on every upload to learn nothing. The scan runs only when neither of the other two
     sources named a workshop, i.e. exactly in the blind spot.
 
+    :func:`interview_workshop_id` is the FOURTH source and it is always consulted, unlike the third.
+    A questionnaire clip's interview may name a design workshop, and where it does the clip is that
+    workshop's material; where it does not — every interview in this deployment today — the answer is
+    unchanged from what it has always been. Read that function's own note for why this could not be
+    left out once the questionnaire page began posting the same audio to the gated dictation route.
+
     THE CONSENT READ IS ONE INDEXED LOOKUP BY PRIMARY KEY PER CANDIDATE, which is what makes it
     affordable in the place it has to be affordable — the queue drain, once per job, and the stage save,
     once per clip. In the overwhelmingly common case there is exactly one candidate.
@@ -1028,6 +1104,16 @@ async def transcription_verdict(
     for candidate in (str(design_workshop_id or "").strip(), tagged_workshop_id(media)):
         if candidate and candidate not in candidates:
             candidates.append(candidate)
+    # THE INTERVIEW'S OWN ANSWER, ADDED RATHER THAN PREFERRED. It joins the candidate list under the
+    # same rule as everything else above — every workshop that names this file has to permit the send
+    # and one refusal is the answer — so a clip filed under workshop A and interviewed for workshop B
+    # cannot be released by whichever source happens to be read first. It is NOT behind
+    # ``resolve_from_stages``: that flag exists because a stage scan is a query over a table the row
+    # does not point at, whereas this link is a column ON the row and is already there at
+    # ``POST /media/complete`` time, which is the one place a questionnaire clip is enqueued.
+    interview_workshop = await interview_workshop_id(media)
+    if interview_workshop and interview_workshop not in candidates:
+        candidates.append(interview_workshop)
     if not candidates and resolve_from_stages:
         candidates = await stage_attached_workshop_ids(str(about or ""))
     if not candidates:

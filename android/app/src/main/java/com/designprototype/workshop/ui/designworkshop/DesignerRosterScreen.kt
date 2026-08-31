@@ -72,6 +72,7 @@ import com.designprototype.workshop.ui.RecordProseField
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt. Every file
 // in this feature imports it, or its headings are quietly set in the body face.
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -897,7 +898,7 @@ private fun RosterEditDialog(
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it },
-                    label = { Text("Email *") },
+                    label = { Text(requiredMarked("Email *")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     modifier = Modifier.fillMaxWidth()

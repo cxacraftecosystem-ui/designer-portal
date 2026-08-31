@@ -46,7 +46,13 @@ from prisma.errors import UniqueViolationError
 
 from app.core.db import db
 from app.core.deps import is_admin
-from app.services import custom_sections, dictation_consent, entry_provenance, rich_text
+from app.services import (
+    custom_sections,
+    design_workshop_data,
+    dictation_consent,
+    entry_provenance,
+    rich_text,
+)
 from app.services.address import DISTRICTS_BY_STATE
 from app.services.concurrency import gather_reads
 from app.services.design_workshop_access import add_one_viewer
@@ -232,6 +238,8 @@ def workshop_summary(record: Any) -> dict[str, Any]:
         "templateId": record.templateId,
         "status": record.status,
         "workshopCode": record.workshopCode,
+        # NAMED HERE OR IT IS INVISIBLE — this dict's own docstring says so, and calls it the trap.
+        "workshopKind": record.workshopKind,
         "scheme": record.scheme,
         "craftName": record.craftName,
         "clusterName": record.clusterName,
@@ -3761,6 +3769,22 @@ async def seed_designer_prefill(
                         "entityKey": entity.key,
                         "ordinal": 0,
                         "data": _json(clean),
+                        # THE SEARCHABLE RENDERING, BECAUSE THIS IS THE SECOND WRITER OF
+                        # `DwStageEntry.data` AND THE ONE THAT RUNS FIRST — the same sentence
+                        # `clientKey` two lines down has to make, about the same pair of writers, for
+                        # the same structural reason.
+                        #
+                        # A prefilled row that carried no searchText would be invisible to a stage
+                        # search until somebody happened to save that stage again, and stage 1's
+                        # `workshopSetup` — the designer's own name, agency and biography, written
+                        # here on `POST /design-workshops` and often never edited — is exactly the
+                        # row a researcher looks for by name. "Whose workshops are these" would have
+                        # been the first query the feature could not answer.
+                        #
+                        # A THIRD WRITER MUST WRITE THIS COLUMN TOO, and cannot be added quietly:
+                        # `tests/test_stage_search_text_writers.py` sweeps `backend/app` for writes to
+                        # this table and fails on one it has not been told about.
+                        "searchText": design_workshop_data.entry_search_text(entity, clean) or None,
                         # THE RESERVED KEY, BECAUSE THIS IS THE OTHER WRITER OF SINGLETON ROWS AND THE
                         # ONE THAT RUNS FIRST. `save_stage` is where the key is documented, but this
                         # create is what puts `workshopSetup` — the singleton carrying the promoted
@@ -4383,6 +4407,22 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             hydrated=item.hydrated,
             user=user,
         )
+        # THE SEARCHABLE RENDERING, COMPUTED FROM THE SAME `item.data` THE ROW IS ABOUT TO STORE and
+        # written in the SAME statement — which is the whole of the answer to §6.1's objection to
+        # this design ("a second copy of every answer, which can disagree with `data` the moment a
+        # write path forgets it"). It cannot be forgotten from here, because there is no way to write
+        # `data` in this function without passing through one of the two dicts below.
+        #
+        # AFTER HYDRATION, LIKE THE PROVENANCE ABOVE IT AND FOR THE SAME REASON: an artisan picked
+        # from the dropdown writes her NAME onto sibling text fields of this row, and those are
+        # exactly the words a researcher types. Computed before the write, the column would carry the
+        # cuid-shaped answer and nothing a person could search for.
+        #
+        # `or None` RATHER THAN `""`. A row with nothing text-shaped in it (a cost line, a
+        # measurement) stores NULL, which is the same value an un-backfilled row carries and can
+        # never match — so the empty string never becomes a value the column distinguishes, and the
+        # backfill's `searchText IS NULL` resume point stays honest for the whole life of the table.
+        search_text = design_workshop_data.entry_search_text(item.entity, item.data) or None
         if item.row_id is not None:
             # deletedAt is cleared unconditionally: the client is asserting this row exists, and
             # for a row that was never deleted writing None over None costs nothing. Clearing it
@@ -4393,6 +4433,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     item.row_id,
                     {
                         "data": _json(item.data),
+                        "searchText": search_text,
                         "ordinal": item.ordinal,
                         "deletedAt": None,
                         "fieldProvenance": _json(field_provenance),
@@ -4411,6 +4452,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     "entityKey": item.entity.key,
                     "ordinal": item.ordinal,
                     "data": _json(item.data),
+                    "searchText": search_text,
                     "fieldProvenance": _json(field_provenance),
                     "clientKey": item.client_key,
                     "createdById": user.id,
@@ -4447,6 +4489,15 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             hydrated={},
             user=user,
         )
+        # THE DESIGNER'S OWN QUESTIONS ARE SEARCHED TOO, AND THEY ARE THE ONES THAT MOST NEED IT. A
+        # registry field's wording is shared by every workshop in the repository, so a researcher can
+        # read the form to learn what to type; a custom field is one designer's question asked in one
+        # workshop in whatever words they chose, and nobody else can guess the wording. Rendered
+        # through the field's own per-workshop option labels — `custom_specs` is already loaded at the
+        # top of this function, so this costs no read.
+        custom_search_text = (
+            design_workshop_data.custom_search_text(custom_specs, custom_to_store) or None
+        )
         if custom_row is not None:
             # THE CONTAINER ADOPTS THE RESERVED KEY ON THE SAME RULE A SINGLETON DOES, because it is
             # one and because every `_custom` row written before the key existed is a row the index
@@ -4460,6 +4511,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     custom_row.id,
                     {
                         "data": _json(custom_to_store),
+                        "searchText": custom_search_text,
                         "ordinal": 0,
                         "deletedAt": None,
                         "fieldProvenance": _json(custom_provenance),
@@ -4475,6 +4527,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     "entityKey": custom_sections.CUSTOM_ENTITY_KEY,
                     "ordinal": 0,
                     "data": _json(custom_to_store),
+                    "searchText": custom_search_text,
                     "fieldProvenance": _json(custom_provenance),
                     # THE SAME RESERVED KEY A SINGLETON GETS, because this row is one: there is exactly
                     # one `_custom` row per (workshop, stage) and `entityKey` is the reserved literal,

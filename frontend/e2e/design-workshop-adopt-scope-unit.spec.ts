@@ -97,28 +97,47 @@ test("the server's answer is NOT merged with what this browser happens to have c
   expect(dialog).toContain("setCandidates(found.items.map((row) => ({ id: row.id, label: labelFor(row) })))");
 });
 
-test("with no connection it falls back to the device AND says the list cannot be trusted", () => {
+test("with no connection the list is still READ from the device, and says what it is", () => {
   /*
-    The fallback stays — a designer with one bar of signal holding a stranded workshop must not be
-    told to come back when they have wifi. What it must not do is present itself as the scoped
-    answer, so the sentence now says both halves: the list is partial, and the repository cannot be
-    asked whether this account is still on any of it.
+    The fallback LIST stays. A designer with one bar of signal, holding a stranded workshop, still
+    sees what is on the device rather than "Loading…" through a request that will time out. What the
+    sentence must do is refuse to present itself as the scoped answer — and, since the move is now
+    held (the test below), say that too, because a disabled button whose reason is nowhere is the
+    control people press repeatedly.
   */
   expect(dialog).toContain("setCandidates(knownRef.current);");
   expect(dialog).toContain("setPartial(true);");
-  expect(dialog).toContain("cannot be asked whether you are still on them");
+  expect(dialog).toContain("cannot check whether");
+  expect(dialog).toContain("Moving waits for signal");
 });
 
-test("the one-way write is held until the repository has answered, though the list is readable at once", () => {
+test("A FAILED FETCH DOES NOT UNLOCK THE MOVE — the list may be read offline and never acted on", () => {
   /*
-    THE SAME RULE AS THE REMOVED MERGE, APPLIED TO THE FIRST FRAME. The picker paints this device's
-    cached workshops immediately — somebody with no signal must not stare at "Loading…" through a
-    request that is going to time out — but a cached row is stale in the permissive direction and
-    adoption cannot be undone. So the list may be READ early and may not be ACTED ON early: `Move`
-    is disabled until one answer has landed, and a FAILURE counts as an answer because the partial
-    notice then says exactly what the list is.
+    THE DEFECT THIS PINS, AND IT IS THE ONE THIS FILE'S OWN HEADER FORBIDS ONE BRANCH EARLIER.
+
+    `verified` used to be stamped by BOTH arms of `load`, on the reasoning that "a failure is an
+    answer too". It is an answer about the NETWORK and no answer at all about ACCESS. So a fetch that
+    failed handed the cached rows straight back as DESTINATIONS — the same rows defect 2 above
+    removed from the merge, offered one branch later for the write that cannot be undone. A grant
+    revoked in March was still choosable in September, and `localDraftNeedsAWorkshop` guards adoption
+    on `remoteId === null`, so nothing in either client could point the draft anywhere else
+    afterwards. `DROPDOWN_DESIGN.md` R6 cites this dialog as its authority for "never cache an ACCESS
+    list" while this branch was the exception to it.
+
+    WITHDRAWING IT COSTS THE DESIGNER NOTHING, which is what makes this the right way round rather
+    than merely the stricter one. Adoption sends nothing: the draft stays on the device, nothing
+    automatic may delete it, and no stage can reach the chosen workshop until there is a connection —
+    the same moment the live list becomes available. Waiting changes when the button lights up and
+    not when the fieldwork moves.
   */
   expect(dialog).toContain("const [verified, setVerified] = useState(false);");
+  /*
+    COUNTED RATHER THAN MATCHED, and that is the only form of this assertion that holds. A
+    `toContain("setVerified(false)")` passes on the reset effect alone, which has always set it false
+    when the dialog opens — so it would go on passing the day somebody stamps the catch again. There
+    is exactly ONE place the live answer is claimed, and it is the success arm.
+  */
+  expect(dialog.match(/setVerified\(true\)/g) ?? []).toHaveLength(1);
   expect(dialog).toContain("disabled={busy || !chosen || !verified}");
   expect(dialog).toContain("Checking which workshops are open to you…");
 });
@@ -154,10 +173,40 @@ test("the dialog does not offer itself where it would do nothing", () => {
   expect(dialog).toContain("{nothingToMoveInto ? null : (");
 });
 
-test("it says plainly what linking does, including what it does NOT do", () => {
-  expect(dialog).toContain("Nothing is deleted by this and nothing is retyped");
-  expect(dialog).toContain("the workshop keeps whatever\n          is already in it");
+test("it says plainly what linking does, including what happens on a COLLISION", () => {
+  /*
+    THIS TEST PINNED A SENTENCE THAT WAS NOT TRUE, and it is worth saying which one rather than
+    quietly swapping the string. It required the dialog to promise *"the workshop keeps whatever is
+    already in it"*. `adoptedIntoWorkshop` clears `serverLoadedAt`, so the first PUT carries
+    `merge: true`, and `save_stage` folds the row as `{**previous, **clean}` — a key THIS DEVICE
+    holds wins. So a box answered on both sides ends up with the draft's answer, and the promise was
+    false for exactly the case a designer would want it for.
+
+    The dialog now states the rule instead, and this asserts the three clauses that matter: nothing
+    is deleted, what survives on the target, and who wins a box both sides answered. The argument for
+    why local-wins is the right way round — the draft is the answer given in the room, the target's
+    is a seed or a desk edit — is in the component's own header.
+  */
+  expect(dialog).toContain("Nothing is deleted and nothing is retyped");
+  expect(dialog).toContain("answers already in\n          that workshop are kept");
+  expect(dialog).toContain("where both have the same box, this device");
   expect(dialog).toContain("It can only be done once");
+});
+
+test("the row says what an unlinked draft IS and what to do with it, in two facts", () => {
+  /*
+    THE ROW'S PARAGRAPH USED TO BE THREE SENTENCES AND USED TO SEND EVERY DESIGNER TO AN ADMIN. It
+    was written when the only drafts that could reach that row were the ones stranded by the create
+    rule, whose owner genuinely had no workshop to move into. Since 2026-08-31 a designer may START
+    one there deliberately, with no signal, and such a designer usually has workshops already — so
+    the next move is the picker, not a conversation. The admin sentence survives on the one surface
+    that KNOWS the account has nothing to move into (`nothingToMoveInto`, asserted above) and in the
+    list's own empty state.
+
+    Both clients read these two strings from one declaration, and
+    `design-workshop-offline-start-unit.spec.ts` holds them against the handset's literals.
+  */
+  expect(page).toContain("{DW_LOCAL_DRAFT_UNLINKED} {DW_LOCAL_DRAFT_LINK_PROMPT}");
 });
 
 test("the row's control is still offered only to an account that cannot create a workshop", () => {

@@ -45,7 +45,8 @@ import {
   fieldWorkshopOptions,
   workshopEmptyLabel,
   workshopListNotice,
-  type WorkshopListState
+  type WorkshopListState,
+  type WorkshopListVoice
 } from "@/lib/workshopOptions";
 import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
 
@@ -70,25 +71,46 @@ export const UNASSIGNED_WORKSHOP = "none";
 const UNASSIGNED_GROUP = "Records with no workshop";
 
 /**
- * WHAT THE READ FAILED TO SAY, IN A FILTER'S VOICE RATHER THAN A FORM FIELD'S.
+ * WHAT THE READ FAILED TO SAY, IN A FILTER'S VOICE RATHER THAN A FORM FIELD'S — THE CLAUSE ONLY.
  *
- * The first sentence of each is `workshopListNotice`'s, byte for byte, so a researcher who has met
- * the record form's picker recognises this one. The last clause is not, and could not be: that
- * module's sentences end *"Nothing you have entered is at risk — this record can be saved without
- * it"* and *"a stored copy of who may file where reads a revoked grant as a grant"*, both of which
- * are about SAVING A RECORD against a workshop. Nothing is saved here. This control narrows a
- * screen, and the fact a reader needs when its list did not arrive is what the screen is therefore
- * showing — which is everything, because "no workshop chosen" is spelled as an absence and an
- * absence is what a failed load leaves behind.
+ * The reason a clause is needed at all is unchanged from the day this was written. `workshopListNotice`'s
+ * sentences close on *"Nothing you have entered is at risk — this record can be saved without it"*
+ * and *"a stored copy of who may file where reads a revoked grant as a grant"*, both of which are
+ * about SAVING A RECORD against a workshop. Nothing is saved here. This control narrows a screen,
+ * and the fact a reader needs when its list did not arrive is what the screen is therefore showing —
+ * which is everything, because "no workshop chosen" is spelled as an absence and an absence is what
+ * a failed load leaves behind.
  *
  * Saying nothing was the shipping behaviour and is the one unacceptable option: the scope silently
  * widened from "the most recent workshop" to "the whole repository", on five screens, with the
  * picker looking merely short.
+ *
+ * ── WHAT CHANGED ON 2026-08-31: THE OPENING IS NO LONGER A SECOND COPY ──────────────────────────
+ *
+ * This used to be two WHOLE sentences written out here — opening included — with a spec asserting
+ * that the duplicated opening still matched `workshopListNotice`'s byte for byte. `WorkshopListVoice`
+ * grew a `reassurance` field for exactly this shape and its own note recorded the refusal to migrate:
+ * *"WorkshopScopeSelect is deliberately NOT migrated onto this: the spec above pins its literal, and
+ * a screen whose scope silently widened is precisely the wrong place to accept an incidental copy
+ * change."* That was the right call while the two strings were being compared by hand and nobody had
+ * checked them against each other; it is not a rule, and holding to it is what the module's own
+ * header calls *"six label shapes for one question, one layer down: a shared opening kept in step by
+ * hand across N copies."*
+ *
+ * SO THE OPENING NOW HAS ONE OWNER AND THE ONLINE SENTENCE IS BYTE-IDENTICAL TO WHAT IT WAS —
+ * `workshopListNotice(list, voice)` with this clause as `reassurance` composes exactly the string
+ * that used to be the literal above, which is what makes the migration checkable rather than
+ * merely tidy (`e2e/dropdown-sweep-unit.spec.ts` now asserts the composition, not the copy).
+ *
+ * THE OFFLINE ARM APPENDS IT INSTEAD OF PASSING IT, and that is not an oversight. `reassurance`
+ * closes the ONLINE failure only, by its own declaration; the offline sentence ends on R6's reason
+ * for never keeping a workshop list on the device, which is `accessList`'s to decide and is true of
+ * this table whichever control is reading it. Setting `accessList: false` here would shorten the
+ * line by telling the module this is not one of the two workshop tables, which it is. So the clause
+ * is added after, and the reader gets both facts in one paragraph.
  */
-const SCOPE_READ_FAILED =
-  "The workshops list could not be loaded, so this is not showing what exists. Nothing is hidden by it — with no workshop chosen, this screen is showing every record.";
-const SCOPE_READ_OFFLINE =
-  "This device has not received the workshops list yet, so there is nothing to pick here. That is not a claim that there are none. With no workshop chosen, this screen is showing every record.";
+const SCOPE_SHOWS_EVERYTHING =
+  "Nothing is hidden by it — with no workshop chosen, this screen is showing every record.";
 
 export type WorkshopScope = {
   /** The selected ids; `[]` means every workshop. May contain {@link UNASSIGNED_WORKSHOP}. */
@@ -102,7 +124,7 @@ export type WorkshopScope = {
    *
    * The screen behind still falls through to every record on a failure, which is a complete and
    * honest answer to "what am I looking at"; what was missing is that nobody was told the narrowing
-   * they asked for never happened. See {@link SCOPE_READ_FAILED}.
+   * they asked for never happened. See {@link SCOPE_SHOWS_EVERYTHING}.
    */
   list: WorkshopListState<Workshop>;
   /**
@@ -292,16 +314,22 @@ export function WorkshopScopeSelect({
    * to discover that the fallback was a claim about the repository.
    */
   const online = !deviceLooksOffline();
-  const notice =
-    list.kind === "failed"
-      ? online
-        ? SCOPE_READ_FAILED
-        : SCOPE_READ_OFFLINE
-      : // The genuinely-empty and still-loading arms are the shared ones. `scoped: false` because
-        // this request carries no `accessibleOnly`: it is a READ scope over the whole repository, so
-        // an empty answer means "nothing has been recorded", never "nothing is open to you", and
-        // sending a reader to an administrator over an empty table wastes a day.
-        workshopListNotice(list, { table: "field", scoped: false, online });
+  /*
+    ONE VOICE FOR ALL FOUR STATES. `scoped: false` because this request carries no `accessibleOnly`:
+    it is a READ scope over the whole repository, so an empty answer means "nothing has been
+    recorded", never "nothing is open to you", and sending a reader to an administrator over an empty
+    table wastes a day. `reassurance` is what the online failure closes on — see the constant.
+  */
+  const voice: WorkshopListVoice = {
+    table: "field",
+    scoped: false,
+    online,
+    reassurance: SCOPE_SHOWS_EVERYTHING
+  };
+  const shared = workshopListNotice(list, voice);
+  // The offline failure is the one arm `reassurance` does not reach, and it is the arm where the
+  // widened scope is easiest to miss — a picker that looks merely short on a phone with no signal.
+  const notice = list.kind === "failed" && !online ? `${shared} ${SCOPE_SHOWS_EVERYTHING}` : shared;
 
   const all = workshopIds.length === 0;
 
@@ -364,7 +392,7 @@ export function WorkshopScopeSelect({
         bulk={false}
         ariaLabel="Choose which workshops to include"
         placeholder={loading ? "Loading workshops…" : all ? "All workshops" : "Select workshops"}
-        emptyLabel={workshopEmptyLabel(list, { table: "field", scoped: false, online })}
+        emptyLabel={workshopEmptyLabel(list, voice)}
         describedBy={`${cutNoteId} ${stateNoteId}`}
       />
 

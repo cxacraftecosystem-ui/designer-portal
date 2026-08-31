@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui
 
 import com.designprototype.workshop.data.AccessRefusal
+import com.designprototype.workshop.data.SignInHint
 
 /**
  * WHAT THE SIGN-IN CARD SAYS AROUND A REFUSAL — never instead of it.
@@ -109,4 +110,40 @@ fun accessRefusalChrome(refusal: AccessRefusal): AccessRefusalChrome? = when (re
     AccessRefusal.UNCLASSIFIED,
     AccessRefusal.NOT_REFUSED,
     -> null
+}
+
+/**
+ * THE HEADING FOR AN IDENTIFIER-SHAPED REFUSAL — never instead of the server's sentence.
+ *
+ * ── WHY THIS IS A SECOND FUNCTION AND NOT A SIXTH BRANCH OF [accessRefusalChrome] ────────────────
+ *
+ * [AccessRefusal] answers "where does this address stand with the platform allow-list". [SignInHint]
+ * answers a different question — what was typed names two accounts, or the account it names has never
+ * had a password — and the server keeps them on two headers precisely so that one client-side `when`
+ * does not come to mean two kinds of thing. Merging them here would undo that on this client alone.
+ *
+ * ── TERSE, UNLIKE ITS NEIGHBOUR, AND THAT IS DELIBERATE ──────────────────────────────────────────
+ *
+ * [AccessRefusalChrome] carries a three-sentence `advice` paragraph because those five refusals are
+ * about an ACCOUNT and the reader can do nothing about them except contact somebody — the paragraph
+ * is the only place anybody will ever explain that to them. These two are about what was just typed,
+ * the server's own `detail` already names the next move ("sign in with your email address instead",
+ * "ask an administrator for a set-password link"), and a paragraph repeating it in different words
+ * would be the screen arguing with itself. Owner's instruction of 2026-08-30: do not be verbose.
+ *
+ * ── THE WEB SAYS THE SAME TWO SENTENCES, WORD FOR WORD ───────────────────────────────────────────
+ *
+ * `frontend/lib/signIn.ts::signInHintHeading` carries the identical headings, for the reason
+ * [accessRefusalChrome] gives: a designer who cannot get into the phone opens the website next, and
+ * a different explanation there is how somebody concludes one of the two is broken. Change one,
+ * change both.
+ *
+ * NULL FOR [SignInHint.NONE] — an ordinary wrong password, or a refusal this build cannot classify.
+ * Both keep the plain line and the server's own words; guessing a heading is the only way this can
+ * produce a WRONG one, which is worse than producing none.
+ */
+fun signInHintHeading(hint: SignInHint): String? = when (hint) {
+    SignInHint.AMBIGUOUS_IDENTIFIER -> "That number matches more than one account"
+    SignInHint.PASSWORD_NOT_SET -> "This account has no password yet"
+    SignInHint.NONE -> null
 }

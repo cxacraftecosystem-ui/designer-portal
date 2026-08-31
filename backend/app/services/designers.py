@@ -38,7 +38,7 @@ from fastapi.encoders import jsonable_encoder
 from prisma.errors import UniqueViolationError
 
 from app.core.db import db
-from app.services import rich_text
+from app.services import identity, rich_text
 
 # Every column of ``DesignerProfile`` a person may write. Named once, here, and consumed by the
 # serializer, the updater and the schema's field list alike — three copies of a twenty-two-name
@@ -769,6 +769,35 @@ async def update_profile(user_id: str, values: dict[str, Any]) -> Any:
     # to ask for that. A designer who moves house REPLACES their location; they cannot delete it.
     if "locationId" in values:
         data["locationId"] = values["locationId"]
+
+    # ── THE TWO SIGN-IN KEYS, DERIVED HERE AND NEVER ACCEPTED FROM THE WIRE ─────────────────
+    #
+    # `phoneKey` and `empanelmentKey` are the NORMALISED forms of the two columns above them,
+    # and they are what `POST /auth/login` looks a phone number or an empanelment number up by.
+    # They are deliberately NOT in `PROFILE_FIELDS`: a client that could post a key could claim
+    # somebody else's sign-in identifier by typing it into a field nobody renders.
+    #
+    # RECOMPUTED WHENEVER EITHER RAW COLUMN IS IN THIS SAVE, including when it is being cleared
+    # — a designer who deletes their phone number must stop being reachable by it, and leaving a
+    # stale key behind would leave a live sign-in identifier pointing at a number the account no
+    # longer claims.
+    #
+    # A KEY ANOTHER PROFILE ALREADY HOLDS IS NOT CLAIMED AND THE SAVE IS NOT REFUSED. See
+    # `identity.resolve_profile_keys` for the whole argument; the short version is that 44 live
+    # profiles here share one empanelment number, and a 409 would leave 43 designers unable to
+    # save their own biography over a data problem none of them caused.
+    if "phone" in data or "empanelmentNo" in data:
+        stored = await db.designerprofile.find_unique(where={"userId": user_id})
+        keys = await identity.resolve_profile_keys(
+            user_id=user_id,
+            phone=data.get("phone", getattr(stored, "phone", None)),
+            empanelment_no=data.get(
+                "empanelmentNo", getattr(stored, "empanelmentNo", None)
+            ),
+        )
+        data["phoneKey"] = keys.phone_key
+        data["empanelmentKey"] = keys.empanelment_key
+
     if not data:
         return await get_or_create_profile(user_id)
     return await db.designerprofile.upsert(
@@ -776,6 +805,51 @@ async def update_profile(user_id: str, values: dict[str, Any]) -> Any:
         data={"create": {**data, "user": {"connect": {"id": user_id}}}, "update": data},
         include=PROFILE_INCLUDE,
     )
+
+
+#: Every writable column except the two empanelment ones. "Does this profile have anything in
+#: it" has to be asked WITHOUT them, or a profile holding nothing but an empanelment number
+#: would count as content and the requirement below would be satisfied by itself.
+PROFILE_CONTENT_FIELDS: tuple[str, ...] = tuple(
+    key for key in PROFILE_FIELDS if key not in {"empanelmentNo", "empanelmentDate"}
+)
+
+
+def profile_has_content(row: Any) -> bool:
+    """Is there anything on this profile besides the empanelment pair?
+
+    `get_or_create_profile` writes an EMPTY row on the first GET, so "a row exists" does not
+    mean "a profile exists" and cannot be the test for whether the requirement below has been
+    met. This is the test: a row with a name, a biography, an institution, an address or a
+    photograph is a profile somebody made; a row with nothing but its own id is not.
+
+    An empty STRING counts as nothing, because `update_profile` stores an all-whitespace value
+    as NULL and a client that has not been rebuilt may still post one.
+    """
+    if row is None:
+        return False
+    for key in PROFILE_CONTENT_FIELDS:
+        value = getattr(row, key, None)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return True
+    return False
+
+
+def values_carry_content(values: dict[str, Any]) -> bool:
+    """The same question about a body that has not been written yet."""
+    for key in PROFILE_CONTENT_FIELDS:
+        if key not in values:
+            continue
+        value = values[key]
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return True
+    return bool(values.get("locationId"))
 
 
 def profile_payload(row: Any) -> dict[str, Any]:
@@ -827,6 +901,27 @@ def profile_payload(row: Any) -> dict[str, Any]:
     payload["locationId"] = getattr(row, "locationId", None)
     location = getattr(row, "location", None)
     payload["location"] = jsonable_encoder(location) if location is not None else None
+
+    # ── THREE DERIVED ANSWERS THE FORM CANNOT WORK OUT FOR ITSELF ───────────────────────────
+    #
+    # `phoneKey`/`empanelmentKey` themselves are NOT published: they are lookup keys, they are
+    # not what anybody typed, and a screen that rendered one would be showing a designer a
+    # mangled version of their own telephone number. What IS published is whether each of them
+    # was actually claimed, because that is the difference between "you can sign in with this"
+    # and "somebody else already holds it" — and the second is invisible from the raw column,
+    # which stores the number either way.
+    payload["signInByPhone"] = getattr(row, "phoneKey", None) is not None
+    payload["signInByEmpanelmentNo"] = getattr(row, "empanelmentKey", None) is not None
+    # THE GRACE PATH, RESOLVED SERVER-SIDE SO BOTH CLIENTS DRAW THE SAME BANNER. Owner's
+    # decision, 2026-08-30: the empanelment number is required to save, but a profile that
+    # already carries other content may go on saving without one while being asked for it. True
+    # here means exactly that state — there is a profile with something in it and no number —
+    # and it is what the persistent one-line banner is rendered from. A client that computed it
+    # itself would be a second definition of "has content", and the two would disagree the day
+    # a column is added.
+    payload["empanelmentNoMissing"] = profile_has_content(row) and not (
+        str(getattr(row, "empanelmentNo", "") or "").strip()
+    )
     payload["createdAt"] = _iso(row.createdAt)
     payload["updatedAt"] = _iso(row.updatedAt)
     return payload

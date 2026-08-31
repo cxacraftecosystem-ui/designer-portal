@@ -440,7 +440,9 @@ fun FieldDateField(
     OutlinedTextField(
         value = digits,
         onValueChange = ::commit,
-        label = { Text(label) },
+        // [requiredMarked]: a caller's trailing " *" is painted in the theme's error colour. Material
+        // supplies the label slot's own ink for the words; only the mark's span overrides it.
+        label = { Text(requiredMarked(label)) },
         placeholder = { Text(placeholder, color = MaterialTheme.field.placeholder) },
         singleLine = true,
         isError = rangeError != null,
@@ -816,7 +818,8 @@ fun FieldTimeField(
             onValueChange = {},
             readOnly = true,
             singleLine = true,
-            label = { Text(label) },
+            // See the date box above — same helper, same reason.
+            label = { Text(requiredMarked(label)) },
             trailingIcon = { Icon(Icons.Outlined.Schedule, contentDescription = null) },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = MaterialTheme.colorScheme.primary,

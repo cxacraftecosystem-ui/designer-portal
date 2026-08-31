@@ -124,8 +124,18 @@ import { uploadMediaBatch } from "@/lib/media";
 // is the copy that would go on minting workshops for a designer months after the rule changed.
 // One set, in `lib/permissions.ts`, mirrored by `backend/app/core/deps.py` and checked by
 // `backend/tests/test_design_workshop_gate.py`.
-import { DESIGN_WORKSHOP_CREATE_REFUSAL, canCreateDesignWorkshops } from "@/lib/permissions";
+import {
+  DESIGN_WORKSHOP_CREATE_REFUSAL,
+  canCreateDesignWorkshops,
+  canRunDesignWorkshops
+} from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
+// `navigator.onLine === false` is this app's convention for "definitely offline", and it is
+// IMPORTED rather than spelled out again here for the reason `deviceLooksOffline`'s own header
+// gives: twelve copies of a convention is how a convention becomes a coin flip. It is only the
+// FLOOR under the answer — a captive portal reports true and routes nothing — which is why the
+// caller may add its own evidence on top. See {@link DwLocalDraftOptions.serverUnreachable}.
+import { deviceLooksOffline } from "@/lib/workshopOptions";
 // The one rule for "is this the network" lives in `lib/failureTriage.ts` and is imported rather than
 // restated. Two answers to that question is two different ideas of what "offline" means, and the
 // wrong one either strands a queue for ever or replays a rejection until somebody clears storage.
@@ -221,6 +231,22 @@ export type DwDraftHeader = {
   title: string;
   templateId: string;
   status: string;
+  /**
+   * IN THE FIRST BLOCK AND NOT THE SECOND, which is the distinction this type's own header draws
+   * and the one that decides whether a value is ever sent back.
+   *
+   * `workshopKind` IS a promoted column — `promoted_values()` copies it off stage 1 exactly as it
+   * copies `scheme` and `venue`, which are display-only here. What puts it in the editable block
+   * instead is that `PATCH /design-workshops/{id}` ACCEPTS it: the create form collects it, so the
+   * route's own refusal table admits it beside craft, cluster, state, district and the two dates,
+   * on the stated rule that a promoted column the create body collects may also be patched.
+   *
+   * The cost that rule carries applies here too and is worth restating where the value is stored: a
+   * kind corrected through the header is overwritten the next time stage 1 is saved with that
+   * dropdown empty, because `_coerce_promoted` nulls a promoted column of a touched entity whose
+   * value is blank. That is why the create seeds the STAGE ENTRY as well as the column.
+   */
+  workshopKind: string | null;
   craftName: string | null;
   clusterName: string | null;
   state: string | null;
@@ -1085,6 +1111,77 @@ export function draftSessionMayCreate(): boolean {
 }
 
 /**
+ * May this session do the WORK of a design workshop — the wider predicate, asked here for exactly
+ * one question: {@link classifyDraftStart}'s middle arm.
+ *
+ * A SECOND PREDICATE AND NOT A LOOSENING OF THE FIRST. `draftSessionMayCreate` answers "may this
+ * account bring a workshop into existence" and is unchanged; this answers "is this account one of
+ * the people a workshop is worked by at all", which is what separates a designer with no signal
+ * from an account that has wandered onto the route. Collapsing them is how the create rule comes
+ * back widened — see {@link classifyDraftStart} for what the two decide between them.
+ */
+function draftSessionMayRunWorkshops(): boolean {
+  return canRunDesignWorkshops(sessionRole ? ({ role: sessionRole } as User) : null);
+}
+
+/**
+ * What starting a workshop on this device MEANS for this session, right now — three answers rather
+ * than two, and the middle one is the whole of the owner's remaining clause.
+ *
+ * ── THE REQUIREMENT, VERBATIM ────────────────────────────────────────────────────────────────────
+ *
+ * *"the designers do not get to create a designer workshop, they simply get to participate in
+ * one... **Instead if they are offline, let them create one for the time being, and when the
+ * internet comes back up, let them link it to one of the workshops that they have access to.**"*
+ *
+ * ── WHY THIS IS NOT A WIDENING OF THE CREATE RULE, WHICH IS THE THING TO CHECK ───────────────────
+ *
+ * `"create"` and `"link-later"` produce a byte-identical record in IndexedDB. They differ in what
+ * the SYNC PASS does with it, and that is decided at drain time by {@link createMustBeDeclined}
+ * against the role THEN — not by anything stamped here. So a designer's draft can never become a
+ * `POST /design-workshops`: the pass declines it by the same rule that has declined every unsent
+ * designer draft since the create rule shipped, and the only route off this device is
+ * {@link adoptDraftIntoWorkshop}, into a workshop an admin has already created. The server set
+ * (`DESIGN_WORKSHOP_CREATOR_ROLES`, `deps.py`) is untouched and nothing in this file may widen it:
+ * **a local draft is not a create — it is fieldwork waiting for a home.**
+ *
+ * ── AND WHY THE REACHABILITY CLAUSE IS A CONDITION AND NOT DECORATION ────────────────────────────
+ *
+ * With signal, a designer who wants to start a workshop has two better answers than an unlinked
+ * draft: open one of the workshops they already hold, or ask an admin for one — and
+ * `DESIGN_WORKSHOP_CREATE_REFUSAL` names both. An unlinked draft minted WITH a connection would be
+ * a second, worse copy of a workshop that could have been the real one from the first keystroke,
+ * and it would still have to be linked by hand afterwards. With no signal there is no such
+ * alternative, and the only other answer is a paper notebook.
+ *
+ * PURE AND EXPORTED, for the reason {@link mayMintLocalWorkshop} is: the tri-state is the decision
+ * worth pinning and the IndexedDB transaction is not. `dwClassifyDraftStart` in
+ * `android/.../data/DwWorkshopCreation.kt` is the same three lines, and the two must not drift.
+ */
+export type DwDraftStart =
+  /** Mint it, and let the sync pass create the workshop. Admins and the master admin. */
+  | "create"
+  /** Mint it — and it needs {@link adoptDraftIntoWorkshop} before a byte of it can leave. */
+  | "link-later"
+  /** Nothing is written. {@link DwCreateNotPermittedError} carries the shared refusal. */
+  | "refused";
+
+export function classifyDraftStart(
+  { mayCreate, mayRunWorkshops, reachable }: {
+    /** {@link mayMintLocalWorkshop} — asked FIRST, so nothing below can narrow an admin. */
+    mayCreate: boolean;
+    /** `canRunDesignWorkshops` — a designer, an admin or the master admin. */
+    mayRunWorkshops: boolean;
+    /** Could a request from this device reach the repository at all? See `deviceLooksOffline`. */
+    reachable: boolean;
+  }
+): DwDraftStart {
+  if (mayCreate) return "create";
+  if (mayRunWorkshops && !reachable) return "link-later";
+  return "refused";
+}
+
+/**
  * Thrown by {@link createLocalDraft} when this session may not start a workshop.
  *
  * A NAMED CLASS RATHER THAN A BARE `Error`, so a caller can tell a refusal apart from a storage
@@ -1098,6 +1195,37 @@ export class DwCreateNotPermittedError extends Error {
     this.name = "DwCreateNotPermittedError";
   }
 }
+
+/* ── THE WORDS FOR THE "LINK-LATER" ARM ───────────────────────────────────────────────────────────
+ *
+ * ONE COPY, SAID ON FOUR SURFACES. The web offers this on the list page and marks the row; Android
+ * offers it on its list screen and marks the row. A designer moves between the two clients
+ * mid-workshop, so the strings are declared here and byte-for-byte in `DwWorkshopCreation.kt`. A
+ * rule worded differently depending on which device is in your hand is not a rule, it is two
+ * rumours — the argument `DESIGN_WORKSHOP_CREATE_REFUSAL` already makes for itself.
+ *
+ * TERSE, per the owner's 2026-08-30 ruling: the reasoning is in these comments, never on screen.
+ */
+
+/** The control a designer with no signal presses. Byte-for-byte `DW_LOCAL_START_ACTION` (Kotlin). */
+export const DW_LOCAL_START_ACTION = "Start one on this device";
+
+/**
+ * The one line under that control.
+ *
+ * IT SAYS "NOT A WORKSHOP YET", WHICH IS THE FACT THE DESIGNER HAS TO CARRY FOR A FORTNIGHT. A
+ * sentence that merely said "saved offline" would describe every other record in this app, all of
+ * which send themselves; this one cannot, and somebody who does not know that waits for a sync that
+ * is never coming.
+ */
+export const DW_LOCAL_START_NOTE =
+  "Not a workshop yet. You will link it to one of your workshops when the connection returns.";
+
+/** The row's marker, once such a draft exists. */
+export const DW_LOCAL_DRAFT_UNLINKED = "Started on this device. Not a workshop yet.";
+
+/** The next move — on the row and in the prompt, in the same words in both places. */
+export const DW_LOCAL_DRAFT_LINK_PROMPT = "Choose which of your workshops this belongs to.";
 
 /**
  * May this session read and send this draft?
@@ -1230,6 +1358,9 @@ function emptyHeader(title: string, templateId: string): DwDraftHeader {
     // admin named somebody. A blank header has nobody named, which is a legal and common state.
     designerUserId: null,
     designerUserIds: [],
+    // NOT STATED, which is the honest value for a header nobody has filled in yet and is exactly
+    // what the column means for every workshop opened before it existed.
+    workshopKind: null,
     craftName: null,
     clusterName: null,
     state: null,
@@ -1386,7 +1517,15 @@ async function mutate<P = undefined>(
 }
 
 /**
- * Start a workshop that exists only on this device — ADMINS AND THE MASTER ADMIN ONLY.
+ * Start a workshop that exists only on this device.
+ *
+ * ── WHO, AS OF 2026-08-31, AND THIS HEADING READ "ADMINS AND THE MASTER ADMIN ONLY" UNTIL THEN ───
+ *
+ * It still is, for a draft that is going to BECOME a workshop. What changed is that a DESIGNER WITH
+ * NO CONNECTION may now mint one too — and that draft is not going to become anything. It is
+ * fieldwork with no home yet, and {@link adoptDraftIntoWorkshop} is the only way off this device
+ * for it. {@link classifyDraftStart} is the decision and carries the whole argument; the paragraphs
+ * below are why the old rule was right about everything except this one case.
  *
  * The record is complete and openable the moment this returns: 22 stages of nothing is a legitimate
  * workshop on day one, and the whole point is that the creator can start filling it in before the
@@ -1406,19 +1545,46 @@ async function mutate<P = undefined>(
  * So the refusal happens at the FIRST act instead of the last, with nothing typed and nothing lost,
  * and it names the next move rather than stating a rule (see `DESIGN_WORKSHOP_CREATE_REFUSAL`).
  *
+ * ── AND THAT PARAGRAPH IS EXACTLY WHY THE DESIGNER'S OFFLINE ARM EXISTS ──────────────────────────
+ *
+ * Read it again with the courtyard in mind and it argues for the arm as loudly as it argues for the
+ * refusal. Refusing at the first act is right when there IS a first act to take instead — open a
+ * workshop you already hold, or ask an admin — and with a connection there always is. With none,
+ * the refusal is not "do this instead", it is "stop working", and what a designer does then is open
+ * a paper notebook no report will ever read. So the refusal keeps its whole force online and stands
+ * down offline, where it protects nothing and costs a fortnight.
+ *
+ * NOTHING ABOUT THE SERVER RULE MOVED. The draft this mints for a designer cannot be posted by any
+ * pass — `runSync` declines it through {@link createMustBeDeclined}, on the role, at drain time --
+ * so its only future is a workshop an admin created. See {@link classifyDraftStart}.
+ *
  * IT THROWS RATHER THAN RETURNING NULL. Every caller of this function navigates straight into the
  * draft it hands back; a null would have to be checked at each of them, and the one that forgot
  * would land a designer on `/design-workshops/undefined`. A throw lands in the create form's
  * existing catch, which already renders `err.message`.
  *
- * A CALLER MAY NOT OPT OUT. There is deliberately no `options.force`: the whole value of this gate
- * is that there is exactly one way to mint a local workshop and it asks.
+ * A CALLER MAY NOT OPT OUT, AND `serverUnreachable` IS NOT AN OPT-OUT. There is still deliberately
+ * no `options.force`: this remains the only way a local workshop reaches storage, and it still asks.
+ * What a caller may hand over is EVIDENCE ABOUT THE NETWORK — never about the rule — and it can
+ * unlock exactly one arm, for exactly the set `canRunDesignWorkshops` already admits to this whole
+ * feature. An account outside that set is refused with the evidence in hand and the network down.
  */
 export async function createLocalDraft(
   header: Partial<DwDraftHeader> & { title: string },
   options?: DwLocalDraftOptions
 ): Promise<DwDraft> {
-  if (!draftSessionMayCreate()) throw new DwCreateNotPermittedError();
+  const start = classifyDraftStart({
+    mayCreate: draftSessionMayCreate(),
+    mayRunWorkshops: draftSessionMayRunWorkshops(),
+    // `deviceLooksOffline()` is the FLOOR and the caller's evidence is added to it, never the other
+    // way round: `navigator.onLine` reports true through a captive portal that routes nothing, which
+    // is a village guest-house router exactly, and the page's own list read — triaged by
+    // `isUnreachable` — is the only thing that actually watched a request fail. Either one saying
+    // "unreachable" is enough. Neither can make a REACHABLE device look unreachable to the arm
+    // above, because `mayCreate` is answered first and an admin never reaches this line's answer.
+    reachable: !(deviceLooksOffline() || options?.serverUnreachable === true)
+  });
+  if (start === "refused") throw new DwCreateNotPermittedError();
   const draft = newLocalDraft(header, options);
   await transact([STORE_DRAFTS], "readwrite", async (stores) => req(stores[STORE_DRAFTS].put(draft)));
   await refreshDrafts();
@@ -1442,6 +1608,23 @@ export type DwLocalDraftOptions = {
    * has on the server would swallow a fortnight of stages under a 200.
    */
   createSentAt?: number | null;
+  /**
+   * "This caller WATCHED a request to the repository fail as unreachable" — evidence, not a licence.
+   *
+   * WHY THE CALLER HOLDS BETTER EVIDENCE THAN THIS MODULE DOES. `deviceLooksOffline()` reads
+   * `navigator.onLine`, which reports true through a captive portal that routes nothing — a village
+   * guest-house router is precisely that — while the list page has just had `GET /design-workshops`
+   * fail and has run it through `isUnreachable`, which is the outbox's own answer to "was that the
+   * network". Left to `navigator` alone, the designer who most needs the offline arm is the one
+   * refused it.
+   *
+   * IT WIDENS ONE ARM AND NOTHING ELSE. It is OR-ed into `reachable` and read only by
+   * {@link classifyDraftStart}'s middle branch, which already requires `canRunDesignWorkshops`; an
+   * account outside that set passing `true` is still refused, and an admin never reaches the branch
+   * at all because `mayCreate` is answered first. A draft minted through it is still not a create --
+   * see {@link classifyDraftStart}. The server rule is not reachable from this key in any direction.
+   */
+  serverUnreachable?: boolean;
 };
 
 /**
@@ -3265,6 +3448,9 @@ function headerOf(summary: DwSummary): DwDraftHeader {
     // neither create input back on any read, and a workshop adopted from the server has already
     // been created, so there is no create left for either of them to feed.
     designerUserIds: [],
+    // COPIED DOWN, unlike the two create-only keys above it: the kind is promoted from stage 1
+    // by the server, so an adopted workshop's own answer is the one to keep.
+    workshopKind: summary.workshopKind,
     title: summary.title,
     templateId: summary.templateId,
     status: String(summary.status),
@@ -3491,6 +3677,7 @@ export function draftSummary(draft: DwDraft): DwSummary {
     templateId: draft.header.templateId,
     status: draft.header.status,
     workshopCode: draft.header.workshopCode,
+    workshopKind: draft.header.workshopKind,
     scheme: null,
     craftName: draft.header.craftName,
     clusterName: draft.header.clusterName,
@@ -4477,10 +4664,26 @@ async function runSync(): Promise<DwSyncResult> {
         /*
           THE SESSION MAY NOT START A WORKSHOP — SAY SO HERE, DO NOT POST AND LET THE SERVER SAY IT.
 
-          This is the arm that catches the drafts that were ALREADY on the device when the create
-          rule shipped: a designer's laptop holding a workshop they started under the old rule, with
-          a fortnight of stages in it and no `remoteId`. Nothing is deleted and nothing is retried
-          into a wall.
+          TWO KINDS OF DRAFT REACH THIS ARM, and until 2026-08-31 this comment named only the first.
+
+            1. The drafts that were ALREADY on the device when the create rule shipped: a designer's
+               laptop holding a workshop they started under the OLD rule, with a fortnight of stages
+               in it and no `remoteId`.
+            2. The drafts a designer MEANT to start here, with no signal, under
+               {@link classifyDraftStart}'s `"link-later"` arm — the owner's clause about a designer
+               who is offline creating one "for the time being". Those are not an accident and not a
+               legacy: they are the feature, and this is the arm that keeps them off the create
+               route.
+
+          BOTH TAKE THE ADOPT PATH AND NEITHER IS EVER POSTED, which is the point — the create arm
+          would collect the server's 403, a refusal is not transient, and the entry would park for
+          ever behind a Try again that can only fetch the same 403. Nothing is deleted and nothing is
+          retried into a wall.
+
+          ONE SENTENCE COVERS BOTH, deliberately: it says the workshop was started on this device,
+          that nothing is lost, and which control finishes the job. A designer does not need to know
+          which of the two histories their row has, and a second string would be a second place for
+          the words to drift.
 
           IT SITS AFTER `resolveInterruptedCreate` AND IT READS `resumed`, AND BOTH HALVES MATTER —
           the decision itself is {@link createMustBeDeclined}, where the trap is written out in full.

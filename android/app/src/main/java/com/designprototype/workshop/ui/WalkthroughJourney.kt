@@ -17,6 +17,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.WarningAmber
@@ -215,6 +217,22 @@ private val WALK_EDGE = 16.dp
 
 /** The corner every card in here is cut to. */
 private val WALK_CARD_CORNER = 14.dp
+
+/**
+ * The corner on a "What the screen asks for" chip, AND IT IS DELIBERATELY NOT THE WEB'S.
+ *
+ * The web sets `rounded-full` on those chips and gets away with it because its card is a wide column
+ * and every one of its labels is one line — "Status", "Notes", "Phone". A 360dp handset is not that
+ * card. Four of the web's own steps carry section DESCRIPTIONS rather than labels (see
+ * [WALKTHROUGH_FIELDS]) and the longest of them runs past a hundred and twenty characters, which at
+ * 12sp wraps to four lines here. A fully-rounded shape on a four-line box is a stadium with a 34dp
+ * radius — a blob, with the first and last words of the sentence sitting inside the curve.
+ *
+ * A fixed radius reads correctly at BOTH shapes, which is the property actually needed, so it is the
+ * geometry that diverges and never the words. The strings are the web's to the character and a test
+ * holds them there; the corner is this screen's own answer to this screen's own width.
+ */
+private val WALK_CHIP_CORNER = 9.dp
 
 /**
  * The reading line, as a fraction of the viewport, and it is the WEB'S OWN NUMBER.
@@ -488,6 +506,337 @@ private class WalkthroughMetrics(
 }
 
 // ---------------------------------------------------------------------------------------------
+// What each screen asks for
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The web's `GuideStep.fields` — "the real form labels, in screen order, with (required) marked" —
+ * keyed by the step id the two clients already join on.
+ *
+ * ── THIS IS A COPY, IT IS DELIBERATELY A COPY, AND THE COPY IS PINNED ────────────────────────────
+ *
+ * Every string below is `frontend/components/guide/steps.ts`'s, carried across verbatim. NOT ONE OF
+ * THEM WAS READ OFF AN ANDROID FORM, and that is the whole design rather than a shortcut. The web's
+ * file states that its labels are copied from the components themselves and renamed with them, and
+ * it is the register: one list, one owner, one place a rename lands. A second list derived
+ * independently from this app's twenty-three forms would be a second register with nothing holding
+ * it to the first, and the failure mode is not "the two disagree" — it is that nobody can tell which
+ * one is wrong.
+ *
+ * WHAT MAKES A COPY SAFE HERE IS THE JOIN, AND IT IS A MACHINE. `backend/tests/
+ * test_walkthrough_fields_parity.py` parses `GUIDE_STEPS[].fields` out of the TypeScript and this
+ * table out of this file, and fails naming the step and the string on a one-word difference. That is
+ * this repository's settled answer to a register that has to live in two places:
+ * `test_role_ladder_parity.py` holds twenty-three hand-kept copies of the role ladder to the one
+ * `ROLE_RANK` in `deps.py`, and `test_terms_clause_parity.py` holds the nine terms clauses across
+ * `frontend/app/terms/page.tsx` and `TermsScreen.kt` the same way. The backend suite is the only
+ * gate that runs with both trees on disk, which is why a Python test guards two files neither of
+ * whose builds can see the other.
+ *
+ * ⚠ SO DO NOT EDIT A STRING HERE TO MATCH AN ANDROID FORM. If a label on this handset genuinely
+ * differs from the one below, the web is the register and BOTH change, in one commit — the same
+ * instruction `TermsScreen.kt` carries for the same reason. Editing this file alone turns a red test
+ * green while making the two walkthroughs describe two different products.
+ *
+ * ── THE FOUR CARDS WHOSE ENTRIES ARE NOT FORM LABELS ─────────────────────────────────────────────
+ *
+ * `design-workshop-codes`, `design-workshop-readiness`, `design-workshop-stages` and
+ * `design-workshop-inspection` render no labelled field the web could enumerate — two are a print
+ * sheet and a list of links, one is built from a registry the server publishes, and one is a
+ * read-only view of a workshop it did not author. `steps.ts` names all four and says why, and their
+ * entries are section descriptions instead. THEY ARE CARRIED EXACTLY AS THEY STAND. The parity test
+ * does not care what a string means, only that there is one register — and a fifth card quietly
+ * joining that exception is a decision for `steps.ts` to make and to document, never for this table.
+ *
+ * ── WHAT IS ABSENT FROM THIS MAP, AND WHY THAT IS THE CORRECT SHAPE ──────────────────────────────
+ *
+ * Three of the deck's twenty-five cards have no key here. `offline` is the one subject a browser
+ * cannot teach, it has no web counterpart and no screen of its own — [WalkStep.destination] is null
+ * for exactly that reason — so there is no form for it to name. The opening and closing cards are
+ * not features at all. A missing key answers `emptyList()`, and the card draws NO HEADING over an
+ * empty block, which is the rule the "Watch out for" section already obeys and the one the web's own
+ * card does not.
+ *
+ * The keys are in the web's order, and the parity test asserts that too: this table read top to
+ * bottom is the journey read top to bottom, so a step inserted on the web has one obvious place to
+ * go here.
+ *
+ * ONE STRING LITERAL PER LINE AND NEVER A `+` CONCATENATION, however long the line runs. The parser
+ * on the other side of the join reads every quoted run inside a `listOf(…)` as one entry; two
+ * literals joined by `+` would arrive there as two chips and as two failures naming strings nobody
+ * typed.
+ */
+private val WALKTHROUGH_FIELDS: Map<String, List<String>> = mapOf(
+    "workshop" to listOf(
+        "Kind of workshop (required)",
+        "Workshop title (required)",
+        "Place (required)",
+        "Start and end date",
+        "Status",
+        "Description",
+        "Notes",
+        "Linked artisans",
+        "Crafts covered",
+        "Workshop media",
+        "Location (GPS fix or map pin)",
+    ),
+    "craft" to listOf(
+        "Craft name (required)",
+        "Local name",
+        "Category",
+        "Place",
+        "Description",
+        "Craft media",
+    ),
+    "artisan" to listOf(
+        "Name (required)",
+        "Local name",
+        "Workshop",
+        "Design & prototype workshop",
+        "Craft (required)",
+        "Or new craft name",
+        "Place (required)",
+        "Gender",
+        "Phone",
+        "Email",
+        "Address",
+        "Notes",
+        "Do's (positive prompt) (required)",
+        "Don'ts (negative prompt) (required)",
+        "Status",
+        "Artisan media",
+        "Location (GPS fix or map pin)",
+    ),
+    "product" to listOf(
+        "Product name (required)",
+        "Local name",
+        "Workshop",
+        "Design & prototype workshop",
+        "Product type",
+        "Linked craft (fills craft name)",
+        "Craft name (required)",
+        "Linked artisan (fills artisan + place)",
+        "Artisan name (required)",
+        "Place (required)",
+        "Time taken to complete",
+        "Size",
+        "Length (inches)",
+        "Breadth (inches)",
+        "Height (inches)",
+        "Cost of making",
+        "Selling price",
+        "Market demand",
+        "Raw materials used",
+        "Main tools used",
+        "Function or use",
+        "Remarks",
+        "Status",
+        "Product media",
+        "Location (GPS fix or map pin)",
+    ),
+    "process" to listOf(
+        "Workshop",
+        "Design & prototype workshop",
+        "Name of the process (required)",
+        "Artisan (required)",
+        "Product (required)",
+        "What happens in this process",
+        "Pre-processes available",
+        "Per step: Name of the step (required)",
+        "Per step: additional context notes (optional)",
+        "Per step: attached media",
+        "Status",
+    ),
+    "tool" to listOf(
+        "Toolkit name (required)",
+        "Local name",
+        "English name",
+        "Workshop",
+        "Design & prototype workshop",
+        "Linked craft (fills craft name)",
+        "Craft name (required)",
+        "Linked artisan (fills artisan + place)",
+        "Artisan name (required)",
+        "Place (required)",
+        "Process used in",
+        "Material",
+        "Years in use",
+        "Height",
+        "Width",
+        "Length (inches)",
+        "Breadth (inches)",
+        "Height (inches)",
+        "Thickness",
+        "Weight",
+        "Radius",
+        "Maker",
+        "Tradition type",
+        "Replacement cost",
+        "Suggestions for improvement",
+        "Remarks",
+        "Status",
+        "Process stages",
+        "Tool media",
+        "Location (GPS fix or map pin)",
+    ),
+    "questionnaire" to listOf(
+        "Interview title (required)",
+        "Place",
+        "Language",
+        "Workshop",
+        "Design & prototype workshop",
+        "Status",
+        "Primary artisan",
+        "Additional artisans",
+        "Per question: \"Record this question\" audio, or typed answer",
+        "Interview notes",
+    ),
+    "media" to listOf(
+        "Capture media — images, video, audio and documents",
+        "Media title / object name",
+        "Linked record type (required)",
+        "Linked entry (optional)",
+        "Design & prototype workshop",
+        "Caption",
+        "Location (GPS fix or map pin)",
+    ),
+    "review" to listOf(
+        "Pending — submitted, waiting for a reviewer",
+        "Approved — final, counted in the dataset",
+        "Needs revision — comments explain what to change",
+        "Rejected — not going into the dataset",
+    ),
+    "view-data" to listOf(
+        "By workshop — every record filed under the workshop it was made in (the view it opens on)",
+        "By uploader — a workshop's records filed under the researcher who uploaded them",
+        "By media type — every file filed by what kind of file it is",
+        "Download report (.xlsx)",
+        "Download any folder as a zip, with content-type filters",
+    ),
+    "scan" to listOf(
+        "Scan with the camera",
+        "Upload a picture — or drop one here, or paste it with Ctrl+V",
+        "Or type the code printed under the QR",
+        "The record it resolved to, with one press to open it",
+    ),
+    "designer-profile" to listOf(
+        "Name (required)",
+        "Name in the local script",
+        "Designation",
+        "Institution",
+        "Department",
+        "Qualification (required)",
+        "Specialisation",
+        "Designer’s experience",
+        "Designer’s profile",
+        "Phone (required)",
+        "Email (required)",
+        "Website",
+        "Address",
+        "City or town",
+        "State",
+        "Pincode",
+        "Empanelment number",
+        "Empanelment date",
+        "Photograph",
+        "Signature",
+        "CV",
+    ),
+    "design-workshop" to listOf(
+        "Start from a recorded workshop — what narrows every reference picker inside the stages",
+        "Workshop title (required)",
+        "Report template",
+        "Craft",
+        "Cluster",
+        "State",
+        "District",
+        "Start date and End date",
+        "Designers this workshop is for",
+        "Notes",
+    ),
+    "design-workshop-codes" to listOf(
+        "Artisan cards — one per roster entry",
+        "Prototype tags — one per prototype",
+        "Print sheet, sized for a home printer",
+        "Scan a code back — camera, an uploaded picture, a dropped or pasted picture, or typed",
+    ),
+    "design-workshop-questionnaires" to listOf(
+        "Download the pro-forma",
+        "Upload a filled-in pro-forma",
+        "Or “Start an empty one” — Title, Attach to a design workshop, Description",
+        "Per section: Section title, Code",
+        "Per question: Question, Help text",
+        "Record answers",
+        "Reuse at another workshop",
+        "Download question set, or Download .xlsx",
+    ),
+    "design-workshop-stages" to listOf(
+        "Basic fields — what “Save and check required fields” refuses this one stage without",
+        "Standard and Advanced fields — depth, never a blocker",
+        "Reference pickers — choose the artisan, craft, product, tool, process or questionnaire sitting you documented in the steps above",
+        "“Create a new …” inside a picker, when the record is missing and you are mid-stage",
+        "Photographs, sketches and measurements per stage",
+        "Choose a photograph already in the repository, instead of uploading it a second time",
+        "Photograph galleries that say how many are wanted, with a bar counting what you hold",
+        "A microphone on every narrative box",
+        "This stage in the document — the report’s own pages, beside the form",
+        "Your own sections and questions, added to the workshop with no deployment",
+    ),
+    "design-workshop-sketches" to listOf(
+        "Which workshop",
+        "Upload / Review",
+        "Prototypes / Sketches",
+        "Photograph to trace",
+        "Traced result",
+        "The trace against the photograph",
+        "Measure a dimension from a photograph",
+        "Attach as",
+        "Download a copy to this device",
+        "360° capture",
+        "3D model",
+    ),
+    "design-review" to listOf(
+        "A workshop you can open yourself",
+        "Or any other workshop, from its link or its id",
+        "Prototypes / Sketches",
+        "Your score for this piece (1 to 5)",
+        "What you think of it",
+        "What you would change",
+        "Move up / Move down, or drag to reorder",
+    ),
+    "design-workshop-readiness" to listOf(
+        "Unfilled Basic fields — what a stage check is waiting for",
+        "Report checks — they change the delivered file without refusing it",
+        "Standard and Advanced gaps — counts, behind a disclosure",
+        "A link straight into the stage that holds each gap",
+    ),
+    "design-workshop-report" to listOf(
+        "Report template",
+        "Transcripts in this file",
+        "Include machine-assisted text",
+        "Report colour",
+        "Download .docx",
+        "Download .pdf",
+        "Print these pages",
+    ),
+    "design-workshop-history" to listOf(
+        "Every generated file, newest first",
+        "Template",
+        "Pages",
+        "Size",
+        "Generated by",
+        "SHA-256 of the file",
+        "Compare … With — any two files",
+    ),
+    "design-workshop-inspection" to listOf(
+        "Workshops to inspect — the ones assigned to you, searchable by title, craft, cluster or workshop code",
+        "Workshop under inspection — all 22 stages, read-only",
+        "Who wrote each field, and when",
+        "How complete the workshop is",
+    ),
+)
+
+// ---------------------------------------------------------------------------------------------
 // The prose, split into the blocks the web's card renders
 // ---------------------------------------------------------------------------------------------
 
@@ -516,21 +865,50 @@ private class WalkthroughMetrics(
  * change and the card above it does not have to change at all. That is the whole reason it exists as
  * a function with a return type rather than as three expressions inlined into the card.
  *
- * ── WHAT IS DELIBERATELY ABSENT: THE WEB'S `fields[]` ────────────────────────────────────────────
+ * ── THE WEB'S `fields[]`: A DECISION THAT WAS MADE HERE AND THEN OVERRULED ───────────────────────
  *
- * The web's third panel section lists "the real form labels, in screen order, with (required)
- * marked". There is no Android counterpart and there must not be one invented here. Those are the
- * WEB'S labels in the WEB'S screen order; four of the web's own cards already cannot obey the rule
- * and carry section descriptions instead; and enumerating twenty-three Android forms from this file
- * would be copy written from copy, which is the failure both walkthrough files exist to prevent. A
- * step whose screen is one tap away does not need its fields transcribed — it needs the button, and
- * it has one. The card renders no heading for a block it has nothing to put under.
+ * This block used to say the web's third panel section had no Android counterpart and must not have
+ * one. THE ARGUMENT IS KEPT, because it is what the answer had to be built around and deleting it
+ * would let somebody arrive at the version it correctly refused:
+ *
+ *     "Those are the WEB'S labels in the WEB'S screen order; four of the web's own cards already
+ *     cannot obey the rule and carry section descriptions instead; and enumerating twenty-three
+ *     Android forms from this file would be copy written from copy, which is the failure both
+ *     walkthrough files exist to prevent."
+ *
+ * WHAT CHANGED IS THAT THE OWNER ASKED FOR THE BLOCK, on 2026-08-31: "walkthrough on phone has same
+ * number of cards, but not exactly the same content, the name of the fields in bubble are missing
+ * from there, facilitate that as well." They were right. The two decks already matched card for
+ * card, in one order, under one set of ids — and the handset's card was a section short of the
+ * web's, so a designer who read the guide on a laptop and opened it in a courtyard met a card that
+ * had stopped saying what the screen would ask them for.
+ *
+ * AND THE OLD ARGUMENT DEFEATED EXACTLY ONE IMPLEMENTATION: hand-transcribing twenty-three Android
+ * forms into a Kotlin literal and hoping nobody edits one of them. It never touched the other
+ * one — carrying the WEB'S register, unchanged, under a guarantee a machine enforces. That is
+ * [WALKTHROUGH_FIELDS]. There is still one register and it is still `steps.ts`; this file holds a
+ * copy of it rather than a paraphrase of this app's forms; and
+ * `backend/tests/test_walkthrough_fields_parity.py` reads both source files and fails naming the
+ * step and the string on a one-word difference. The objection was to an UNGUARDED duplicate, and it
+ * is answered by the guard rather than by the omission.
+ *
+ * The last sentence of the old paragraph survives unchanged and now does work in the other
+ * direction: the card renders no heading for a block it has nothing to put under, which is what
+ * `offline` and the two ends of the deck get, because [WALKTHROUGH_FIELDS] has no key for them.
  */
 internal data class WalkthroughFacets(
     /** The collapsed line under the title: what you are doing at this point. One sentence. */
     val summary: String,
     /** The panel's prose: why the dataset needs this, and what the screen will ask for. */
     val detail: String,
+    /**
+     * The form labels the screen asks for, in screen order, one entry per chip — the web's
+     * `GuideStep.fields`, straight out of [WALKTHROUGH_FIELDS].
+     *
+     * Empty for the two ends of the deck and for `offline`, which teach no screen. Empty means the
+     * card draws no heading, exactly as it does for [watch].
+     */
+    val fields: List<String>,
     /** The cautions, one entry per bullet. Empty for the two ends of the deck, which have none. */
     val watch: List<String>,
 )
@@ -547,6 +925,12 @@ internal data class WalkthroughFacets(
  * If the body has no caution the list comes back empty rather than holding one blank string, because
  * the card decides whether to draw a heading by asking whether the list is empty, and a heading over
  * an empty bullet is the latent defect the web card has and this one must not copy.
+ *
+ * THE FIELDS ARE LOOKED UP RATHER THAN CUT, and that is the one thing in here that is not a seam in
+ * the prose. They are not in [WalkStep.body] to be found: they are the web's register, carried in
+ * [WALKTHROUGH_FIELDS] and held to `steps.ts` by a test. This function is still the ONE place a card
+ * gets a facet from, which is what keeps the card ignorant of where any of them came from — and a
+ * step with no key answers `emptyList()` on the same terms an absent caution does.
  */
 internal fun walkthroughFacets(step: WalkStep): WalkthroughFacets {
     val body = step.body.trim()
@@ -560,6 +944,7 @@ internal fun walkthroughFacets(step: WalkStep): WalkthroughFacets {
     return WalkthroughFacets(
         summary = prose.substring(0, cut).trim(),
         detail = prose.substring(cut).trim(),
+        fields = WALKTHROUGH_FIELDS[step.id].orEmpty(),
         watch = if (caution.isEmpty()) emptyList() else listOf(caution),
     )
 }
@@ -1516,12 +1901,21 @@ private fun WalkthroughBubble(
  * is no `aria-controls` in Compose and none is invented here: the state description carries the same
  * fact and carries it in both states.
  *
+ * ── THE PANEL'S THREE BLOCKS, IN THE WEB'S OWN ORDER ─────────────────────────────────────────────
+ *
+ * "Why this step exists", then "What the screen asks for", then "Watch out for", then the door.
+ * `GuideStepCard.tsx` lays them out in exactly that sequence and the sequence is the lesson: why you
+ * are here, what you will be asked, what goes wrong. The middle block landed on 2026-08-31 — see the
+ * overruled paragraph over [WalkthroughFacets] — and it goes in the MIDDLE rather than on the end,
+ * because a caution read before the form it is about is a caution about nothing.
+ *
  * ── AND THE HEADINGS ARE CONDITIONAL ─────────────────────────────────────────────────────────────
  *
  * A section is drawn only if it has something in it. The web's card renders "What the screen asks
  * for" and "Watch out for" unconditionally over `.map` calls that can both be empty, which is a
  * heading with nothing under it waiting to happen on the first step that has no caution. Two ends of
- * this deck genuinely have none.
+ * this deck genuinely have none — and `offline`, which teaches a behaviour rather than a screen, has
+ * no fields, so it is the third card that would otherwise have drawn one.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1700,6 +2094,57 @@ private fun WalkthroughStepCard(
                                     fontSize = 14.sp,
                                     lineHeight = 21.sp,
                                 )
+                            }
+                        }
+
+                        if (facets.fields.isNotEmpty()) {
+                            WalkthroughPanelSection(
+                                icon = Icons.Filled.Checklist,
+                                heading = "What the screen asks for",
+                            ) {
+                                /*
+                                 * A CHIP CLOUD AND NOT A BULLET LIST, for the shape of the data.
+                                 * Most of these entries are short labels — "Status", "Notes",
+                                 * "Phone" — and a bullet each would run the `tool` step to thirty
+                                 * lines for thirty words. A FlowRow packs the short ones three and
+                                 * four to a line and lets a long one take a full width of its own,
+                                 * which is what the web's `flex flex-wrap` does with these same
+                                 * strings.
+                                 *
+                                 * NOTHING HERE ANIMATES, and the web's version does — its chips
+                                 * arrive on a 0.025s stagger. That is not a reduced-motion decision
+                                 * (this panel already branches on the preference one level up) but a
+                                 * count one: twenty-five of these on the `product` card and thirty
+                                 * on `tool`, each an animation started on the frame the panel opens,
+                                 * on the SM-M325F this fleet actually carries. The whole file exists
+                                 * to keep per-frame work off that handset, and a stagger nobody
+                                 * asked for is the last place to spend it.
+                                 *
+                                 * The chip is sized in `sp` and padded in `dp`, so it grows with the
+                                 * reader's font scale and reflows instead of clipping — the same
+                                 * rule the numbered bubble follows by deriving its diameter rather
+                                 * than declaring one.
+                                 */
+                                val chip = RoundedCornerShape(WALK_CHIP_CORNER)
+                                val chipFill = MaterialTheme.field.surface50
+                                val chipEdge = MaterialTheme.field.hairline
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    facets.fields.forEach { label ->
+                                        Text(
+                                            label,
+                                            color = MaterialTheme.field.body,
+                                            fontSize = 12.sp,
+                                            lineHeight = 17.sp,
+                                            modifier = Modifier
+                                                .background(chipFill, chip)
+                                                .border(1.dp, chipEdge, chip)
+                                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
 

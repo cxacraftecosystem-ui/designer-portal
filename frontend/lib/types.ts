@@ -42,6 +42,35 @@ export type User = {
   canReview?: boolean;
   canViewProvenance?: boolean;
   canDownloadDataset?: boolean;
+  /**
+   * ── THE FIRST-LOGIN PASSWORD, 2026-08-30 ────────────────────────────────────────────────────
+   *
+   * True when the password on this account was typed by an ADMINISTRATOR rather than chosen by its
+   * owner — `POST /api/users`, or a password written through `PATCH /api/users/{id}` for somebody
+   * else. It arrives on every `/me` and on the sign-in response for free, because `serialize_user`
+   * encodes the whole row.
+   *
+   * **`/login` IS THE SCREEN THAT CONSUMES IT, SINCE 2026-08-31.** This paragraph used to say that
+   * no screen on either client did, and it was right: the flag rode on every payload and nobody was
+   * ever asked anything, so an admin-issued password — a secret two people know by construction —
+   * stayed on the account for as long as its owner cared to keep using it. `FirstPasswordGate` in
+   * `app/login/page.tsx` now stands between sign-in and the dashboard while this is true, and
+   * `PasswordGateScreen` does the same on the handset.
+   *
+   * The server still REPORTS and never refuses (see the column's comment in schema.prisma), for the
+   * reason that route gives: `POST /api/auth/change-password` needs a bearer token, so a 403 at the
+   * door would be a demand the account could never satisfy. Read `mustChangePassword` in
+   * `lib/signIn.ts` rather than this field directly — an absent field means "a server older than the
+   * column", which is neither "must" nor "need not".
+   *
+   * The admin's "Password link" action on /users remains the OTHER way this is cleared, and it is
+   * the one to reach for when somebody cannot sign in at all: /set-password clears the flag as part
+   * of the redemption, so the gate is never met by a person who arrived through a link.
+   */
+  mustChangePassword?: boolean;
+  /** ISO-8601. Null alongside a Google account means "never had a password", which is the
+   *  distinction this column was added to make; see schema.prisma. */
+  passwordSetAt?: string | null;
 };
 
 export type FieldProvenanceEntry = { by?: string; byName?: string; at?: string };
@@ -400,6 +429,18 @@ export type MediaFile = {
   transcriptSummary?: string | null;
   transcriptStatus?: string | null;
   transcriptError?: string | null;
+  /**
+   * When a person last replaced this transcript, or null when nothing is on record.
+   *
+   * NULL IS NOT "NEVER EDITED". The column landed on 2026-08-31 and is null for every row stored
+   * before it, so a reader may draw "Edited" from a value and must draw NOTHING from its absence —
+   * `POST /media/{id}/transcript` has been able to replace a transcript all along, and printing
+   * "these are the machine's words" over one a researcher rewrote is the claim the flag exists to
+   * stop being made. The migration carries the full argument.
+   */
+  transcriptEditedAt?: string | null;
+  /** Who made that edit. An audit stamp with no relation behind it — see the schema. */
+  transcriptEditedById?: string | null;
   uploadedBy?: User | null;
   createdAt: string;
 };

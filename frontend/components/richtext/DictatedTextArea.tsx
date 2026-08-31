@@ -26,6 +26,7 @@ import { useId, useState } from "react";
 
 import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { appendDictatedPhrase, clampToColumn, columnFullSentence } from "@/components/richtext/dictatedValue";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 export function DictatedTextArea({
   name,
@@ -109,7 +110,7 @@ export function DictatedTextArea({
       */}
       <label className="field-label" htmlFor={`${reactId}-box`}>
         {label}
-        {required ? " *" : ""}
+        <RequiredMark when={required} />
       </label>
       {helper ? (
         <p id={helpId} className="text-xs text-ink-muted">

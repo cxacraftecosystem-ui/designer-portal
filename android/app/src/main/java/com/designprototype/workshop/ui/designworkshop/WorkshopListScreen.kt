@@ -59,6 +59,12 @@ import com.designprototype.workshop.data.DesignWorkshopCreateBody
 import com.designprototype.workshop.data.DwEligibleViewerDto
 import com.designprototype.workshop.data.DwEligibleViewers
 import com.designprototype.workshop.data.DW_MAX_NAMED_DESIGNERS
+import com.designprototype.workshop.data.DW_LOCAL_DRAFT_LINK_PROMPT
+import com.designprototype.workshop.data.DW_LOCAL_DRAFT_UNLINKED
+import com.designprototype.workshop.data.DW_LOCAL_START_ACTION
+import com.designprototype.workshop.data.DW_LOCAL_START_NOTE
+import com.designprototype.workshop.data.DwDraftStart
+import com.designprototype.workshop.data.dwClassifyDraftStart
 import com.designprototype.workshop.data.mayMintLocalWorkshop
 import com.designprototype.workshop.data.ReportTemplateDto
 import com.designprototype.workshop.data.SchemaResponse
@@ -88,6 +94,7 @@ import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import com.designprototype.workshop.ui.requiredMarked
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -124,6 +131,18 @@ import java.util.UUID
  * broken. It is the same 350ms `WorkshopViewersScreen` uses for the same endpoint.
  */
 private const val SEARCH_DEBOUNCE_MS = 350L
+
+/**
+ * How many names the create form asks for when offering the ones already on record.
+ *
+ * ONE PAGE, DELIBERATELY SMALL, AND THE PICKER SAYS SO. The offer is a convenience over a box that
+ * always works, so the whole corpus is not what is wanted here — and the anchored menu builds every
+ * row eagerly inside a scrolling column, which is right for twenty and is not where two hundred
+ * belong. Because it IS one truncated page, the picker passes `searchable = false` (a filter box over
+ * a page filters the page and answers "nothing matches" about a workshop that exists) and the caller
+ * owes the sentence naming what reaches the rest — which, on this control, is typing the name.
+ */
+private const val NAME_OFFER_PAGE_SIZE = 20
 
 /** One row: a workshop, wherever it currently lives. */
 @Immutable
@@ -217,6 +236,16 @@ fun WorkshopListScreen(
     var loading by remember { mutableStateOf(true) }
     var search by remember { mutableStateOf("") }
     /**
+     * The `WORKSHOP_KIND` this list is narrowed to, or `""` for every type.
+     *
+     * EMPTY MEANS EVERYTHING, BY ABSENCE (R1) — never by an all-selected state. `""` is what the
+     * picker's "none" row writes, `WorkshopRepository.designWorkshops` folds it to an absent query
+     * parameter, and there is no second spelling of "show me all of them" for a later reader to
+     * disagree with. The same rule and the same reserved-empty as the web's type filter on this
+     * screen.
+     */
+    var kindFilter by remember { mutableStateOf("") }
+    /**
      * May this account start a workshop at all — read from the CACHED user, with no network.
      *
      * `remember`ed with no key on purpose, and for the reason `canReadIdentityCards` gives on the
@@ -245,6 +274,19 @@ fun WorkshopListScreen(
     val mayCreate = remember(cachedSession?.id, cachedSession?.role) {
         mayMintLocalWorkshop(known = cachedSession != null, role = cachedSession?.role)
     }
+    /**
+     * May this account do the WORK of a design workshop - the wider set, read for exactly one
+     * question: [dwClassifyDraftStart]'s middle arm, which is the owner's clause about a designer
+     * with no signal.
+     *
+     * A SECOND PREDICATE AND NOT A LOOSENING OF THE FIRST. [mayCreate] answers "may this account
+     * bring a workshop into existence" and is unchanged. Keyed the same way and for the same reason.
+     */
+    val mayRunWorkshops = remember(cachedSession?.id, cachedSession?.role) {
+        cachedSession != null && FieldPermissions.canRunDesignWorkshops(cachedSession)
+    }
+    /** The title in the offline start box, and whether it is being written. */
+    var localTitle by remember { mutableStateOf("") }
     var showCreate by remember(startCreating) { mutableStateOf(startCreating && mayCreate) }
     /** The device-only draft the designer is moving into a real workshop, while they choose one. */
     var adopting by remember { mutableStateOf<WorkshopRow?>(null) }
@@ -253,6 +295,17 @@ fun WorkshopListScreen(
     var offline by remember { mutableStateOf(false) }
     /** Rows gathered vs rows the server says exist, set only when the walk came back short. */
     var partial by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    /**
+     * How many device-only workshops are on screen that the type filter could not be applied to.
+     *
+     * COUNTED AND SAID, never quietly left in the list and never quietly dropped from it. A workshop
+     * minted in a courtyard has no type on this device at all — `WorkshopDraft` carries none, and the
+     * column is promoted from stage 1 by the server — so the filter has nothing to test it against.
+     * Dropping those rows would hide a fortnight of work behind a filter; leaving them silently
+     * would be a filtered list quietly showing rows that do not match it, which teaches a designer
+     * that the filter does not work. So they stay, and the sentence below says how many and why.
+     */
+    var unfilterableLocal by remember { mutableIntStateOf(0) }
     /**
      * Which workshop the background pass is uploading right now, straight from the engine.
      *
@@ -263,11 +316,15 @@ fun WorkshopListScreen(
     val sendingId by WorkshopSyncEngine.busyWorkshop.collectAsState()
     val syncRevision by WorkshopSyncEngine.revision.collectAsState()
 
-    LaunchedEffect(reload, search) {
+    LaunchedEffect(reload, search, kindFilter) {
         // Debounced, and only for typing. Keying the effect on `search` means every keystroke
         // cancels the previous run and starts a new one, so without this a five-letter craft name is
         // five list requests on a metered field connection — and the first four are replies nobody
         // will ever look at. `reload` is a deliberate action (a create, a send) and must not wait.
+        //
+        // `kindFilter` is keyed here too and is DELIBERATELY NOT DEBOUNCED: it changes by a tap on a
+        // picker, not by typing, so there is no run of intermediate values to swallow and making a
+        // deliberate choice wait a third of a second reads as the control being slow.
         if (search.isNotBlank()) delay(SEARCH_DEBOUNCE_MS)
         loading = true
         runCatching {
@@ -293,7 +350,16 @@ fun WorkshopListScreen(
             // sorts to the end. Verified live: designer@example.org with one grant sees total 120 and
             // the granted workshop is the 119th row. See data/DesignWorkshopListing.kt.
             val remote = runCatching {
-                repository.visibleDesignWorkshops(search = search.takeIf { it.isNotBlank() })
+                repository.visibleDesignWorkshops(
+                    search = search.takeIf { it.isNotBlank() },
+                    // NARROWED ON THE SERVER, never over the rows this walk gathered — see
+                    // [visibleDesignWorkshops]. A local filter would search only the pages that
+                    // happened to be fetched and answer "none of that type" over a repository full
+                    // of them, and it would leave `total` counting every type while the list showed
+                    // one, so the "Showing N of M" sentence beneath would be arithmetic about two
+                    // different lists.
+                    workshopKind = kindFilter.takeIf { it.isNotBlank() },
+                )
             }
             // A CANCELLED walk IS NOT AN OFFLINE ONE. This effect is keyed on the search box, so a
             // keystroke landing while a later page is in flight cancels it — and `runCatching` catches
@@ -349,6 +415,13 @@ fun WorkshopListScreen(
                     // filtered here or a search would quietly stop matching offline.
                     search.isBlank() || row.title.contains(search, ignoreCase = true)
                 }
+
+            // THE TYPE FILTER IS NOT APPLIED TO THESE, AND CANNOT BE. See [unfilterableLocal]: the
+            // draft on this device holds no kind, so the only honest choices are to show them and
+            // say so, or to hide a fortnight of work behind a filter that has nothing to test. The
+            // count is set even when it is zero, so a designer who clears the filter loses the
+            // sentence with it.
+            unfilterableLocal = if (kindFilter.isBlank()) 0 else localOnly.size
 
             (fromServer + localOnly).sortedByDescending { it.updatedAt }
         }.onSuccess { rows = it }
@@ -409,6 +482,36 @@ fun WorkshopListScreen(
             }
         }
 
+        /*
+          FILTER BY TYPE — the read half of the pair the owner asked for, and the handset's copy of
+          the control the browser grew on this same screen.
+
+          DRAWN ONLY WHEN THERE ARE TYPES TO OFFER. `workshopKindOptions` answers off the registry,
+          which on this client always resolves — memory, then `filesDir`, then the bundled APK asset
+          — so the empty case means the enum has been RETIRED server-side, and a filter whose only
+          row is "Any type" is a control that cannot do anything.
+
+          "Any type" IS THE EMPTY VALUE AND IT IS FIRST, spelled exactly as the web spells it and
+          built as an ordinary first option rather than through `includeNone`: this is the row that
+          takes the filter off, and the reader has to be able to see the way back on the same list
+          they used to get here.
+
+          `searchable = false` — six members of a vocabulary compiled into this app is precisely the
+          class the shared threshold answers correctly, and six is under it anyway; passing the
+          ruling explicitly would be overruling a count that is already right.
+        */
+        val kindChoices = workshopKindOptions(schema)
+        if (kindChoices.isNotEmpty()) {
+            SearchableSelectField(
+                label = "Type of workshop",
+                options = listOf(com.designprototype.workshop.ui.SelectOption("", "Any type")) + kindChoices,
+                selectedValue = kindFilter,
+                includeNone = false,
+                enabled = !busy,
+                onSelect = { picked -> kindFilter = picked }
+            )
+        }
+
         // Answered BY NAME rather than by an absence — and answered here even when the designer
         // arrived from the dashboard's "New workshop" tile, which passes `startCreating` and would
         // otherwise land them on a list with nothing to explain why no form opened.
@@ -454,6 +557,109 @@ fun WorkshopListScreen(
                   sentence above still says whose job that is.
                 */
                 DwMostRecentlyAllocated(repository = repository, onOpen = onOpen)
+
+                /*
+                  AND THE OTHER HALF OF THE CLAUSE - THE ONE THAT ONLY APPLIES WITH NO SIGNAL.
+
+                  The owner: "if they are offline, let them create one for the time being, and when
+                  the internet comes back up, let them link it to one of the workshops that they
+                  have access to." With a connection, the row above IS the better answer and this is
+                  not drawn at all; with none, there is no answer at all and a designer standing in
+                  a courtyard opens a paper notebook instead.
+
+                  INSIDE THIS PANEL RATHER THAN IN THE HEADER, and that placement is the honesty.
+                  The header's New button is gated to nothing for this account on purpose, and a
+                  different button in the same place would read as that rule quietly reversing. Here
+                  the refusal above it is still the first thing read, and this is plainly the
+                  exception it names.
+
+                  THE GATE IS ASKED AT THE TAP, NOT AT THE DRAW - see the confirm below. A phone can
+                  find a bar of signal between this composing and a thumb landing on it.
+                */
+                if (offline && mayRunWorkshops) {
+                    Text(
+                        DW_LOCAL_START_NOTE,
+                        color = MaterialTheme.field.onWarningContainer,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                    OutlinedTextField(
+                        value = localTitle,
+                        onValueChange = { localTitle = it },
+                        label = { Text("Workshop title") },
+                        singleLine = true,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedButton(
+                        // Disabled on an empty title only. Everything else this control could
+                        // refuse is refused by [dwClassifyDraftStart] below, which is the one place
+                        // that knows the rule.
+                        enabled = !busy && localTitle.isNotBlank(),
+                        onClick = {
+                            /*
+                              READ AT THE TAP AND FROM THE CACHED USER, exactly as the create dialog
+                              does and for the same reason: the answer must not depend on a round
+                              trip, and the phone already holds the signed-in account.
+
+                              `reachable` IS `ConnectivityObserver`, NOT THE `offline` FLAG ABOVE.
+                              That flag records a list read that failed some seconds ago, which is
+                              the right evidence for DRAWING this control and the wrong evidence for
+                              writing to disk: the whole point of the clause is that a workshop is
+                              minted here only while the repository genuinely cannot be reached, and
+                              a phone that has since found signal has the better answer available to
+                              it again.
+                            */
+                            val cached = repository.cachedUser()
+                            val start = dwClassifyDraftStart(
+                                mayCreate = mayMintLocalWorkshop(
+                                    known = cached != null,
+                                    role = cached?.role,
+                                ),
+                                mayRunWorkshops = cached != null &&
+                                    FieldPermissions.canRunDesignWorkshops(cached),
+                                reachable = ConnectivityObserver.isOnline(appContext),
+                            )
+                            if (start != DwDraftStart.LINK_LATER) {
+                                onError(DW_WORKSHOP_CREATE_REFUSAL)
+                            } else {
+                                busy = true
+                                val typed = localTitle.trim()
+                                localTitle = ""
+                                scope.launch {
+                                    val id = DW_LOCAL_ID_PREFIX + UUID.randomUUID()
+                                    val written = runCatching {
+                                        // Seeded immediately, before the screen opens, for the
+                                        // reason the create dialog gives: a workshop whose draft is
+                                        // only written on the first stage save vanishes from this
+                                        // list if the designer backs out of stage 1.
+                                        WorkshopDraftStore.update(appContext, id) { draft ->
+                                            draft.copy(
+                                                title = typed,
+                                                // NO `remoteId`, and no `createSentAt` either:
+                                                // nothing was sent, so nothing is outstanding, and a
+                                                // stamp here would arm `resolveInterruptedCreate`
+                                                // against a request that never left the handset.
+                                                ownerUserId = cached?.id,
+                                            )
+                                        }
+                                    }.isSuccess
+                                    busy = false
+                                    if (!written) {
+                                        onError(
+                                            "That could not be written to this phone, so nothing " +
+                                                "has been started and nothing has been lost."
+                                        )
+                                    } else {
+                                        reload++
+                                        onOpen(id)
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.heightIn(min = 48.dp)
+                    ) { Text(DW_LOCAL_START_ACTION, fontSize = 13.sp) }
+                }
             }
         }
 
@@ -465,6 +671,34 @@ fun WorkshopListScreen(
             )
         }
 
+        /*
+          THE PROMPT THE OWNER ASKED FOR: "when the internet comes back up, let them link it to one
+          of the workshops that they have access to."
+
+          ONLINE ONLY, which is the whole point - the row is marked from the moment the draft is
+          minted, and this is the arrival of the moment to act. Offline it would be an instruction
+          nobody can follow, because the adopt sheet holds the move until the repository has said
+          which workshops this account may actually open.
+
+          IT DOES NOT OPEN THE SHEET ITSELF. With more than one unlinked workshop the screen cannot
+          know which one is meant, and choosing for the designer is how a fortnight is filed under
+          the wrong cluster - so it names the count and sends them to the row, where the title is.
+        */
+        val unlinkedCount = rows.count { it.localOnly && it.hasLocalDraft }
+        if (!offline && !mayCreate && unlinkedCount > 0) {
+            Text(
+                (if (unlinkedCount == 1) {
+                    "One workshop here was started on this device and is not linked to a workshop yet. "
+                } else {
+                    "$unlinkedCount workshops here were started on this device and are not linked " +
+                        "to a workshop yet. "
+                }) + DW_LOCAL_DRAFT_LINK_PROMPT + " Use “Move into a workshop” on the row.",
+                color = MaterialTheme.field.warning,
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
+        }
+
         // Says so rather than letting a designer infer it from a workshop that is not there — which
         // is the failure this whole paging change exists to end. Advisory: nothing is blocked, and
         // the search box above narrows on the SERVER, so typing a craft or cluster name reaches the
@@ -473,6 +707,18 @@ fun WorkshopListScreen(
             Text(
                 "Showing $shown of $total workshops. Search by title, craft or cluster to reach the rest.",
                 color = MaterialTheme.field.warning,
+                fontSize = 12.sp
+            )
+        }
+
+        // Said rather than left to be inferred from a filtered list with unfiltered rows in it. See
+        // [unfilterableLocal] for why the filter cannot reach them and why hiding them is worse.
+        if (unfilterableLocal > 0) {
+            Text(
+                "$unfilterableLocal workshop${if (unfilterableLocal == 1) "" else "s"} on this device " +
+                    "${if (unfilterableLocal == 1) "is" else "are"} shown whatever the filter says — " +
+                    "the type is only known once they sync.",
+                color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
         }
@@ -791,13 +1037,22 @@ fun WorkshopListScreen(
               at a workshop that answers 404 strands it behind a refusal no sync pass can clear. See
               [WorkshopRow.fromServer].
 
-              OFFLINE IS THE DELIBERATE EXCEPTION, and the browser answers it the same way: with no
-              answer from the server there is nothing to confirm against, and refusing to offer
-              anything would take the feature away in the courtyard it exists for. The remembered
-              rows are offered, and [dwAdoptCandidateNotice] says exactly what they are. What is
-              NOT needed here is the browser's extra "hold the button until the repository has
-              answered once" gate — this control lives ON a row, so the walk has already finished
-              (or already failed, setting `offline`) before the dialog can be opened at all.
+              OFFLINE THE REMEMBERED ROWS ARE SHOWN AND MAY NOT BE CHOSEN, which is the same split
+              the browser makes. With no answer from the server there is nothing to confirm against,
+              and refusing to draw anything would take the feature away in the courtyard it exists
+              for — so the rows are offered as a LIST, [dwAdoptCandidateNotice] says exactly what
+              they are, and [AdoptIntoWorkshopDialog]'s confirm button is disabled. Its header
+              carries the argument in full.
+
+              THIS PARAGRAPH USED TO END "What is NOT needed here is the browser's extra hold the
+              button until the repository has answered once gate — this control lives ON a row, so
+              the walk has already finished (or already failed, setting `offline`) before the dialog
+              can be opened at all", and every clause of that was true except the conclusion. A walk
+              that has FINISHED is not a walk that has SUCCEEDED: `offline` is set precisely when it
+              failed, and the candidate set is then this phone's memory, which is stale in the
+              PERMISSIVE direction. The gate is here, it is the confirm button, and it has been since
+              the same wave that put it on the browser. Two comments on one screen disagreeing about
+              whether a one-way write is gated is how the gate comes out again.
             */
             candidates = rows.filter { it.remoteId != null && (offline || it.fromServer) },
             offline = offline,
@@ -951,10 +1206,16 @@ private fun WorkshopCard(
             // designer looking at a row that will not sync has to be able to see the answer from
             // here.
             onAdopt?.let { adopt ->
+                // TERSE, AND IT NO LONGER TELLS EVERY DESIGNER TO GO AND ASK AN ADMIN. The
+                // paragraph this replaces was written when the only drafts that could reach this row
+                // were the ones stranded by the create rule, whose owner genuinely had no workshop
+                // to move into. A designer who starts one here deliberately, offline, usually has
+                // several - the picker is the next move, not a conversation - and the admin sentence
+                // is still on screen for the other case, in the adopt sheet's own empty state, which
+                // is the one surface that KNOWS the account has nothing to move into. Two facts and
+                // nothing else: what this row is, and what to do with it. Byte-for-byte the web's.
                 Text(
-                    "This workshop exists only on this phone. Once an admin has created it on the " +
-                        "server, move this draft into it and everything you have captured — every " +
-                        "stage, photograph and recording — goes up into that workshop.",
+                    DW_LOCAL_DRAFT_UNLINKED + " " + DW_LOCAL_DRAFT_LINK_PROMPT,
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp
@@ -1115,6 +1376,38 @@ private fun CreateWorkshopDialog(
     var cluster by remember { mutableStateOf("") }
     var templateId by remember { mutableStateOf("DCH_STANDARD") }
     var templates by remember { mutableStateOf<List<ReportTemplateDto>>(emptyList()) }
+    /** The chosen `WORKSHOP_KIND` token, or `""` for "not stated". See the control for both halves. */
+    var workshopKind by remember { mutableStateOf("") }
+    /** The six kinds, off the registry. Always answerable on this client — see [workshopKindOptions]. */
+    var kinds by remember { mutableStateOf<List<com.designprototype.workshop.ui.SelectOption>>(emptyList()) }
+    /**
+     * Names already used by workshops this account can open, narrowed by [workshopKind].
+     *
+     * WHY THEY ARE OFFERED AT ALL. A design workshop's name is copied into stage 1, promoted onto the
+     * column, and printed on the cover of a document a ministry receives; "Bagru Block Print Workshop
+     * 2025" and "Bagru block-printing workshop, 2025" are one fortnight to a reader and two different
+     * strings to every group-by. A workshop that runs every year, or in three clusters at once, is
+     * named three ways by three designers unless the names already on record are in front of them.
+     *
+     * IT IS AN OFFER AND NEVER A GATE, which is the half the browser's `stageFieldRoles.ts` objects
+     * to losing: a workshop that has no record anywhere is most of them on the day they start, so the
+     * box below is the default arm and the picker is the shortcut.
+     */
+    var namesOnRecord by remember { mutableStateOf<List<String>>(emptyList()) }
+    /** The server's count against what it sent, so the cut can be stated with its number (R4). */
+    var namesTotal by remember { mutableIntStateOf(0) }
+    /**
+     * Which half of the name combo is on screen. `false` — the plain box — is the default.
+     *
+     * THE OPPOSITE DEFAULT TO THE WEB'S STAGE-1 FIELD, AND THE DIFFERENCE IS THE SURFACE'S RATHER
+     * THAN A PARAPHRASE. There the box is usually already filled — stage 1 is opened on a workshop
+     * that exists and whose name was chosen weeks ago — so the list is the common act and the typing
+     * is the escape. Here the workshop is being created: its name is nearly always new, and putting a
+     * picker in front of the one act this form exists for would cost two taps on every create to
+     * save one on the rare reuse. Both arms accept anything typed and both offer the names on record;
+     * only which one is on top differs.
+     */
+    var pickingName by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
     /**
@@ -1194,6 +1487,54 @@ private fun CreateWorkshopDialog(
 
     LaunchedEffect(Unit) {
         templates = runCatching { repository.designWorkshopTemplates(appContext) }.getOrDefault(emptyList())
+        // NETWORK-FREE IN THE ORDINARY CASE and never dependent on one: `designWorkshopSchema` peeks
+        // the process cache first and otherwise ends in `StageSchemaStore.load`, which falls through
+        // to the APK's bundled asset. That is why this vocabulary needs no compiled-in floor of its
+        // own on the handset where the browser needs `WORKSHOP_KIND_FLOOR` — see [workshopKindOptions],
+        // which states the check rather than the assumption.
+        kinds = runCatching { workshopKindOptions(repository.designWorkshopSchema(appContext)) }
+            .getOrDefault(emptyList())
+    }
+
+    /**
+     * The names already on record, re-read whenever the chosen type changes.
+     *
+     * NARROWED ON THE SERVER, and narrowing what is OFFERED can never narrow what can be TYPED — the
+     * box below is untouched by this. With a type chosen the offer is the workshops of that type,
+     * because that is the set whose naming convention is worth copying; a Skill Upgradation sitting
+     * and a Design Intervention are named to different patterns and mixing them is how a designer
+     * copies the wrong precedent.
+     *
+     * A FAILED READ IS AN EMPTY OFFER AND NOTHING ELSE. There is no banner and nothing stands down:
+     * this dialog opens offline by design — it mints a local id — and the name has always been
+     * typeable. The picker simply is not offered when there is nothing to offer, which is the honest
+     * shape for a convenience.
+     */
+    LaunchedEffect(workshopKind) {
+        val answer = try {
+            repository.designWorkshops(
+                page = 1,
+                pageSize = NAME_OFFER_PAGE_SIZE,
+                workshopKind = workshopKind.takeIf { it.isNotBlank() },
+            )
+        } catch (cancelled: CancellationException) {
+            // NEVER SWALLOWED, and this is why the arm is a `try` rather than the `runCatching` the
+            // two effects above can afford: this one is KEYED, so changing the type cancels the run
+            // in flight, and `runCatching` catches that like any other throwable — leaving the
+            // previous type's names standing under the new type's heading.
+            throw cancelled
+        } catch (offline: Throwable) {
+            null
+        }
+        namesOnRecord = answer?.items.orEmpty()
+            .mapNotNull { it.title.trim().takeIf { name -> name.isNotEmpty() } }
+            // DEDUPLICATED because only the NAME is offered: two workshops may share one, and a row
+            // drawn twice is a control that appears to distinguish two answers it cannot.
+            .distinct()
+        namesTotal = answer?.total ?: 0
+        // A picker with nothing in it is not a picker. Falling back to the box costs nothing here,
+        // because the box is what this field was and is still the whole answer.
+        if (namesOnRecord.isEmpty()) pickingName = false
     }
 
     /**
@@ -1309,13 +1650,86 @@ private fun CreateWorkshopDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.verticalScroll(rememberScrollState())
             ) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Workshop title *") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                /*
+                  -- NAME OF WORKSHOP: A CREATABLE COMBO, NOT A PICKER AND NOT A BARE BOX ---------
+
+                  The owner asked for the workshop's name to OFFER the names already on record while
+                  still ACCEPTING a new one typed straight in. The browser's `stageFieldRoles.ts`
+                  carries a written objection to putting a dropdown on this fact -- "a dropdown there
+                  would refuse a workshop that has no `Workshop` record yet, which is most of them on
+                  the day they start" -- and every word of it is right about the control it refuses: a
+                  CLOSED list. It says nothing against this one, because nothing here can refuse an
+                  answer. Both arms below take any name; only which one is on top differs.
+
+                  THE ESCAPE IS `createAction`, WHICH THIS PRIMITIVE HAS HAD ALL ALONG and which the
+                  browser has only just grown. Its own rule is why the list half is usable at all:
+                  "A cluster whose artisan register holds three names takes the anchored menu, and
+                  three names is precisely the case where the artisan being looked for is the one that
+                  was never documented." Offered at the foot of whichever surface opens, and offered
+                  whether or not anything matched, so it never has to be discovered twice.
+
+                  `searchable = false` because [namesOnRecord] is ONE SERVER-TRUNCATED PAGE: a filter
+                  box over a page filters the page, and typing the name of a workshop sitting past the
+                  cut would answer "nothing matches" about a workshop that exists -- which on a naming
+                  control is worse than usual, because the next thing a person does after "no matches"
+                  is type the name again slightly differently. The sentence under it names what does
+                  reach the rest, which on this control is simply typing.
+                */
+                if (pickingName && namesOnRecord.isNotEmpty()) {
+                    SearchableSelectField(
+                        label = "Workshop title *",
+                        // The name already typed is always a row, so the trigger can read back the
+                        // control's own answer. A picker that cannot draw its current value reads as
+                        // blank, and the obvious repair for a blank box is to answer it again.
+                        options = (listOfNotNull(title.trim().takeIf { it.isNotEmpty() }) + namesOnRecord)
+                            .distinct()
+                            .map { com.designprototype.workshop.ui.SelectOption(value = it, label = it) },
+                        selectedValue = title,
+                        includeNone = false,
+                        searchable = false,
+                        enabled = !busy,
+                        createAction = com.designprototype.workshop.ui.SelectCreateAction(
+                            label = "Type a name that is not on this list"
+                        ) { pickingName = false },
+                        onSelect = { picked -> if (picked.isNotBlank()) title = picked }
+                    )
+                    // TWO FACTS AND NOTHING ELSE: what the list is (R3 -- a narrowing nobody
+                    // announced reads as non-existence), and the cut with its number where there is
+                    // one (R4). The reasoning for both lives in the block above; the standing
+                    // instruction on this product is that the screen carries the fact and the file
+                    // carries the argument.
+                    Text(
+                        buildString {
+                            append(
+                                if (workshopKind.isBlank()) {
+                                    "Names from workshops you can open."
+                                } else {
+                                    "Names from workshops of this type."
+                                }
+                            )
+                            if (namesTotal > namesOnRecord.size) {
+                                append(" Showing ${namesOnRecord.size} of $namesTotal.")
+                            }
+                        },
+                        color = MaterialTheme.field.muted,
+                        fontSize = 11.sp
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        label = { Text(requiredMarked("Workshop title *")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // DRAWN ONLY WHEN THERE IS SOMETHING TO REUSE. An offer that opens on an empty
+                    // list is the wordless picker this app's own primitive spends a page refusing.
+                    if (namesOnRecord.isNotEmpty()) {
+                        TextButton(enabled = !busy, onClick = { pickingName = true }) {
+                            Text("Reuse a name already on record")
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = craft,
                     onValueChange = { craft = it },
@@ -1337,6 +1751,46 @@ private fun CreateWorkshopDialog(
                     includeNone = false,
                     onSelect = { picked -> if (picked.isNotBlank()) templateId = picked }
                 )
+                /*
+                  -- TYPE OF WORKSHOP: IMMEDIATELY UNDER THE REPORT TEMPLATE, ON PURPOSE ----------
+
+                  These two are the reason this requirement read as half-built for so long, on both
+                  clients. This form has always drawn a six-value dropdown under the title and it is
+                  REPORT TEMPLATE -- the output document's format, not the workshop's kind -- so the
+                  screen looked as though it carried a type/name pair and carried neither half.
+                  Putting the real type directly beside it, with its own label and its own sentence,
+                  is what makes the two legible as different questions; separating them would leave
+                  the template still sitting where a reader expects the type. The browser's create
+                  form places them the same way for the same reason.
+
+                  `searchable` IS NOT PASSED, and the template above does not pass it either -- but
+                  the two silences mean different things, and the browser's copy of this pair says so.
+                  Six members of a vocabulary compiled into this app is exactly the class the shared
+                  threshold answers correctly on its own; the template's options are fetched ROWS, and
+                  on this client the count still decides for them, because nothing here has yet had
+                  reason to overrule it. Neither list is over eight today, so both draw the anchored
+                  menu and the divergence is invisible on this form.
+
+                  DRAWN ONLY WHEN THERE ARE TYPES. Empty means the registry has retired the enum, and
+                  a picker offering tokens the server would refuse is worse than no picker at all.
+                */
+                if (kinds.isNotEmpty()) {
+                    SearchableSelectField(
+                        label = "Type of workshop",
+                        options = kinds,
+                        selectedValue = workshopKind,
+                        includeNone = false,
+                        placeholder = "Not stated",
+                        enabled = !busy,
+                        onSelect = { picked -> workshopKind = picked }
+                    )
+                    // NO HELP LINE UNDER IT, DELIBERATELY. The true thing to say — "stage 1 asks this
+                    // too and its answer is the one that counts" — is a fact about where the column
+                    // comes from, not something a designer filling in a create form can act on, and
+                    // the standing instruction on this product is that the screen carries the answer
+                    // and the file carries the reasoning. The label and the six options are the whole
+                    // question. See [DesignWorkshopCreateBody.workshopKind] for the mechanism.
+                }
 
                 // ── Who the workshop is for ──────────────────────────────────────────────────────
                 //
@@ -1583,6 +2037,15 @@ private fun CreateWorkshopDialog(
                         val body = DesignWorkshopCreateBody(
                             title = title.trim(),
                             templateId = templateId,
+                            // FOLDED TO NULL RATHER THAN SENT AS "", the same way the designer keys
+                            // below are and for the same two reasons: a body carrying the key with
+                            // nothing in it reads on the wire as an answer given, and a null property
+                            // is left off the request entirely by `ApiClient.json` — which is what
+                            // keeps this handset compatible with an API that predates the field,
+                            // where a body merely CARRYING it is answered 422 `extra_forbidden` and a
+                            // 422 is never queued. Stage 1 remains the authority for this column; see
+                            // [DesignWorkshopCreateBody.workshopKind].
+                            workshopKind = workshopKind.takeIf { it.isNotBlank() },
                             // FOLDED TO NULL RATHER THAN SENT AS "", because a body carrying the key
                             // with nothing in it reads on the wire as an answer given. The server
                             // would fold it itself — `(payload.designerUserId or "").strip() or
@@ -1748,9 +2211,24 @@ private fun CreateWorkshopDialog(
  * designers at create. As a row on a list, showing a remembered workshop is right. As a
  * DESTINATION for a one-way move it is not — the fortnight would be filed against an id this
  * account cannot open, and every later sync would answer 404 with nothing able to undo it. So while
- * the server is answering, only the rows it returned are offered. With no connection there is
- * nothing to confirm against, the remembered rows are offered instead, and [dwAdoptCandidateNotice]
- * says exactly that. `AdoptLocalDraftDialog.tsx` makes the same split for the same reason.
+ * the server is answering, only the rows it returned are offered.
+ *
+ * ── AND WITH NO CONNECTION THE REMEMBERED ROWS ARE SHOWN AND MAY NOT BE CHOSEN ──────────────────
+ *
+ * That paragraph used to end "With no connection there is nothing to confirm against, the remembered
+ * rows are offered instead, and [dwAdoptCandidateNotice] says exactly that." Offered as a LIST, yes.
+ * Offered as a DESTINATION, no — which is what the sentence above spends its whole length forbidding,
+ * and the offline branch was quietly the exception to it. `DROPDOWN_DESIGN.md` R6 calls caching an
+ * ACCESS list FORBIDDEN rather than unattractive and cites this control's web twin as its authority;
+ * both clients then let a failed fetch unlock the write anyway.
+ *
+ * WITHDRAWING IT COSTS THE DESIGNER NOTHING, which is why this is the right way round rather than
+ * merely the stricter one. Adoption sends nothing. The draft stays on this phone, nothing automatic
+ * may delete it (`Offline.kt:709`), and not one stage can reach the chosen workshop until there is a
+ * connection — the same moment the list becomes confirmable. So [offline] disables "Move it" and
+ * [dwAdoptCandidateNotice] says why, instead of filing a fortnight against a grant that may have
+ * been revoked in March. `AdoptLocalDraftDialog.tsx` makes the identical split for the identical
+ * reason.
  *
  * AND IT SAYS WHENEVER THE SET IS PARTIAL — offline, narrowed by the list's own search box, or cut
  * short by a bounded page walk. All three are invisible from inside a dialog that covers the screen
@@ -1863,7 +2341,12 @@ private fun AdoptIntoWorkshopDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = chosen.isNotBlank(),
+                // HELD OFFLINE. The candidates are then this phone's remembered rows, and a
+                // remembered row is stale in the PERMISSIVE direction — see this dialog's header for
+                // why that is fatal HERE specifically and merely untidy on a list. The reason is on
+                // screen: `dwAdoptCandidateNotice`'s offline arm is the sentence for this state, and
+                // a second one beside it would be two amber paragraphs saying one thing.
+                enabled = chosen.isNotBlank() && !offline,
                 onClick = { onAdopt(chosen) }
             ) { Text("Move it") }
         },
@@ -1971,6 +2454,36 @@ internal fun dwDesignerPickerStandDown(
  * and "Implementing agency format" are indistinguishable to anyone who has not laid both out, and
  * picking the wrong one is only discovered when the .docx comes back from the department.
  */
+/**
+ * The six workshop KINDS, off the served registry — the type filter's rows and the create form's.
+ *
+ * ── NO COMPILED-IN FLOOR ON THIS CLIENT, AND THE CLAIM WAS CHECKED RATHER THAN ASSUMED ─────────
+ *
+ * `DROPDOWN_DESIGN.md` §3.1 files a served enum as a class-(a) vocabulary on Android — *"always
+ * answerable, may be required, says nothing, no work"* — and gives the reason: `StageSchemaStore`
+ * resolves memory, then `filesDir`, then the BUNDLED APK ASSET, and a build shipped without that
+ * asset throws rather than degrading to an empty registry. The web needs `WORKSHOP_KIND_FLOOR`
+ * because a browser that has never reached this API holds nothing at all; a handset always holds the
+ * copy that shipped with it.
+ *
+ * VERIFIED ON THIS TREE, 2026-08-31, rather than taken on the document's word:
+ * `assets/design-workshop-schema.json` carries `enums.WORKSHOP_KIND` with all six members;
+ * [SchemaResponse.enums] decodes it; `StageSchemaStore.load` falls through to `readAsset` when both
+ * memory and disk miss, and `readAsset` RAISES rather than returning an empty registry; and
+ * `WorkshopRepository.designWorkshopSchema` ends in `StageSchemaStore.load(context)` whether or not
+ * the network answered. So a fresh install with no signal draws all six, and the claim holds. The
+ * one thing that could break it is the bundled asset going stale, which is what the regenerate step
+ * and `backend/tests/test_controlled_vocabularies.py` already hold.
+ *
+ * AN EMPTY LIST IS STILL RETURNED HONESTLY rather than substituted for, because the one state this
+ * cannot rule out is a registry that has RETIRED the enum — and quietly drawing six members the
+ * server no longer accepts would offer a token every save refuses. The callers draw nothing then.
+ */
+internal fun workshopKindOptions(schema: SchemaResponse?): List<com.designprototype.workshop.ui.SelectOption> =
+    schema?.enums?.get("WORKSHOP_KIND").orEmpty().map { option ->
+        com.designprototype.workshop.ui.SelectOption(value = option.value, label = option.label)
+    }
+
 internal fun templateOptions(templates: List<ReportTemplateDto>): List<com.designprototype.workshop.ui.SelectOption> =
     templates.map { template ->
         com.designprototype.workshop.ui.SelectOption(

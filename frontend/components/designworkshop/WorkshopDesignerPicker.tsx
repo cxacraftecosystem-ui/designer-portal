@@ -14,6 +14,12 @@ import {
   type DwEligibleViewer
 } from "@/lib/designWorkshopViewers";
 import { roleLabel } from "@/lib/permissions";
+import {
+  deviceLooksOffline,
+  workshopEmptyLabel,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 
 /**
  * Matches the viewers panel's own debounce. An `ILIKE '%term%'` over `User` is a scan no index can
@@ -292,6 +298,37 @@ export function WorkshopDesignerPicker({
 
   const atCap = values.length >= MAX_NAMED_DESIGNERS;
 
+  /*
+    WHICH OF THE FOUR EMPTY STATES THE PANEL IS IN.
+
+    The notice above already names three of them on the PAGE -- offline, an older deployment, a
+    failed read -- and this is the same three said in the other place a reader meets them, inside
+    the panel. `emptyLabel` was the flat literal "No account on this repository may be named as this
+    workshop's designer.", which is a claim about the empanelment roster and was drawn just as
+    readily while the first read was still outstanding and after one had failed. Rule 10 does not
+    stop at the page: a panel that asserts non-existence is the same defect one layer in.
+
+    Read only for its KIND in the failed and loading arms -- the genuinely-empty sentence stays this
+    file's own, because it goes on to name the next move (empanel a designer first) and the shared
+    "No designers have been recorded yet" does not. `accessList` keeps its default: this is a
+    permissions control, and section 3.3 rules those "disable with a reason, never cache".
+  */
+  const eligibleList: WorkshopListState<DwEligibleViewer> =
+    offline || featureMissing || loadError
+      ? { kind: "failed" }
+      : eligible === null
+        ? { kind: "loading" }
+        : { kind: "ok", rows: eligible, total: eligible.length };
+  const eligibleVoice: WorkshopListVoice = {
+    table: "field",
+    noun: "designers",
+    scoped: true,
+    online: !deviceLooksOffline(),
+    // True as written here, and unusually so: the hint below says in as many words that the field
+    // may be left empty and stage 1 will carry whoever creates the workshop.
+    reassurance: "Nothing you have entered is at risk — the workshop can be started without it."
+  };
+
   /**
    * AT MOST ONE LINE, EVER: what the search is doing, or the single sentence that says the list is
    * incomplete, or why there is no list at all. Nothing when the list is whole — a standing note
@@ -374,7 +411,11 @@ export function WorkshopDesignerPicker({
           // is not in the document is worse than naming nothing at all.
           describedBy={notice ? noticeId : undefined}
           disabled={disabled || offline}
-          emptyLabel="No account on this repository may be named as this workshop's designer."
+          emptyLabel={
+            eligibleList.kind === "ok"
+              ? "No account on this repository may be named as this workshop's designer."
+              : workshopEmptyLabel(eligibleList, eligibleVoice)
+          }
           onChange={(next) => {
             /*
               TRIMMED HERE, AND SAID ON SCREEN — never silently.

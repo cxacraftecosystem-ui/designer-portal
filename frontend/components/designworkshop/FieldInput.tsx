@@ -62,6 +62,7 @@ import {
   offersPhotoMeasure,
   offersSignaturePad,
   offersSketchRectify,
+  ownWorkshopTitleRole,
   recordMediaNoteRole,
   sketchSourceFields,
   workshopTitleRole
@@ -88,6 +89,7 @@ import { StageAddressField } from "@/components/designworkshop/StageAddressField
 import { StageGeoField } from "@/components/designworkshop/StageGeoField";
 import { StageMediaNoteField } from "@/components/designworkshop/StageMediaNoteField";
 import { StageWorkshopField } from "@/components/designworkshop/StageWorkshopField";
+import { StageWorkshopNameField } from "@/components/designworkshop/StageWorkshopNameField";
 /*
  * THE REF PICKER'S SINGLE-SELECT, AND THE THREE SENTENCES ITS LIST OWES A READER.
  *
@@ -571,8 +573,15 @@ function derivedPlaceholder(field: DwField, value: DwValue | undefined, row: DwE
  * `field_to_dict` emits `maxItems` only for a field that states one, so an absent key is not a number
  * and must never be drawn as one: "up to 200" under a gallery would be this client naming a figure it
  * did not read and the server may change, and a stated cap that is not the enforced cap is worse than
- * no sentence at all (docs/DESIGN_WORKSHOP.md:229-232). Two of the registry's 20 IMAGE_LIST fields
- * answer this — the motif pair, 20 each — and none of its 12 TAGS or 5 MULTI_ENUM fields do.
+ * no sentence at all (docs/DESIGN_WORKSHOP.md:229-232). THREE of the registry's 21 IMAGE_LIST fields
+ * answer this — `clusterBackground`'s motif pair and its `lostCraftPhotos` gallery, 25 each — and
+ * none of its 12 TAGS or 5 MULTI_ENUM fields do. (This line read "two of 20 … 20 each" until
+ * 2026-08-30, which was wrong about the number as well as the count: the motif pair has always
+ * declared 25. Count them from the schema, never from this sentence —
+ * `registry_to_dict()` is one command away and this comment is a fourth copy of a fact the registry
+ * publishes. `lostCraftPhotos` differs from the pair in the half that matters: it declares NO
+ * `min_items`, because the owner said "upto 25" — a ceiling, not a floor — so it draws the ceiling
+ * sentence below and no progress bar at all.)
  *
  * The `> 0` is not defensive padding: Android's `FieldDto.maxItems` defaults to 0 for the same
  * absence, so a schema that ever reached this client through that shape has to read as "not
@@ -923,6 +932,45 @@ export function FieldInput({
           <StageWorkshopField
             field={field}
             value={value}
+            onChange={onChange}
+            labelId={labelId}
+            describedBy={describedBy}
+            invalid={invalid}
+            disabled={disabled}
+            dictation={
+              <DictationButton
+                onCommit={appendDictated}
+                disabled={disabled}
+                fieldLabel={field.label}
+                workshopId={workshopId}
+              />
+            }
+          />
+        );
+      }
+      /*
+       * "NAME OF WORKSHOP" GETS THE NAMES ALREADY ON RECORD, AND STILL TAKES ANYTHING TYPED.
+       *
+       * This is the box `workshopTitleRole` refuses by name, and the refusal is intact: the control
+       * below is not that role's scoped list of `Workshop` rows, it is a creatable combo over
+       * `DesignWorkshop` NAMES that stores the same plain string this field has always stored and
+       * cannot refuse an answer. `ownWorkshopTitleRole` is why the two are separate roles rather
+       * than one widened key list; `StageWorkshopNameField` is where the whole argument lives.
+       *
+       * ORDERED AFTER `workshopTitleRole` ON PURPOSE. The two key sets are disjoint today and the
+       * standing tripwire is what keeps them so, but a reader has to be able to see which control
+       * wins if they ever overlap, and the answer is the one that can refuse an answer — that is the
+       * branch whose mistake is expensive.
+       *
+       * `row` carries the type chosen on this same entry; it narrows what is OFFERED and never what
+       * can be typed. `unlabelled` because the control contains a button, same as above.
+       */
+      if (ownWorkshopTitleRole(field)) {
+        return unlabelled(
+          <StageWorkshopNameField
+            field={field}
+            value={value}
+            workshopKind={inputValue(row.workshopKind)}
             onChange={onChange}
             labelId={labelId}
             describedBy={describedBy}

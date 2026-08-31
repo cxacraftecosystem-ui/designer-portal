@@ -62,6 +62,40 @@
  * reviews could not be reached. It never shows an empty list for a connection failure: "no
  * prototypes" and "cannot reach the server" are different facts and this repository has shipped the
  * first as a disguise for the second more than once.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * NEITHER LIST ON THIS PANEL IS PARTITIONED TENTATIVE-FIRST, AND HERE IS WHY NOT
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `sketch.isTentative` landed on 2026-08-30 with the owner's rule that tentative sketches come to
+ * the top of the list. `lib/sketchTentative.ts` carries that partition and the rule for where it may
+ * be applied: a surface that READS a list, never one that WRITES it. This panel is the second of the
+ * two that write, and it fails the test three times over:
+ *
+ *   1. `order` IS THE WRITE. Whatever this list draws is what `arrangeRows` puts into the draft on
+ *      the next save, and `buildStageEntries` turns that array into `ordinal`. Partitioning the
+ *      display here would not be a view of the arrangement — it would BE a new arrangement, saved,
+ *      and unticking the box could no longer restore a row's place.
+ *   2. AN ARRANGEMENT SOMEBODY FIXED IS A DECISION. Where `rankFixedBy`/`rankFixedAt` are set, a
+ *      designer took responsibility for this exact order and the banner above says so by name.
+ *      Moving rows in it on the strength of a flag nobody stamped is the score-re-sorts-a-fixed-list
+ *      failure the whole override rule exists to prevent, arrived at from a new direction.
+ *   3. THE UNFIXED LIST IS THE SCORE ORDER, and the banner says "highest first, and pieces nobody
+ *      has rated yet at the end". Tentative-first would make that sentence false — and it would be
+ *      false only on this route: the POOL surface holds no rows at all (`readsStageRows` is false,
+ *      its reader is refused the workshop), so it cannot read the flag, and the same list would be
+ *      ordered one way for the workshop's own designers and another for everybody else. Two surfaces
+ *      disagreeing about one list is the thing this file's header already spends three paragraphs
+ *      refusing.
+ *
+ * THE OFFLINE LIST BELOW IS NOT PARTITIONED EITHER, for a fourth reason that is about this screen
+ * rather than about writes: it is the stand-in for the ranked list, on the same tab, and a list that
+ * reordered itself when the signal came back would be this panel telling a designer two different
+ * things about one workshop depending on their connection.
+ *
+ * WHAT IS SHOWN INSTEAD is the word, on the card — see `tentativeWord` below. A reviewer choosing
+ * between eight sketches is owed the fact that the maker has not settled on one of them; what they
+ * are not owed is an order nobody chose.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -70,6 +104,7 @@ import { AlertTriangle, CloudOff, Loader2, PinOff, RefreshCw } from "lucide-reac
 
 import { useAuth } from "@/components/AuthProvider";
 import { isUnreachable } from "@/lib/failureTriage";
+import { isTentativeRow, tentativeField } from "@/lib/sketchTentative";
 import { formatDate } from "@/lib/format";
 import type { DwRegistry, DwRow } from "@/lib/designWorkshops";
 import {
@@ -257,6 +292,24 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
         : openingOrder(items, stamp, readsStageRows ? heldOrder(rows) : null)
     );
   }, [items, readsStageRows, rows, stamp]);
+
+  /**
+   * The registry's own word for the tentative flag, or null — see this file's header for why it is a
+   * WORD here and not an ordering.
+   *
+   * READ OFF THE REGISTRY so the two clients and the stage form all print the same string, and null
+   * wherever it cannot be known: a registry this browser has never downloaded, an entity that
+   * declares no such field (`prototype` does not), and the pool round, which holds no rows to read
+   * the value from in the first place.
+   */
+  const tentativeWord = useMemo(() => {
+    if (!registry) return null;
+    for (const stage of registry.stages) {
+      const entity = stage.entities.find((candidate) => candidate.key === entityKey);
+      if (entity) return tentativeField(entity)?.label ?? null;
+    }
+    return null;
+  }, [entityKey, registry]);
 
   const byId = useMemo(() => new Map((items ?? []).map((item) => [item.subjectId, item])), [items]);
   const rowById = useMemo(() => {
@@ -611,8 +664,18 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
                 {index + 1}
               </span>
               <span className="min-w-0">
-                <span className="block truncate font-medium text-ink-900">
-                  {typeof row.name === "string" && row.name ? row.name : "Untitled piece"}
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 truncate font-medium text-ink-900">
+                    {typeof row.name === "string" && row.name ? row.name : "Untitled piece"}
+                  </span>
+                  {/* The same word the online cards carry, so the tab does not gain and lose a fact
+                      about a sketch with the signal. It does not reorder this list either — see the
+                      header's fourth reason. */}
+                  {tentativeWord && isTentativeRow(row) ? (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      {tentativeWord}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="block text-xs text-ink-muted">
                   {rowSubtitle(row) || "On this device — its score and its reviews are on the server."}
@@ -688,6 +751,14 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
               <ReviewCard
                 item={item}
                 subtitle={rowSubtitle(rowById.get(id))}
+                /*
+                  NULL WHEREVER IT CANNOT BE KNOWN, never `false`. On the pool round there are no
+                  rows, so this is not "the maker has settled on it" — it is "this surface cannot
+                  say", and drawing the absence as a settled piece would be an answer invented to
+                  fill a slot. The card omits the chip either way; the difference is that nothing
+                  here claims the second thing.
+                */
+                tentative={tentativeWord && isTentativeRow(rowById.get(id)) ? tentativeWord : null}
                 round={round}
                 /*
                   THE SERVER'S DISCLOSURE, NOT THIS SURFACE'S IDENTITY. It read `readsStageRows`, which

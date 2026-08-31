@@ -151,94 +151,95 @@ internal fun usageReadNotice(
 // ---------------------------------------------------------------------------------------------
 
 /**
- * What this client is prepared to do at the sign-in screen, given whether it has a notice to show.
+ * THE DOOR IS ONE LINE NOW, AND THIS IS THE RECORD OF WHAT WAS TAKEN OFF IT.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE DECISION THIS TYPE RECORDS, WHICH IS THE MOST CONSEQUENTIAL ONE IN THE FEATURE
+ * WHAT USED TO BE HERE
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * The requirement is a blocking, required agreement before a person may use the product. The naive
- * reading of that is "disable the sign-in buttons until the box is ticked, always". Applied without
- * a second thought it produces a **fleet-wide lockout with no way past it**: the notice is computed
- * on the server from the running collection policy, so one bad deploy can break `GET
- * /usage/consent/notice` while `POST /auth/login` beside it keeps working — and every handset in
- * every village then meets a permanently disabled button, on the one screen that has no other
- * controls, held there by a checkbox whose text never arrives.
+ * A `UsageDoorPolicy` enum with three arms, a `usageSignInBlockedReason` with four, and an
+ * ask-later paragraph. All of it existed to answer ONE question — *what does the sign-in screen do
+ * when it cannot show the recording notice?* — and the answer it gave was "let the person through,
+ * because a checkbox whose text never arrives is a fleet-wide lockout on the one screen that has no
+ * other controls". That reasoning was correct while **the checkbox WAS the notice**.
  *
- * So the rule is: **the tick is required whenever the question can be put, and the question can
- * almost always be put.**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY THE QUESTION NO LONGER ARISES
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- *  * [Blocking] — a notice is in hand (fetched, or the copy this device kept from last time). The
- *    box must be ticked before either sign-in button does anything.
- *  * [AskLater] — no notice, from any source. The buttons work, the screen says plainly that the
- *    question could not be loaded and will be asked as soon as it can be, and the BLOCKING half then
- *    happens after sign-in, where a token exists and `GET /usage/consent` carries the notice inline
- *    as a second, independent source of the same text. Nobody reaches the product without answering;
- *    the enforcement simply moves one screen later, to the only place it can still be escaped from.
- *  * [Waiting] — the fetch is in flight and this device has no stored copy. Momentary; the buttons
- *    wait rather than committing to either of the above.
+ * Since 2026-08-30 the box agrees to the TERMS AND CONDITIONS, and [TermsScreen] is nine constants
+ * compiled into this binary. There is no fetch that can fail to produce them, so the tick can always
+ * be put and can always be given — which removes the lockout the old escape hatch was built for, and
+ * removes with it the reason to let anybody past the door unasked. The gate is now the tick and
+ * nothing else, exactly as `frontend/app/login/page.tsx` states it: `blocked = !agreed`.
  *
- * `UsageNoticeStore` is what makes [AskLater] rare rather than routine, and the server explicitly
- * blessed it: an unrecognised `noticeVersion` is accepted and stored verbatim *"because refusing
- * would lock out a handset holding a cached notice, and the honest record of 'they agreed to THAT
- * text' is the version they saw."*
+ * **Anyone reintroducing an escape hatch must first say what it is escaping FROM.** The old one is
+ * not a safety net that was removed; it is a net for a fall that can no longer happen, and leaving
+ * it in would have been a front door that a dead endpoint walks straight through.
+ *
+ * The notice is still fetched, because the answer is filed against its version — see
+ * [usageAnswerAtTheDoor]. When it is missing nothing is filed, [USAGE_NOTICE_NOT_FILED_LINE] says
+ * so in one line, the server's gate goes on reading `required`, and [UsageConsentGateScreen] asks
+ * again one screen later. Nobody is waved through; only the FILING is deferred.
  */
-enum class UsageDoorPolicy {
-    Waiting,
-    Blocking,
-    AskLater,
-}
 
-/** Which of the three the sign-in screen is in. [noticeReady] is "a usable notice is in hand". */
-internal fun usageDoorPolicy(noticeReady: Boolean, stillFetching: Boolean): UsageDoorPolicy = when {
-    noticeReady -> UsageDoorPolicy.Blocking
-    stillFetching -> UsageDoorPolicy.Waiting
-    else -> UsageDoorPolicy.AskLater
-}
+/** The half-sentence beside the tick. It ends where the link begins, so the two together read as
+ *  one line — see `UsageConsentGate.UsageAgreeRow` for why they are two controls and not one. */
+internal const val USAGE_AGREE_LABEL: String = "I agree to the"
+
+/** The underlined, tappable half. Lower case and mid-sentence on purpose: it is the tail of
+ *  [USAGE_AGREE_LABEL] and not a heading. [TERMS_TITLE] is the heading. */
+internal const val USAGE_TERMS_LINK: String = "terms and conditions"
 
 /**
- * WHY SIGN-IN IS NOT AVAILABLE RIGHT NOW, or null when it is.
+ * WHY SIGN-IN IS NOT AVAILABLE, or null when it is.
  *
- * **THIS SENTENCE IS THE ACCESSIBILITY REQUIREMENT AND NOT A GARNISH.** A disabled `Button` is
- * announced by TalkBack as "disabled" and nothing else; somebody who cannot see the checkbox above
- * it is told a control does not work and given no reason and no remedy. So the screen draws this in
- * a polite live region beside the buttons, which is how a change to it is spoken the moment it
- * changes rather than only when the reader happens to swipe onto it.
+ * **THIS SENTENCE IS THE ACCESSIBILITY REQUIREMENT AND NOT A GARNISH**, and that has not changed
+ * with the copy. A disabled `Button` is announced by TalkBack as "disabled" and nothing else;
+ * somebody who cannot see the checkbox above it is told a control does not work and given no reason
+ * and no remedy. So the screen draws this in a polite live region beside the buttons.
  *
- * It is also the reason the tick and the buttons are not the only things on that screen: a control
- * that refuses a tap without saying why is how somebody concludes the app is broken — the ruling
- * `DwDictationConsent` states for its own greyed control, applied at the door.
+ * IT NAMES THE CONTROL, where the web's own live region says only "Required to sign in." The web can
+ * afford the shorter sentence because it is bound to the checkbox by `aria-describedby` and is read
+ * out as part of the box itself; a Compose live region is a separate node with no such binding, so
+ * dropping the noun would leave a reader hearing "Required to sign in" with nothing to act on. §16's
+ * rule for a platform that genuinely differs — pick the equivalent shape, and say so — applied to
+ * four words.
  */
-internal fun usageSignInBlockedReason(
-    policy: UsageDoorPolicy,
+internal const val USAGE_TICK_TO_SIGN_IN: String = "Tick the box to sign in."
+
+/** The same sentence for [UsageConsentGateScreen], where the next step is not a sign-in. */
+internal const val USAGE_TICK_TO_CONTINUE: String = "Tick the box to continue."
+
+/**
+ * The tick was given and there is no notice to file it against.
+ *
+ * It says the thing a person actually needs to know — that they are not being let past the
+ * question, only past this screen — because the alternative is somebody agreeing here, meeting the
+ * same question one screen later, and concluding the app asked them twice.
+ */
+internal const val USAGE_NOTICE_NOT_FILED_LINE: String =
+    "The recording notice could not be read, so this answer is not filed yet. You will be asked " +
+        "again after signing in."
+
+/**
+ * The one line under the tick, or null when there is nothing to say.
+ *
+ * @param agreed the box is ticked.
+ * @param noticeReady a usable notice is in hand, from the server or from this device's stored copy.
+ * @param stillFetching the first fetch is in flight and nothing was stored. Silent, deliberately:
+ *   it lasts a second or two on a fresh install and a line that appears and vanishes on its own is
+ *   read as a fault. It blocks nothing either — see this section's header.
+ */
+internal fun usageDoorHint(
     agreed: Boolean,
-    online: Boolean,
+    noticeReady: Boolean,
+    stillFetching: Boolean,
 ): String? = when {
-    policy == UsageDoorPolicy.Waiting && online ->
-        "Reading the recording notice you have to agree to before signing in…"
-    policy == UsageDoorPolicy.Waiting ->
-        "This phone has no connection. Signing in needs one, and so does reading the recording " +
-            "notice you have to agree to first."
-    policy == UsageDoorPolicy.Blocking && !agreed ->
-        "You cannot sign in until you tick the box above. Open \"What is recorded\" to read what " +
-            "you are agreeing to first."
-    else -> null
+    !agreed -> USAGE_TICK_TO_SIGN_IN
+    noticeReady || stillFetching -> null
+    else -> USAGE_NOTICE_NOT_FILED_LINE
 }
-
-/**
- * What the screen says when it could not put the question at the door.
- *
- * It says the thing a person actually needs to know — that they are not being let past the question,
- * only past this screen — because the alternative is somebody signing in, meeting the same question
- * one screen later, and concluding the app asked them twice.
- */
-internal const val USAGE_ASK_LATER_LINE: String =
-    "The recording notice you have to agree to could not be loaded on this screen, so you are being " +
-        "asked after signing in instead. You will not be able to use the app until you have answered."
-
-/** The label beside the checkbox at the door. Short, because the SERVER's `requiredSentence` is
- *  printed directly under it and is the sentence that carries the weight. */
-internal const val USAGE_AGREE_LABEL: String = "I agree to this being recorded"
 
 /** The expander that opens the notice. Worded as what is behind it rather than as "Details", so a
  *  person can decide whether to open it without opening it. */

@@ -59,6 +59,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.services import rich_text
+from app.services.questionnaire_kinds import label_for, stage_key_for
 from app.services.report_model import (
     Align,
     Block,
@@ -112,6 +114,11 @@ class QuestionnaireAnswer:
     """
 
     prompt: str
+    #: EXACTLY WHAT THE COLUMN HOLDS, UNFLATTENED — see :attr:`plain_answer`, which is what every
+    #: reader below goes through instead. The loader (``questionnaire_forms.report_items``) hands
+    #: ``QuestionnaireFormAnswer.answerText`` over as stored, and keeping it raw here means the
+    #: flattening happens ONCE, at the one place that renders it, rather than inside a loader whose
+    #: other callers want the stored value.
     answer_text: str = ""
     notes: str = ""
     section_code: str = ""
@@ -120,8 +127,61 @@ class QuestionnaireAnswer:
     is_retired: bool = False
 
     @property
+    def plain_answer(self) -> str:
+        """The answer as the words a person wrote — a stored document flattened, prose untouched.
+
+        **THIS IS THE RICH-TEXT READ BOUNDARY FOR THE ANNEXURE.** ``rich_text``'s "rich text inside
+        a plain ``String`` column" section describes the encoding this defends against: a ``String?``
+        column that holds NULL, prose, or a whole serialised document as ``{"blocks":[…]}``, told
+        apart only by looking at the value. Without this call the raw value went to ``runs_of``,
+        which stringifies whatever it is given — so a stored document printed as the literal text
+        ``{"blocks":[{"kind":"PARAGRAPH",…}]}`` into a document submitted to a ministry, AND
+        ``has_answer`` below read that JSON-shaped string as a filled field, so no emptiness check
+        anywhere reported a problem. That is the failure ``report_builder.format_value`` records at
+        its own RICH_TEXT branch, one table over, in as many words.
+
+        ── WHICH COLUMN THIS ACTUALLY IS, SAID PLAINLY, BECAUSE THE TWO ARE EASY TO CONFUSE ────────
+        This annexure renders ``QuestionnaireFormAnswer.answerText`` — the DESIGNER'S OWN form, the
+        ``Questionnaire``/``QuestionnaireForm*`` family attached to a workshop from a dropdown. It is
+        NOT ``QuestionnaireResponse.answerText``, the ministry interview instrument on
+        ``/questionnaire`` (singular), which is the box that became a ``RichTextField`` on
+        2026-08-31 and the one that demonstrably stores documents today. As of that date no client
+        writes a document into THIS column: the plural form builder's answer box is a plain field on
+        both the web and the handset, and the uploaded-workbook path stores what the spreadsheet
+        held.
+
+        So this is a guard at a render boundary rather than a fix for an observed corrupt row, and it
+        is here on three grounds. The column is a free ``String?`` that any client may post any
+        string into, so "no client does" is a fact about today rather than a property of the schema.
+        The two columns are one feature away from converging — the two answer boxes are the same
+        control in a designer's head, and the sibling was promoted without this module hearing about
+        it. And the cost of being wrong is not symmetric: everywhere else a JSON-shaped cell is an
+        ugly row somebody can re-export, and here it is a paragraph inside a .docx already handed to
+        an officer. The guard costs one identity call per answer.
+
+        ``plain_from_stored`` AND NOT ``from_json``/``to_plain``: this value came out of a ``String``
+        column, and ``from_json`` reads a ``str`` as PROSE by design, so it would hand back a
+        paragraph of JSON syntax rather than the answer. The stored-column front door is the only one
+        that tries JSON first. It also returns a plain string BY IDENTITY — not by a round trip that
+        re-strips and re-spaces — so every answer in the existing corpus renders byte-for-byte as it
+        did before this property existed.
+        """
+        return str(rich_text.plain_from_stored(self.answer_text or "")).strip()
+
+    @property
     def has_answer(self) -> bool:
-        return bool(self.answer_text and self.answer_text.strip())
+        """Whether this sitting actually answered the question.
+
+        Measured on the FLATTENED text, which is what makes an empty document count as empty: a
+        rich-text box that was focused and left alone still saves
+        ``{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}``, and a raw ``.strip()`` on that string is
+        truthy. It would have printed an empty answer cell, counted towards ``answered_count`` on the
+        sitting's provenance line and towards "Answers recorded" in the index table — three
+        statements about fieldwork that never happened. ``rich_text.is_empty`` is not the right test
+        here for the same reason ``from_json`` is not: it reads a ``str`` as prose and would call
+        that value filled.
+        """
+        return bool(self.plain_answer)
 
     @property
     def prints(self) -> bool:
@@ -214,6 +274,17 @@ class QuestionnaireItem:
     description: str = ""
     version: int = 1
     source_filename: str = ""
+    #: ``Questionnaire.kind`` — ``WORKSHOP_INTERVIEW``, ``MARKET_SURVEY``, or ``""`` for a form
+    #: whose designer has not said. It decides which STAGE this instrument's answers are filed under
+    #: in the annexure below; the vocabulary and the mapping are
+    #: :mod:`app.services.questionnaire_kinds`, which is also where the argument for each stage is.
+    #:
+    #: A PLAIN STRING AND NOT AN ENUM, matching every other field on this dataclass: the renderer
+    #: must be able to print a report from a row written by a NEWER deployment carrying a token this
+    #: build has never heard of, and an enum would raise on the way in and take the whole document
+    #: with it. An unknown token groups under itself and prints its own name — see
+    #: :func:`_stage_group`.
+    kind: str = ""
     question_count: int = 0
     sittings: tuple[QuestionnaireSitting, ...] = ()
 
@@ -289,7 +360,15 @@ def _answer_runs(answer: QuestionnaireAnswer) -> tuple[Run, ...]:
     """
     if not answer.has_answer:
         return runs_of(NOT_RECORDED, italic=True)
-    runs = list(runs_of(answer.answer_text.strip()))
+    # A FORMATTED ANSWER KEEPS ITS MARKS AND A PLAIN ONE IS UNTOUCHED, and the branch is what makes
+    # the second half true. ``plain_runs`` is the in-a-table-cell renderer — the same one
+    # ``report_builder._cell_runs`` reaches for, because a cell holds runs and cannot hold a block —
+    # so bold and italics survive and paragraph breaks collapse to single spaces, which is the trade
+    # that module documents. It is NOT applied to prose: ``plain_runs`` would push an ordinary
+    # multi-line answer through ``from_plain``/block-join and re-space it, silently reformatting
+    # every answer in the existing corpus to fix a problem those rows do not have.
+    document = rich_text.stored_text_document(answer.answer_text or "")
+    runs = list(runs_of(answer.plain_answer) if document is None else rich_text.plain_runs(document))
     note = (answer.notes or "").strip()
     if note:
         runs.extend(runs_of(f"  Note: {note}", italic=True))
@@ -332,6 +411,11 @@ def _questionnaire_provenance(item: QuestionnaireItem) -> str:
     parts = [
         p
         for p in (
+            # THE KIND AND ITS STAGE, FIRST, because it is the one clause that says what the reader
+            # is looking at rather than how much of it there is. Empty for an unstated kind, which
+            # keeps the line byte-identical to what it was for every questionnaire recorded before
+            # the column existed — the same rule the grouping above follows.
+            _stage_group(item)[2],
             f"{len(printed)} sitting(s)",
             f"{item.question_count} question(s)" if item.question_count else "",
             f"version {item.version}",
@@ -343,18 +427,125 @@ def _questionnaire_provenance(item: QuestionnaireItem) -> str:
     return "The designer's own questionnaire, attached to this workshop · " + " · ".join(parts)
 
 
+# --------------------------------------------------------------------------------------
+# Which stage each questionnaire belongs to
+# --------------------------------------------------------------------------------------
+#
+# THE OWNER'S SENTENCE, 2026-08-30: *"they also do market survey interviews, so create that
+# differentiation as well, so that we can map the questionnaires and the transcripts to the correct
+# stage in the report."* This is the half of it that happens in the report: the annexure used to be
+# one flat list, so a baseline interview and a market survey printed under one heading, in creation
+# order, with nothing on the page saying which part of the workshop either was evidence for. An
+# officer reading it could not tell an artisan's answers from a shopkeeper's.
+#
+# GROUPED, NOT MOVED. The questionnaires stay in the ANNEXURE rather than being printed inside the
+# stage bodies, and that is deliberate — this module's own header argues it at length: a set of
+# sittings is unbounded in length and is read as proof rather than as narrative, and the stage bodies
+# already print stage 7's typed question list and stage 8's `surveyResponse` rows, so a third
+# structured answer table between them makes a reader ask which of the three is "the survey". What
+# the kind changes is which stage each group is LABELLED with, and the order the groups appear in,
+# which is what makes the annexure navigable back to the stage it supports.
+
+# Stage number and title per stage key, for the group headings. Read from the stage registry rather
+# than typed here, so a renamed stage renames its group heading too and cannot leave this module
+# printing a title the rest of the report has stopped using.
+def _stage_titles() -> dict[str, tuple[int, str]]:
+    """``{stage key: (number, title)}``, read through ``stage_schema.stages()``.
+
+    ``stages()`` AND NOT AN IMPORTED CONSTANT, which is not a style preference — that function's own
+    docstring records the outage it exists to prevent. ``stage_schema.STAGES`` is an empty tuple at
+    import time and is REBOUND by ``_install`` when ``stage_definitions`` loads, so
+    ``from app.services.stage_schema import STAGES`` captures the empty copy for the life of the
+    process; under uvicorn that produced a server answering ``stages: 0`` while every test that
+    imported the module was green. ``stage_definitions.ALL_STAGES`` would work but is the
+    declaration site rather than the registry, and reaching past the accessor is how the next
+    reader learns the wrong habit.
+
+    LAZILY, and this is the one import in this module that is not at the top: loading the registry
+    builds all 22 stages, and this module is imported by ``questionnaire_forms``, which is imported
+    by routes that have nothing to do with reports. By the time a report is generated the registry is
+    already in memory, so this costs a dict comprehension on the path that uses it and nothing on the
+    paths that do not.
+    """
+    from app.services.stage_schema import stages
+
+    return {stage.key: (stage.number, stage.title) for stage in stages()}
+
+
+def _stage_group(item: QuestionnaireItem) -> tuple[int, str, str]:
+    """``(sort key, group heading, provenance clause)`` for one questionnaire.
+
+    THREE CASES, AND THE THIRD ONE IS WHY THIS RETURNS A SORT KEY RATHER THAN A STAGE NUMBER:
+
+    * a KNOWN kind mapped to a KNOWN stage sorts by that stage's number, so the groups appear in the
+      order the workshop happened — stage 6's interviews before stage 8's market survey — which is
+      the order the body of the report is already in;
+    * a kind this build does not recognise (a row written by a newer deployment) sorts after every
+      real stage and is labelled with the token itself. It is NOT silently folded into "not stated":
+      somebody chose that value, and relabelling their choice as an absence is the one wrong answer
+      available;
+    * NO KIND AT ALL sorts LAST and gets no stage heading. Every questionnaire that existed before
+      the ``kind`` column did is in this state, and there is no backfill by design (see the column's
+      comment in ``schema.prisma``), so this is the case that keeps already-generated reports
+      reproducible.
+    """
+    if not item.kind:
+        return (10_000, "", "")
+    stage_key = stage_key_for(item.kind)
+    label = label_for(item.kind)
+    if not stage_key:
+        return (9_000, label, f"filed as {label}")
+    number, title = _stage_titles().get(stage_key, (8_000, stage_key))
+    return (number, f"{label} \u2014 stage {number}, {title}", f"filed as {label}, under stage {number} ({title})")
+
+
+def grouped_by_stage(
+    items: tuple[QuestionnaireItem, ...] | list[QuestionnaireItem],
+) -> list[tuple[str, list[QuestionnaireItem]]]:
+    """The questionnaires as ``[(group heading, items)]``, in stage order.
+
+    ``""`` IS A REAL HEADING AND MEANS "PRINT THESE WITHOUT ONE". A report whose questionnaires all
+    predate the ``kind`` column therefore renders EXACTLY as it did before this grouping existed —
+    one heading, one index table, the questionnaires in creation order — which is what makes this
+    change safe to apply to a repository full of unstated rows. The moment a designer states a kind,
+    that form lifts out into its own labelled group and the unstated remainder keeps its old shape at
+    the bottom.
+
+    Stable within a group: ``sorted`` is stable, so ``report_items``' ``createdAt asc`` ordering
+    survives inside each stage.
+    """
+    keyed = sorted(items, key=lambda item: _stage_group(item)[0])
+    groups: list[tuple[str, list[QuestionnaireItem]]] = []
+    for item in keyed:
+        heading = _stage_group(item)[1]
+        if groups and groups[-1][0] == heading:
+            groups[-1][1].append(item)
+        else:
+            groups.append((heading, [item]))
+    return groups
+
+
 def questionnaire_index_block(items: tuple[QuestionnaireItem, ...]) -> TableBlock:
     """The contents table at the head of the annexure — what was asked, and how much came back."""
+    # THE KIND IS A COLUMN HERE AND A HEADING BELOW, which is not a duplication: the index is the
+    # one place a reader sees every questionnaire at once, and "which of these is the market survey"
+    # is the question it exists to answer. The widths are re-cut from the four the table had rather
+    # than squeezed, and still total 100.
     return TableBlock(
         columns=(
-            TableColumn("Questionnaire", 46.0),
-            TableColumn("Questions", 16.0, numeric=True),
-            TableColumn("Sittings", 16.0, numeric=True),
-            TableColumn("Answers recorded", 22.0, numeric=True),
+            TableColumn("Questionnaire", 36.0),
+            TableColumn("Kind", 18.0),
+            TableColumn("Questions", 14.0, numeric=True),
+            TableColumn("Sittings", 14.0, numeric=True),
+            TableColumn("Answers recorded", 18.0, numeric=True),
         ),
         rows=tuple(
             (
                 runs_of(item.title or "Untitled questionnaire"),
+                # ``label_for`` answers "Kind not stated" for an empty value rather than leaving the
+                # cell blank, because a blank cell in a printed table reads as data that failed to
+                # load rather than as a question nobody answered.
+                runs_of(label_for(item.kind)),
                 runs_of(f"{item.question_count:,}" if item.question_count else "—"),
                 runs_of(f"{len(item.printed_sittings):,}"),
                 runs_of(f"{item.answered_total:,}"),
@@ -461,24 +652,39 @@ def append_questionnaire_annexure(
         style=ParaStyle.LEAD,
     )
     doc.add(questionnaire_index_block(tuple(printed)))
-    for item in printed:
-        doc.heading(item.title or "Untitled questionnaire", 2, numbered=numbered)
-        doc.para(_questionnaire_provenance(item), style=ParaStyle.NOTE)
-        doc.para(item.description)
-        sittings = item.printed_sittings
-        dropped = len(sittings) - MAX_SITTINGS_PER_QUESTIONNAIRE
-        for sitting in sittings[:MAX_SITTINGS_PER_QUESTIONNAIRE]:
-            doc.heading(sitting.label, 3, numbered=numbered)
-            doc.para(_sitting_provenance(sitting), style=ParaStyle.NOTE)
-            doc.para(sitting.notes)
-            for block in sitting_blocks(sitting):
-                doc.add(block)
-        if dropped > 0:
-            doc.para(
-                f"[{dropped} further sitting(s) were recorded against this questionnaire and are "
-                f"not printed here. The full set is held in the repository.]",
-                style=ParaStyle.NOTE,
-            )
+    # ══ GROUPED BY THE STAGE EACH KIND BELONGS TO ═══════════════════════════════════════════════
+    #
+    # ONE EXTRA HEADING LEVEL, AND ONLY WHERE A KIND WAS STATED. A group whose heading is empty —
+    # which is every questionnaire on every workshop that predates the ``kind`` column — prints its
+    # questionnaires at heading level 2 exactly as this function always did, so a report generated
+    # from unstated rows is byte-for-byte the report it was. A stated group takes level 2 for the
+    # stage and pushes its questionnaires to level 3, and their sittings to 4.
+    #
+    # THE DEPTHS ARE COMPUTED RATHER THAN WRITTEN TWICE, because a heading level typed in two
+    # branches is the kind of thing that drifts by one and produces a table of contents where a
+    # sitting outranks the questionnaire it belongs to.
+    for stage_heading, group in grouped_by_stage(printed):
+        if stage_heading:
+            doc.heading(stage_heading, 2, numbered=numbered)
+        depth = 3 if stage_heading else 2
+        for item in group:
+            doc.heading(item.title or "Untitled questionnaire", depth, numbered=numbered)
+            doc.para(_questionnaire_provenance(item), style=ParaStyle.NOTE)
+            doc.para(item.description)
+            sittings = item.printed_sittings
+            dropped = len(sittings) - MAX_SITTINGS_PER_QUESTIONNAIRE
+            for sitting in sittings[:MAX_SITTINGS_PER_QUESTIONNAIRE]:
+                doc.heading(sitting.label, depth + 1, numbered=numbered)
+                doc.para(_sitting_provenance(sitting), style=ParaStyle.NOTE)
+                doc.para(sitting.notes)
+                for block in sitting_blocks(sitting):
+                    doc.add(block)
+            if dropped > 0:
+                doc.para(
+                    f"[{dropped} further sitting(s) were recorded against this questionnaire and "
+                    f"are not printed here. The full set is held in the repository.]",
+                    style=ParaStyle.NOTE,
+                )
     return len(printed)
 
 

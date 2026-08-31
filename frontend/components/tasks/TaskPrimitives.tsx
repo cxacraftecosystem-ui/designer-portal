@@ -18,6 +18,7 @@ import type { TaskArtisanRef, TaskSectionRef, TaskStatus, TaskUserBrief } from "
 import { formatDate } from "@/lib/format";
 import { roleLabel } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 /**
  * The shared vocabulary of the task screens.
@@ -59,7 +60,7 @@ export function FieldBlock({
     <div className="grid gap-1">
       <span id={id} className="field-label">
         {label}
-        {required ? " *" : ""}
+        <RequiredMark when={required} />
       </span>
       {/*
         The `role="group"` names the SLOT; the provider names the CONTROL. Both, because they are

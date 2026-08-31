@@ -224,7 +224,216 @@ export type OutboxEntry = {
   createdStepIds?: string[];
   /** Indices into `media` whose files have already been sent; never sent twice. */
   uploadedBatches?: number[];
+  /**
+   * WHY A CLOSED-LIST FIELD ON THIS ENTRY IS EMPTY — keyed by the wire name of the column.
+   *
+   * ── THE TWO ABSENCES THIS QUEUE COULD NOT TELL APART, AND WHAT IT COST ────────────────────
+   *
+   * A record queued with no workshop against it has always been ONE thing on disk: a `null`, or a
+   * key that was never written. It is two completely different acts by the person who made it:
+   *
+   *   * THEY CHOSE NOTHING. The picker offered four workshops, the researcher opened it and took
+   *     the "none" row, because this artisan genuinely belongs to no design workshop.
+   *     {@link UNFILED_BY_CHOICE}. That is a decision and the server has to be TOLD it: on a
+   *     correction the column already holds a value, and "unfile" is only expressible as an
+   *     explicit `{"designWorkshopId": null}`. `services/records.CLEARABLE_KEYS` exists for exactly
+   *     this and says what happens without it — *"the save would return 200, the form would show it
+   *     unfiled, and the old link would survive in the database."*
+   *
+   *   * THERE WAS NOTHING TO CHOOSE. The laptop was in a courtyard with no signal, an access list
+   *     is never cached (R6 — a stale grant set is wrong in the permissive direction), so the
+   *     picker was EMPTY. {@link UNFILED_NO_OPTIONS}. The researcher made no decision at all, and
+   *     reading their empty box as one is how a correction composed on the bus home silently strips
+   *     a link nobody was ever shown. That absence sends NOTHING for the column and the stored
+   *     value stands.
+   *
+   * That is R1 — *empty means everything BY ABSENCE* — with its sign flipped for a form field:
+   * absence means "no change" UNLESS it was chosen. Collapsing the two gives the column two
+   * spellings for one state and no way to tell a default from a decision.
+   *
+   * OPTIONAL, so every entry queued before this existed carries no map, {@link clearedLinkKeys} is
+   * empty for it, and the replay omits every link column exactly as it always did. An old queued
+   * correction cannot be made to clear a link this build has no evidence anybody asked to clear.
+   */
+  unfiled?: Record<string, string>;
+  /**
+   * THIS RECORD POINTS AT AN ID THE SERVER DOES NOT HAVE — the one outcome this queue had no word
+   * for. Absent on every other failure.
+   *
+   * ── WHY IT IS NOT ONE MORE PERMANENT REFUSAL ──────────────────────────────────────────────
+   *
+   * A 404 — or the 422 an existence check produces — is not transient, is not a 409, and is not a
+   * schema refusal. So it fell through to the plain `markFailure` at the bottom of the drain and was
+   * parked for ever behind two controls: *Try again*, which fetches the identical 404, and
+   * *Discard*, which destroys the last copy of the record and its photographs. THIS FILE ALREADY
+   * HAD THE WORDS FOR THAT SHAPE, written about the 409 it was added to close — *"a Try again
+   * button that could only ever fetch the identical answer — a dead end wearing the costume of a
+   * remedy."* The 409 got its own arm and a route out. A dangling foreign key did not, and neither
+   * the banner nor the sentence said WHICH field's id was missing, which is the one fact that makes
+   * the remedy obvious.
+   *
+   * The remedy is small because nothing is lost: the record is still in this browser with its
+   * payload intact, and exactly one field in it is wrong. {@link repickOutboxEntry} rewrites that
+   * one key and unparks the entry.
+   *
+   * ── WHAT IS STORED, AND WHY IT CAN NAME MORE THAN ONE ─────────────────────────────────────
+   *
+   * The wire name of the column — `designWorkshopId` — or, when the server's answer does not name a
+   * field and the body carries several ids that could be at fault, EVERY candidate, comma-separated,
+   * in {@link REFERENCE_FIELD_NOUNS} order. Read it back with {@link danglingKeys}.
+   *
+   * NAMING ALL OF THEM IS THE HONEST ANSWER AND PICKING ONE WOULD NOT BE. A 404 from
+   * `records.require_record` is the string "Record not found" and a 404 from
+   * `design_workshops.load_workshop_or_404` is the same string BY DESIGN — *"a 403 would confirm
+   * that the id exists to precisely the caller being turned away"* — so on an artisan carrying both
+   * a `workshopId` and a `designWorkshopId` there is nothing in the answer that separates them.
+   * Choosing by plausibility would put fieldwork in the wrong place under a sentence claiming
+   * certainty.
+   */
+  danglingField?: string | null;
 };
+
+/**
+ * The researcher opened the picker and took the "none" row. A DECISION, and the wire must carry it.
+ *
+ * A plain string rather than a union member on the wire for the reason the Kotlin twin gives: this
+ * value is written into a store that a LATER build may write and an EARLIER one may read, and a
+ * value neither recognises must simply not be one of the two they act on. See
+ * {@link OutboxEntry.unfiled}.
+ */
+export const UNFILED_BY_CHOICE = "chosen";
+
+/** The picker was empty when this was filled in, so nothing could be chosen. */
+export const UNFILED_NO_OPTIONS = "noOptions";
+
+/**
+ * EVERY FOREIGN KEY A QUEUED RECORD CAN POINT AT, and the noun each is called by on screen.
+ *
+ * The keys are `services/records.CLEARABLE_KEYS` minus the two identity numbers, which are VALUES
+ * rather than references and can never 404. The nouns are what the forms already call these
+ * controls, because the sentence a researcher reads has to name the box they are about to reopen —
+ * "a design & prototype workshop", not "designWorkshopId".
+ *
+ * ORDER IS LOAD-BEARING, which is why this is an array of pairs and not an object read with
+ * `Object.keys`. When more than one candidate survives, {@link outboxDanglingSentence} lists them in
+ * this order, so two entries refused the same way never word the same ambiguity two different ways.
+ * Byte-identical to `Offline.kt`'s `REFERENCE_FIELD_NOUNS`, including the order.
+ */
+export const REFERENCE_FIELD_NOUNS: ReadonlyArray<readonly [string, string]> = [
+  ["designWorkshopId", "design & prototype workshop"],
+  ["workshopId", "workshop"],
+  ["artisanId", "artisan"],
+  ["craftId", "craft"],
+  ["productId", "product"],
+  ["toolId", "toolkit"],
+  ["processId", "process"],
+  ["questionnaireInterviewId", "interview"],
+  ["locationId", "place"]
+];
+
+/** The noun a column is called by on screen, or the key itself when it is not a reference. */
+export function referenceFieldNoun(key: string): string {
+  return REFERENCE_FIELD_NOUNS.find(([name]) => name === key)?.[1] ?? key;
+}
+
+/**
+ * The two columns that file a record under a workshop, and the only two a picker on a record form
+ * can leave empty.
+ *
+ * BOTH, TOGETHER, ALWAYS — DROPDOWN_DESIGN §2.7 says so in as many words: *"a sentinel on the wire
+ * for BOTH COLUMNS AT ONCE"*. The two pickers have the identical shape and the identical
+ * consequence, so a fix reaching one of them would leave a researcher clearing one box successfully
+ * and the other box silently, on the same form, one line apart.
+ */
+export const WORKSHOP_LINK_KEYS: readonly string[] = ["designWorkshopId", "workshopId"];
+
+/**
+ * WHICH OF THE TWO ABSENCES A LINK BOX IS IN — the rule that decides it, in ONE place.
+ *
+ * ── THE THREE INPUTS, AND WHY THE BASELINE IS THE ONE THAT DECIDES ────────────────────────────
+ *
+ * `selectedId` is what the box holds now. `baselineId` is what it held when the form was BUILT —
+ * the stored id on an edit, the prefill on a create — and it is never moved by a click.
+ * `hadOptions` is whether the list behind the box had anything in it at all.
+ *
+ * A blank box over a non-blank baseline is the one combination a person alone can produce: they
+ * opened a picker that was showing a workshop and took the "none" row. That is
+ * {@link UNFILED_BY_CHOICE} whatever the list looks like at this moment — and it HAS to be read that
+ * way, because at this moment the list can be empty: a record filed under a workshop this browser
+ * cannot list still draws its recovered off-page row (`useRecordOffPage`), so the control stays
+ * enabled and the "none" row stays reachable with the page empty. Deciding this by "is the list
+ * empty" would read a deliberate clearance as "there was nothing to choose", omit the key, and
+ * leave the researcher looking at an emptied form, a 200, and the old link still in the database.
+ *
+ * ── AND WHY THE OTHER TWO ARMS ARE WRONG IN THE HARMLESS DIRECTION ────────────────────────────
+ *
+ * With a blank baseline the column is already empty on the server, so either answer is a no-op on
+ * the data and all the choice changes is which SENTENCE the drain prints
+ * ({@link outboxSentUnfiledMessage}). `hadOptions` is the honest split: somebody shown four
+ * workshops who picked none needs no sentence, and somebody shown an EMPTY picker in a courtyard has
+ * to be told the record went up filed under nothing — otherwise that absence is discovered weeks
+ * later as a record missing from a workshop's lists, by which time nobody can tell it from a record
+ * deliberately filed under nothing.
+ *
+ * `null` when the box holds something: there is no absence to explain.
+ */
+export function unfiledLinkReason(selectedId: string, baselineId: string, hadOptions: boolean): string | null {
+  if (selectedId.trim()) return null;
+  if (baselineId.trim()) return UNFILED_BY_CHOICE;
+  return hadOptions ? UNFILED_BY_CHOICE : UNFILED_NO_OPTIONS;
+}
+
+/**
+ * {@link OutboxEntry.unfiled} for one record form, from the two pickers it mounts.
+ *
+ * THE KEYS ARE NAMED HERE AND NOWHERE ELSE, and that is the whole reason this short function exists
+ * rather than an object literal at each save handler. A mistyped column — `designWorkshopID`,
+ * `design_workshop_id` — is an error nowhere: it would ride in {@link clearedLinkKeys}, the replay
+ * would write it into the body, the API's `extra="forbid"` would refuse the whole request, and a
+ * clearance would turn into a schema refusal three files away.
+ *
+ * A form that mounts only one of the two pickers passes nothing for the other, and nothing is not a
+ * clearance: the column is absent from the map, absent from {@link clearedLinkKeys}, and absent from
+ * the replayed body, so the stored value stands. A form cannot un-file a link it never put a control
+ * in front of anybody for.
+ */
+export function workshopUnfiledReasons(reasons: {
+  designWorkshop?: string | null;
+  workshop?: string | null;
+}): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (reasons.designWorkshop) map.designWorkshopId = reasons.designWorkshop;
+  if (reasons.workshop) map.workshopId = reasons.workshop;
+  return map;
+}
+
+/**
+ * The link columns this entry's author DELIBERATELY emptied, and which a replay must therefore send
+ * as an explicit `null`.
+ *
+ * Empty for every entry from every earlier build, which is what makes widening the record safe: no
+ * evidence, no clearance, and the replay behaves exactly as it did before this field existed.
+ */
+export function clearedLinkKeys(entry: Pick<OutboxEntry, "unfiled">): string[] {
+  return Object.entries(entry.unfiled ?? {})
+    .filter(([, reason]) => reason === UNFILED_BY_CHOICE)
+    .map(([key]) => key);
+}
+
+/** The columns that were empty because the picker had nothing in it. See {@link OutboxEntry.unfiled}. */
+export function emptyPickerKeys(entry: Pick<OutboxEntry, "unfiled">): string[] {
+  return Object.entries(entry.unfiled ?? {})
+    .filter(([, reason]) => reason === UNFILED_NO_OPTIONS)
+    .map(([key]) => key);
+}
+
+/** {@link OutboxEntry.danglingField} read back as the list it is. Empty when nothing is dangling. */
+export function danglingKeys(entry: Pick<OutboxEntry, "danglingField">): string[] {
+  return (entry.danglingField ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+}
 
 // ---------------------------------------------------------------------------
 // IndexedDB plumbing
@@ -561,16 +770,230 @@ export async function discardOutboxEntry(id: number): Promise<void> {
  * portal, the server is back). The pass that follows is what finds out.
  */
 export async function retryOutboxEntry(id: number): Promise<void> {
-  await updateEntry(id, (row) => (row.failure === null && !row.skewRun ? null : { ...row, failure: null, skewRun: null }));
+  await updateEntry(id, (row) =>
+    row.failure === null && !row.skewRun && !row.danglingField
+      ? null
+      : // `danglingField` is cleared with the rest for the reason the whole marker exists: it
+        // describes THIS refusal, and the person clearing it is saying the conditions have changed.
+        // A stale marker would leave the banner offering a re-pick for a refusal nobody is holding.
+        { ...row, failure: null, skewRun: null, danglingField: null }
+  );
+  await refreshOutbox();
+}
+
+/**
+ * WHICH IDS IN THIS ENTRY COULD BE THE MISSING ONE — the honest answer, which is sometimes several.
+ *
+ * Reads the queued body for every {@link REFERENCE_FIELD_NOUNS} key it actually carries a non-empty
+ * string for, in that array's order. An entry that names none of them is not a dangling-reference
+ * failure at all and gets the ordinary refusal arm.
+ *
+ * PURE, and exported so the ambiguity can be asserted without a server that 404s: the interesting
+ * case is an artisan queued with BOTH a `workshopId` and a `designWorkshopId`, where the server's
+ * answer is the same string either way.
+ */
+export function danglingCandidates(body: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // A body this build cannot parse is one it did not write. Nothing can be re-picked in it, so it
+    // takes the ordinary refusal arm rather than a remedy that could not work.
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const record = parsed as Record<string, unknown>;
+  return REFERENCE_FIELD_NOUNS.filter(([key]) => typeof record[key] === "string" && (record[key] as string).trim()).map(
+    ([key]) => key
+  );
+}
+
+/**
+ * IS THIS REFUSAL A REFERENCE THAT IS NOT THERE?
+ *
+ * ── THE TWO STATUSES, AND WHY THE SECOND IS NARROWED BY ITS WORDS AND THE FIRST IS NOT ────────
+ *
+ * A **404** on a create or a correction can only mean one thing: a route that reached its handler
+ * and could not find something it was told to attach to. Every 404 this queue's six endpoints can
+ * produce is `require_record`'s "Record not found" or `load_workshop_or_404`'s identical string.
+ *
+ * A **422** is mostly validation and only sometimes an existence check, so it is admitted only when
+ * the server's own words say so. Reading the prose is a compromise and it is the smaller of the two
+ * available ones: the alternative is to treat every 422 as a dangling reference and offer a re-pick
+ * for a refusal about a missing product name, which sends the researcher to a dropdown that cannot
+ * fix it. Schema refusals are already taken by `schemaRefusalError` before this is asked.
+ *
+ * A REFUSAL WITH NO CANDIDATE IN THE BODY IS NOT ONE OF THESE, whatever its status: a re-pick
+ * dialog with no field to re-pick is the dead end this whole arm exists to remove, wearing a new
+ * costume. The caller checks the candidate list, not just this predicate.
+ */
+export function isDanglingReference(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  if (error.status === 404) return true;
+  if (error.status !== 422) return false;
+  const said = `${error.message}`.toLowerCase();
+  return said.includes("not found") || said.includes("does not exist") || said.includes("no longer exists");
+}
+
+/**
+ * "a workshop", "an artisan" — the list read out with its articles, and "or" before the last.
+ *
+ * `a`/`an` from the first letter, which is right for every noun in {@link REFERENCE_FIELD_NOUNS} and
+ * is checked by the spec rather than assumed; "interview" is the only vowel among them today.
+ */
+function anyOneOf(nouns: readonly string[]): string {
+  const withArticles = nouns.map((noun) => `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`);
+  if (withArticles.length <= 1) return withArticles[0] ?? "a record";
+  return `${withArticles.slice(0, -1).join(", ")} or ${withArticles[withArticles.length - 1]}`;
+}
+
+/**
+ * WHAT A RESEARCHER IS TOLD WHEN A QUEUED RECORD POINTS AT SOMETHING THE SERVER DOES NOT HAVE.
+ *
+ * Four things, and each is load-bearing:
+ *
+ *  1. WHAT IS WRONG, IN THE WORDS OF THE BOX THEY WILL REOPEN — not "designWorkshopId".
+ *  2. THAT NOTHING IS LOST, before anything else, because the control beside this sentence is
+ *     Discard and a person who has read "the server rejected this" reaches for it.
+ *  3. THE SERVER'S OWN WORDS, VERBATIM. "Record not found" adds little, and it is printed anyway,
+ *     because the rule this banner keeps is that the API's sentence is never summarised — a route
+ *     that starts saying something more useful must not have to wait for a client release.
+ *  4. THAT A BARE RETRY CANNOT WORK. Without it the researcher walks up the hill for a signal and
+ *     does it again tomorrow.
+ *
+ * PURE and exported, for the reason every sentence in this file is: it is read by somebody standing
+ * in a courtyard, so a spec is the only place it can be checked.
+ */
+export function outboxDanglingSentence(said: string, nouns: readonly string[], files: number, isCorrection: boolean): string {
+  const subject = isCorrection ? "This correction" : "This record";
+  const head =
+    nouns.length === 1
+      ? `${subject} points at ${anyOneOf(nouns)} that is not on the server.`
+      : // NOT A GUESS DRESSED AS A FACT. The 404 names no field and the body carries several ids, so
+        // the sentence carries several.
+        `${subject} points at something that is not on the server. It is ${anyOneOf(nouns)} — the server's answer does not say which.`;
+  const carrying = files > 0 ? ` and the ${files} file(s) saved with it` : "";
+  const isAre = files > 0 ? "are" : "is";
+  const trimmed = said.trim();
+  const server = trimmed ? ` The server said: ${/[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`}` : "";
+  return (
+    `${head} Nothing is lost — open it, choose one that is, and it will send.${server} ` +
+    `Nothing has been sent and nothing has been deleted: this entry${carrying} ${isAre} still in this browser. ` +
+    "Sending it again unchanged will get the same answer, because what is missing is missing on the server."
+  );
+}
+
+/**
+ * WHAT THE RE-PICK PANEL SAYS WHEN IT HAS NOTHING TO OFFER.
+ *
+ * Two facts, two sentences, and they are NOT §3.5's — deliberately. §3.5's sentences are said on a
+ * FORM, about a record that has not been saved yet, and they end by promising that "this record can
+ * be saved without it". Here the record IS saved, in this browser, and it is stuck: that promise
+ * would be true and useless, and the standing fact the researcher needs is the opposite one — the
+ * entry is not lost while this panel cannot help, and it will still be here when the list can be
+ * read.
+ *
+ * THE READ FAILED is separated from THE SCOPE IS EMPTY because their next moves are a connection and
+ * an administrator, and somebody sent to the wrong one loses a day. "No workshops are open to this
+ * account" said after a timeout is the single most repeated bug class in this repository, arriving on
+ * the one surface whose whole job is to be a way out.
+ */
+export function repickEmptyLine(noun: string, listed: boolean): string {
+  return listed
+    ? `No ${noun} is open to this account, so there is nothing to point this at. An administrator can give you access to one. Until then the record stays here — nothing is deleted.`
+    : `The ${noun} list could not be read just now, so this is not showing what exists. Nothing has been lost — the record and anything saved with it stay in this browser, and this will work when the list can be read.`;
+}
+
+/**
+ * WHAT A RESEARCHER IS TOLD WHEN A RECORD GOES UP FILED UNDER NOTHING BECAUSE THE LIST WAS EMPTY.
+ *
+ * The one outcome of the three that ends in SUCCESS, which is exactly why it needs saying. The entry
+ * leaves the queue, the banner's count drops, and every visible sign says the record arrived intact.
+ * It did arrive; it arrived UNFILED, because the picker had nothing in it at the moment it was
+ * filled in and somebody in a cluster with no signal never saw a choice to make. Say nothing and the
+ * record is found missing from a workshop's lists weeks later, by which time nobody can reconstruct
+ * which of the two absences it was.
+ *
+ * IT IS NOT THE DANGLING SENTENCE AND IT IS NOT AN EMPTY-PICKER SENTENCE. Nothing is refused, so
+ * there is no remedy to offer and no button to press; the record simply needs filing, on its own
+ * screen, whenever there is next a connection. R7: the two failures never share a message.
+ */
+export function outboxSentUnfiledMessage(label: string, nouns: readonly string[]): string {
+  // NO ARTICLES, because "no" already carries the determiner: "there was no design & prototype
+  // workshop to choose from" is the sentence, and "there was no A design & prototype workshop" is
+  // the kind of seam that tells a reader the words were assembled by a machine.
+  const list =
+    nouns.length === 0
+      ? "workshop"
+      : nouns.length === 1
+        ? nouns[0]
+        : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
+  return (
+    `“${label}” was sent, and it is filed under nothing: there was no ${list} to choose from in this ` +
+    "browser when it was saved. That was never a claim that none exist. Open the record and file it now that " +
+    "there is a connection."
+  );
+}
+
+/**
+ * Point a queued entry at a different record — the remedy for {@link OutboxEntry.danglingField}.
+ *
+ * ── WHY THIS EDITS THE PAYLOAD RATHER THAN REOPENING THE FORM ─────────────────────────────────
+ *
+ * The record is already complete and already in this browser: its media are staged against this
+ * entry, its typed values are in `body`, and the whole of what is wrong with it is one id. Reopening
+ * the form would mean rebuilding the record from a payload the form does not know how to seed, and
+ * every field that failed to round-trip would be silently re-derived from today's state. One key is
+ * re-serialised and the entry is unparked.
+ *
+ * ── CHOOSING NOTHING IS AN ANSWER, AND IT IS RECORDED AS ONE ──────────────────────────────────
+ *
+ * `chosen === null` means the researcher decided the record belongs to none of them, so the key is
+ * written as an explicit `null` AND {@link OutboxEntry.unfiled} is marked {@link UNFILED_BY_CHOICE}
+ * — deciding HERE is as deliberate as deciding on the form, and `CLEARABLE_KEYS` is what carries it
+ * to a column that already holds a value. Marking it `noOptions` instead would be this file
+ * inventing a claim about a list the person was looking at when they answered.
+ *
+ * The failure and the marker are cleared together, so the next pass simply sends the entry.
+ */
+export async function repickOutboxEntry(id: number, field: string, chosen: string | null): Promise<void> {
+  await updateEntry(id, (row) => {
+    let parsed: Record<string, unknown>;
+    try {
+      const candidate: unknown = JSON.parse(row.body);
+      if (!candidate || typeof candidate !== "object") return null;
+      parsed = candidate as Record<string, unknown>;
+    } catch {
+      // Nothing this build can rewrite. Left exactly as it is: a queue entry is fieldwork, and the
+      // only door out that is not a successful send is the person-confirmed Discard.
+      return null;
+    }
+    parsed[field] = chosen;
+    const unfiled = { ...(row.unfiled ?? {}) };
+    if (chosen === null) unfiled[field] = UNFILED_BY_CHOICE;
+    else delete unfiled[field];
+    return { ...row, body: JSON.stringify(parsed), unfiled, failure: null, skewRun: null, danglingField: null };
+  });
   await refreshOutbox();
 }
 
 /**
  * Record why an entry did not go — against the row AS IT IS ON DISK. See {@link updateEntry} for why
  * the loop's own copy may not be written back.
+ *
+ * `danglingField` is WRITTEN ON EVERY CALL, including the calls that pass nothing, and that is not
+ * an accident of the default. A refusal is a fresh reading of this entry as it stands NOW: an entry
+ * whose missing workshop was re-picked and which is then refused for a clashing Aadhaar must not
+ * keep offering a "Re-pick it" button that edits a field nothing is wrong with any more. Same rule
+ * and same reason as `skewRun` beside it.
  */
-async function markFailure(entry: OutboxEntry, failure: string, skewRun: string | null = null): Promise<void> {
-  await updateEntry(entry.id!, (row) => ({ ...row, attempts: row.attempts + 1, failure, skewRun }));
+async function markFailure(
+  entry: OutboxEntry,
+  failure: string,
+  skewRun: string | null = null,
+  danglingField: string | null = null
+): Promise<void> {
+  await updateEntry(entry.id!, (row) => ({ ...row, attempts: row.attempts + 1, failure, skewRun, danglingField }));
 }
 
 /**
@@ -601,6 +1024,40 @@ async function persistProgress(entry: OutboxEntry): Promise<boolean> {
     uploadedBatches: entry.uploadedBatches,
     media: entry.media
   }));
+}
+
+/**
+ * The queued body with the researcher's DELIBERATE clearances written into it as explicit nulls.
+ *
+ * ── WHY THE STORED BODY DOES NOT ALREADY CARRY THEM ───────────────────────────────────────────
+ *
+ * Because a form cannot tell the two absences apart at the moment it serialises. Both come out of
+ * `FormData` as an empty string, and the queue's whole discipline is that `body` is *"serialised at
+ * queue time so a later schema change cannot alter what the user actually saved"*. So the EVIDENCE
+ * is stored beside the body ({@link OutboxEntry.unfiled}) and the null is written at replay, which
+ * also means an entry queued by an earlier build — which has no evidence — replays byte for byte as
+ * it always did.
+ *
+ * `CLEARABLE_KEYS` on the server is the other half and says what happens without this: *"the save
+ * would return 200, the form would show it unfiled, and the old link would survive in the
+ * database."*
+ *
+ * A BODY THAT WILL NOT PARSE IS RETURNED UNTOUCHED rather than rebuilt. It was not written by this
+ * build, nothing here can safely reason about it, and sending it exactly as queued is the behaviour
+ * it was queued under.
+ */
+function bodyWithClearances(entry: OutboxEntry): string {
+  const cleared = clearedLinkKeys(entry);
+  if (cleared.length === 0) return entry.body;
+  try {
+    const parsed: unknown = JSON.parse(entry.body);
+    if (!parsed || typeof parsed !== "object") return entry.body;
+    const record = parsed as Record<string, unknown>;
+    for (const key of cleared) record[key] = null;
+    return JSON.stringify(record);
+  } catch {
+    return entry.body;
+  }
 }
 
 /** Files across every batch of one entry — what the researcher stands to lose, in one number. */
@@ -867,6 +1324,20 @@ export type SyncResult = {
   credentialExpired: boolean;
   /** This device could not be read during the pass, so `remaining` is not to be believed. */
   storeUnreadable: boolean;
+  /**
+   * ENTRIES THAT WENT UP FILED UNDER NOTHING because the picker had nothing in it — one sentence per
+   * entry, already written by {@link outboxSentUnfiledMessage}.
+   *
+   * THE ONE REPORT ON THIS TYPE THAT DESCRIBES A SUCCESS, and it is here precisely because every
+   * other signal says the save worked. The entry leaves the queue, `synced` goes up, the banner's
+   * count goes down — and a link nobody was ever shown a choice about is silently absent. See
+   * {@link OutboxEntry.unfiled} for why that absence is not the same as a deliberate one.
+   *
+   * OPTIONAL, so that a caller building one of these by hand — the drain spec does, eight times —
+   * is not obliged to state an outcome it is not asserting. Absent means the same as empty: no entry
+   * in this pass went up unfiled. Every reader takes it as `?? []`.
+   */
+  sentUnfiled?: string[];
 };
 
 let syncing: Promise<SyncResult> | null = null;
@@ -921,7 +1392,8 @@ async function declinedResult(): Promise<SyncResult> {
     stoppedOffline: false,
     declined: true,
     credentialExpired: false,
-    storeUnreadable: health.readFailedAt !== null
+    storeUnreadable: health.readFailedAt !== null,
+    sentUnfiled: []
   };
 }
 
@@ -938,6 +1410,9 @@ async function runSync(): Promise<SyncResult> {
   let failed = 0;
   let stoppedOffline = false;
   let credentialExpired = false;
+  // Sentences, not a count. Each names the entry and which control was empty, and the banner toasts
+  // them individually: a number would be the fact without the record it is about.
+  const sentUnfiled: string[] = [];
 
   // NOBODY IS SIGNED IN, SO NOTHING CAN BE SENT — and this is the reachable half of the 401 case:
   // another tab signed out and `AuthProvider.logout` cleared the token both tabs share. Answered
@@ -953,7 +1428,8 @@ async function runSync(): Promise<SyncResult> {
       stoppedOffline: false,
       declined: false,
       credentialExpired: true,
-      storeUnreadable: health.readFailedAt !== null
+      storeUnreadable: health.readFailedAt !== null,
+      sentUnfiled: []
     };
   }
 
@@ -971,7 +1447,8 @@ async function runSync(): Promise<SyncResult> {
         try {
           const answer = await apiFetch<ReplayAnswer>(
             progress.endpoint,
-            { method: progress.method, body: progress.body },
+            // NOT `progress.body`: see {@link bodyWithClearances}, which carries the argument.
+            { method: progress.method, body: bodyWithClearances(progress) },
             // A BACKGROUND PASS MUST NOT NAVIGATE. This runs on an `online` event and on mount, with
             // nobody having asked for anything: a token that expired while the tab sat open would
             // otherwise throw the researcher off whatever screen they were on, mid-edit, with the
@@ -1195,6 +1672,16 @@ async function runSync(): Promise<SyncResult> {
         continue;
       }
 
+      /*
+        THE RECORD LANDED, AND ONE OF ITS LINK COLUMNS IS EMPTY BECAUSE THE PICKER WAS.
+
+        Read BEFORE the entry is deleted, because after that there is nothing left to read it off.
+        This is the third of the three outcomes and the only one that ends in success, which is why
+        it needs saying at all: every visible sign — the entry leaving the queue, the count dropping,
+        the "sent" toast — says the record arrived intact. It did. It arrived unfiled.
+      */
+      const unfiledNouns = emptyPickerKeys(progress).map(referenceFieldNoun);
+      if (unfiledNouns.length > 0) sentUnfiled.push(outboxSentUnfiledMessage(progress.label, unfiledNouns));
       await discardOutboxEntry(progress.id!);
       synced += 1;
     } catch (error) {
@@ -1245,6 +1732,37 @@ async function runSync(): Promise<SyncResult> {
         failed += 1;
         continue;
       }
+      /*
+        A REFERENCE THAT IS NOT THERE — R7's after-the-drain half, and the reason this arm sits above
+        the plain refusal below rather than beside it.
+
+        Everything under this point is a refusal waiting on a PERSON's decision. This one is waiting
+        on one click, and until it had its own arm it was indistinguishable from the others: parked
+        for ever behind a *Try again* that fetches the identical 404 and a *Discard* that destroys the
+        only copy of the record and its photographs. The entry is still marked and `blocksRetry` still
+        holds it — retrying unchanged really is pointless — but it is marked WITH THE FIELD, which is
+        what lets `OutboxBanner` draw the third button.
+
+        THE CANDIDATE LIST IS CHECKED, NOT JUST THE STATUS. A 404 on an entry whose body names no
+        reference at all cannot be re-pointed at anything, so it falls through and takes the ordinary
+        sentence. Offering a re-pick panel with nothing in it would be a second dead end.
+      */
+      const candidates = isDanglingReference(error) ? danglingCandidates(progress.body) : [];
+      if (candidates.length > 0) {
+        await markFailure(
+          progress,
+          outboxDanglingSentence(
+            error instanceof Error ? error.message : "",
+            candidates.map(referenceFieldNoun),
+            pendingFileCount(progress),
+            progress.method === "PATCH"
+          ),
+          null,
+          candidates.join(",")
+        );
+        failed += 1;
+        continue;
+      }
       await markFailure(progress, error instanceof Error ? error.message : "The server rejected this entry.");
       failed += 1;
     }
@@ -1261,7 +1779,8 @@ async function runSync(): Promise<SyncResult> {
     stoppedOffline,
     declined: false,
     credentialExpired,
-    storeUnreadable: health.readFailedAt !== null
+    storeUnreadable: health.readFailedAt !== null,
+    sentUnfiled
   };
 }
 

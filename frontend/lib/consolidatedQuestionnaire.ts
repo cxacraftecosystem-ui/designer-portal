@@ -46,6 +46,16 @@ export type ConsolidatedAnswer = {
   url?: string | null;
   transcriptText?: string | null;
   transcriptStatus?: string | null;
+  /**
+   * True when a person has replaced this transcript, absent when nothing is on record.
+   *
+   * NEVER FALSE, deliberately, and the server's own comment carries the argument: the stamp behind
+   * it is NULL both for a transcript nobody edited and for every row stored before the column
+   * existed, and printing "Not edited" over the second kind would credit a provider with a
+   * researcher's words. So this page draws the chip or draws nothing. "Not edited" is sound only
+   * where the machine's own copy is in hand to compare against — the interview form, not here.
+   */
+  transcriptEdited?: boolean | null;
   interviewId: string;
   interviewTitle: string;
   interviewDate: string | null;

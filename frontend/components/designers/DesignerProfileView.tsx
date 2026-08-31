@@ -13,7 +13,7 @@
  * saying so is indistinguishable from a place with no records.
  */
 
-import { plainFromStoredAddress } from "@/components/designers/storedAddress";
+import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { StoredMediaImage } from "@/components/designers/StoredMediaImage";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
 import {
@@ -24,6 +24,7 @@ import {
 } from "@/components/designers/profileCopy";
 import { formatDate } from "@/lib/format";
 import type { DesignerProfile, DesignerProfileField, DesignerProfileLocation } from "@/lib/designers";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 /** The one wording for "there is nothing in this box", so no group can invent a second one. */
 const BLANK = "Not filled in";
@@ -72,7 +73,7 @@ function GroupPanel({ group, profile }: { group: DesignerProfileGroup; profile: 
             */}
             <dt className="field-label">
               {DESIGNER_PROFILE_LABELS[field]}
-              {isDesignerProfileFieldRequired(field) ? " *" : ""}
+              <RequiredMark when={isDesignerProfileFieldRequired(field)} />
             </dt>
             <dd className="mt-1 text-sm leading-6 text-ink-900">
               <FieldValue field={field} profile={profile} />
@@ -249,11 +250,11 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
 
     `whitespace-pre-line` because the flattened form of a two-paragraph address has a newline in it,
     and an address whose lines run together is harder to check than one that does not.
-    `plainFromStoredAddress` is identity on prose, so an address written before this change renders
+    `plainFromStoredRichText` is identity on prose, so an address written before this change renders
     exactly as it did yesterday — which is the case that matters, since it is every live row.
   */
   if (field === "addressLine") {
-    return <p className="whitespace-pre-line break-words">{plainFromStoredAddress(String(raw))}</p>;
+    return <p className="whitespace-pre-line break-words">{plainFromStoredRichText(String(raw))}</p>;
   }
 
   if (field === "website") {

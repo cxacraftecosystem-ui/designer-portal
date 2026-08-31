@@ -458,6 +458,34 @@ private fun DwChooserPeerRound(
         }
 
         if (order.isNotEmpty()) {
+            /*
+              ══════════════════════════════════════════════════════════════════════════════════════
+              THIS LIST IS NOT PARTITIONED TENTATIVE-FIRST, AND HERE IS WHY NOT
+              ══════════════════════════════════════════════════════════════════════════════════════
+
+              `sketch.isTentative` landed on 2026-08-30 with the owner's rule that tentative sketches
+              come to the top of the list. [dwTentativeFirst] carries that partition and the rule for
+              where it may be applied: a surface that READS a list, never one that WRITES it. This is
+              one of the two that write, and it fails the test three times over:
+
+                * `order` IS THE WRITE. Whatever this list draws is what `dwPlanArrangement` turns
+                  into rows and what `buildStageBody` then turns into `ordinal`. Partitioning the
+                  display here would not be a view of the arrangement — it would BE a new one, saved,
+                  and unticking the box could no longer restore a row's place.
+                * AN ARRANGEMENT SOMEBODY FIXED IS A DECISION. Where `rankFixedBy`/`rankFixedAt` are
+                  set a designer took responsibility for this exact order and the note above says so
+                  by name; moving rows inside it on the strength of a flag nobody stamped is the
+                  score-re-sorts-a-fixed-list failure the whole override rule exists to prevent.
+                * THE UNFIXED LIST IS THE SCORE ORDER and the note says so in those words. It would
+                  also be partitioned only HERE: `DesignReviewScreen` holds no stage rows at all, so
+                  it cannot read the flag, and one list would then be ordered two ways depending on
+                  which screen a designer opened it from.
+
+              The word is drawn on the row instead — see [DwChooserReviewRow]. A reviewer choosing
+              between eight sketches is owed the fact that the maker has not settled on one of them;
+              what they are not owed is an order nobody chose.
+            */
+            val tentativeWord = dwTentativeField(dwChooserEntity(stageSpec, entity.wire))?.label
             DwRankableList(
                 order = order,
                 labelFor = { id -> byId[id]?.label?.ifBlank { DW_CHOOSER_UNTITLED } ?: DW_CHOOSER_UNTITLED },
@@ -491,6 +519,13 @@ private fun DwChooserPeerRound(
                 DwChooserReviewRow(
                     item = byId[id],
                     subtitle = dwRowSubtitle(rowById[id]),
+                    /*
+                      NULL WHEREVER IT CANNOT BE KNOWN, never `false`. This tab holds the rows, so it
+                      can answer; `DesignReviewScreen` does not and draws nothing rather than
+                      implying every piece is settled. Read off the registry so the word is the
+                      schema's label and matches the stage form and the web exactly.
+                    */
+                    tentative = tentativeWord?.takeIf { dwIsTentativeRow(rowById[id]?.values) },
                     position = position,
                     total = total,
                     showPlaced = seesWholeCollection,
@@ -527,6 +562,15 @@ private fun DwChooserPeerRound(
 private fun DwChooserReviewRow(
     item: RankedSubjectDto?,
     subtitle: String,
+    /**
+     * The registry's word for the tentative flag when this piece carries it, or null.
+     *
+     * A STRING RATHER THAN A BOOLEAN so the word on screen is the schema's, and NULL COVERS TWO
+     * FACTS on purpose — not ticked, and this surface cannot read the rows — because the row draws
+     * nothing for either and must not claim the piece is settled where it does not know. It does not
+     * MOVE the row: see the argument above [DwRankableList] in this file.
+     */
+    tentative: String?,
     position: Int,
     total: Int,
     showPlaced: Boolean,
@@ -549,6 +593,13 @@ private fun DwChooserReviewRow(
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
         )
+        if (tentative != null) {
+            // ABOVE the identifier line and not folded into it: the subtitle is the piece's IDENTITY
+            // (its sketch number, its designer), and a working state written into an identifier reads
+            // as part of the name. Amber — "wants attention, nothing is wrong" — the same pair the
+            // stage form's row and the web's chip use, so one concept has one colour on three screens.
+            Text(tentative, color = MaterialTheme.field.warning, fontSize = 12.sp)
+        }
         if (subtitle.isNotBlank()) {
             Text(subtitle, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }

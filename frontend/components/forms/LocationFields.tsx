@@ -24,8 +24,14 @@ import { flyToPlace, loadMapLibre, type MapLibre } from "@/components/forms/MapP
 // its header, and `lib/placeSearch.ts` for why it returns no address fields at all.
 import { PlaceSearchBox } from "@/components/forms/PlaceSearchBox";
 import { apiFetch } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import type { PlaceHit } from "@/lib/placeSearch";
+import { getCachedAddressReference, putCachedAddressReference } from "@/lib/referenceCache";
 import type { AddressReference } from "@/lib/types";
+import { RequiredMark } from "@/components/ui/RequiredMark";
+// §3.5's cached-and-stale sentence, shared with every other picker in the app that can be served
+// from this device. The district list is the one on this card that can.
+import { cachedListLine } from "@/lib/workshopOptions";
 
 const maptilerKey = process.env.NEXT_PUBLIC_MAPTILER_API_KEY;
 
@@ -71,7 +77,16 @@ const maptilerKey = process.env.NEXT_PUBLIC_MAPTILER_API_KEY;
  * This is still where the names come from when the request lands; it is no longer what stands
  * between a researcher with no signal and a saved record.
  */
-let addressReferenceRequest: Promise<AddressReference> | null = null;
+let addressReferenceRequest: Promise<AddressReferenceRead> | null = null;
+
+/**
+ * The address reference, and where this copy came from.
+ *
+ * `cachedAt` is null on a live answer and an ISO-8601 stamp when the network could not be reached
+ * and `lib/referenceCache.ts` answered instead — which is what lets the district picker print
+ * §3.5's cached-and-stale sentence with a date on it rather than looking merely short.
+ */
+export type AddressReferenceRead = { reference: AddressReference; cachedAt: string | null };
 
 /**
  * The address reference, with `districts` guaranteed present.
@@ -92,29 +107,89 @@ let addressReferenceRequest: Promise<AddressReference> | null = null;
  * eventually forget the `districts` guard above, and the way that omission surfaced last time was a
  * white screen on the artisan form.
  */
-export function loadAddressReference(): Promise<AddressReference> {
-  addressReferenceRequest ??= apiFetch<AddressReference>("/reference/address")
-    .then((payload) => {
-      const districts = payload?.districts;
-      if (districts && districts.byState) return payload;
-      return {
-        ...payload,
-        districts: {
-          source: districts?.source ?? "",
-          sourceUrl: districts?.sourceUrl ?? "",
-          asOf: districts?.asOf ?? "",
-          listVersion: districts?.listVersion ?? 0,
-          count: districts?.count ?? 0,
-          byState: districts?.byState ?? {},
-          normalisation: districts?.normalisation ?? { trailingWordsStripped: [], description: "" }
-        }
-      };
-    })
-    .catch((error) => {
+function normaliseAddressReference(payload: AddressReference): AddressReference {
+  const districts = payload?.districts;
+  if (districts && districts.byState) return payload;
+  return {
+    ...payload,
+    districts: {
+      source: districts?.source ?? "",
+      sourceUrl: districts?.sourceUrl ?? "",
+      asOf: districts?.asOf ?? "",
+      listVersion: districts?.listVersion ?? 0,
+      count: districts?.count ?? 0,
+      byState: districts?.byState ?? {},
+      normalisation: districts?.normalisation ?? { trailingWordsStripped: [], description: "" }
+    }
+  };
+}
+
+/**
+ * The address reference with its provenance — live if the server can be reached, out of this
+ * browser's store if it cannot.
+ *
+ * ── THE `version` THE ROUTE ASKS CLIENTS TO HONOUR, AND WHAT HONOURING IT MEANS HERE ──────────
+ *
+ * `backend/app/api/routes/reference.py` says it in the route's own docstring: *"The payload is a
+ * pure constant — no database read — so a client should cache it and re-fetch only when `version`
+ * changes."* Until this change NO CLIENT DID. This one stored nothing at all and re-fetched 11.7 KB
+ * on every page load; Android reached the right outcome the expensive way, by encoding the whole
+ * payload and comparing 12 KB of JSON. It is the only server-provided invalidation signal in this
+ * API and it was being paid for and thrown away.
+ *
+ * Honouring it is two things, and the second is the one that matters:
+ *
+ *  1. `putCachedAddressReference` compares the version and SKIPS THE PAYLOAD WRITE when it has not
+ *     moved, which is the saving the docstring is actually asking for. The `fetchedAt` stamp still
+ *     moves — "last refreshed" means the last time the server CONFIRMED the list, not the last time
+ *     it differed, and the two are a year apart on a near-constant.
+ *  2. AN UNCHANGED VERSION RETURNS THE OBJECT ALREADY IN STORAGE, so `reference` keeps its identity
+ *     across a reload and the `useMemo`s below it — `stateOptions`, `districtOptions` — do not
+ *     recompute over 795 names for an answer that has not changed.
+ *
+ * ── AND THE HALF THIS BUYS FOR FREE: 795 DISTRICTS, OFFLINE ───────────────────────────────────
+ *
+ * `OFFLINE_STATES` has always kept the STATE box answerable with no signal, and the district
+ * genuinely cannot be bundled (see that constant's note). What it can be is REMEMBERED: a browser
+ * that has loaded this app once now answers "District" in a courtyard from the copy it kept, and the
+ * card says how old that copy is instead of silently offering nothing. That is §3.2's parity gap
+ * closed on this client — the handset has had `AddressReferenceCache` since it had an address card.
+ *
+ * A FAILURE IS ONLY SERVED FROM STORAGE, NEVER SUPPRESSED: with no cached copy the rejection is
+ * re-thrown exactly as before, the module promise is cleared so the next form to mount asks again,
+ * and every caller's existing `.catch` behaves as it always has.
+ */
+export function loadAddressReferenceRead(): Promise<AddressReferenceRead> {
+  addressReferenceRequest ??= (async (): Promise<AddressReferenceRead> => {
+    // Read first, so the answer is already to hand if the request never arrives. It costs one
+    // IndexedDB get against a store that is not on any hot path.
+    const cached = await getCachedAddressReference<AddressReference>();
+    try {
+      const payload = normaliseAddressReference(await apiFetch<AddressReference>("/reference/address"));
+      const unchanged = cached !== null && cached.version === payload.version;
+      // Not awaited: no form waits on storage for a list it is already holding, and a refused write
+      // is not a failed read.
+      void putCachedAddressReference(payload);
+      return { reference: unchanged ? cached.payload : payload, cachedAt: null };
+    } catch (error) {
+      if (cached) return { reference: normaliseAddressReference(cached.payload), cachedAt: cached.fetchedAt };
       addressReferenceRequest = null;
       throw error;
-    });
+    }
+  })();
   return addressReferenceRequest;
+}
+
+/**
+ * The payload alone, for the four callers that only ever wanted the lists.
+ *
+ * KEPT AS THE DEFAULT DOOR rather than migrating them: the provenance is only actionable on a
+ * surface that draws a sentence about it, and three of the four (`StageAddressField`,
+ * `StageRecordingPlace`, `DesignerProfileForm`) hand the names straight to a picker. Both share the
+ * one module-level promise, so this is still exactly one request per page load.
+ */
+export function loadAddressReference(): Promise<AddressReference> {
+  return loadAddressReferenceRead().then((read) => read.reference);
 }
 
 /**
@@ -697,6 +772,12 @@ export function LocationFields({
   const [subjectLongitude, setSubjectLongitude] = useState(asText(initial?.subjectLongitude));
 
   const [reference, setReference] = useState<AddressReference | null>(null);
+  /**
+   * ISO-8601 when the reference came off a server, set ONLY when this page load could not reach one
+   * and `lib/referenceCache.ts` answered instead. Null on a live read, which is the ordinary case
+   * and the one with nothing to report.
+   */
+  const [addressCachedAt, setAddressCachedAt] = useState<string | null>(null);
   // What the current point would suggest. This is the ONLY thing a fix the device produced by itself
   // is ever allowed to do to the stated address — whether the boxes are full or empty.
   const [suggestion, setSuggestion] = useState<(PointAddress & { metres: number | null }) | null>(null);
@@ -895,9 +976,11 @@ export function LocationFields({
 
   useEffect(() => {
     let live = true;
-    loadAddressReference()
-      .then((payload) => {
-        if (live) setReference(payload);
+    loadAddressReferenceRead()
+      .then((read) => {
+        if (!live) return;
+        setReference(read.reference);
+        setAddressCachedAt(read.cachedAt);
       })
       .catch(() => {
         // Offline, or the endpoint is unhappy, which out here is a normal minute of the morning.
@@ -1707,7 +1790,7 @@ export function LocationFields({
         <div>
           <h3 id={headingId} className="font-display font-bold text-lg text-ink-900">
             Location of {subjectLabel}
-            {stateRequired ? " *" : ""}
+            <RequiredMark when={stateRequired} />
           </h3>
           <p className="mt-1 text-sm text-ink-500">
             Where {subjectLabel} is. This is what the map, the exports and the research dataset use.{" "}
@@ -1897,6 +1980,23 @@ export function LocationFields({
             {stateName && reference && districtOptions.length === 0 ? (
               <p className="text-xs text-ink-500">
                 No districts are listed for {stateName} — save without one and report the gap.
+              </p>
+            ) : null}
+            {/*
+              §3.5's CACHED-AND-STALE SENTENCE, FOR THE ONE LIST ON THIS CARD THAT CANNOT BE BUNDLED.
+
+              The 36 states are compiled in (`OFFLINE_STATES`) and are therefore always answerable
+              and always current; the 795 districts are neither, and until `loadAddressReferenceRead`
+              kept a copy the honest thing to say about them offline was the paragraph below, which
+              begins "The district list has not loaded". A browser that HAS been given them now
+              answers the box — and owes the reader the date, because a district list is revised
+              several times a year and a name that is missing from a copy taken in March proves
+              nothing at all about a district created in July. Only when the box has something to
+              offer: with no options the paragraph below is still the right sentence.
+            */}
+            {stateName && addressCachedAt && districtOptions.length > 0 ? (
+              <p className="text-xs text-ink-500">
+                {cachedListLine(districtOptions.length, "districts", formatDate(addressCachedAt))}
               </p>
             ) : null}
             {stateName && !reference && districtOptions.length === 0 ? (

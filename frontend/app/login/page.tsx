@@ -17,12 +17,20 @@ import {
   accessRefusalKind,
   type AccessRefusalKind
 } from "@/lib/accessRoster";
-// ACROSS FROM components/settings ON PURPOSE. The recording notice has exactly two consumers — this
-// card, which asks, and the settings card, which lets a person take it back — and they must show the
-// same words in the same order or somebody agrees to one description of this system and reads a
-// different one when they come to withdraw. One component, imported by both; it lives beside its
-// settings consumer because that is where the rest of the consent surface is.
-import { UsageConsentDisclosure } from "@/components/settings/UsageConsentNotice";
+import {
+  MIN_PASSWORD_LENGTH,
+  SIGN_IN_HINT_HEADER,
+  changeOwnPassword,
+  mustChangePassword,
+  passwordRuleLine,
+  signInHintHeading,
+  signInHintOf,
+  type SignInHint
+} from "@/lib/signIn";
+// THE NOTICE IS NO LONGER RENDERED HERE. `UsageConsentDisclosure` used to be imported across from
+// components/settings so the door and the withdrawal screen showed one text; the door now shows one
+// line and links to `/terms`, which renders `UsageConsentNoticeBody` — the same component, the same
+// server text — as clause 10. Two consumers still, and still one source of words.
 import {
   loadUsageConsentNotice,
   recordUsageConsent,
@@ -141,77 +149,72 @@ const AGREE_BOX_ID = "usage-consent-agree";
 const AGREE_HINT_ID = "usage-consent-agree-hint";
 
 /**
- * THE TURNSTILE: a real checkbox, a real label, the notice expanding under it, and the reason the
- * button below is dead — in words, in a region that speaks.
+ * THE TURNSTILE: one checkbox, one line, and the phrase that carries the detail is a link.
  *
- * ── EVERY ACCESSIBILITY DECISION HERE, AND THE FAILURE EACH ONE PREVENTS ────────────────────────
+ * ── WHAT THIS USED TO BE, AND WHY IT IS NOT THAT ANY MORE ───────────────────────────────────────
+ *
+ * Until 2026-08-30 this control carried the entire usage-recording notice at the door: a two-clause
+ * label naming what is and is not collected, an expandable disclosure headed "Read what is
+ * recorded, and what is not", and a three-branch live region explaining the disabled button. It was
+ * accurate, it was defensible, and nobody read a word of it — which is the failure it was written to
+ * prevent, arrived at from the other side. The owner's instruction was to cut it to one line.
+ *
+ * So the agreement is now the ordinary one — the terms and conditions — and the recording notice is
+ * clause 10 of them, at `/terms`, rendered from the same server text this screen used to expand
+ * inline. Nothing was dropped; the reading moved to a page built for reading.
+ *
+ * ── THE LINK OPENS IN A NEW TAB, AND THAT IS THE POINT ──────────────────────────────────────────
+ *
+ * The objection to a link here was always right: on this screen a navigation away costs a half-typed
+ * password. `target="_blank"` is what answers it — the terms open beside the card and the form is
+ * exactly where it was left. `rel="noopener noreferrer"` because a `_blank` link without it hands
+ * the opened page a live `window.opener`.
+ *
+ * ── THE ACCESSIBILITY DECISIONS THAT SURVIVE UNCHANGED ──────────────────────────────────────────
  *
  * **A REAL `<input type="checkbox">` WITH A REAL `<label htmlFor>`.** Not a styled `<div
- * role="checkbox">` and not a `Toggle`: this is a legal agreement, it must appear in a form's own
- * validity state, it must respond to Space, and its checked state must be reported by the platform
- * rather than by an attribute somebody remembered to write. `required` is on it too, so a browser
- * that submits past the disabled button still refuses.
+ * role="checkbox">`: this is a legal agreement, it must appear in the form's own validity state, it
+ * must respond to Space, and its checked state must be reported by the platform rather than by an
+ * attribute somebody remembered to write. `required` is on it too, so a browser that submits past
+ * the disabled button still refuses.
  *
  * **THE BLOCKED REASON IS `aria-describedby` ON THE CHECKBOX, NOT ON THE BUTTON.** A `disabled`
- * button is not focusable, so nothing on it is ever announced — a description hung there is a
- * description no screen-reader user will ever hear. The checkbox is the control they will actually
- * land on, and it is the control that clears the block, so the sentence belongs to it.
+ * button is not focusable, so nothing on it is ever announced. The checkbox is the control a reader
+ * lands on and the control that clears the block, so the sentence belongs to it.
  *
  * **THE REGION IS PRESENT FROM FIRST PAINT AND ONLY ITS TEXT CHANGES.** Assistive technology
- * announces mutations inside a live region that already existed; a region that appears at the same
- * moment as its message is frequently announced as nothing at all. This is the same rule
- * `components/ui/Toast.tsx` follows for its own viewport, and for the same reason.
+ * announces mutations inside a live region that already existed; one that appears with its message
+ * is frequently announced as nothing at all.
  *
- * **THE STATE IS SAID, NOT ONLY COLOURED.** "Required" is a word before it is an amber tint, and the
- * cleared state says "You can now sign in" rather than merely turning green — there is no colour
- * anywhere on this control that carries a fact the text does not.
+ * **THE LABEL DOES NOT WRAP THE LINK BY ACCIDENT.** A `<label>` forwards a stray click to its
+ * control, so a click on "terms and conditions" would toggle the box as well as follow the link. The
+ * link therefore sits OUTSIDE the `<label>`, as a sibling, and the sentence is split across the two.
  */
 function ConsentGateField({
-  notice,
-  noticeError,
   agreed,
+  noticeError,
   onChange
 }: {
-  notice: UsageConsentNotice | null;
-  noticeError: string | null;
   agreed: boolean;
+  /**
+   * The recording notice failed to fetch. It does NOT block the door — the terms are a static page
+   * and the tick is an agreement to them — but it does mean `settleConsent` has no version to file
+   * the answer against, so the question comes round again. One line, in the region that is already
+   * here, rather than a panel: it is rare, there is nothing to act on, and the sign-in works.
+   */
+  noticeError: string | null;
   onChange: (agreed: boolean) => void;
 }) {
   const boxId = AGREE_BOX_ID;
   const hintId = AGREE_HINT_ID;
 
-  /*
-    THE NOTICE COULD NOT BE LOADED, SO NOBODY IS ASKED TO AGREE TO IT.
-
-    No checkbox at all, and sign-in is NOT blocked — the alternatives are both worse than saying so.
-    Barring the door would put the front of the app behind one endpoint; showing a checkbox anyway
-    would collect an agreement to text this screen could not display, which is not a smaller kind of
-    consent but a different thing entirely. The server's gate is untouched by any of this, so the
-    question is put again at the next sign-in and Settings can answer it at any time.
-  */
-  if (noticeError) {
-    return (
-      <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2.5 text-sm leading-6 text-ink-700">
-        <p className="font-medium text-ink-900">The recording notice could not be loaded.</p>
-        <p className="mt-1">
-          You are not being asked to agree to text this screen cannot show you, so sign-in is not blocked. You will be
-          asked again next time, and Settings carries the notice and the answer at any point.
-        </p>
-        <p className="mt-1 text-xs text-ink-500">{noticeError}</p>
-      </div>
-    );
-  }
-
-  const loading = notice === null;
-
   return (
-    <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
-      <div className="flex items-start gap-2.5">
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2.5">
         <input
           id={boxId}
           type="checkbox"
           required
-          disabled={loading}
           checked={agreed}
           onChange={(event) => onChange(event.target.checked)}
           aria-describedby={hintId}
@@ -220,35 +223,27 @@ function ConsentGateField({
           // action colour from `tailwind.config.ts` — purple-700 — written out because
           // `accent-purple-700` compiles to a Tailwind utility that carries `<alpha-value>` and the
           // property takes no alpha.
-          className="mt-0.5 h-4 w-4 shrink-0 rounded border-line-200 [accent-color:oklch(0.47_0.198_305)]"
+          className="h-4 w-4 shrink-0 rounded border-line-200 [accent-color:oklch(0.47_0.198_305)]"
         />
-        <label htmlFor={boxId} className="min-w-0 text-sm leading-6 text-ink-900">
-          <span className="font-medium">
-            I agree to have my use of this platform recorded, whichever way I sign in.
-          </span>{" "}
-          <span className="text-ink-700">
-            Which screens I open, how long the server took, and whether it worked — never what I type, never a search
-            box, never a record id. It is required to use the platform, and I can withdraw it in Settings at any time
-            without losing access.
-          </span>
-        </label>
+        <span className="min-w-0 text-sm leading-6 text-ink-900">
+          <label htmlFor={boxId}>I agree to the</label>{" "}
+          <Link
+            href="/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-purple-700 underline underline-offset-2 hover:text-purple-800"
+          >
+            terms and conditions
+          </Link>
+        </span>
       </div>
 
-      {/* Expandable IN PLACE and not a link away: on this screen a link would navigate off a
-          half-typed password, and a notice behind one is a notice nobody reads. */}
-      {notice ? <UsageConsentDisclosure notice={notice} tone="inset" /> : null}
-
-      <p
-        id={hintId}
-        role="status"
-        aria-live="polite"
-        className={cn("text-xs leading-5", agreed ? "text-ink-500" : "text-amber-800")}
-      >
-        {loading
-          ? "Loading the recording notice. The sign-in buttons stay disabled until it has arrived, so nobody signs in past a question that had not finished loading."
-          : agreed
-            ? `You can now sign in. Your answer is recorded against notice version ${notice?.version ?? ""}, with the fact that it was required at sign-in, so a later reader can tell it apart from a free choice.`
-            : "Required. Both the Sign In button and Continue with Google stay disabled until this box is ticked — agreeing is a condition of using this platform."}
+      <p id={hintId} role="status" aria-live="polite" className="text-xs leading-5 text-ink-500">
+        {!agreed
+          ? "Required to sign in."
+          : noticeError
+            ? "The recording notice is unavailable, so this answer is not filed yet. You will be asked again."
+            : ""}
       </p>
     </div>
   );
@@ -274,16 +269,199 @@ function ConsentGateField({
 function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onContinue: () => void }) {
   return (
     <div role="status" className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-4 text-sm leading-6">
-      <p className="font-display text-base font-bold text-ink-900">You are signed in — and your earlier answer stands</p>
+      <p className="font-display text-base font-bold text-ink-900">Your earlier answer stands</p>
       <p className="text-ink-700">{gate.reason}</p>
-      <p className="text-ink-700">
-        Nothing was recorded from the box you ticked just now. Withdrawing recording does not cost you anything here,
-        so it has been left exactly as you set it; Settings is where to change it if you want to.
-      </p>
+      {/* One line, not a paragraph. The server's sentence above already says what the answer is and
+          that it costs nothing; all this half has to add is that the tick did not overturn it. */}
+      <p className="text-ink-700">Ticking the box did not change it. Settings is where to change it.</p>
       <Button type="button" size="auth" onClick={onContinue} className="mt-1 w-full font-display text-base font-bold">
         Continue
       </Button>
     </div>
+  );
+}
+
+/**
+ * THE FIRST-LOGIN PASSWORD, ASKED BETWEEN SIGN-IN AND THE DASHBOARD.
+ *
+ * ── THE REQUIREMENT, AND WHAT WAS ACTUALLY MISSING ──────────────────────────────────────────────
+ *
+ * Owner: *"they would be able to set the password on their first login, and confirm it"*. Every
+ * piece of the mechanism existed and nothing joined them up: `POST /api/users` creates an account
+ * with `mustChangePassword` set, `serialize_user` puts the flag on every sign-in answer and every
+ * `/me`, and `POST /auth/change-password` is the route it names — and NO SCREEN ON EITHER CLIENT
+ * READ THE FLAG. An account created with a password an administrator typed signed in, worked
+ * normally, and nobody was ever asked to replace a secret that by construction two people know.
+ *
+ * ── IT REPORTS, WE REFUSE — THE CONSENT GATE'S OWN SHAPE ────────────────────────────────────────
+ *
+ * The server deliberately does not 403 the sign-in, for the reason the column's comment gives: the
+ * only route that can change a password needs a bearer token, so refusing here would leave the
+ * account permanently unable to comply. So this is the same arrangement as `StandingRefusal` above
+ * and as Android's `UsageConsentGateScreen`: the server states the fact, the client is the gate.
+ *
+ * ── WHY IT REPLACES THE CARD RATHER THAN OPENING A DIALOG ───────────────────────────────────────
+ *
+ * A dialog is dismissible, and "you may set a password if you feel like it" is not the requirement.
+ * The person holds a token by this point, so leaving the sign-in controls live underneath would also
+ * offer them a second sign-in they neither need nor can usefully make — the argument
+ * `StandingRefusal` already makes one branch up.
+ *
+ * ── THE CURRENT PASSWORD IS USUALLY NOT ASKED FOR, AND SOMETIMES MUST BE ────────────────────────
+ *
+ * `POST /auth/change-password` requires it even for an account carrying this flag, and it is right
+ * to: the flag means "the password you hold was typed for you", not "anybody at this keyboard may
+ * replace it". On the ordinary path the person typed that password into the box above ten seconds
+ * ago, so asking for it again would be asking somebody to re-type a secret this page is already
+ * holding. Where the page is NOT holding one — a Google sign-in, or a session already open when the
+ * page loaded — the box appears, because the alternative is a gate whose only button cannot succeed.
+ *
+ * ── AND IT HAS A WAY OUT, WHICH IS NOT A HEDGE ──────────────────────────────────────────────────
+ *
+ * "Sign out instead" is the escape `UsageConsentGateScreen` carries, for its reason: a person who
+ * cannot complete this — they do not know the temporary password, the server is unreachable — must
+ * not be held on one screen whose controls all do nothing. Signing out returns them to a door they
+ * can use with a different account. It does not let anybody INTO the product.
+ */
+function FirstPasswordGate({
+  currentPassword,
+  onDone,
+  onSignOut
+}: {
+  /** The password typed at the door, or "" when this session did not see one. */
+  currentPassword: string;
+  onDone: () => void;
+  onSignOut: () => void;
+}) {
+  const [current, setCurrent] = useState(currentPassword);
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [show, setShow] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Asked only where the door has nothing to offer. Computed from the PROP and not from `current`,
+  // which the person is about to type into — reading the state would make the box vanish under the
+  // caret on the first keystroke.
+  const askCurrent = currentPassword.length === 0;
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (next !== confirm) {
+      setError("The two passwords do not match.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await changeOwnPassword(current, next);
+      onDone();
+    } catch (err) {
+      // The server's own sentence wins: it is the only text that knows whether the current password
+      // was wrong, whether the account has no password to change at all, or whether the new one was
+      // refused — three different next moves behind one status code family.
+      setError(err instanceof Error ? err.message : "Could not set the password.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="grid gap-3">
+      {/* `role="status"` and not `alert`: nothing has gone wrong and nothing is being refused — the
+          person is signed in and one form away from the app. Same reading as `StandingRefusal`. */}
+      <div role="status" className="rounded-md border border-line-200 bg-surface-50 p-3 text-sm leading-6 text-ink-700">
+        {/* TERSE. The whole explanation is that somebody else chose the password they just used. */}
+        An administrator set your password. Choose your own to continue.
+      </div>
+      {error ? (
+        <div role="alert" className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+          {error}
+        </div>
+      ) : null}
+
+      {askCurrent ? (
+        <div className="grid gap-2">
+          <label htmlFor="gate-current-password" className="text-sm font-medium text-ink-900">
+            Current password
+          </label>
+          <div className="relative">
+            <Lock aria-hidden className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-500" />
+            <input
+              id="gate-current-password"
+              type={show ? "text" : "password"}
+              autoComplete="current-password"
+              required
+              value={current}
+              onChange={(event) => setCurrent(event.target.value)}
+              className="field-input h-[52px] pl-10"
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid gap-2">
+        <label htmlFor="gate-new-password" className="text-sm font-medium text-ink-900">
+          New password
+        </label>
+        <div className="relative">
+          <Lock aria-hidden className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-500" />
+          <input
+            id="gate-new-password"
+            type={show ? "text" : "password"}
+            autoComplete="new-password"
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            value={next}
+            onChange={(event) => setNext(event.target.value)}
+            className="field-input h-[52px] pl-10 pr-11"
+          />
+          {/* ONE TOGGLE FOR EVERY BOX ON THIS FORM, the ruling `/set-password` already made: the
+              pair is typed in sequence by one person checking one password against itself, and two
+              independent eyes would let them be revealed separately — the one arrangement in which
+              "they do not match" is still a mystery. `aria-pressed` because it is a toggle. */}
+          <button
+            type="button"
+            aria-label={show ? "Hide password" : "Show password"}
+            aria-pressed={show}
+            onClick={() => setShow((value) => !value)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-ink-300 hover:text-ink-500"
+          >
+            {show ? <EyeOff size={22} aria-hidden /> : <Eye size={22} aria-hidden />}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <label htmlFor="gate-confirm-password" className="text-sm font-medium text-ink-900">
+          Repeat password
+        </label>
+        <div className="relative">
+          <Lock aria-hidden className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-500" />
+          <input
+            id="gate-confirm-password"
+            type={show ? "text" : "password"}
+            autoComplete="new-password"
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
+            className="field-input h-[52px] pl-10"
+          />
+        </div>
+      </div>
+
+      {/* The same first clause as `/set-password`, from the same function — see `passwordRuleLine`.
+          The second clause differs because nobody here is holding a link, and because this route
+          deliberately does NOT revoke sessions the way a link redemption does. */}
+      <p className="text-xs leading-5 text-ink-500">{passwordRuleLine("Other devices stay signed in.")}</p>
+
+      <Button type="submit" size="auth" disabled={saving} className="mt-1 w-full font-display text-base font-bold">
+        {saving ? "Saving…" : "Set password and continue"}
+      </Button>
+      <button type="button" className="field-button-secondary w-full" onClick={onSignOut}>
+        Sign out instead
+      </button>
+    </form>
   );
 }
 
@@ -313,11 +491,14 @@ function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onConti
  *    would make the withdrawal theatre and the whole flow indefensible. So the answer is recorded
  *    ONLY where the server says `required`, and a standing REFUSED is held on screen and explained
  *    in the server's own words before the person is let through.
- * 3. **THE NOTICE FAILING TO LOAD MUST NOT BAR THE DOOR.** If `GET /usage/consent/notice` cannot be
- *    reached, there is no checkbox at all and sign-in proceeds — with a sentence saying why. The
- *    alternative is an app whose front door depends on a new endpoint, and a tick that means "I
- *    agree to text that did not load" is not consent in either direction. The gate stays true on
- *    the server, so the person is asked at their next sign-in and in Settings.
+ * 3. **THE NOTICE FAILING TO LOAD MUST NOT BAR THE DOOR** — and since 2026-08-30 it cannot even
+ *    reach the door. The box now agrees to `/terms`, a page this bundle serves, so a tick means what
+ *    it says whether or not `GET /usage/consent/notice` answered. The notice is still fetched,
+ *    because `settleConsent` files the answer against its version; when it is missing, nothing is
+ *    filed, one line under the box says so, and the server's gate still reads `required`, so the
+ *    question comes round at the next sign-in and in Settings. What this bullet used to describe —
+ *    no checkbox at all, and the gate cleared by a failed fetch — was correct while the checkbox WAS
+ *    the notice, and would now be a front door that a dead endpoint walks straight through.
  * 4. **THE REASON A CONTROL IS BLOCKED IS SPOKEN, NOT ONLY GREYED.** A `disabled` button is not
  *    focusable, so an `aria-describedby` on it is never announced; the requirement rides on the
  *    CHECKBOX instead, and a live region that is present from first paint says what is blocking and
@@ -325,7 +506,7 @@ function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onConti
  */
 function LoginView() {
   const router = useRouter();
-  const { login, loginWithGoogle, refreshMe, user } = useAuth();
+  const { login, loginWithGoogle, logout, refreshMe, user } = useAuth();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -342,6 +523,14 @@ function LoginView() {
    * their password.
    */
   const [refusal, setRefusal] = useState<AccessRefusalKind | null>(null);
+  /**
+   * The OTHER kind of refusal: about what was typed rather than about admission.
+   *
+   * Held separately from `refusal` and not folded into it, because the two headers answer two
+   * different questions and a single switch over both would have to invent a precedence for the
+   * (impossible today, cheap to keep impossible) case where a server sends both.
+   */
+  const [hint, setHint] = useState<SignInHint>(null);
   const [loading, setLoading] = useState(false);
   const googleHost = useRef<HTMLDivElement | null>(null);
   const renderedWidth = useRef(0);
@@ -376,10 +565,31 @@ function LoginView() {
    * ref is written synchronously and is already correct when that effect runs.
    */
   const signingIn = useRef(false);
+  /**
+   * True once THIS visit has replaced the temporary password, so the gate below closes even if the
+   * `/me` that would have proved it never lands.
+   *
+   * DERIVED-PLUS-A-LATCH RATHER THAN A COPY OF THE ACCOUNT. `passwordGate` reads the live `user`, so
+   * a session that was ALREADY open when this page loaded meets the gate too — not only the sign-in
+   * that has just happened — and there is no second copy of the flag to go stale. The latch is what
+   * covers the one case the derivation cannot: `changeOwnPassword` has succeeded server-side, and the
+   * best-effort `refreshMe()` after it fails on a dropped connection. Without it the person would be
+   * asked a second time for a password they had just set, and told the current one was wrong.
+   */
+  const [passwordSet, setPasswordSet] = useState(false);
+  /**
+   * The account that must choose its own password before it is let in, or null.
+   *
+   * Held apart from `held` for the same reason `hint` is held apart from `refusal`: two gates that
+   * answer two different questions, and folding them into one piece of state would oblige somebody to
+   * invent a precedence between "your earlier consent answer stands" and "set a password". The
+   * ordering is expressed where it belongs — in the render below, consent first — and is argued there.
+   */
+  const passwordGate = !passwordSet && mustChangePassword(user) ? user : null;
 
   useEffect(() => {
-    if (user && !signingIn.current && !held) router.replace("/dashboard");
-  }, [held, router, user]);
+    if (user && !signingIn.current && !held && !passwordGate) router.replace("/dashboard");
+  }, [held, passwordGate, router, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -397,20 +607,22 @@ function LoginView() {
   }, []);
 
   /**
-   * THE GATE ITSELF: blocked unless the box is ticked, or unless the notice could not be loaded.
+   * THE GATE ITSELF: blocked until the box is ticked. One clause, and it used to be two.
    *
-   * **IT IS ALSO BLOCKED WHILE THE NOTICE IS STILL IN FLIGHT**, which is not fussiness. `notice` and
-   * `noticeError` are both null for the first few hundred milliseconds, and a rule written as
-   * `notice !== null && !agreed` would leave the button live for exactly that window — a fast
-   * typist with a saved password signs in past a gate that had not finished arriving, once, on a
-   * slow connection, and nothing on screen ever says so. Blocking on the unknown is the only
-   * direction that cannot silently let somebody through.
+   * The second clause was `&& noticeError === null` — a failed fetch of the recording notice cleared
+   * the gate, because a tick could not honestly mean "I agree" to text the screen had not managed to
+   * show. That reasoning was correct while the checkbox WAS the recording notice. It is not any
+   * more: the box now agrees to the terms and conditions, which are a static page this bundle serves
+   * and which no fetch can fail to produce. So the tick means what it says whether or not
+   * `/usage/consent/notice` answered, and the gate is the tick.
    *
-   * A FAILED FETCH DOES NOT BAR THE DOOR — see reason 3 in the header comment. That is why the
-   * condition is `noticeError === null` and not `notice !== null`: a rejection clears the gate, and
-   * `ConsentGateField` states in words that the question is not being asked and why.
+   * **NOTHING WAITS ON THE NOTICE ANY LONGER EITHER.** The old control disabled the checkbox while
+   * the fetch was in flight, so that nobody signed in past a question that had not arrived. There is
+   * no such question now, and keeping the wait would have made the front door of the app depend on an
+   * endpoint it no longer needs. The notice is still fetched — `settleConsent` files the answer
+   * against its version — and its absence is stated under the box rather than blocking anybody.
    */
-  const blocked = !agreed && noticeError === null;
+  const blocked = !agreed;
 
   /**
    * What to do with the tick now that we know whose account it was. Returns the gate to HOLD on, or
@@ -516,6 +728,11 @@ function LoginView() {
     // rather than guessing at a category — the only safe direction to be wrong in on this screen.
     const kind = accessRefusalKind(status, err instanceof ApiError ? err.headers?.get(ACCESS_STATUS_HEADER) : null);
     setRefusal(kind);
+    // The identifier-shaped refusals ride their own header for the reason the server's comment
+    // gives: the refusal BODY is asserted to hold nothing but `detail`, so anything a client
+    // needs to branch on has to travel beside it. Absent means unclassified, which draws the
+    // plain box around the server's own sentence.
+    setHint(signInHintOf(err instanceof ApiError ? err.headers?.get(SIGN_IN_HINT_HEADER) : null));
     setError(err instanceof Error ? err.message : "Unable to sign in or reach the server.");
   }, []);
 
@@ -564,15 +781,13 @@ function LoginView() {
           */
           if (gateNow.current.blocked) {
             setRefusal(null);
-            setError(
-              "Please tick the box agreeing to how your use of the platform is recorded — it is above the sign-in buttons, and the full notice expands there. Agreeing is required to use this platform, and it can be withdrawn later in Settings."
-            );
+            setError("Please agree to the terms and conditions above the sign-in buttons.");
             // SAYING IT IS NOT ENOUGH: the person clicked a button and, from where they are looking,
             // nothing happened. Focus moves to the control that clears the block, so a keyboard or
             // screen-reader user is put on it rather than being told to go and find it. `focus` is
-            // safe on a missing element only because it is guarded — this id is rendered on every
-            // branch of `ConsentGateField` except the notice-failed one, and on that branch
-            // `blocked` is false and this line is unreachable.
+            // safe on a missing element only because it is guarded — and since 2026-08-30 the box is
+            // rendered unconditionally (there is no longer a notice-failed branch that omits it), so
+            // the guard is the only thing standing between this and a control that is always there.
             document.getElementById(AGREE_BOX_ID)?.focus();
             return;
           }
@@ -587,6 +802,12 @@ function LoginView() {
               setHeld(standing);
               return;
             }
+            // THE PASSWORD GATE IS READ OFF THE ACCOUNT HERE AND NOT LEFT TO THE REDIRECT EFFECT,
+            // for the reason `signingIn` exists at all: `loginWithGoogle` has already called
+            // `setUser`, so navigating now would put somebody on the dashboard a frame before the
+            // gate could render. The effect's guard is the belt; this is the brace, and it is the
+            // one that holds on the path a person actually walks.
+            if (mustChangePassword(account)) return;
             router.replace("/dashboard");
           } catch (err) {
             signingIn.current = false;
@@ -651,6 +872,7 @@ function LoginView() {
     setLoading(true);
     setError(null);
     setRefusal(null);
+    setHint(null);
     signingIn.current = true;
     try {
       const account = await login(email, password);
@@ -659,6 +881,9 @@ function LoginView() {
         setHeld(standing);
         return;
       }
+      // See the Google path above: read off the ACCOUNT rather than waiting for the redirect effect,
+      // which runs on a `user` React has already flushed.
+      if (mustChangePassword(account)) return;
       router.replace("/dashboard");
     } catch (err) {
       describeFailure(err);
@@ -718,10 +943,12 @@ function LoginView() {
           telling somebody, on the very screen that is about to refuse them, that they were about to
           be let in.
         */}
+        {/* THREE SENTENCES CUT TO ONE, 2026-08-30. The claim itself is unchanged and still true —
+            approval first, Crowdsource Volunteer on arrival — and the half that was dropped
+            ("signing in tells you so and puts you in the queue") is not lost: `SignInRefusal` says
+            it, in the server's own words, at the moment it is actually relevant. */}
         <p className="relative z-10 text-xs text-white/40">
-          Signing in is by invitation: an administrator approves your address first, and new accounts then join as
-          Crowdsource Volunteers until they are promoted. If yours has not been approved yet, signing in tells you so and
-          puts you in the queue.
+          By invitation. An administrator approves your address first; new accounts join as Crowdsource Volunteers.
         </p>
       </aside>
 
@@ -740,16 +967,50 @@ function LoginView() {
           <div className="mb-6 flex flex-col items-center gap-2 text-center">
             <WorkshopLogo className="h-12 w-12 rounded-xl shadow-sm lg:hidden" />
             <h1 className="font-display text-2xl font-bold text-ink-900">Welcome back</h1>
-            <p className="text-sm text-ink-500">{held ? "One thing before you go on" : "Sign in to your account"}</p>
+            <p className="text-sm text-ink-500">
+              {held || passwordGate ? "One thing before you go on" : "Sign in to your account"}
+            </p>
           </div>
 
           {/*
-            THE SIGN-IN CONTROLS ARE REPLACED, NOT COVERED, WHILE A STANDING REFUSAL IS BEING SHOWN.
+            THE SIGN-IN CONTROLS ARE REPLACED, NOT COVERED, WHILE EITHER GATE IS BEING SHOWN.
             The person is already signed in at this point — leaving a live "Sign In" button under
             the panel would offer them a second sign-in they do not need and cannot usefully make.
+
+            CONSENT FIRST, THEN THE PASSWORD, and the order is not arbitrary. The consent panel is a
+            CORRECTION — the person ticked a box saying they agree and their standing refusal was not
+            overwritten — so it is about something that has already happened and is owed to them
+            before anything else asks them for a keystroke. The password gate is a REQUEST, and a
+            request stacked on top of an unread correction is how the correction goes unread. They can
+            both be true at once (an admin-created account whose owner withdrew consent in Settings),
+            which is why this is a chain and not two independent branches.
           */}
           {held ? (
             <StandingRefusal gate={held} onContinue={() => setHeld(null)} />
+          ) : passwordGate ? (
+            <FirstPasswordGate
+              // The password typed at the door THIS visit, so the ordinary path never asks for it
+              // twice. Empty on the Google path and on a session that was already open when this
+              // page loaded, and `FirstPasswordGate` draws the box in exactly those two cases.
+              currentPassword={password}
+              onDone={() => {
+                setPasswordSet(true);
+                // BEST-EFFORT AND DELIBERATELY NOT AWAITED-INTO-THE-BRANCH, the treatment
+                // `settleConsent` gives its own re-read: the password IS set by this point, and
+                // folding a failed `/me` into the same outcome would tell somebody their password
+                // could not be saved when it had been. The latch above is what makes the gate close
+                // either way; the refresh is only a cache invalidation.
+                refreshMe().catch(() => undefined);
+                router.replace("/dashboard");
+              }}
+              onSignOut={() => {
+                // The escape, and it lands back on this same card with the form live — `logout`
+                // clears the session, which drops `user`, which drops `passwordGate`.
+                setPasswordSet(false);
+                setPassword("");
+                logout().catch(() => undefined);
+              }}
+            />
           ) : (
             <>
           {/*
@@ -760,21 +1021,39 @@ function LoginView() {
             answered. This is the front door of the app, so it is the one place where "the message
             is on screen" is furthest from "the message arrived".
           */}
-          {error ? <SignInRefusal kind={refusal} message={error} /> : null}
+          {error ? <SignInRefusal kind={refusal} hint={hint} message={error} /> : null}
 
           <form onSubmit={submit} className="grid gap-3">
             <div className="grid gap-2">
               <label htmlFor="email" className="text-sm font-medium text-ink-900">
-                Email address
+                Email, phone or empanelment number
               </label>
               <div className="relative">
                 <Mail aria-hidden className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-500" />
+                {/*
+                  ── `type="text"`, AND THAT ONE ATTRIBUTE IS THE WHOLE OF THE CHANGE HERE ────────
+
+                  It was `type="email"`, which is a CLIENT-SIDE REFUSAL: a browser will not submit
+                  "DES/2024/0142" from it at all, so the server's three-way resolution would have
+                  been unreachable from this screen no matter what the backend did. There is nothing
+                  to replace it with — a pattern that admitted an address, a telephone number and an
+                  arbitrary institutional numbering scheme admits everything — and nothing is lost by
+                  its absence: an identifier that names no account is answered by the same 401 as a
+                  wrong password, which is the answer the server deliberately kept unchanged.
+
+                  `autoComplete="username"` and not `"email"`: the field is no longer an address, and
+                  a password manager told otherwise offers the wrong stored value to a designer who
+                  signs in with their empanelment number.
+
+                  The id stays `email` so the label binding, the `name`, and every test that types
+                  into it are untouched — the same reason the wire field kept its name.
+                */}
                 <input
                   id="email"
-                  type="email"
-                  autoComplete="email"
+                  type="text"
+                  autoComplete="username"
                   required
-                  placeholder="Enter your email"
+                  placeholder="Email, phone or empanelment number"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   className="field-input h-[52px] pl-10"
@@ -818,14 +1097,11 @@ function LoginView() {
               In DOM order it precedes every sign-in control on this card — the password submit here,
               and the three provider buttons below the divider — so somebody reading the page with a
               screen reader meets the requirement before either control that it disables, rather than
-              tabbing onto a dead button and being told nothing. Its own copy says "whichever way I
-              sign in", because a checkbox drawn inside the password form otherwise reads as a
-              condition of the password form.
+              tabbing onto a dead button and being told nothing.
             */}
             <ConsentGateField
-              notice={notice}
-              noticeError={noticeError}
               agreed={agreed}
+              noticeError={noticeError}
               onChange={(next) => {
                 // Stamped at the tick, not at the POST. See `agreedAt`'s declaration.
                 agreedAt.current = next ? new Date().toISOString() : null;
@@ -966,8 +1242,30 @@ function LoginView() {
  * somebody using a screen reader the difference between a wrong password and a server that never
  * answered is otherwise silence.
  */
-function SignInRefusal({ kind, message }: { kind: AccessRefusalKind | null; message: string }) {
+function SignInRefusal({
+  kind,
+  hint,
+  message
+}: {
+  kind: AccessRefusalKind | null;
+  hint: SignInHint;
+  message: string;
+}) {
   const chrome = kind ? accessRefusalChrome(kind) : null;
+  // THE HINT WINS OVER THE ADMISSION CHROME WHERE BOTH APPLY, and today both never do: every
+  // hint arrives on a 401, which `accessRefusalKind` classifies as BAD_CREDENTIAL, for which
+  // `accessRefusalChrome` returns null. The order is written down anyway so that adding a hint
+  // to a 403 later cannot silently produce two headings in one box.
+  const hintHeading = signInHintHeading(hint);
+  if (hintHeading) {
+    return (
+      <div role="alert" className="mb-4 grid gap-1.5 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-3 text-sm text-amber-900">
+        <p className="font-display text-base font-bold leading-snug">{hintHeading}</p>
+        {/* The server's sentence, verbatim — it is the only text that knows what to do next. */}
+        <p className="leading-6">{message}</p>
+      </div>
+    );
+  }
 
   if (!chrome) {
     return (

@@ -35,6 +35,7 @@ from app.core.deps import get_value, is_empty_value
 from app.services.concurrency import gather_reads
 from app.services.record_filters import resolve_workshop_ids, workshop_clause
 from app.services.records import media_url_owners, public_encode, viewable_where
+from app.services.rich_text import plain_from_stored
 
 # How many statements ``consolidate_for_artisan`` issues, whatever the artisan's interview count.
 # Asserted by the route's ``meta.queryCount`` so the number is checkable from a live response rather
@@ -189,8 +190,20 @@ def _answer_key(text: str | None) -> str:
     Whitespace and case only. Anything cleverer (stemming, fuzzy distance) would start silently
     merging answers that a reader would want to see side by side, which is the behaviour this whole
     module is built to prevent.
+
+    **FLATTENED FIRST, AND THAT IS A CORRECTNESS FIX RATHER THAN TIDINESS.** ``answerText`` is a
+    ``String?`` that has held plain prose since this feature was written and, since the answer box
+    became a ``RichTextField`` on 2026-08-31, sometimes holds a serialised document instead (see
+    ``rich_text``'s "rich text inside a plain String column" section). Two sittings that gave the
+    SAME answer — one typed plainly, one typed after somebody bolded a word — then produced two
+    different keys, so ``distinct`` held two members and the artisan's question was flagged as a
+    CONFLICT: the screen says "these two accounts disagree" over two identical sentences, which is
+    the wrong answer dressed as a right one. The rows reaching :func:`consolidate_for_artisan` are
+    already flattened where they are built, so this call is an identity no-op for them; it is here
+    because this function's CONTRACT is "normalised answer text", and a later caller handing it a
+    raw column value must not silently get a JSON string back.
     """
-    return " ".join((text or "").split()).casefold()
+    return " ".join(str(plain_from_stored(text or "")).split()).casefold()
 
 
 async def consolidate_for_artisan(
@@ -312,7 +325,27 @@ async def consolidate_for_artisan(
     # --- Typed answers, grouped by the question they answer -----------------------------------
     answers_by_question: dict[str, list[dict[str, Any]]] = {}
     for response in responses:
-        if is_empty_value(response.answerText) and is_empty_value(response.notes):
+        # ── THE RICH-TEXT READ BOUNDARY FOR THIS DOCUMENT, AND IT IS ONE LINE ON PURPOSE ─────────
+        # ``QuestionnaireResponse.answerText`` is a ``String?`` holding plain prose on almost every
+        # row and, since the answer box became a ``RichTextField`` on 2026-08-31, a serialised
+        # rich-text document on the rest. Flattened HERE, before anything reads it, because this one
+        # value then goes four ways: onto the web consolidated page, onto the Android consolidated
+        # screen, into the ``consolidated.csv`` a researcher archives, and into :func:`_answer_key`,
+        # which decides whether two sittings CONFLICT. Left raw, the first three printed
+        # ``{"blocks":[{"kind":"PARAGRAPH",…}]}`` at a reader and the fourth read two identical
+        # sentences as a disagreement. Flattening at each of the four instead would be four chances
+        # to add a fifth without it.
+        #
+        # ``plain_from_stored`` returns a plain string BY IDENTITY, so every answer recorded before
+        # the editor existed travels exactly as it did — no re-wrapping, no re-spacing.
+        #
+        # AND IT COMES BEFORE THE EMPTINESS TEST, which is the second half of the fix. A rich-text
+        # box that was focused and left alone still saves
+        # ``{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}``; ``is_empty_value`` on that raw string is
+        # False, so a blank answer would have been consolidated as a real one, counted in
+        # ``typed_total`` and shown as an empty row under the artisan's name.
+        answer_text = plain_from_stored(response.answerText)
+        if is_empty_value(answer_text) and is_empty_value(response.notes):
             continue
         meta = interview_meta.get(response.interviewId)
         if meta is None:
@@ -321,7 +354,7 @@ async def consolidate_for_artisan(
             {
                 "kind": TYPED,
                 "sourceId": response.id,
-                "answerText": response.answerText,
+                "answerText": answer_text,
                 "notes": response.notes,
                 "recordedByName": get_value(get_value(response, "answeredBy"), "name"),
                 "sortAt": _aware(meta["date"]),
@@ -372,6 +405,15 @@ async def consolidate_for_artisan(
             "url": media.url if _may_take(media, media_owners) else None,
             "transcriptText": media.transcriptText,
             "transcriptStatus": media.transcriptStatus,
+            # TRUE OR ABSENT, NEVER FALSE, and the missing third value is the point. The stamp behind
+            # this was added on 2026-08-31 and is NULL both for a transcript nobody has edited and for
+            # every row stored before the column existed — and those are different facts. Shipping
+            # ``False`` would collapse them and print "these are the machine's words" over transcripts
+            # a researcher may well have rewritten through ``POST /media/{id}/transcript``, which has
+            # been able to replace one all along. So this page can say "Edited" and can say nothing,
+            # and it never says "Not edited": that claim is only sound where the machine's own copy is
+            # in hand to compare against, which is true in the interview form and not here.
+            "transcriptEdited": True if getattr(media, "transcriptEditedAt", None) else None,
             "recordedByName": None,
             "sortAt": _aware(get_value(media, "recordedAt") or get_value(media, "createdAt")),
             **_provenance(meta),

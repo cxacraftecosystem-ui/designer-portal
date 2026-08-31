@@ -56,6 +56,9 @@ import {
   truncationSentence,
   type SelectOption
 } from "@/components/ui/selectFilter";
+// The app's one date format. `cachedListLine` takes the FORMATTED string, so this is the only place
+// the ISO stamp on `WorkshopListState.cachedAt` meets a locale.
+import { formatDate } from "@/lib/format";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The two tables
@@ -80,8 +83,9 @@ export type WorkshopTable = "design" | "field";
  * prose and it has never appeared in front of a designer; introducing it in a sentence that only
  * ever renders when something has gone wrong is the worst possible moment to teach new vocabulary.
  */
-function nounFor(table: WorkshopTable): string {
-  return table === "design" ? "design workshops" : "workshops";
+function nounFor(voice: { table: WorkshopTable; noun?: string }): string {
+  if (voice.noun) return voice.noun;
+  return voice.table === "design" ? "design workshops" : "workshops";
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -312,6 +316,23 @@ export type WorkshopListState<Row> =
       total: number | null;
       /** The route said it had more than it sent, without saying how many. */
       truncated?: boolean;
+      /**
+       * ISO-8601: these rows came out of `lib/referenceCache.ts` and the NETWORK HAS NOT ANSWERED.
+       * Null (or absent) means the read that produced them crossed the wire just now.
+       *
+       * A FOURTH ANSWER, NOT A FLAG ON ONE OF THE THREE. `ok` with a stamp is a genuinely different
+       * state from `ok` without one — the rows are real and pickable, the field stays REQUIRED
+       * because it is answerable, and yet a name missing from the list proves nothing. That is the
+       * distinction `DwReferenceStore` turns on: *"A list last refreshed an hour ago that does not
+       * contain Ram Kumar means Ram Kumar has no artisan record and one should be created; the same
+       * list refreshed nine days ago means nothing of the kind."*
+       *
+       * ONLY A REGISTER MAY CARRY ONE. R6: caching is FORBIDDEN for the two workshop lists and for
+       * every roster of who-may-do-what, so a stamp on one of those would be describing a document
+       * that must not exist. {@link workshopListNotice} refuses to print the sentence for a voice
+       * whose `accessList` is not explicitly `false`, which is the cheapest place to hold that line.
+       */
+      cachedAt?: string | null;
     };
 
 /**
@@ -843,6 +864,80 @@ export function workshopCutSentence(
 export type WorkshopListVoice = {
   table: WorkshopTable;
   /**
+   * The plural this list is written about, where it is NOT one of the two workshop tables.
+   *
+   * ── WHY A NON-WORKSHOP NOUN IS ACCEPTED BY A MODULE CALLED `workshopOptions` ────────────────
+   *
+   * Because the sentences below are not about workshops. They are the four answers to *"why is
+   * this picker empty"* — the read is outstanding, the read failed, the device is offline, there
+   * genuinely are none — and the same four questions are asked of the artisan register, the craft
+   * register, the questionnaire sections and the assignee roster on eight other controls in this
+   * app, every one of which answered all four with a single confident claim of non-existence.
+   * §3.5 of `DROPDOWN_DESIGN.md` writes the strings with a `{noun}` hole in them for exactly this
+   * reason and calls the noun *"the caller's plural"*.
+   *
+   * So the choice was between exporting the noun and letting eight call sites write their own
+   * sentences, and the second is how "could not be loaded" and "couldn't be loaded" and "failed to
+   * load" all end up on screen at once — the six-label-shapes failure this whole file exists to
+   * stop, one layer down. Absent, {@link nounFor} answers from `table` exactly as before.
+   */
+  noun?: string;
+  /**
+   * Is this a list of WHO MAY DO WHAT — one of the lists R6 forbids caching?
+   *
+   * **Defaults to `true`, which is every caller that existed before this field did.** Both workshop
+   * tables are access lists, and the offline sentence therefore ends by saying the list is never
+   * kept on the device *and why*: a stored copy of who may file where reads a revoked grant as a
+   * grant (§3.3, R6).
+   *
+   * That reason is FALSE of a register. The artisan, craft, tool and section lists are not grants;
+   * §3.3 rules that they SHOULD be cached, and Android already caches them through
+   * `DwReferenceStore`. Printing R6's reason over an artisan picker would explain an absence with a
+   * cause that has nothing to do with it — and a wrong reason is not a smaller error than a wrong
+   * claim, it is the same error one clause later. So a register passes `accessList: false` and the
+   * sentence stops at *"Connect and it will load."*, which is the whole of what this client can
+   * promise: the web caches no list of any kind, so §3.5's shared closing clause (*"the list is
+   * kept on the device from then on"*) is not available to either kind here.
+   */
+  accessList?: boolean;
+  /**
+   * WHAT IS NOT AT STAKE, in one clause -- the half-sentence that closes the ONLINE failure notice.
+   *
+   * Defaults to *"Nothing you have entered is at risk -- this record can be saved without it."*,
+   * which is every caller that existed before this field did, and which is a claim about SAVING A
+   * RECORD against the thing the picker offers. On a control that is not part of a record save it
+   * is simply false: the assignment builder's assignee picker is required and there is no record to
+   * save, and so is the workshop picker on the access-request panel.
+   *
+   * ── WHY A CLAUSE AND NOT A WHOLE SENTENCE ──────────────────────────────────────────────────
+   *
+   * `components/WorkshopScopeSelect.tsx:73-91` met this first and answered it by writing the whole
+   * notice out again, opening included, with its own last clause -- and its spec then had to assert
+   * that the duplicated opening still matched this module's byte for byte
+   * (`e2e/dropdown-sweep-unit.spec.ts`, "the filter's failure sentence keeps section 3.5's opening").
+   * That is the arrangement this file's header calls six label shapes for one question, one layer
+   * down: a shared opening kept in step by hand across N copies. Handing the CLAUSE in keeps the
+   * opening in one place, which is the half a reader recognises from the last picker they met.
+   *
+   * WorkshopScopeSelect IS MIGRATED ONTO THIS AS OF 2026-08-31, and this line used to say the
+   * opposite: *"deliberately NOT migrated onto this: the spec above pins its literal, and a screen
+   * whose scope silently widened is precisely the wrong place to accept an incidental copy change."*
+   * That reasoning was about the risk of an UNCHECKED copy change and not about the arrangement, and
+   * it is answered rather than overruled: the clause that control passes composes a string
+   * byte-identical to the literal it used to hold, and `e2e/dropdown-sweep-unit.spec.ts` now asserts
+   * that composition instead of asserting that a hand-kept copy still matched. The duplicated
+   * opening is gone, which was the whole point of this field existing.
+   *
+   * IT REACHES THE ONLINE ARM ONLY, and that filter appends its clause to the OFFLINE sentence by
+   * hand for the reason set out at its own constant: offline ends on R6's reason for never keeping
+   * a workshop list on the device, which `accessList` owns and which is true of that table whoever
+   * is reading it.
+   *
+   * The OFFLINE sentence takes no such parameter and needs none -- once `accessList` is right, its
+   * trailer is "Connect and it will load.", which is true on any surface.
+   */
+  reassurance?: string;
+  /**
    * Did the REQUEST narrow this list to what the account may use?
    *
    * `true` for `GET /workshops?accessibleOnly=true` and for every `DesignWorkshop` list (that table
@@ -862,6 +957,25 @@ export type WorkshopListVoice = {
    * it is the caller's to give.
    */
   online: boolean;
+  /**
+   * DOES THIS CALLER ACTUALLY WRITE THIS LIST TO `lib/referenceCache.ts`?
+   *
+   * It unlocks one clause and nothing else: §3.5's offline sentence ends *"Connect once and the
+   * list is kept on the device from then on"*, and that is a PROMISE about what happens next. Only
+   * a caller that keeps the list may make it. Left off, the sentence ends *"Connect and it will
+   * load."*, which is true of every list in the app.
+   *
+   * SEPARATE FROM `accessList` ON PURPOSE, EVEN THOUGH THE FOUR REGISTERS SET BOTH. `accessList:
+   * false` is a fact about what a list MEANS — a register is not a grant set — and is true of the
+   * assignee roster, the questionnaire sections and the designer directory, none of which is
+   * cached. Reading the promise off `accessList` would have promised a stored copy on every one of
+   * them, which is the failure this repository keeps re-learning in the other direction: a sentence
+   * that is right about the list it was written for and wrong about the next one to reuse it.
+   *
+   * R6 STILL GOVERNS: an access list may never set this, and there is nothing here it could set it
+   * for — `ReferenceRegister` in `lib/referenceCache.ts` will not compile with one.
+   */
+  cached?: boolean;
 };
 
 /**
@@ -917,22 +1031,85 @@ export function deviceLooksOffline(): boolean {
  * offer what it cannot honour. Printing the shared clause here would promise a designer that the
  * list will be waiting next time, and it will not be — so the first two sentences are §3.5's word
  * for word and the last clause states what actually happens, and why.
+ *
+ * ── AND WHY A REGISTER GETS THE SAME SENTENCE WITHOUT THAT LAST CLAUSE ───────────────────────
+ *
+ * `accessList: false` drops it. The clause is a REASON, and R6's reason is about grants; over an
+ * artisan or craft picker it would explain a missing list by a rule that does not govern it.
+ *
+ * ── AND WHAT A REGISTER IS PROMISED INSTEAD, WHICH THIS PARAGRAPH USED TO GET WRONG ──────────
+ *
+ * It said *"the web caches no list at all, so §3.5's own closing clause is unavailable here in both
+ * directions"*, and that was true of this client until `lib/referenceCache.ts` landed. It is now
+ * false for the four registers and still true for everything else, so the promise is made by a
+ * third field rather than inferred from `accessList`: {@link WorkshopListVoice.cached} is set ONLY
+ * by a caller that actually writes to that store, and it is what unlocks §3.5's closing clause
+ * *"Connect once and the list is kept on the device from then on."* A caller that does not cache
+ * keeps *"Connect and it will load."* — which is the whole of what it can honestly say, and saying
+ * more would have a designer close the laptop believing a list will be there in the morning.
+ *
+ * A read that ANSWERED FROM THAT STORE is the fifth state and comes first below: see
+ * {@link WorkshopListState.cachedAt}.
  */
 export function workshopListNotice<Row>(state: WorkshopListState<Row>, voice: WorkshopListVoice): string {
-  const noun = nounFor(voice.table);
+  const noun = nounFor(voice);
   if (state.kind === "loading") return "";
   if (state.kind === "failed") {
     return voice.online
-      ? `The ${noun} list could not be loaded, so this is not showing what exists. Nothing you have entered is at risk — this record can be saved without it.`
-      : `This device has not received the ${noun} list yet, so there is nothing to pick here. That is not a claim that there are none. Connect and it will load; this list is never kept on the device, because a stored copy of who may file where reads a revoked grant as a grant.`;
+      ? `The ${noun} list could not be loaded, so this is not showing what exists. ${
+          voice.reassurance ?? "Nothing you have entered is at risk — this record can be saved without it."
+        }`
+      : voice.accessList === false
+        ? `This device has not received the ${noun} list yet, so there is nothing to pick here. That is not a claim that there are none. ${
+            voice.cached
+              ? "Connect once and the list is kept on the device from then on."
+              : "Connect and it will load."
+          }`
+        : `This device has not received the ${noun} list yet, so there is nothing to pick here. That is not a claim that there are none. Connect and it will load; this list is never kept on the device, because a stored copy of who may file where reads a revoked grant as a grant.`;
+  }
+  /*
+    THE CACHED ROWS COME BEFORE THE ROW COUNT, AND BEFORE THE EMPTY ARM.
+
+    A cached list with rows in it is the one `ok` state that still has something to say, so it
+    cannot sit after `rows.length > 0 && return ""`. A cached list with NO rows falls through to
+    `genuinelyEmpty` on purpose: `getCachedRegister` distinguishes "never fetched" (null, and the
+    caller reports `failed`) from "the server said there are none" (an empty document), and the
+    second of those is exactly the claim the genuinely-empty sentence is entitled to make.
+
+    R6 IS HELD HERE RATHER THAN TRUSTED UPSTREAM. `accessList === false` is required, not merely
+    expected: a stamp arriving on a grant set would otherwise print "42 workshops on this device,
+    last refreshed 3 Aug" over a list whose staleness is wrong in the permissive direction, which is
+    the one sentence R6 exists to prevent anybody writing. Such a caller gets silence instead.
+  */
+  if (state.cachedAt && state.rows.length > 0 && voice.accessList === false) {
+    return cachedListLine(state.total ?? state.rows.length, noun, formatDate(state.cachedAt));
   }
   if (state.rows.length > 0) return "";
   return genuinelyEmpty(voice);
 }
 
+/**
+ * CACHED AND STALE — §3.5's fifth sentence, and the twin of `WorkshopOptions.kt::cachedListLine`.
+ *
+ * THE DATE IS THE WHOLE SENTENCE, which is why this takes it ALREADY FORMATTED rather than as an
+ * ISO string: the branch that matters can then be asserted without the assertion depending on which
+ * timezone the test runner is in, exactly as `cachedQuestionnaireNotice` takes its stamp. A caller
+ * that cannot produce a real date must not use this sentence at all — a made-up or omitted date
+ * turns the one line that lets a designer judge a list into the one that stops them.
+ *
+ * Byte for byte the Kotlin string. §3.5 says both clients print these word for word, and a second
+ * wording of one fact is a second fact as far as a reader is concerned.
+ */
+export function cachedListLine(count: number, noun: string, refreshedOn: string): string {
+  return (
+    `${count} ${noun} on this device, last refreshed ${refreshedOn}. If the one you want is missing, ` +
+    "refresh with a connection before concluding it is not on record."
+  );
+}
+
 /** The two "there really are none" sentences, which are two on purpose — see `WorkshopListVoice`. */
 function genuinelyEmpty(voice: WorkshopListVoice): string {
-  const noun = nounFor(voice.table);
+  const noun = nounFor(voice);
   return voice.scoped
     ? `No ${noun} are open to this account. An administrator can give you access to one.`
     : `No ${noun} have been recorded yet.`;

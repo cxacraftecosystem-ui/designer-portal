@@ -87,7 +87,7 @@ class DesignerProfileScreenTest {
     fun `every column on the profile is classified, and none of them twice`() {
         val columns = profileColumns()
         assertEquals(
-            "ProfileForm no longer has twenty-three columns. That is fine — but the new one has to " +
+            "ProfileForm no longer has twenty-four columns. That is fine — but the new one has to " +
                 "be put in DESIGNER_PROFILE_DICTATED or in DESIGNER_PROFILE_NOT_DICTATED with a " +
                 "reason, because a box that is neither is an omission nobody can tell from a " +
                 "decision",
@@ -95,7 +95,13 @@ class DesignerProfileScreenTest {
             // the months half of the experience pair, and the `Location` row that finally gives a
             // designer's address a district and a map point. Both are classified as NOT dictated,
             // with their reasons, in the table this test guards.
-            23,
+            //
+            // Twenty-four since `empanelmentGrace` arrived with the empanelment requirement the
+            // same day. It is the one member that is not a BOX — it is the server's answer to
+            // "may this profile be saved without a number" — and it is classified anyway, in
+            // NOT_DICTATED, because a field this test cannot see is a field nobody has to think
+            // about.
+            24,
             columns.size,
         )
 

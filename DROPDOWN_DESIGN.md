@@ -17,7 +17,38 @@ symbol or a quoted sentence as well as a line**; where the two disagree, the sym
 the number is a hint. Re-derive with `codegraph explore` or a grep for the quoted text before editing,
 and never delete a line because its number matched.
 
-**Nothing in this document has been implemented.** It is the specification the next wave builds from.
+**STATUS, 2026-08-31: MOST OF THIS DOCUMENT IS BUILT. Read a section against the tree before
+building it.**
+
+This line said *"Nothing in this document has been implemented"* from the day it was written until
+2026-08-31, and it was true then and false for months afterwards. It is corrected here rather than
+deleted because the failure it caused is the one worth naming: a headline claiming a shipped design
+is unbuilt sends the next reader to build it again, and a second implementation of a picker
+vocabulary is exactly the condition §1.2 is about — six label shapes and nine "none" strings, arrived
+at one honest re-implementation at a time.
+
+What is in the tree, checked against it rather than remembered:
+
+| | Where it landed | How to check in one command |
+|---|---|---|
+| §2's single vocabulary | `frontend/lib/workshopOptions.ts` and `android/.../ui/WorkshopOptions.kt` — the four "none" constants, the label builder, the group headings, the six sentences | both files exist |
+| E1 `serverQuery`, E2 `bulk`, E4 `noneLabel` | `components/ui/SearchableSelect.tsx` | `grep -n "serverQuery\|bulk?:\|noneLabel" components/ui/SearchableSelect.tsx` |
+| E3 `searchable` + `emptyMessage` on Kotlin | `ui/SearchableSelect.kt`; the threshold now decides in exactly one place | `grep -rn "options.size >= SEARCH_THRESHOLD" android/app/src/main` returns ONE hit |
+| §3.1 / §3.2 (B1, B2, B3) | computed asterisks, the honest offline sentence, and `fetchedAt` beside `address-reference.json` | `grep -n "REFERENCE_CACHE_STAMP_FILE" ui/LocationFields.kt` |
+| §3.2's bundled state list | `BUNDLED_STATES`, derived from `report/ReportMap.STATE_SEATS` rather than typed out | `grep -n "INDIAN_STATES_AND_UNION_TERRITORIES" android/app/src/main -r` |
+| §3.3 C1 on Android | `loadCachedRegister` and its four wrappers in `MainActivity.kt`, over `DwReferenceStore` | `grep -n "loadCraftRegister" MainActivity.kt` |
+| §3.3 on the web | `frontend/lib/referenceCache.ts` — the fourth IndexedDB database, `model__owner__filter`, no expiry, an empty fetch never overwrites a populated cache | that file exists |
+| §3.4 | `MyAiKeysScreen` and `SearchScreen` both route through `SearchableSelectField`; `AccessRosterScreen` stays a menu, as this document pins it | `grep -rn "ExposedDropdownMenuBox" android/app/src/main` returns nothing but a comment |
+| §3.5 | the six sentences, byte for byte, on both clients | `workshopListNotice` / `registerListNotice` / `addressListNotice` |
+| §3.7 O1 | Android's `danglingField` / `repick` / `unfiled`; and now the web's `repickOutboxEntry` and the outbox's third button | `grep -n "danglingField" frontend/lib/offline.ts data/Offline.kt` |
+| §4 | `sort` and `dir` on both roster routes, plus the designer roster's roles/institutions grammar | `grep -n "sort: str | None" backend/app/api/routes/access.py` |
+
+**What is NOT claimed by this table.** It says a mechanism is in the tree; it does not say every one
+of the twenty-one controls in §1.1 has been migrated onto it. §2.8's *"`pageSize === RENDER_CAP`,
+always"* and §2.3's one label shape are call-site sweeps, and a sweep is finished only when the grep
+in §5.1 comes back empty — which is why §5.1 is written as greps rather than as a list of tickboxes.
+Run them; do not trust this paragraph, or the one above it, which is the mistake this whole block is
+a correction of.
 
 ---
 
@@ -64,7 +95,7 @@ design-and-prototype record, gated by `load_workshop_or_404` (creator / admin /
 
 | # | Control | Asked / drawn | Search | Cap stated | Empty-vs-failed |
 |---|---|---|---|---|---|
-| 1 | `components/forms/DesignWorkshopSelect.tsx:239` — mounted 6× (`ArtisanForm:1136`, `ProductForm:849`, `ToolForm:958`, `ProcessForm:1131`, `media/page.tsx:562`, `questionnaire/page.tsx:1076`) | 80 / 80 (`:74`) | `searchable={false}` `:262` + `capHint` `:263` | yes, `:220-225` | **no — a failed list IS an empty list.** `.catch(()=>null)` then `page?.items ?? []` at `:168,176`, so a network failure renders *"You are on no design workshop yet"* `:257` |
+| 1 | `components/forms/DesignWorkshopSelect.tsx:239` — mounted 6× (`ArtisanForm:1136`, `ProductForm:849`, `ToolForm:958`, `ProcessForm:1131`, `media/page.tsx:562`, `questionnaire/page.tsx:1076`) | 80 / 80 (`:74`) | ~~`searchable={false}` `:262` + `capHint` `:263`~~ → the panel's own box, wired to `GET /design-workshops?search=` | yes, through `workshopCutSentence` | ~~**no — a failed list IS an empty list.** `.catch(()=>null)` then `page?.items ?? []` at `:168,176`, so a network failure renders *"You are on no design workshop yet"* `:257`~~ → **CLOSED.** Now a three-state `WorkshopListState` through `lib/workshopOptions`; pinned by `dropdown-sweep-unit.spec.ts` ("a failed design-workshop read stops rendering as an account with no design workshops") |
 | 2 | `design-workshops/page.tsx:1495` `ContinueOnAllocatedWorkshop` | 50 / 50 (`:1465`) | `searchable` `:1513` | never | collapsed — the control returns `null` at `:1487` and vanishes |
 | 3 | `sketches-and-prototypes/page.tsx:736` | **100 / 80** (`:236`) | `searchable` forced | prints "the first 100 of N" while drawing 80 — the dead band `selectFilter.ts:81-86` exists to kill | correct, `null` and `[]` kept apart |
 | 4 | `design-review/page.tsx:659` | 80 / 80, `CHOOSER_PAGE = RENDER_CAP` `:245` | `false` + a server `SearchInput` above, 300 ms | yes | correct — five states, `ListFailure` splits unreachable from refusal |
@@ -81,7 +112,7 @@ design-and-prototype record, gated by `load_workshop_or_404` (creator / admin /
 | # | Control | Asked / drawn | Scope | Cap stated |
 |---|---|---|---|---|
 | 12 | `components/forms/WorkshopSelect.tsx:445` (`ComboBox`), mounted 6× | 100 / 80 | `accessibleOnly=true` `:244`; the record's own workshop merged back in `:372` | 100-vs-total only `:459` |
-| 13 | `components/WorkshopScopeSelect.tsx:232` (`MultiSelectDropdown`), mounted 5× | **100 / 80** | none — deliberately a READ scope | **no notice of any kind**, and on error it falls through to "all workshops" over an empty list |
+| 13 | `components/WorkshopScopeSelect.tsx:232` (`MultiSelectDropdown`), mounted 5× | ~~**100 / 80**~~ → `WORKSHOP_OPTION_PAGE_SIZE` for both | none — deliberately a READ scope | ~~**no notice of any kind**, and on error it falls through to "all workshops" over an empty list~~ → **CLOSED.** `CappedListNotice` for the cut, and a `WorkshopListState` whose failure sentence names the widened scope; the opening is `workshopListNotice`'s through `WorkshopListVoice.reassurance` rather than a second copy (2026-08-31) |
 | 14 | `designworkshop/StageWorkshopField.tsx:232` | 100 / 80, memoised 60 s | `accessibleOnly` | none (it stores the TITLE, not an id) |
 | 15 | `components/FunnelFilters.tsx:246`, mounted 4× | 100 / 80 | none | 100-vs-total `:282` |
 | 16 | `design-workshops/page.tsx:931` | 100 / 80, **`workshopType=DESIGN_PROTOTYPE`** — the only server-side type filter in the app | `accessibleOnly` | never |
@@ -1804,17 +1835,50 @@ menu by design.
 
 ## 5.1 What "done" looks like
 
-- No picker anywhere asks for a page size other than `RENDER_CAP` / the Android page constant, and no
-  screen prints two truncation sentences with two different totals.
-- Grepping the web for a workshop label built inline returns nothing: `lib/workshopOptions.ts` is the
-  only place a title and a hint are assembled.
-- Grepping Android for `options.size >= SEARCH_THRESHOLD` returns one hit, inside
-  `SearchableSelect.kt`.
-- Every dropdown that can be empty renders one of §3.5's six sentences, and no control anywhere says
-  "there are none" from a read that may have failed.
-- Both roster routes accept every §4.1 parameter, page through `count_and_page`, and neither client
-  runs a `.filter()` or a `sortedWith` over a fetched page.
-- `roleMatchTruncated` and the institutions endpoint's `truncated` both reach a sentence on screen.
+**Each line is a check, and the ones that pass today are marked so — because a criterion with no
+verdict beside it is what let this document's headline claim nothing was built while most of it
+was.** A mark is a statement about the tree on 2026-08-31 and about nothing else: re-run the command,
+do not trust the tick.
+
+- ☐ No picker anywhere asks for a page size other than `RENDER_CAP` / the Android page constant, and
+  no screen prints two truncation sentences with two different totals. **Open** — this is the
+  call-site sweep §2.8 rule 1 describes, and §1.1 lists the controls still asking for 100 into a
+  control that draws 80 (#3, #5, #8, #9, #10, #13).
+- ☐ Grepping the web for a workshop label built inline returns nothing: `lib/workshopOptions.ts` is
+  the only place a title and a hint are assembled. **Open** — the module exists and is the home; the
+  migration of every caller onto it is not finished.
+- ☑ Grepping Android for `options.size >= SEARCH_THRESHOLD` returns one hit, inside
+  `SearchableSelect.kt`. **Passes** — verified 2026-08-31; E3's `searchable` override is what made it
+  one, and the record-backed call sites now pass the flag rather than letting the count decide.
+- ☐ Every dropdown that can be empty renders one of §3.5's six sentences, and no control anywhere
+  says "there are none" from a read that may have failed. **Substantially done, not finished.** The
+  two workshop pickers, the address card, the four register controls on the record forms, the search
+  filters and the AI-model picker all do. What has NOT been swept is every remaining `emptyMessage`
+  literal on both clients — `grep -rn "No .* available" android/app/src/main` is the fastest way to
+  find the next one, and each hit is a claim about a repository made from a read that may have timed
+  out.
+- ☑ Both roster routes accept every §4.1 parameter, page through `count_and_page`, and neither client
+  runs a `.filter()` or a `sortedWith` over a fetched page. **Passes** — `sort`/`dir` are declared on
+  `access.py` and `designers.py`, with the roles/institutions grammar beside them.
+- ☑ `roleMatchTruncated` and the institutions endpoint's `truncated` both reach a sentence on screen.
+  **Passes** — verified 2026-08-31: `components/admin/RosterFilterBar.tsx` turns them into
+  `roleMatchCutNotice` and `institutionCutNotice`, both roster pages mount it, and the two Android
+  roster screens carry the same pair through `ui/RosterFilters.kt`.
+
+**Three that were not on this list and should have been**, because each is a whole section's point
+rather than a call-site sweep:
+
+- ☑ **The web keeps the four registers on the device, and keeps NEITHER access list.** `grep -n
+  "ReferenceRegister" frontend/lib/referenceCache.ts` — the type is a closed union of the four, so
+  R6 is enforced by the compiler and not by a comment. A `designWorkshop` cache does not compile.
+- ☑ **A queued record whose id 404s has a way out on both clients.** `grep -rn "danglingField"` finds
+  it in `android/.../data/Offline.kt` and `frontend/lib/offline.ts`; the re-pick list is fetched LIVE
+  on both, because it is an access-adjacent question (R6) and a cached answer would offer a grant
+  revoked in March.
+- ☑ **`GET /reference/address`'s `version` is honoured by both clients**, which was the one
+  server-provided invalidation signal in the API and which nothing read. `reference.py`'s docstring
+  now records that it is load-bearing, so a state added without a bump is a defect rather than a
+  tidiness question.
 
 ---
 

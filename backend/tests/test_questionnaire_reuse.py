@@ -968,17 +968,31 @@ def test_a_failure_part_way_through_leaves_no_half_copy(client, env, monkeypatch
     is the whole trick: ``db.tx()`` hands back a DIFFERENT client, so a patch on ``db`` would not be
     inside the transaction at all and this test would measure nothing. Patching the generated action
     class reaches whichever client is holding it.
+
+    ── THE FIXTURES ARE BUILT BEFORE THE PATCH, AND SINCE 2026-08-30 THAT ORDER IS LOAD-BEARING ──
+
+    The patch used to be applied first, which was harmless while ``POST /api/questionnaires`` wrote
+    its questions one ``create`` at a time: a break on ``create_many`` reached the reuse path and
+    nothing else. That create is now ONE TRANSACTION batched through the very same ``create_many``
+    (see ``create_questionnaire``, and D2 in this feature's lane brief), so an early patch blew up
+    the SOURCE questionnaire this test needs — the run failed at line 980 with
+    ``500 RuntimeError: the questions could not be written`` before reaching the reuse it is about.
+
+    Moving the two fixture lines above the patch restores exactly what this test measured and
+    narrows nothing: the ``monkeypatch`` is still live for the whole of the reuse call, which is the
+    only write under test. Anything else this file adds to a fixture from here on must be built
+    above the patch for the same reason.
     """
     from prisma.actions import QuestionnaireFormQuestionActions
+
+    workshop = _workshop(client, env, f"Half-copy workshop {env['stamp']}")
+    source = _questionnaire(client, env, f"Half-copy source {env['stamp']}")
+    title = f"Half-copy attempt {env['stamp']}"
 
     async def _boom(self, *args, **kwargs):  # noqa: ANN001 - mirrors create_many
         raise RuntimeError("the questions could not be written")
 
     monkeypatch.setattr(QuestionnaireFormQuestionActions, "create_many", _boom)
-
-    workshop = _workshop(client, env, f"Half-copy workshop {env['stamp']}")
-    source = _questionnaire(client, env, f"Half-copy source {env['stamp']}")
-    title = f"Half-copy attempt {env['stamp']}"
 
     response = client.post(
         f"/api/questionnaires/{source['id']}/reuse",

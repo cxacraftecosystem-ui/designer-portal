@@ -203,6 +203,14 @@ internal data class ProfileForm(
     val empanelmentNo: String = "",
     val empanelmentDate: LocalDate? = null,
     /**
+     * Whether this profile may be saved WITHOUT an empanelment number — the server's own
+     * answer, carried through [DesignerProfileDto.empanelmentNoMissing]. See that field.
+     *
+     * NOT PART OF [toBody]: it is a read of the stored row, not a value anybody types, and a
+     * client that posted it could grant itself the grace path.
+     */
+    val empanelmentGrace: Boolean = false,
+    /**
      * The designer's STATED ADDRESS AND MAP POINT — the `Location` row this profile now relates to.
      *
      * ── IT DOES NOT REPLACE THE FOUR FLAT COLUMNS ABOVE, AND BOTH ARE ON SCREEN ────────────────
@@ -255,6 +263,7 @@ internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
     signatureMediaId = signatureMediaId.orEmpty(),
     cvMediaId = cvMediaId.orEmpty(),
     empanelmentNo = empanelmentNo.orEmpty(),
+    empanelmentGrace = empanelmentNoMissing == true,
     // A stored value this build cannot parse degrades to "no date" instead of throwing during
     // composition, which would take the whole screen down over one malformed string in one column.
     empanelmentDate = empanelmentDate
@@ -478,7 +487,7 @@ internal val DESIGNER_PROFILE_DICTATED: Set<String> = linkedSetOf(
  * call site. Every value here is a full sentence and the test requires it to be one — an empty
  * string would be a way of satisfying "every column is classified" while classifying nothing.
  *
- * Read with [DESIGNER_PROFILE_DICTATED]: together they are all twenty-three columns of
+ * Read with [DESIGNER_PROFILE_DICTATED]: together they are all twenty-four columns of
  * [ProfileForm].
  */
 internal val DESIGNER_PROFILE_NOT_DICTATED: Map<String, String> = linkedMapOf(
@@ -531,6 +540,13 @@ internal val DESIGNER_PROFILE_NOT_DICTATED: Map<String, String> = linkedMapOf(
             "GPS reading and its accuracy radius. Its one free-text answer, the village, has a " +
             "microphone of its own inside that card, which is where the classification for it " +
             "belongs. A microphone at this level would have nothing to write into.",
+    "empanelmentGrace" to
+        "Not a box at all, and not a value anybody types: it is the SERVER'S answer to \"may " +
+            "this profile be saved without an empanelment number\", read off " +
+            "DesignerProfileDto.empanelmentNoMissing and used to draw one banner and to soften " +
+            "one refusal. It is classified here rather than filtered out of the test because a " +
+            "field in neither table is indistinguishable from a box somebody forgot to " +
+            "classify, which is the whole point of the pair.",
 )
 
 /**
@@ -826,6 +842,21 @@ fun DesignerProfileScreen(
           snackbar rather than only into the form.
         */
         val missing = designerProfileMissingRequired(form)
+        // ── THE EMPANELMENT NUMBER: REQUIRED, WITH THE SERVER'S GRACE PATH ─────────────────
+        //
+        // Deliberately NOT added to [DESIGNER_PROFILE_REQUIRED_LABELS], which is the list the
+        // server's `REQUIRED_COLUMNS` refuses a body for CLEARING and which the web mirrors
+        // field for field. Putting it there would refuse exactly the save the grace path exists
+        // to allow — an existing profile with content, no number, and a correction to make
+        // somewhere else — because this screen posts every box and an empty one arrives as an
+        // explicit null. So the rule is expressed here, in the same two halves the web uses:
+        // the asterisk is unconditional, and the refusal fires only where the server would
+        // 422 anyway (`_assert_empanelment_number` in app/api/routes/designers.py).
+        val empanelmentFault = if (!form.empanelmentGrace && form.empanelmentNo.isBlank()) {
+            "An empanelment number is required to create a designer profile."
+        } else {
+            null
+        }
         val emailFault = designerEmailRefusal(form.email)
         // The stored value's shape, which is a different question from "is it blank" and is asked of
         // the composed "+CC number" string — see `artisanPhoneValidationError`. Blank answers null
@@ -886,7 +917,7 @@ fun DesignerProfileScreen(
         }
         experienceError = yearsFault ?: monthsFault
         if (missing.isNotEmpty() || emailFault != null || phoneFault != null || yearsFault != null ||
-            monthsFault != null || addressFault != null
+            monthsFault != null || addressFault != null || empanelmentFault != null
         ) {
             // Latched here and nowhere else: the boxes turn red because a save was actually
             // refused, never because the profile has not been filled in yet.
@@ -894,6 +925,7 @@ fun DesignerProfileScreen(
             onError(
                 listOfNotNull(
                     designerProfileRequiredRefusal(missing).takeIf { it.isNotEmpty() },
+                    empanelmentFault,
                     emailFault,
                     phoneFault,
                     yearsFault,
@@ -1127,6 +1159,30 @@ fun DesignerProfileScreen(
                     ReadOnlyNotice(viewer)
                 }
 
+                // ── THE EMPANELMENT GRACE BANNER, THE WEB'S TWIN ──────────────────────────
+                //
+                // Above the first section rather than inside the Empanelment one, matching
+                // `DesignerProfileForm.tsx`: on a handset that section is several screens down,
+                // and an ask a designer only meets after scrolling past everything else is an
+                // ask most of them never meet. Persistent rather than a snackbar for the same
+                // reason the web does not use a toast — this is a standing state of the record,
+                // not an event, and a snackbar is gone before the box it is about is on screen.
+                //
+                // TERSE, and the wording is the web's, verbatim.
+                if (form.empanelmentGrace) {
+                    Text(
+                        "Add your empanelment number — it is required on every report.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.errorContainer,
+                                MaterialTheme.shapes.small
+                            )
+                            .padding(12.dp)
+                    )
+                }
                 ProfileSection("Name and standing") {
                     ProfileText(
                         "Name as printed", form.displayName, canEdit,
@@ -1616,6 +1672,18 @@ fun DesignerProfileScreen(
                     // [DESIGNER_PROFILE_NOT_DICTATED].
                     ProfileText(
                         "Empanelment number", form.empanelmentNo, canEdit,
+                        // MARKED REQUIRED WHETHER OR NOT THE GRACE PATH IS OPEN. The number IS
+                        // mandatory; the grace path only says this particular profile may be
+                        // saved once more without it, which is a fact about the save and not
+                        // about the field. Dropping the asterisk there would tell a designer
+                        // the number is optional, which is the sentence the banner exists to
+                        // contradict.
+                        required = true,
+                        error = if (form.empanelmentGrace) {
+                            null
+                        } else {
+                            requiredRefusal(enforceRequired, form.empanelmentNo, "Empanelment number")
+                        },
                         dictate = dictates("empanelmentNo")
                     ) {
                         form = form.copy(empanelmentNo = it)

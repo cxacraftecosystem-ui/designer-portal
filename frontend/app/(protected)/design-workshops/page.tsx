@@ -27,6 +27,17 @@
  * into a real record on the next connection and the local id keeps resolving afterwards. Refusing to
  * create offline would make the first act of a fortnight in the field the one act that needs signal.
  *
+ * AND SINCE 2026-08-31 A DESIGNER WITH NO SIGNAL MAY START ONE HERE TOO — which is the owner's last
+ * unmet clause: *"if they are offline, let them create one for the time being, and when the internet
+ * comes back up, let them link it to one of the workshops that they have access to."* It is NOT a
+ * create and it never becomes one: the draft carries no server record, the sync pass declines to
+ * post it (`createMustBeDeclined`, on the role, at drain time), and its only route off this device
+ * is "Move into a workshop". `classifyDraftStart` in `lib/designWorkshopStore.ts` is the whole rule
+ * and `startLocalDraftHere` in `lib/designWorkshopCreate.ts` is the arm; both carry the argument.
+ * Three things on this page follow from it: the offline start panel (offered only under the offline
+ * banner, only to `allowWork && !allowCreate`), the row's own marker, and the prompt that appears
+ * when the connection comes back.
+ *
  * WHO MAY START ONE CHANGED, AND THIS PAGE IS WHERE THAT IS FELT. Only admins and the master admin
  * (`canCreateDesignWorkshops`) — a workshop is the container a fortnight of records lives in and the
  * unit the ministry indexes and funds, so opening one belongs to whoever holds the sanction order.
@@ -84,17 +95,26 @@ import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
+import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import {
   deleteDesignWorkshop,
+  fetchStageRegistry,
   listDesignWorkshops,
   listReportTemplates,
   namedDesignerTeam,
+  peekStageRegistry,
+  workshopKindOptions,
+  type DwRegistry,
   type DwSummary,
   type DwTemplate
 } from "@/lib/designWorkshops";
 import {
+  DW_LOCAL_DRAFT_LINK_PROMPT,
+  DW_LOCAL_DRAFT_UNLINKED,
+  DW_LOCAL_START_ACTION,
+  DW_LOCAL_START_NOTE,
   adoptServerSummaries,
   draftSummary,
   getDraftsSnapshot,
@@ -104,7 +124,7 @@ import {
   subscribeDrafts,
   type DwDraft
 } from "@/lib/designWorkshopStore";
-import { createWorkshopOrKeepItHere } from "@/lib/designWorkshopCreate";
+import { createWorkshopOrKeepItHere, startLocalDraftHere } from "@/lib/designWorkshopCreate";
 import { AdoptLocalDraftDialog } from "@/components/designworkshop/AdoptLocalDraftDialog";
 import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { DesignWorkshopViewersPanel } from "@/components/settings/DesignWorkshopViewersPanel";
@@ -248,7 +268,72 @@ function DesignWorkshopsPageBody() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  /**
+   * The title in the offline start box, and whether it is being written.
+   *
+   * ORDINARY REACT STATE AND NOT A `FormData` FIELD, unlike the create form's boxes above. This is
+   * one control with one button beside it; there is nothing for an uncontrolled form to buy here,
+   * and the store's own gate is what refuses an empty start rather than a `required` attribute on
+   * a box nobody can see.
+   */
+  const [localTitle, setLocalTitle] = useState("");
+  const [startingLocal, setStartingLocal] = useState(false);
+  /**
+   * THE CREATE FORM'S OWN TITLE, now a creatable combo rather than a plain box.
+   *
+   * ── WHY A PICKER ON A FIELD THAT STORES FREE TEXT ────────────────────────────────────────────
+   *
+   * Android's stage-1 equivalent grew this last wave and the web create form was the one surface
+   * where the two clients differed on the control. The reason is `StageWorkshopNameField`'s and is
+   * not repeated in full here: a design workshop's title is a FROZEN COPY that nothing re-resolves,
+   * so "Bagru Block Print Workshop 2025" and "Bagru block-printing workshop, 2025" are one fortnight
+   * to a reader and two strings to every group-by and every report cover. A workshop that runs every
+   * year, or in three clusters at once, is named three ways by three admins unless the names already
+   * on record are in front of them while they type.
+   *
+   * NOTHING HERE CAN REFUSE AN ANSWER, which is what makes this legal on a required field: whatever
+   * is typed is committable in one keystroke through `createAction`, so a workshop nobody has ever
+   * filed is answered exactly as fast as one with ten years of history. R6 does not reach it either
+   * — the VALUE is a name, not a grant-bearing reference; picking a row grants nothing and points at
+   * nothing, and the identical string is typeable by hand.
+   *
+   * ── THE TERM, AND WHY IT IS THE SERVER'S ─────────────────────────────────────────────────────
+   *
+   * §11.5: a client-side filter over a server-truncated list answers "No matches" about records that
+   * exist, and on a NAMING control that answer is worse than usual — what a person does next is type
+   * the name again slightly differently, which is the exact divergence this control exists to stop.
+   * So the panel's box is wired to `GET /design-workshops`'s own `search`.
+   */
+  const [title, setTitle] = useState("");
+  const [titleTerm, setTitleTerm] = useState("");
+  const [titleRows, setTitleRows] = useState<DwSummary[]>([]);
+  const [titlePending, setTitlePending] = useState(false);
   const [templateId, setTemplateId] = useState("DCH_STANDARD");
+  /**
+   * THE TYPE OF WORKSHOP, and the empty string is a real answer meaning "not stated yet".
+   *
+   * It is NOT defaulted to `DESIGN_PROTOTYPE_DEVELOPMENT` even though that is what most workshops
+   * are. A pre-selected classification is one nobody chose, and this value is promoted to a column
+   * a list filters on and printed on the report cover — so a default would file every workshop
+   * opened by an admin who never looked at the box under a kind they never picked, and it would be
+   * indistinguishable from a deliberate answer. Stage 1 declares the field `required`, which this
+   * registry enforces at SUBMISSION rather than on every save, so an unstated kind is asked for
+   * once, at the point it is needed, and never silently invented.
+   */
+  const [workshopKind, setWorkshopKind] = useState("");
+  /** The stage registry, for the workshop-kind vocabulary. Null until it lands; see the floor. */
+  const [registry, setRegistry] = useState<DwRegistry | null>(() => peekStageRegistry());
+  /** The list's own type filter. Empty means every kind, by absence — the `filters.types` rule. */
+  const [kindFilter, setKindFilter] = useState("");
+  /**
+   * The kinds to draw, and whether they came off the server.
+   *
+   * Memoised on the registry object rather than on its contents, which is exactly what
+   * `fetchStageRegistry`'s identity guarantee is for: it returns the PREVIOUSLY cached object when
+   * the version is unchanged, so a refresh that changed nothing does not rebuild this list and does
+   * not re-render either dropdown that reads it.
+   */
+  const kindChoices = useMemo(() => workshopKindOptions(registry), [registry]);
   /**
    * THE DESIGNERS THIS WORKSHOP IS BEING OPENED FOR, in the order they were ticked — empty until an
    * admin picks somebody, which is a real and common answer rather than an unfilled field.
@@ -397,6 +482,85 @@ function DesignWorkshopsPageBody() {
 
   useLeaveGuard(dirty, () => guard(() => router.back()));
 
+  /**
+   * The titles already on record, for the combo above — fetched only while the form is open.
+   *
+   * A GENERATION COUNTER RATHER THAN AN ABORT, the same as everywhere else on this page:
+   * `listDesignWorkshops` takes no signal and what matters is ignoring the late answer. Two reads
+   * are in flight whenever somebody types quickly, and a slow answer for "bag" landing after the
+   * fast one for "bagru" would leave the wrong list under the typed word.
+   *
+   * A FAILURE LEAVES THE LIST ALONE AND SAYS NOTHING. There is nothing at stake: the box below is
+   * the answer, `createAction` commits whatever is in it, and a sentence explaining that a
+   * convenience did not load is noise on the one screen an admin opens to do a thing they can
+   * already do. This is the deliberate exception to rule 10 on this page, and it is allowed because
+   * the control cannot refuse an answer — see the state's own note.
+   */
+  const titleGeneration = useRef(0);
+  useEffect(() => {
+    if (!formOpen || !allowCreate) return;
+    const term = titleTerm.trim();
+    const mine = titleGeneration.current + 1;
+    titleGeneration.current = mine;
+    setTitlePending(true);
+    // No debounce on the empty term — that is the read the form opens with, and making somebody wait
+    // 300ms to see a list they have not asked to narrow is a delay with nothing to pay for it.
+    const timer = window.setTimeout(() => {
+      void listDesignWorkshops({
+        page: 1,
+        // `RENDER_CAP` ROWS AND NOT A ROUND NUMBER: the control draws 80, and asking for 100 prints
+        // two truncation sentences with two different totals and says nothing at all between 81
+        // and 100.
+        pageSize: RENDER_CAP,
+        search: term || undefined
+      })
+        .then((found) => {
+          if (titleGeneration.current !== mine) return;
+          setTitleRows(found.items);
+        })
+        .catch(() => {
+          // Deliberately silent — see this effect's note.
+        })
+        .finally(() => {
+          if (titleGeneration.current === mine) setTitlePending(false);
+        });
+    }, term ? 300 : 0);
+    return () => window.clearTimeout(timer);
+  }, [formOpen, allowCreate, titleTerm]);
+
+  /**
+   * The distinct titles among what came back, newest first, with the count of sittings sharing each.
+   *
+   * DEDUPLICATED BECAUSE ONLY THE NAME IS STORED — two workshops may legitimately share a title, and
+   * offering the same string twice is a control appearing to distinguish two answers it cannot. The
+   * hint says how many share it, so nobody is told a false singular. ORDER IS THE SERVER'S and is
+   * never re-sorted: `GET /design-workshops` answers newest first, which is the workshop somebody
+   * naming one today almost always means; alphabetical would bury this season's between two from
+   * 2019. Both rules, and the reasons, are `StageWorkshopNameField.distinctTitles`'.
+   */
+  const titleOptions = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const row of titleRows) {
+      const name = row.title?.trim();
+      if (!name) continue;
+      seen.set(name, (seen.get(name) ?? 0) + 1);
+    }
+    const rows = [...seen.entries()].map(([name, count]) => ({
+      value: name,
+      label: name,
+      // `hint`, not part of the label: the hint is drawn beside the row and IS searched, while the
+      // stored value stays the bare title.
+      hint: count > 1 ? `${count} workshops share this name` : undefined
+    }));
+    // THE TYPED VALUE IS ALWAYS AN OPTION, AND IT IS FIRST. With the box wired to the server the
+    // options ARE the answer to the term, so a title that matches nothing would leave the trigger
+    // drawing an empty value — and a control that cannot draw its own current value reads as blank.
+    if (title && !seen.has(title)) {
+      rows.unshift({ value: title, label: title, hint: "typed here" });
+    }
+    return rows;
+  }, [titleRows, title]);
+
   const load = useCallback(async () => {
     const mine = ++generation.current;
     try {
@@ -404,7 +568,12 @@ function DesignWorkshopsPageBody() {
         page,
         pageSize: 20,
         search: applied || undefined,
-        statusFilter: status || undefined
+        statusFilter: status || undefined,
+        // EMPTY MEANS EVERY KIND, BY ABSENCE — the rule `filters.types` and `workshopIds` already
+        // follow. Sending the six ids when nothing is picked would silently exclude any kind added
+        // to the vocabulary after this page loaded, and it would exclude every workshop opened
+        // before the column existed, whose kind is NULL.
+        workshopKind: kindFilter || undefined
       });
       if (mine !== generation.current) return;
       setData(result);
@@ -433,7 +602,7 @@ function DesignWorkshopsPageBody() {
       // designer can still read with "No design workshops yet", which is indistinguishable from
       // having none — the single most repeated bug class in this repository.
     }
-  }, [page, applied, status]);
+  }, [page, applied, status, kindFilter]);
 
   useEffect(() => {
     load();
@@ -497,6 +666,31 @@ function DesignWorkshopsPageBody() {
         // created with DCH_STANDARD can have its template changed on the report page at any time.
       }
     })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /*
+    THE STAGE REGISTRY, FETCHED HERE ONLY FOR THE WORKSHOP-KIND VOCABULARY.
+
+    Cheap, and deliberately not guarded: `fetchStageRegistry` is module-cached, shares one in-flight
+    promise across every component that asks in the same commit, and is the ONE call in this client
+    that revalidates from the browser's HTTP cache — a cold start holding the current registry costs
+    a 304 rather than ~25 KB. A page that already fetches the template list and the workshop list can
+    afford it.
+
+    A FAILURE IS SILENT AND CORRECT. `workshopKindOptions` falls back to the compiled-in floor, so
+    the dropdown is answerable either way; there is nothing here for a designer to act on, and a
+    banner about a registry they have never heard of would be noise on the page they open first.
+  */
+  useEffect(() => {
+    let cancelled = false;
+    fetchStageRegistry()
+      .then((next) => {
+        if (!cancelled) setRegistry(next);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -678,6 +872,10 @@ function DesignWorkshopsPageBody() {
       const header = {
         title,
         templateId,
+        // Omitted rather than sent as "" when nothing is picked: the server's body declares this
+        // `str | None` and validates a present value against the six, so an empty string would be a
+        // 422 on a field the admin deliberately left for the designer to answer in stage 1.
+        workshopKind: workshopKind || undefined,
         designerUserId: designers.lead || undefined,
         designerUserIds: designers.team,
         craftName: text("craftName"),
@@ -710,6 +908,11 @@ function DesignWorkshopsPageBody() {
       */
       const created = await createWorkshopOrKeepItHere(header);
       formElement.reset();
+      // `reset()` only clears what the DOM owns, and the title now lives in React state — without
+      // this the next "New design workshop" opens carrying the name of the one just created, which
+      // on a creatable combo reads as the form having remembered a deliberate choice.
+      setTitle("");
+      setTitleTerm("");
       // `reset()` only clears what the DOM owns, and the range lives in React state — without this
       // the next "New design workshop" opens pre-filled with the dates of the one just created, and
       // a designer starting their second workshop of the week inherits the first one's fortnight.
@@ -891,6 +1094,63 @@ function DesignWorkshopsPageBody() {
   const [moving, setMoving] = useState<DwDraft | null>(null);
   const offerMove = !allowCreate && allowWork;
 
+  /**
+   * Offer a designer with no signal somewhere to put a fortnight of fieldwork.
+   *
+   * THE OWNER'S REMAINING CLAUSE, AND ALL THREE CONDITIONS ARE LOAD-BEARING. `allowWork` because
+   * this is for the people who run workshops and nobody else; `!allowCreate` because an admin has
+   * the create form and an unlinked draft would be strictly worse for them — theirs sends itself;
+   * and `offline` because with a connection there are two better answers than an unlinked draft,
+   * and `DESIGN_WORKSHOP_CREATE_REFUSAL` plus `ContinueOnAllocatedWorkshop` above already name
+   * both. The store re-asks the whole question at the moment of the write
+   * (`classifyDraftStart`), so a device that comes back while this panel is on screen refuses the
+   * start rather than minting a draft that never needed to exist.
+   *
+   * `offline` HERE IS THE PAGE'S OWN EVIDENCE, not `navigator.onLine`: the list read above failed
+   * and was triaged by `isUnreachable`. That is the difference between offering this in a
+   * courtyard and offering it behind a guest-house captive portal, which reports itself online and
+   * routes nothing.
+   */
+  const offerLocalStart = allowWork && !allowCreate && offline;
+  /**
+   * "The connection is back, and these are still not workshops."
+   *
+   * SHOWN ONLY ONLINE, which is the whole point: the draft is marked on its row from the moment it
+   * is minted, and this is the PROMPT the owner asked for — the unmistakable one that arrives when
+   * the internet comes back up. Offline it would be an instruction nobody can act on, because
+   * `AdoptLocalDraftDialog` holds the move until the repository has answered which workshops this
+   * account may actually open (R6).
+   */
+  const unlinkedCount = offerMove ? orphanDrafts.size : 0;
+  const promptLink = unlinkedCount > 0 && !offline;
+
+  /**
+   * Start a workshop that lives here until it is linked.
+   *
+   * `startLocalDraftHere` NEVER POSTS — see its own header for why it is not a third branch of
+   * `createWorkshopOrKeepItHere`. A refusal (the device turned out to be reachable, or this account
+   * may not run workshops at all) arrives as `DwCreateNotPermittedError`, whose message is the
+   * shared refusal naming the next move, and it is rendered unchanged in the page banner.
+   */
+  async function startHere() {
+    const title = localTitle.trim();
+    if (!title || startingLocal) return;
+    setStartingLocal(true);
+    setError(null);
+    try {
+      const started = await startLocalDraftHere({ title });
+      setLocalTitle("");
+      await refreshDrafts();
+      // Straight into it, exactly as a create does: 22 empty stages are the only useful next step,
+      // and every design-workshop route resolves a `dwlocal-…` id before and after adoption.
+      router.push(`/design-workshops/${started.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to start a workshop on this device");
+    } finally {
+      setStartingLocal(false);
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -989,6 +1249,73 @@ function DesignWorkshopsPageBody() {
         </div>
       ) : null}
 
+      {offerLocalStart ? (
+        /*
+          THE ONE CONTROL A DESIGNER IN A COURTYARD NEEDS, and it is a panel rather than a button in
+          the header for a reason: the header's create control is gated to nothing for this account
+          on purpose (an ungated "New …" invites a press that lands on a 403), and putting a
+          different button in the same place would read as that rule quietly reversing. This one
+          appears only with the offline banner directly above it, which is the context that makes it
+          honest.
+
+          TWO SENTENCES AND NO MORE. What it is, and what happens next. The reasoning is on
+          `classifyDraftStart`.
+        */
+        <section className="panel mb-5 grid gap-3 p-4">
+          <div>
+            <h2 className="font-display text-lg font-bold text-ink-900">{DW_LOCAL_START_ACTION}</h2>
+            <p className="mt-1 text-sm leading-6 text-ink-muted">{DW_LOCAL_START_NOTE}</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <Field label="Workshop title" required>
+              <TextInput
+                value={localTitle}
+                onChange={(event) => setLocalTitle(event.target.value)}
+                maxLength={220}
+                disabled={startingLocal}
+              />
+            </Field>
+            <button
+              type="button"
+              className="field-button"
+              // Disabled on an empty title only. Everything else this control could refuse is
+              // refused by the store, which is the one place that knows the rule.
+              disabled={startingLocal || !localTitle.trim()}
+              onClick={startHere}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              {startingLocal ? "Starting…" : DW_LOCAL_START_ACTION}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {promptLink ? (
+        /*
+          THE PROMPT THE OWNER ASKED FOR: *"when the internet comes back up, let them link it to one
+          of the workshops that they have access to."*
+
+          `role="status"`, not `alert`: nothing has gone wrong and nothing is at risk. It is not
+          dismissible, unlike the create refusal above, and that asymmetry is deliberate — the
+          refusal is spent once read, while this describes work that is still sitting on the device
+          and stays true until the designer acts on it. Nothing automatic will ever delete it, and
+          nothing will send it either.
+
+          IT DOES NOT OPEN THE DIALOG ITSELF. With more than one unlinked workshop the page cannot
+          know which one the designer means, and choosing for them is how a fortnight is filed under
+          the wrong cluster — so it names the count and sends them to the row, where the title is.
+        */
+        <div
+          role="status"
+          className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800"
+        >
+          {unlinkedCount === 1
+            ? "One workshop here was started on this device and is not linked to a workshop yet. "
+            : `${unlinkedCount} workshops here were started on this device and are not linked to a workshop yet. `}
+          {DW_LOCAL_DRAFT_LINK_PROMPT} Use “Move into a workshop” on the row.
+        </div>
+      ) : null}
+
       {allowCreate && formOpen ? (
         // `onInput` catches every real text box in one place. It CANNOT catch the themed controls —
         // a dropdown, a date picker and a multi-select are all `<button>`s and fire no input event —
@@ -1074,9 +1401,51 @@ function DesignWorkshopsPageBody() {
           </FieldBlock>
 
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <Field label="Workshop title" required>
-              <TextInput name="title" required maxLength={220} />
-            </Field>
+            {/* FieldBlock, not Field: `Field` is a <label>, and a <label> wrapped around a themed
+                dropdown forwards a stray click into the menu and slams it shut after one pick. */}
+            <FieldBlock label="Workshop title" required>
+              <Dropdown
+                value={title}
+                onChange={(next) => {
+                  // Themed control: no native input event, so the form's `onInput` never sees it.
+                  markDirty();
+                  setTitle(next);
+                }}
+                options={titleOptions}
+                placeholder="Type the name, or pick one already on record"
+                ariaLabel="Workshop title"
+                // THE BOX IS THE SERVER'S — see the state's note. `truncated` is deliberately absent:
+                // a cut list here costs nothing, because whatever is typed is committable.
+                serverQuery={{ value: titleTerm, onChange: setTitleTerm, pending: titlePending }}
+                /*
+                  THE HALF THAT MAKES THIS LEGAL ON A REQUIRED FREE-TEXT FIELD. Whatever is in the box
+                  is committable in one keystroke, so a workshop that exists nowhere yet is answered
+                  as fast as one with a history — which is what Android's stage-1 control has done
+                  since it landed, and the difference this closes.
+                */
+                createAction={{ label: (term) => `Use “${term}” as the name`, onCreate: setTitle }}
+              />
+              {/*
+                THE MIRROR, AND IT IS `type="text"` RATHER THAN `type="hidden"`.
+
+                Hidden inputs are exempt from constraint validation, so a `required` themed dropdown
+                would never block submission and an empty title would reach `submit`'s silent
+                `if (!title) return` — a button that does nothing, which is the worst answer a form
+                can give. A zero-size text input submits the value AND participates in native
+                validation. `tabIndex={-1}` keeps `lib/formNav.FOCUSABLE`'s Enter-walker off it.
+              */}
+              <input
+                type="text"
+                name="title"
+                value={title}
+                required
+                maxLength={220}
+                onChange={() => undefined}
+                tabIndex={-1}
+                aria-hidden="true"
+                className="pointer-events-none absolute h-0 w-0 border-0 p-0 opacity-0"
+              />
+            </FieldBlock>
             {/* FieldBlock, not Field: `Field` is a <label>, and a <label> wrapped around a themed
                 dropdown forwards a stray click into the menu and slams it shut after one pick. */}
             <FieldBlock label="Report template">
@@ -1097,6 +1466,37 @@ function DesignWorkshopsPageBody() {
                 // there will be a set per cluster. A picker that grows a filter box on its own at
                 // eight templates is a picker whose behaviour is decided by somebody else's upload.
                 searchable
+              />
+            </FieldBlock>
+            {/*
+              TYPE OF WORKSHOP — the control the owner asked for, and it is placed IMMEDIATELY after
+              the report template on purpose rather than beside the title.
+
+              The two are the reason this requirement read as half-built for so long. Both create
+              forms have always drawn a six-value dropdown right under the title box, and it is
+              REPORT TEMPLATE — the output document format, not the workshop's kind — so the screen
+              looked like it carried a type/name pair and carried neither half. Putting the real type
+              next to it, with its own label and its own help sentence, is what makes the two
+              legible as different questions; separating them across the grid would leave the
+              template still sitting where a reader expects the type.
+
+              `searchable` is deliberately NOT passed. Six members of a vocabulary compiled into this
+              app is exactly the class the shared threshold answers correctly on its own, and a
+              filter box over six options is a control that costs a keystroke to reach four rows.
+              The template above it passes `searchable` because its options are fetched ROWS. Same
+              screen, two dropdowns, opposite answers, and the asymmetry is the rule working.
+            */}
+            <FieldBlock label="Type of workshop">
+              <Dropdown
+                value={workshopKind}
+                onChange={(next) => {
+                  // Themed control: no native input event, so the form's `onInput` never sees it.
+                  markDirty();
+                  setWorkshopKind(next);
+                }}
+                options={kindChoices.options.map((option) => ({ value: option.value, label: option.label }))}
+                ariaLabel="Type of workshop"
+                placeholder="Not stated"
               />
             </FieldBlock>
             <Field label="Craft">
@@ -1297,7 +1697,9 @@ function DesignWorkshopsPageBody() {
         </section>
       ) : null}
 
-      <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_14rem]">
+      {/* THREE COLUMNS SINCE THE TYPE FILTER LANDED. The search box keeps the flexible one; the two
+          dropdowns take a fixed 14rem each so they do not resize as their labels change. */}
+      <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_14rem] lg:grid-cols-[1fr_14rem_14rem]">
         <SearchInput
           value={query}
           onChange={setQuery}
@@ -1317,6 +1719,28 @@ function DesignWorkshopsPageBody() {
           ariaLabel="Filter by status"
           // A dropdown that filters the screen it sits on must NOT advance focus on select: jumping
           // away from the control you are adjusting is wrong when the control is the adjustment.
+          advanceOnSelect={false}
+        />
+        {/*
+          FILTER BY TYPE — the read half of the pair. A classification nothing can narrow by is a
+          column, not a feature, and until this control existed the ONLY type narrowing anywhere in
+          the product was a hard-coded `workshopType="DESIGN_PROTOTYPE"` literal on two request
+          builders against the legacy `Workshop` table.
+
+          "Any type" is the empty value and it is FIRST, exactly as "Any status" is beside it — the
+          same absence-means-everything rule the request builder above relies on.
+        */}
+        <Dropdown
+          value={kindFilter}
+          onChange={(next) => {
+            setKindFilter(next);
+            setPage(1);
+          }}
+          options={[
+            { value: "", label: "Any type" },
+            ...kindChoices.options.map((option) => ({ value: option.value, label: option.label }))
+          ]}
+          ariaLabel="Filter by type of workshop"
           advanceOnSelect={false}
         />
       </div>
@@ -1382,9 +1806,21 @@ function DesignWorkshopsPageBody() {
                         // for it to become. Saying only the first would leave a designer waiting for
                         // a sync that is never coming.
                         <div className="mt-1 text-xs leading-5 text-amber-800">
-                          This workshop was started on this device and has no record in the repository yet. Starting one is
-                          now done by an admin — ask them to create it and name you as one of its designers, then use
-                          “Move into a workshop” to send everything here into it. Nothing has been lost.
+                          {/*
+                            TERSE, AND IT NO LONGER TELLS EVERY DESIGNER TO GO AND ASK AN ADMIN.
+
+                            The paragraph this replaces was written when the only drafts that could
+                            reach this row were the ones stranded by the create rule, whose owner
+                            genuinely had no workshop to move into. A designer who starts one here
+                            deliberately, offline, usually has several — the picker is the next move,
+                            not a conversation — and the admin sentence is still on screen for the
+                            other case, in `AdoptLocalDraftDialog`'s own empty state, which is the
+                            one surface that KNOWS the account has nothing to move into.
+
+                            Two facts and nothing else: what this row is, and what to do with it.
+                            The owner's 2026-08-30 ruling on UI copy; the reasoning is here.
+                          */}
+                          {DW_LOCAL_DRAFT_UNLINKED} {DW_LOCAL_DRAFT_LINK_PROMPT}
                         </div>
                       ) : null}
                     </td>

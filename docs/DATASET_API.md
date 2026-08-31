@@ -100,9 +100,26 @@ of the request would name a host the client cannot reach).
 | `processes` | making processes with their ordered steps | yes |
 | `interviews` | questionnaire interviews with answers | yes |
 | `media` | every uploaded file, with the record it hangs off | **no** |
+| `feedback` | the satisfaction survey — one standing row per account, seven scores and five prompts | yes |
+| `feedback-reports` | the grievance / suggestion / recommendation register, with its whole redressal trail | yes |
 
 `media` has no CSV form: the shared field registry describes *records*, and a media file is not one.
 Use `media.ndjson`, whose rows carry every column.
+
+**The two feedback tables reach CSV a different way, and it is worth knowing which.** They are not
+records either, so they have no registry `kind` — but unlike `media` they declare their own columns
+(`Dataset.flat_columns`), which is what gives them a `.csv`. The difference from a registry-backed
+dataset is that their rows carry no `Status / Created by / Created on` provenance block and no
+`Media count / Media files / Media URLs` block: a feedback report's status is
+`SUBMITTED / ACKNOWLEDGED / RESOLVED`, which under a column headed *Status* a researcher would read
+as the review ladder's `DRAFT / PENDING / APPROVED`, and neither table has media at all. Every closed
+list prints as its **label** rather than its stored key, through the same `label_for` the API
+serializer uses, so the extract needs no legend and cannot drift from one.
+
+**Neither is narrowed by `workshopIds`.** Feedback is about the software, not about a workshop, so
+neither table has a workshop column and the selection simply does not apply — every row stays in
+scope whatever workshops you name. `createdBy`, `createdSince` and `updatedSince` all work as usual;
+`createdBy` matches the **author** of the feedback (`userId`), not an administrator who answered it.
 
 **One thing to know about the media columns.** For every dataset except `processes` they come from the
 record's own `media` relation, which this API loads.

@@ -2068,6 +2068,43 @@ data class DesignWorkshopCreateBody(
     val title: String,
     val templateId: String = "DCH_STANDARD",
     /**
+     * WHAT KIND OF WORKSHOP THIS IS — one of the registry's `WORKSHOP_KIND` tokens, or null.
+     *
+     * ── IT IS NOT THE REPORT TEMPLATE, AND THAT IS WHY IT SITS HERE ─────────────────────────────
+     *
+     * Directly beside [templateId] on purpose. The two have been confused on both clients for as
+     * long as the create form has existed: the handset drew a six-value dropdown under the title and
+     * it was the REPORT TEMPLATE — the output document's format — so the form looked as though it
+     * carried a type/name pair and carried neither half. Keeping them adjacent, here and on both
+     * screens, is what makes them legible as two questions rather than one asked twice.
+     *
+     * ── A PROMOTED COLUMN THE CREATE MAY ALSO SET ──────────────────────────────────────────────
+     *
+     * `workshopSetup.workshopKind` is a stage-1 field and `promoted_values()` copies it onto
+     * `DesignWorkshop.workshopKind`, so stage 1 remains the authority. This key exists so the list
+     * screen can filter and label a workshop by type on the day it is opened, before stage 1 has
+     * been saved at all. The server validates the token against `WORKSHOP_KINDS` and 422s anything
+     * else rather than storing it, because the column is plain TEXT and Prisma would accept a typo.
+     *
+     * ── NULL IS "NOT STATED", AND IT IS LEFT OFF THE WIRE ENTIRELY ─────────────────────────────
+     *
+     * Same mechanism and same reason as [designerUserId] below: `ApiClient.json` sets
+     * `explicitNulls = false` and leaves `encodeDefaults` at kotlinx's default of false, so a body
+     * that has nothing to say with this key does not carry it — which matters because `APIModel` is
+     * `extra="forbid"`, an API deployed before this field answers 422 `extra_forbidden` to a body
+     * that merely CARRIES it, and a 422 is never queued, so a phone running ahead of its server
+     * would otherwise strand a whole courtyard's fortnight rather than merely fail to state a type.
+     *
+     * ── AND THE OFFLINE CREATE DOES NOT CARRY IT, WHICH IS THE EXISTING SHAPE AND NOT A NEW GAP ─
+     *
+     * `WorkshopDraft` has no field for it, exactly as it has none for `craftName` or `clusterName`,
+     * so a workshop minted in a courtyard is posted by `WorkshopSync` without a type and gets one
+     * from the first stage-1 save — which is where the answer is authoritative anyway. Widening the
+     * draft is a change to `WorkshopDraftStore` and its schema version, and it belongs with the two
+     * fields already in that position rather than with this one alone.
+     */
+    val workshopKind: String? = null,
+    /**
      * THE DESIGNER THIS WORKSHOP IS FOR — the one field in this body that changes what the finished
      * report SAYS rather than what it is filed under.
      *

@@ -549,6 +549,10 @@ export type DwSummary = {
   templateId: string;
   status: DwStatus | string;
   workshopCode: string | null;
+  /** A `WORKSHOP_KIND` token, or null for a workshop opened before the column existed — which means
+   *  "not stated" and never a kind. Every reader must treat it that way; see the column's own note
+   *  in `schema.prisma`. */
+  workshopKind: string | null;
   scheme: string | null;
   craftName: string | null;
   clusterName: string | null;
@@ -655,6 +659,19 @@ export type DwTemplate = { id: string; name: string; description: string };
 export type DwCreateBody = {
   title: string;
   templateId?: string;
+  /**
+   * One of the registry's `WORKSHOP_KIND` tokens.
+   *
+   * `null` AND `undefined` BOTH MEAN "not stated" and both are accepted, because the two callers
+   * genuinely hold different shapes: the create form sends `undefined` (it omits the key), while a
+   * workshop kept on the device sends its stored header straight through and that header holds
+   * `null` for a kind nobody picked. The server's body declares it `str | None`, so either is a
+   * legal wire value and neither needs a translation layer nobody would remember to keep.
+   *
+   * `""` IS NOT ACCEPTED AND MUST NOT BE SENT. A present value is validated against the six, so an
+   * empty string is a 422 on a question the admin deliberately left for stage 1 to ask.
+   */
+  workshopKind?: string | null;
   /**
    * THE DESIGNER THIS WORKSHOP IS FOR — the one field here that changes what the finished report
    * SAYS rather than what it is filed under.
@@ -1271,6 +1288,62 @@ export function peekStageRegistry(): DwRegistry | null {
 }
 
 /**
+ * THE SIX WORKSHOP KINDS, WITH A COMPILED-IN FLOOR UNDER THE SERVED LIST.
+ *
+ * ── WHY THERE IS A FLOOR AT ALL ─────────────────────────────────────────────────────────────────
+ *
+ * "Type of workshop" is a stage-1 field the registry declares `required`, and `DROPDOWN_DESIGN.md`'s
+ * rule R2 is that a field may only be mandatory where it is ANSWERABLE. A vocabulary this client
+ * fetches is answerable only once it has fetched it — and `fetchStageRegistry`'s IndexedDB copy is
+ * seeded by a page that has already been online, so a browser that has never reached this API has
+ * nothing at all. That is the `empty-because-offline` state, and for a served ENUM it is avoidable:
+ * §3.1 of that document names this exact shape — "a served vocabulary with a compiled-in floor" —
+ * as the correct answer, and points at Android's `workshopLevelOptions` as the precedent. This is
+ * the web's copy of that pattern.
+ *
+ * ── THE SERVED LIST ALWAYS WINS ─────────────────────────────────────────────────────────────────
+ *
+ * The floor is used ONLY when the registry has not arrived. It is not merged with the served list
+ * and it is not consulted to fill gaps in it: a member the server has retired must disappear, and a
+ * union would resurrect it. A build whose floor has gone stale therefore under-offers until the
+ * registry lands, which is the safe direction — it can never offer a token the server would refuse.
+ *
+ * ── AND IT IS NOT A SECOND SOURCE OF TRUTH ──────────────────────────────────────────────────────
+ *
+ * `backend/app/services/stage_schema.ENUMS["WORKSHOP_KIND"]` is the one definition. This constant is
+ * a cache of it for the first paint of a never-online browser, in the same sense `OFFLINE_STATES`
+ * is for the state list — and unlike that one it cannot be derived from anything already in this
+ * bundle, so it is written out. If the vocabulary changes, this changes with it; a drift costs a
+ * never-online browser a missing option and costs nobody a wrong save, because the server validates
+ * the token either way.
+ */
+export const WORKSHOP_KIND_FLOOR: readonly DwEnumOption[] = [
+  { value: "DESIGN_PROTOTYPE_DEVELOPMENT", label: "Design & Prototype Development" },
+  { value: "SKILL_UPGRADATION", label: "Skill Upgradation" },
+  { value: "DESIGN_INTERVENTION", label: "Design Intervention" },
+  { value: "CLUSTER_DEVELOPMENT", label: "Cluster Development" },
+  { value: "EXPOSURE_EXHIBITION", label: "Exposure / Exhibition" },
+  { value: "OTHER", label: "Other" }
+];
+
+/**
+ * The workshop kinds to draw, and whether they came off the server.
+ *
+ * `served` is returned rather than inferred by the caller comparing lengths, because the two lists
+ * can legitimately be the same length and mean different things — and the only honest sentence a
+ * screen can print about a floor ("these are this app's built-in options; connect once to refresh
+ * them") depends on knowing which it is holding.
+ */
+export function workshopKindOptions(registry: DwRegistry | null): {
+  options: readonly DwEnumOption[];
+  served: boolean;
+} {
+  const served = registry?.enums?.WORKSHOP_KIND;
+  if (served && served.length) return { options: served, served: true };
+  return { options: WORKSHOP_KIND_FLOOR, served: false };
+}
+
+/**
  * Seed the in-memory cache from a registry that did NOT come off the wire — the copy
  * `lib/designWorkshopStore.ts` keeps in IndexedDB, served when a tab has been out of signal since it
  * opened.
@@ -1303,6 +1376,10 @@ export type DwListParams = {
   pageSize?: number;
   search?: string | null;
   statusFilter?: string | null;
+  /** One of the registry's `WORKSHOP_KIND` tokens. The server 422s anything else rather than
+   *  answering an empty list, so a stale bookmark says so instead of claiming no such workshop
+   *  exists — see the route's own note beside the filter. */
+  workshopKind?: string | null;
   craftName?: string | null;
   state?: string | null;
   /**
@@ -1335,6 +1412,7 @@ export function listDesignWorkshops(params: DwListParams) {
       pageSize: params.pageSize,
       search: params.search ?? undefined,
       statusFilter: params.statusFilter ?? undefined,
+      workshopKind: params.workshopKind ?? undefined,
       craftName: params.craftName ?? undefined,
       state: params.state ?? undefined,
       mineOnly: params.mineOnly ? "true" : undefined,

@@ -878,6 +878,7 @@ def test_max_items_crosses_the_wire_only_once_a_field_declares_one():
 CAPPED_GALLERIES: dict[str, int] = {
     "motifPhotos": 25,              # relabelled to "Traditional motif photographs", key KEPT
     "contemporaryMotifPhotos": 25,  # the new half of the traditional/contemporary pair
+    "lostCraftPhotos": 25,          # 2026-08-30: "Lost craft / products", stated as "upto 25"
 }
 
 #: The owner's stated FLOOR of 2026-08-28 — "25 each, and all 25 required" — and the only two
@@ -886,7 +887,18 @@ CAPPED_GALLERIES: dict[str, int] = {
 #: full. They are declared and asserted separately because they are enforced in DIFFERENT PLACES
 #: (`coerce_value` refuses above the ceiling; `stage_completeness` scores below the floor and
 #: nothing refuses), and a single constant would hide that the day one of them moves.
-FLOORED_GALLERIES: dict[str, int] = dict(CAPPED_GALLERIES)
+#: NO LONGER ``dict(CAPPED_GALLERIES)``, AND THE DAY IT STOPPED BEING SO IS THE POINT OF THE
+#: SENTENCE ABOVE. It was a copy for as long as the two owner instructions happened to agree — "25
+#: each, and all 25 required" gave the motif galleries an equal ceiling and floor. On 2026-08-30 a
+#: THIRD gallery arrived with the ceiling and deliberately WITHOUT the floor: the owner's words were
+#: "which would take upto 25 images", which states a maximum and states no minimum, and a floor on
+#: photographs of a craft the cluster no longer practises would make stage 4 permanently incomplete
+#: for every workshop in the country. The derivation would have handed it one silently. Two
+#: literals now, which is what the sentence above always said they were for.
+FLOORED_GALLERIES: dict[str, int] = {
+    "motifPhotos": 25,
+    "contemporaryMotifPhotos": 25,
+}
 
 
 def test_the_capped_motif_galleries_refuse_the_twenty_sixth_photograph():
@@ -956,7 +968,7 @@ def test_the_capped_motif_galleries_refuse_the_twenty_sixth_photograph():
         assert published["maxItems"] == cap, published
 
 
-def test_exactly_two_fields_in_the_whole_registry_declare_a_cap():
+def test_exactly_three_fields_in_the_whole_registry_declare_a_cap():
     """The blast radius of one optional keyword on a helper fifteen galleries share.
 
     `photos()` gained `max_items` and `help` on 2026-08-25. It is called fifteen times across
@@ -989,8 +1001,8 @@ def test_exactly_two_fields_in_the_whole_registry_declare_a_cap():
     assert declared == {
         f"clusterBackground.{key}": cap for key, cap in CAPPED_GALLERIES.items()
     }, (
-        f"the set of fields declaring a cap is {declared}, not the two motif galleries the owner "
-        "stated a ceiling for. A cap that leaked from photos() refuses photographs on a stage "
+        f"the set of fields declaring a cap is {declared}, not the three stage-4 galleries the "
+        "owner stated a ceiling for. A cap that leaked from photos() refuses photographs on a stage "
         "nobody asked about; a cap that vanished silently restores DEFAULT_MAX_ITEMS and both "
         "clients stop showing the ceiling."
     )
@@ -1293,6 +1305,7 @@ def test_the_photos_helper_puts_its_help_on_the_gallery_and_never_on_the_caption
     assert galleries_with_help == {
         "clusterBackground.motifPhotos",
         "clusterBackground.contemporaryMotifPhotos",
+        "clusterBackground.lostCraftPhotos",  # 2026-08-30, stated help, same shape as its siblings
         "existingProduct.productPhotos",   # the hydration sentence, not photos() — see docstring
     }, (
         f"{galleries_with_help} carry gallery help. A string that leaked out of photos() tells "

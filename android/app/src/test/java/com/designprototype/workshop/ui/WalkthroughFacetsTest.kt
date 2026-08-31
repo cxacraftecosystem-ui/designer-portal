@@ -11,11 +11,11 @@ import org.junit.Test
  *
  * ── THE DEFECT THAT MADE THIS FILE NECESSARY, WHICH HAD SHIPPED ─────────────────────────────────
  *
- * A step card draws three blocks: a collapsed summary line, a "Why this step exists" panel and a
- * "Watch out for" list. [WalkStep] carries all three as ONE string, and [walkthroughFacets] is what
- * separates them — it cuts the body at the words "Watch out" and again at the end of the first
- * sentence. The card then draws a heading only where the block behind it has something in it, which
- * is right and is also what made the failure silent.
+ * A step card draws four blocks: a collapsed summary line, a "Why this step exists" panel, a "What
+ * the screen asks for" list and a "Watch out for" list. [WalkStep] carries three of them as ONE
+ * string, and [walkthroughFacets] is what separates them — it cuts the body at the words "Watch out"
+ * and again at the end of the first sentence. The card then draws a heading only where the block
+ * behind it has something in it, which is right and is also what made the failure silent.
  *
  * The marker was the literal `"Watch out:"`. Twenty-one of the twenty-three journey steps write
  * exactly that. TWO RAISE THEIR VOICE INSTEAD — `design-workshop-stages` opens its caution
@@ -47,6 +47,16 @@ import org.junit.Test
  * of the deck — which have no caution and are drawn by different composables entirely — come back
  * with an empty list rather than one blank string, because an empty string in that list is a heading
  * drawn over nothing.
+ *
+ * ── AND THE FOURTH BLOCK, WHICH IS NOT CUT OUT OF ANYTHING ──────────────────────────────────────
+ *
+ * `WalkthroughFacets.fields` arrived on 2026-08-31 and it is the one facet that is LOOKED UP rather
+ * than cut: it is the web's `GuideStep.fields`, carried in `WALKTHROUGH_FIELDS`. Whether those
+ * strings are the WEB'S strings is not a question this suite can answer — it cannot see `steps.ts`
+ * character by character and should not learn to — and it is answered instead by
+ * `backend/tests/test_walkthrough_fields_parity.py`, which reads both source files and fails naming
+ * the step. What is answered HERE is the same thing this file answers about the caution: that the
+ * card ends up with something to draw, and never with a heading over nothing.
  */
 class WalkthroughFacetsTest {
 
@@ -133,6 +143,67 @@ class WalkthroughFacetsTest {
             assertTrue(
                 "“${step.id}” has a ${summary.length}-character collapsed summary: “$summary”",
                 summary.length <= 320,
+            )
+        }
+    }
+
+    @Test
+    fun `every step that opens a screen says what that screen asks for`() {
+        // THE REGRESSION GUARD FOR THE REPORT OF 2026-08-31 — "the name of the fields in bubble are
+        // missing from there". The rule is stated against the DOOR rather than against a list of
+        // ids, so it survives the web adding a step: a step that teaches a screen must say what
+        // that screen will ask for, and `WalkStep.destination` is exactly "there is a screen".
+        //
+        // The one journey step with no door is `offline`, which teaches a behaviour rather than a
+        // form and correctly has nothing to list. It is not named here — the null destination is
+        // what excuses it, and naming it would be a second register of exceptions.
+        val silent = walkthroughJourney
+            .filter { it.destination != null && walkthroughFacets(it).fields.isEmpty() }
+        assertTrue(
+            "these steps open a screen and no longer name a single thing it asks for: " +
+                "${silent.map { it.id }}. Their cards draw the head, the why and the caution and " +
+                "skip the middle block entirely, which is the exact shape the owner reported — " +
+                "same number of cards, not the same content. The entries live in " +
+                "WALKTHROUGH_FIELDS, keyed by step id, and they are the WEB'S: copy them from " +
+                "frontend/components/guide/steps.ts, never from an Android form. " +
+                "backend/tests/test_walkthrough_fields_parity.py is what holds the two together.",
+            silent.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `no card would draw an empty chip`() {
+        // The card lays these out as a FlowRow of bordered chips, one per entry, and it decides
+        // whether to draw the heading by asking whether the list is EMPTY — not whether it has
+        // anything readable in it. A blank string therefore survives every other assertion in this
+        // file and renders as an empty bordered box, which is the same family of defect as a
+        // heading over nothing and is harder to spot because the heading above it looks right.
+        walkthroughSteps.forEach { step ->
+            walkthroughFacets(step).fields.forEach { field ->
+                assertTrue(
+                    "“${step.id}” carries a blank entry in its field list: “$field”",
+                    field.isNotBlank(),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the steps that teach no screen list no fields at all`() {
+        // The two ends are not features, and `offline` is the one subject with no counterpart on the
+        // web and no screen of its own. What matters is the SHAPE handed back: an empty list, not a
+        // list holding one blank string, because the card asks `isNotEmpty()` and would otherwise
+        // draw "What the screen asks for" over a single empty chip.
+        val screenless = listOf(walkthroughSteps.first(), walkthroughSteps.last()) +
+            walkthroughJourney.filter { it.destination == null }
+        screenless.forEach { step ->
+            assertEquals(
+                "“${step.id}” teaches no screen and must list no fields — an entry here is a " +
+                    "register invented on this side, with nothing on the web holding it to " +
+                    "anything, which is the failure WalkthroughJourney.kt's overruled paragraph " +
+                    "spells out",
+                emptyList<String>(),
+                walkthroughFacets(step).fields,
             )
         }
     }

@@ -394,6 +394,25 @@ export type DesignerProfile = {
   /** ISO-8601, and a STRING rather than a date, matching every other date this API accepts. */
   empanelmentDate: string | null;
   /**
+   * ── THREE DERIVED ANSWERS, COMPUTED BY THE SERVER SO BOTH CLIENTS AGREE ─────────────────
+   *
+   * `empanelmentNoMissing` is the GRACE PATH, and it is the whole of the state the banner is
+   * drawn from: this profile has content and no empanelment number. The owner's decision of
+   * 2026-08-30 is that such a profile may go on saving while being asked for the number, and
+   * that a NEW profile cannot be created without one. A client that computed this itself would
+   * be a second definition of "has content", and the two would disagree the day a column is
+   * added — so it is `profile_has_content` on the server and this boolean on the wire.
+   *
+   * `signInByPhone` / `signInByEmpanelmentNo` say whether that value was actually CLAIMED as a
+   * sign-in key. It can fail to be: the keys are unique, and a number another designer already
+   * holds is not taken (the save still succeeds and the number is still printed on the report —
+   * see `app/services/identity.py`). False while the box beside it is filled in is the only
+   * way a designer can find out that typing that number at the sign-in page will not work.
+   */
+  empanelmentNoMissing?: boolean;
+  signInByPhone?: boolean;
+  signInByEmpanelmentNo?: boolean;
+  /**
    * The id of the related `Location` row, or null. Published BESIDE `location` on purpose, so that
    * "this designer has given no address point" (null) is distinguishable from "this response did
    * not load the relation" — which is what a client that read only `location` would have to guess.

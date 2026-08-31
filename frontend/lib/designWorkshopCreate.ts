@@ -165,3 +165,51 @@ export async function createWorkshopOrKeepItHere(
     return io.keepHere(header, { createSentAt: sentAt });
   }
 }
+
+/* ── THE DESIGNER'S ARM, AND WHY IT IS NOT A THIRD BRANCH OF THE FUNCTION ABOVE ───────────────────
+ *
+ * The owner's remaining clause: *"if they are offline, let them create one for the time being, and
+ * when the internet comes back up, let them link it to one of the workshops that they have access
+ * to."* A designer holding this draft is doing something the function above has no branch for —
+ * they are not creating a workshop at all, now or later, because
+ * `DESIGN_WORKSHOP_CREATOR_ROLES` does not admit them and this lane does not widen it. They are
+ * putting a fortnight of fieldwork somewhere it will survive until a workshop exists to hold it.
+ *
+ * SO IT MUST NOT GO NEAR THE POST, and that is the whole reason it is a separate function rather
+ * than a `if (!mayCreate)` line inside `createWorkshopOrKeepItHere`. That function's FIRST act is
+ * `io.couldReachServer()`, and between the render that offered the control and the tap that pressed
+ * it a phone can find a bar of signal — at which point the shared path would POST, collect a 403,
+ * find it not transient, and rethrow. Nothing would be lost, but the designer would have met a
+ * refusal for pressing the one control the app had just offered them, and the request had no
+ * business being sent. Here there is no `post` in the file's reach at all.
+ *
+ * THE GATE IS STILL THE STORE'S. `createLocalDraft` asks `classifyDraftStart` itself — this passes
+ * evidence about the network and no opinion about the rule, and an account outside
+ * `canRunDesignWorkshops` is refused by the store with `DwCreateNotPermittedError` exactly as it
+ * always has been. There is deliberately no second gate here: two gates is two rules.
+ * ──────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Keep a workshop on this device that this account may never create — for a designer with no signal.
+ *
+ * @param header what the offline start form collected. Only the title is required, as on the create
+ *   form and as in the API: a workshop is opened in a room on day one and stage 1 fills in the rest.
+ * @returns the LOCAL id (`dwlocal-…`) to navigate to. Every design-workshop route resolves it, and
+ *   goes on resolving it after `adoptDraftIntoWorkshop` has pointed the draft at a real workshop.
+ * @throws `DwCreateNotPermittedError` when the store refuses — an account that may not run design
+ *   workshops at all, or a device that turns out to be reachable after all. Its `message` is the
+ *   shared refusal, which names the next move, and the caller renders it unchanged.
+ */
+export async function startLocalDraftHere(header: DwCreateHeader): Promise<{ id: string }> {
+  /*
+    `serverUnreachable: true` IS THE CALLER'S EVIDENCE AND NOT A FLAG THAT MEANS "ALLOW IT".
+
+    This function is reached only from a surface that has WATCHED `GET /design-workshops` fail and
+    run the error through `isUnreachable` — the outbox's own answer to "was that the network",
+    rather than `navigator.onLine`, which reports true through a captive portal that routes nothing
+    and is exactly a village guest-house router. The store ORs it with its own `deviceLooksOffline()`
+    floor; see `DwLocalDraftOptions.serverUnreachable` for why widening stops there.
+  */
+  const draft = await createLocalDraft(header, { serverUnreachable: true });
+  return { id: draft.localId };
+}

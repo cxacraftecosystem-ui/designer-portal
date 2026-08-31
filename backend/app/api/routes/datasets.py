@@ -71,7 +71,7 @@ import asyncio
 import csv
 import io
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 from typing import Any
 
@@ -98,6 +98,7 @@ from app.core.security import create_access_token, verify_password
 from app.schemas.auth import LoginRequest
 from app.services.concurrency import gather_reads
 from app.services.csv_export import record_media
+from app.services.feedback_vocabulary import label_for
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_fields import sheet_columns, sheet_row
 from app.services.record_filters import (
@@ -140,6 +141,7 @@ class Dataset:
         owner_field: str = "createdById",
         workshop_filter: str = "column",
         media_tags: tuple[str, ...] = (),
+        flat_columns: tuple[tuple[str, Callable[[Any], Any]], ...] = (),
     ) -> None:
         self.name = name
         #: Attribute on the Prisma client — the model name lowercased, e.g. ``productdocumentation``.
@@ -156,17 +158,57 @@ class Dataset:
         #:   "column"   — the row carries a workshopId FK (the common case);
         #:   "self"     — the row IS the workshop, so the predicate is on its primary key;
         #:   "artisan"  — an artisan reaches a workshop three different ways;
-        #:   "craft"    — a craft reaches it two ways (column OR the WorkshopCraft join).
+        #:   "craft"    — a craft reaches it two ways (column OR the WorkshopCraft join);
+        #:   "none"     — the table has no workshop dimension, so the selection cannot narrow it
+        #:                and no clause is added. NOT the same as the "impossible predicate" the
+        #:                column branch falls back to: that one means "the scope excludes every row
+        #:                here", this one means "the scope does not apply". Feedback is about the
+        #:                software rather than about a workshop, so every row stays in scope.
         #: The last two defer to the shared clause builders rather than testing a column, because
         #: on the live repository the readings disagree and a column-only test returns nothing.
         self.workshop_filter = workshop_filter
         #: ``MediaFile.linkedRecordType`` values that attach a file to a row of THIS table, for a
         #: model with no ``media`` back-relation to load. Empty for every table that has one.
         self.media_tags = media_tags
+        #: ``(header, getter)`` pairs giving a CSV form to a table the FIELD REGISTRY does not
+        #: describe — the alternative to ``kind``, never used together with it.
+        #:
+        #: WHY THIS EXISTS AT ALL, given that ``kind`` was deliberately the only way in. The field
+        #: registry describes RECORDS: ``sheet_row`` appends ``PROVENANCE_COLUMNS`` (Status, Created
+        #: by, Created on) and ``MEDIA_COLUMNS`` (count, files, URLs) to every row it builds, and it
+        #: reads ``record.status`` for the first of those. A feedback report HAS a status and it is
+        #: from a completely different vocabulary — SUBMITTED/ACKNOWLEDGED/RESOLVED under a column
+        #: header a researcher would read as the review ladder's DRAFT/PENDING/APPROVED — and it has
+        #: no media at all, so three columns would be permanently blank and one would be actively
+        #: misleading. Giving feedback a ``RecordSpec`` to reach CSV would also put it in the .xlsx
+        #: workbook and the data browser's record types, which is not what it is.
+        #:
+        #: So this is the SAME pattern with the registry step omitted, not a second pattern: the
+        #: catalogue, the ``.csv`` route and the header all still read one list through
+        #: ``_csv_shape``, and a table still gains every route by being added to ``DATASETS``. What
+        #: it does not get is the record furniture it has no business carrying.
+        self.flat_columns = flat_columns
 
     @property
     def model(self) -> Any:
         return getattr(db, self.delegate)
+
+
+def _person(row: Any, relation: str) -> str:
+    """A related account's NAME, or "" when the relation is absent or was never set.
+
+    Absent is the ordinary case here rather than an error: `acknowledgedBy` is null on every report
+    nobody has read yet, and both actor columns are ON DELETE SET NULL, so a report acknowledged by
+    a colleague who has since left prints an empty cell beside a populated `Acknowledged at`. That
+    pair reads correctly — it was acknowledged, and the account that did it is gone — where "None"
+    or a raised KeyError would not.
+    """
+    return get_value(get_value(row, relation), "name") or ""
+
+
+def _person_email(row: Any, relation: str) -> str:
+    """The same account's email. Separate column, because a name is not a join key."""
+    return get_value(get_value(row, relation), "email") or ""
 
 
 # The registry. Adding a table here gives it a paged JSON route, an .ndjson stream, a .csv stream
@@ -271,6 +313,104 @@ DATASETS: dict[str, Dataset] = {
             "responses": {"include": {"question": True}},
         },
     ),
+    # ── THE TWO FEEDBACK TABLES ──────────────────────────────────────────────────────────────
+    #
+    # Here because of an explicit requirement: *"we need to properly document the feedback that
+    # comes in for the sake of the research as well."* Documented means analysable by somebody who
+    # is not looking at a screen, and this module is already the answer to that question for every
+    # other table in the repository — a streamed, uncapped, keyset-paged download that says how many
+    # rows there should be. Adding them here rather than writing a bespoke export gives them the
+    # paged JSON route, the .ndjson stream, the .csv stream and a catalogue line at once, under the
+    # same admin credential a research mirror already holds.
+    #
+    # NEITHER IS NARROWED BY `workshopIds`, AND THE FILTER IS EXPLICIT ABOUT IT. Feedback is about
+    # the SOFTWARE, not about a workshop, so neither table has a workshop column; left on the
+    # default "column" filter, a request carrying `workshopIds` would ask Postgres for a column that
+    # does not exist and 500. "none" says the selection cannot narrow this table, and `_build_where`
+    # skips it — the honest answer, because every feedback row is genuinely in scope whatever
+    # workshops the caller named. `createdSince` / `updatedSince` still work, which is what an
+    # incremental research pull actually uses.
+    "feedback": Dataset(
+        name="feedback",
+        delegate="feedback",
+        label="App feedback (satisfaction survey)",
+        description=(
+            "One standing row per account: an overall 1-5 rating, six per-aspect sub-ratings and "
+            "five free-text prompts, revised in place. For the grievance/suggestion register see "
+            "the feedback-reports dataset."
+        ),
+        kind=None,
+        include={"user": True},
+        owner_field="userId",
+        workshop_filter="none",
+        # The survey's own shape: the seven scores, then the six prompts. `_person` prints the
+        # author's NAME AND EMAIL, which is a deliberate difference from an anonymous survey and is
+        # what the master admin's screen already shows — this is signed feedback from named
+        # colleagues, and the research question ("who found the questionnaire slow") needs it.
+        flat_columns=(
+            ("User", lambda r: _person(r, "user")),
+            ("Email", lambda r: _person_email(r, "user")),
+            ("Role given", lambda r: get_value(r, "role")),
+            ("Overall", lambda r: get_value(r, "rating")),
+            ("Ease of use", lambda r: get_value(r, "easeOfUse")),
+            ("Reliability", lambda r: get_value(r, "reliability")),
+            ("Performance", lambda r: get_value(r, "performance")),
+            ("Design", lambda r: get_value(r, "design")),
+            ("Features", lambda r: get_value(r, "features")),
+            ("Would recommend", lambda r: get_value(r, "recommend")),
+            ("Likes most", lambda r: get_value(r, "likeMost")),
+            ("To improve", lambda r: get_value(r, "improve")),
+            ("Bugs", lambda r: get_value(r, "bugs")),
+            ("Feature requests", lambda r: get_value(r, "featureRequests")),
+            ("General comments", lambda r: get_value(r, "comment")),
+            ("First given", lambda r: get_value(r, "createdAt")),
+            ("Last updated", lambda r: get_value(r, "updatedAt")),
+        ),
+    ),
+    "feedback-reports": Dataset(
+        name="feedback-reports",
+        delegate="feedbackreport",
+        label="Feedback reports (grievances, suggestions, recommendations)",
+        description=(
+            "One row per thing somebody reported, never overwritten: its kind, severity, the area "
+            "it is about, what was written, the app and version it came from, and the whole "
+            "redressal trail - who acknowledged it, who resolved it, when, and what they said back."
+        ),
+        kind=None,
+        include={"user": True, "acknowledgedBy": True, "resolvedBy": True},
+        owner_field="userId",
+        workshop_filter="none",
+        # EVERY CLOSED LIST PRINTS AS ITS LABEL, THROUGH THE SAME `label_for` THE API SERIALIZER
+        # USES. A CSV of raw keys makes a researcher build their own legend, and the legend they
+        # build is a copy of a vocabulary that can then drift; `label_for` falls back to the raw key,
+        # so a report filed under a category since retired still prints rather than blowing up a
+        # multi-thousand-row stream halfway through.
+        #
+        # THE ACKNOWLEDGER AND RESOLVER ARE NAMED COLUMNS, not a flag. "Was this seen" is answerable
+        # from a status; "by whom, and when" is the question a grievance register exists to answer,
+        # and it has to survive into the extract or the extract cannot audit the redressal.
+        flat_columns=(
+            ("Reported by", lambda r: _person(r, "user")),
+            ("Email", lambda r: _person_email(r, "user")),
+            ("Kind", lambda r: label_for("kind", get_value(r, "kind"))),
+            ("Severity", lambda r: label_for("severity", get_value(r, "severity"))),
+            ("Area", lambda r: label_for("area", get_value(r, "area"))),
+            ("Subject", lambda r: get_value(r, "subject")),
+            ("Details", lambda r: get_value(r, "details")),
+            ("Status", lambda r: label_for("status", get_value(r, "status"))),
+            ("App", lambda r: label_for("client", get_value(r, "client"))),
+            ("App version", lambda r: get_value(r, "clientVersion")),
+            ("Platform", lambda r: get_value(r, "platform")),
+            ("Screen", lambda r: get_value(r, "pagePath")),
+            ("Acknowledged by", lambda r: _person(r, "acknowledgedBy")),
+            ("Acknowledged at", lambda r: get_value(r, "acknowledgedAt")),
+            ("Resolved by", lambda r: _person(r, "resolvedBy")),
+            ("Resolved at", lambda r: get_value(r, "resolvedAt")),
+            ("Response to reporter", lambda r: get_value(r, "responseNote")),
+            ("Reported at", lambda r: get_value(r, "createdAt")),
+            ("Last changed", lambda r: get_value(r, "updatedAt")),
+        ),
+    ),
     "media": Dataset(
         name="media",
         delegate="mediafile",
@@ -318,7 +458,14 @@ def _build_where(
     resolved = resolve_workshop_ids(workshop_ids)
     if resolved is not None:
         ids, include_unassigned = resolved
-        if dataset.workshop_filter == "artisan":
+        if dataset.workshop_filter == "none":
+            # This table has no workshop dimension at all (the two feedback tables). Adding NO
+            # clause is the correct answer and not a shortcut: every row genuinely is in scope
+            # whatever workshops the caller named, because feedback is about the software rather
+            # than about a workshop. Falling through to the column test below would compose a
+            # predicate on a column that does not exist and 500 the download.
+            pass
+        elif dataset.workshop_filter == "artisan":
             clauses.append(artisan_workshop_clause(ids, include_unassigned))
         elif dataset.workshop_filter == "craft":
             clauses.append(craft_workshop_clause(ids, include_unassigned))
@@ -464,22 +611,47 @@ def _csv_columns(kind: str) -> list[str]:
     return ["ID", *sheet_columns(kind)]
 
 
-def _csv_shape(dataset: Dataset) -> tuple[str, list[str]]:
-    """``(registry kind, column list)`` for a dataset's CSV form, or 422 when it has none.
+def _flat_columns(dataset: Dataset) -> list[str]:
+    """The CSV header for a dataset that carries its own columns. "ID" first, as everywhere else."""
+    return ["ID", *(header for header, _ in dataset.flat_columns)]
+
+
+def csv_header(dataset: Dataset) -> list[str] | None:
+    """The CSV header for either form, or None where this dataset has no CSV at all.
+
+    THE CATALOGUE AND THE ROUTE BOTH READ THIS, which is the whole reason it is a function. The
+    catalogue used to test ``dataset.kind`` in three separate expressions to decide whether to
+    advertise a ``.csv`` link and what columns to promise; a second CSV form would have meant
+    getting that test right in three places, and ``_csv_columns``'s own docstring records what
+    happened the last time the plan and the file disagreed about a column list.
+    """
+    if dataset.kind is not None:
+        return _csv_columns(dataset.kind)
+    if dataset.flat_columns:
+        return _flat_columns(dataset)
+    return None
+
+
+def _csv_shape(dataset: Dataset) -> tuple[str | None, list[str]]:
+    """``(registry kind or None, column list)`` for a dataset's CSV form, or 422 when it has none.
 
     Returns the kind alongside the columns rather than letting the caller re-read
     ``dataset.kind``: that field is ``str | None``, so a caller reading it again would need an
-    assertion to convince a type checker that the 422 above had already ruled None out.
+    assertion to convince a type checker that the 422 above had already ruled None out. A kind of
+    None now means the OTHER form — ``flat_columns`` — rather than "no CSV", and the route branches
+    on it once.
     """
-    if dataset.kind is None:
+    columns = csv_header(dataset)
+    if columns is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"The '{dataset.name}' dataset has no CSV form: it is not a record type the shared "
-                f"field registry describes. Use /api/datasets/{dataset.name}.ndjson instead."
+                f"field registry describes and it declares no columns of its own. Use "
+                f"/api/datasets/{dataset.name}.ndjson instead."
             ),
         )
-    return dataset.kind, _csv_columns(dataset.kind)
+    return dataset.kind, columns
 
 
 # =================================================================================================
@@ -648,10 +820,11 @@ async def dataset_catalogue(
             "rows": count,
             "json": f"{base}/{name}{suffix}",
             "ndjson": f"{base}/{name}.ndjson{suffix}",
-            "csv": f"{base}/{name}.csv{suffix}" if dataset.kind else None,
-            # The SAME list the .csv route emits as its header — see _csv_columns for what happened
-            # when these were two expressions.
-            "columns": _csv_columns(dataset.kind) if dataset.kind else None,
+            # The SAME list the .csv route emits as its header, through the SAME function — see
+            # _csv_columns for what happened when these were two expressions, and `csv_header` for
+            # why the "has a CSV at all" test is asked once rather than three times.
+            "csv": f"{base}/{name}.csv{suffix}" if csv_header(dataset) else None,
+            "columns": csv_header(dataset),
         }
         entries.append(entry)
 
@@ -829,6 +1002,14 @@ async def stream_dataset_csv(
             tagged = await _media_by_tag(dataset, rows) if uses_tags else {}
             for record in rows:
                 row_id = get_value(record, "id")
+                if kind is None:
+                    # The flat form. `"" if value is None` and not `str(value)`: the string "None"
+                    # in a CSV cell is a value a spreadsheet will happily filter on, and a
+                    # researcher counting grievances by severity would find a category called None
+                    # sitting between CRITICAL and HIGH.
+                    values = [getter(record) for _, getter in dataset.flat_columns]
+                    writer.writerow([row_id, *("" if v is None else str(v) for v in values)])
+                    continue
                 media = tagged.get(row_id, []) if uses_tags else record_media(record)
                 writer.writerow([row_id, *sheet_row(kind, record, media)])
             yield drain()

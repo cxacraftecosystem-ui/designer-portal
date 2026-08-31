@@ -76,6 +76,7 @@ import com.designprototype.workshop.report.RichDoc
 import com.designprototype.workshop.report.fromJson
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.requiredMarked
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
@@ -503,7 +504,9 @@ fun RichTextEditor(
 
     Column(modifier = modifier.fillMaxWidth()) {
         if (label.isNotBlank()) {
-            Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            // [requiredMarked]: this render carries the label for every rich-text field in the app,
+            // including `RecordProseField`'s rich arm and `MainActivity`'s `"$label *"` wrapper.
+            Text(requiredMarked(label), fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(4.dp))
         }
 

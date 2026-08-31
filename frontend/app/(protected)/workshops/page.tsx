@@ -38,6 +38,15 @@ import { locationFromForm, requiredText, textValue } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
+import { RENDER_CAP } from "@/components/ui/selectFilter";
+import {
+  deviceLooksOffline,
+  workshopEmptyLabel,
+  workshopListNotice,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 import { canManageWorkshops, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import { WORKSHOP_TYPE_LABELS } from "@/lib/types";
@@ -113,6 +122,20 @@ function WorkshopsPageBody() {
   const [data, setData] = useState<PageResult<Workshop> | null>(null);
   const [artisans, setArtisans] = useState<Artisan[]>([]);
   const [crafts, setCrafts] = useState<Craft[]>([]);
+  /**
+   * DID THE PICKERS LOAD? Three answers, because two of them used to render identically.
+   *
+   * The effect below fetches both lists in one `Promise.all` and its `catch` was a comment saying
+   * the pickers "degrade to empty lists". They did, and an empty list then drew "No artisans
+   * recorded yet" and "No crafts available yet" -- claims about the repository made out of a
+   * request that never arrived. That is the silent-emptiness class named in rule 10 of the frontend
+   * contract and in `DROPDOWN_DESIGN.md` section 3.5, and `WorkshopListState` is the three-way
+   * answer the rest of this app already holds, so this page reuses it rather than inventing a
+   * fourth local spelling of the same three states.
+   *
+   * ONE FLAG FOR BOTH LISTS, because one request carries both: they arrive together or not at all.
+   */
+  const [pickerLoad, setPickerLoad] = useState<"loading" | "failed" | "ok">("loading");
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
@@ -173,7 +196,13 @@ function WorkshopsPageBody() {
         apiFetch<WorkshopAssignment[]>(`/workshops/${workshop.id}/assignments`),
         // 100 is the server's cap (`pageSize: int = Query(20, ge=1, le=100)`); asking for 200 was a
         // 422, which left `researchers` empty and the dialog permanently showing "No users to assign".
-        researchers.length ? Promise.resolve({ items: researchers }) : listResource<User>("/users", { pageSize: 100 })
+        // `LIST_PAGE_CEILING` and deliberately NOT `RENDER_CAP`: this list is not drawn by a
+        // dropdown. The assign dialog renders every row as its own checkbox in a scrolling box, so
+        // there is no 80-row draw cap to align the fetch with, and cutting the request to 80 would
+        // hide twenty accounts that are on screen today. The ceiling is the server's -- asking for
+        // 200 was a 422, which left `researchers` empty and the dialog permanently showing "No
+        // users to assign".
+        researchers.length ? Promise.resolve({ items: researchers }) : listResource<User>("/users", { pageSize: LIST_PAGE_CEILING })
       ]);
       if (!researchers.length) setResearchers((users as { items: User[] }).items ?? []);
       // GRANTED only. The endpoint returns every row on the workshop — pending requests, denials and
@@ -226,13 +255,23 @@ function WorkshopsPageBody() {
     (async () => {
       try {
         const [artisanResult, craftResult] = await Promise.all([
-          listResource<Artisan>("/artisans", { pageSize: 100 }),
-          listResource<Craft>("/crafts", { pageSize: 100 })
+          // `RENDER_CAP`, not the round `100`. Both lists go straight into a
+          // `MultiSelectDropdown`, which draws at most `RENDER_CAP` rows and prints its own
+          // truncation sentence from what it was handed -- so a hundred-row page fetched twenty
+          // artisans and twenty crafts that no reader could reach, and made the panel's total and
+          // any notice beside it two different numbers about one list. The workshop pickers have
+          // used this alias (as `WORKSHOP_OPTION_PAGE_SIZE`) since the same defect was closed there.
+          listResource<Artisan>("/artisans", { pageSize: RENDER_CAP }),
+          listResource<Craft>("/crafts", { pageSize: RENDER_CAP })
         ]);
         setArtisans(artisanResult.items);
         setCrafts(craftResult.items);
+        setPickerLoad("ok");
       } catch {
-        // The pickers degrade to empty lists; the workshop list still loads.
+        // The workshop list still loads. The pickers no longer degrade SILENTLY to an empty list:
+        // they say the read failed, which is a different fact from "there are none" and has a
+        // different next move. See `pickerLoad`.
+        setPickerLoad("failed");
       }
     })();
   }, []);
@@ -468,6 +507,43 @@ function WorkshopsPageBody() {
     label: craft.place ? `${craft.name} · ${craft.place}` : craft.name
   }));
 
+  /*
+    The two lists as the shared vocabulary sees them, so the four sentences under and inside these
+    pickers are the app's and not this page's own wording. `scoped: false` on both: neither request
+    carries an access filter, so an empty answer is a statement about the REPOSITORY ("No artisans
+    have been recorded yet") and never about this account's grants. `accessList: false` on both: a
+    register is not a grant set, so R6's reason for refusing to cache one must not be printed over
+    it. See `WorkshopListVoice`.
+  */
+  const artisanList: WorkshopListState<Artisan> =
+    pickerLoad === "ok" ? { kind: "ok", rows: artisans, total: artisans.length } : { kind: pickerLoad };
+  const craftList: WorkshopListState<Craft> =
+    pickerLoad === "ok" ? { kind: "ok", rows: crafts, total: crafts.length } : { kind: pickerLoad };
+  const listsOnline = !deviceLooksOffline();
+  const artisanVoice: WorkshopListVoice = {
+    table: "field",
+    noun: "artisans",
+    scoped: false,
+    accessList: false,
+    online: listsOnline
+  };
+  const craftVoice: WorkshopListVoice = {
+    table: "field",
+    noun: "crafts",
+    scoped: false,
+    accessList: false,
+    online: listsOnline
+  };
+  const artisanNotice = workshopListNotice(artisanList, artisanVoice);
+  /*
+    "" for every state the paragraph beside the craft picker already answers in better words. The
+    shared genuinely-empty sentence is "No crafts have been recorded yet", which is true and stops
+    one sentence short of the next move; this page's own "Create a craft first." names it. So the
+    shared sentence is drawn only for the state the page has nothing of its own to say about, which
+    is the failed read -- the one it used to answer with a claim about the repository.
+  */
+  const craftNotice = craftList.kind === "ok" ? "" : workshopListNotice(craftList, craftVoice);
+
   // The API already returns workshops createdAt-descending; re-sorting keeps the guarantee local
   // so the list stays newest-first even if a caller ever changes the server ordering.
   const rows = data ? [...data.items].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")) : [];
@@ -624,12 +700,22 @@ function WorkshopsPageBody() {
               options={artisanOptions}
               searchable
               placeholder="Link the artisans who took part"
-              emptyLabel="No artisans recorded yet"
+              /* Was the literal "No artisans recorded yet" -- a claim about the repository drawn
+                 just as readily off a read that never arrived. See `artisanList`. */
+              emptyLabel={workshopEmptyLabel(artisanList, artisanVoice)}
               confirmLabel="Link artisans"
+              // R3: nothing to pick means the control is disabled AND the sentence is on screen.
+              // Never while loading -- the panel covers that wait in its own slot.
+              disabled={pickerLoad !== "loading" && artisans.length === 0}
             />
           </Field>
+          {artisanNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{artisanNotice}</p> : null}
           <Field label="Crafts covered">
-            {crafts.length === 0 ? (
+            {/* The paragraph is THE ANSWER TO AN EMPTY REGISTER and is now gated on the read having
+                actually answered. Ungated it replaced the control while the request was still in
+                flight and again when it failed, telling a researcher to go and create a craft over
+                a register that may well be full. */}
+            {craftList.kind === "ok" && crafts.length === 0 ? (
               <p className="rounded-md border border-line-200 bg-field-50 px-3 py-2 text-sm text-ink-muted">
                 No crafts available yet. Create a craft first.
               </p>
@@ -643,11 +729,13 @@ function WorkshopsPageBody() {
                 options={craftOptions}
                 searchable
                 placeholder="Pick the crafts this workshop covered"
-                emptyLabel="No crafts available yet"
+                emptyLabel={workshopEmptyLabel(craftList, craftVoice)}
                 confirmLabel="Add crafts"
+                disabled={pickerLoad === "failed"}
               />
             )}
           </Field>
+          {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
         </div>
         <MediaCaptureField
           files={mediaFiles}

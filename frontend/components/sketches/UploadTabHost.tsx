@@ -113,6 +113,7 @@ import {
   type DwRow,
   type DwValue
 } from "@/lib/designWorkshops";
+import { isTentativeRow, tentativeField, tentativeFirst } from "@/lib/sketchTentative";
 import type { MediaFile } from "@/lib/types";
 
 import { UploadTabPanel, type ChosenPhotograph } from "./upload/UploadTabPanel";
@@ -744,10 +745,19 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
     ]);
     setSketches(sketch);
     setPrototypes(prototype);
-    // The first row is preselected rather than left blank: a picker whose default is "choose one"
-    // makes the commonest case — a workshop with one prototype in it — two actions instead of one.
-    setSketchRow((current) => current || (sketch.rows[0] ? (rowKeyOf(sketch.rows[0]) ?? "") : ""));
-    setPrototypeRow((current) => current || (prototype.rows[0] ? (rowKeyOf(prototype.rows[0]) ?? "") : ""));
+    /*
+      The first row is preselected rather than left blank: a picker whose default is "choose one"
+      makes the commonest case — a workshop with one prototype in it — two actions instead of one.
+
+      AND "THE FIRST ROW" IS THE FIRST ROW OF THE LIST AS DRAWN, which since the tentative flag
+      landed is the first TENTATIVE sketch where there is one. `RowPicker` partitions its options
+      (see its own note), and a default that pointed at the stored first row while the picker showed
+      a different row at the top would be a control disagreeing with its own value on open — the
+      designer would attach a photograph to a sketch other than the one the list is offering them.
+      One partition, read by both.
+    */
+    setSketchRow((current) => current || (firstOffered(sketch.rows) ?? ""));
+    setPrototypeRow((current) => current || (firstOffered(prototype.rows) ?? ""));
   }, [registry, workshopId]);
 
   useEffect(() => {
@@ -1280,6 +1290,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           <RowPicker
             label="Sketch"
             rows={sketches?.rows ?? []}
+            tentativeWord={tentativeField(sketchEntity)?.label ?? null}
             value={sketchRow}
             onChange={setSketchRow}
             emptyHref={
@@ -1293,6 +1304,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           <RowPicker
             label="Prototype"
             rows={prototypes?.rows ?? []}
+            tentativeWord={tentativeField(prototypeEntity)?.label ?? null}
             value={prototypeRow}
             onChange={setPrototypeRow}
             emptyHref={
@@ -1628,10 +1640,22 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
   );
 }
 
+/**
+ * The row a picker over these rows would open on — its key, or null for an empty collection.
+ *
+ * The one place the preselection and {@link RowPicker}'s own option order are kept in step. Both go
+ * through `tentativeFirst`, so there is no second opinion about which row is at the top of the list.
+ */
+function firstOffered(rows: readonly DwRow[]): string | null {
+  const [first] = tentativeFirst(rows, isTentativeRow);
+  return first ? rowKeyOf(first) : null;
+}
+
 /** Which row of a collection a file is going to — the app's themed picker, searched by provenance. */
 function RowPicker({
   label,
   rows,
+  tentativeWord,
   value,
   onChange,
   emptyHref,
@@ -1642,6 +1666,15 @@ function RowPicker({
 }: {
   label: string;
   rows: DwRow[];
+  /**
+   * The registry's own word for the tentative flag, or null where this entity declares none.
+   *
+   * READ OFF THE SCHEMA AND NOT WRITTEN HERE, for the same reason the media cards read their own
+   * labels off it: a word typed into a component is the copy that goes stale when the registry is
+   * edited, and this one has to match the checkbox on the stage form and the chip on its row.
+   * Prototypes declare no such field today, so their picker passes null and draws nothing.
+   */
+  tentativeWord: string | null;
   value: string;
   onChange: (value: string) => void;
   emptyHref: string | null;
@@ -1709,9 +1742,35 @@ function RowPicker({
       <Dropdown
         value={value}
         onChange={onChange}
-        options={rows.map((row, index) => ({
+        /*
+          ── TENTATIVE FIRST, AND THE PAIRS ARE WHY THE NUMBERS STILL READ RIGHT ────────────────────
+
+          THE ONE SKETCH SURFACE THIS PARTITION IS APPLIED TO ON THE WEB, and it is the surface the
+          owner described: "where the designers would be able to upload sketches and mark them as
+          tentative to bring them to the top of the list". Nothing here writes an order back — this
+          picker chooses which row a file lands on — so `ordinal` is untouched, a designer's own
+          arrangement inside each group survives, and unticking the box puts a row back exactly where
+          it was. `lib/sketchTentative.ts` carries the argument, including why the stage form and the
+          design-review list are deliberately NOT partitioned.
+
+          `{ row, index }` PAIRS AND NOT THE ROWS, because the index has to stay the row's position on
+          the STAGE FORM: `rowLabel` falls back to "Untitled 3" for a row nobody has named, and the
+          handset's picker prints "Row 3 of 8" off the same number. Renumbering to the display
+          position would make a designer hunting for "Untitled 3" on the stage form find something
+          else there.
+
+          THE WORD RIDES IN `hint`, WHICH THIS PICKER SEARCHES AS WELL AS SHOWS (§11.5): the top of a
+          list is not a state a reader can name, so typing "tentative" finds them too — and on a
+          workshop with forty sketches, where the render cap draws only the first eighty rows and a
+          filter box is the way in, that is the half that actually answers.
+        */
+        options={tentativeFirst(
+          rows.map((row, index) => ({ row, index })),
+          (pair) => isTentativeRow(pair.row)
+        ).map(({ row, index }) => ({
           value: rowKeyOf(row) ?? "",
-          label: rowLabel(row, index)
+          label: rowLabel(row, index),
+          hint: tentativeWord && isTentativeRow(row) ? tentativeWord : undefined
         }))}
         ariaLabel={label}
         searchable

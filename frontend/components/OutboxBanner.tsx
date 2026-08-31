@@ -29,11 +29,15 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { CloudOff, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { CloudOff, Link2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 
+import { FieldDialog } from "@/components/dialogs/FieldDialog";
+import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast, type ToastTone } from "@/components/ui/Toast";
+import { listResource } from "@/lib/api";
 import {
   acknowledgeOutboxTrouble,
+  danglingKeys,
   discardOutboxEntry,
   getOutboxHealth,
   getOutboxQueuedHere,
@@ -42,7 +46,10 @@ import {
   getServerOutboxQueuedHere,
   getServerOutboxSnapshot,
   outboxIsAnswering,
+  referenceFieldNoun,
   refreshOutbox,
+  repickEmptyLine,
+  repickOutboxEntry,
   retryOutboxEntry,
   subscribeOutbox,
   syncOutbox,
@@ -94,6 +101,15 @@ export function outboxOutcome(result: SyncResult): {
   description?: string;
 } {
   if (result.synced) {
+    /*
+      A RECORD THAT LANDED UNFILED IS REPORTED HERE AND NOT AS A FAILURE, because it is not one.
+
+      Folded into the SENT description rather than given its own arm, for the same reason the expiry
+      below is: the two are not exclusive, and an arm under "sent" would never be reached on the pass
+      that produced it. It replaces the count-only trailer, which is the half a person can already
+      read off the banner; what they cannot see anywhere is the empty column.
+    */
+    const unfiled = result.sentUnfiled ?? [];
     return {
       kind: "sent",
       // Not "success" when the pass ended on an expiry: something was sent AND something needs doing,
@@ -104,9 +120,11 @@ export function outboxOutcome(result: SyncResult): {
         ? `Your sign-in expired part way through, so the rest did not go — ${result.remaining} ${
             result.remaining === 1 ? "entry is" : "entries are"
           } still on this device and nothing has been thrown away. Sign in again, then use Sync now.`
-        : result.remaining
-          ? `${result.remaining} still waiting.`
-          : "The outbox is empty."
+        : unfiled.length
+          ? unfiled.join(" ")
+          : result.remaining
+            ? `${result.remaining} still waiting.`
+            : "The outbox is empty."
     };
   }
   if (result.credentialExpired) {
@@ -154,6 +172,149 @@ export function outboxOutcome(result: SyncResult): {
   return { kind: "idle", tone: "info", title: "Nothing to send" };
 }
 
+/**
+ * WHERE A DANGLING COLUMN'S REPLACEMENTS COME FROM — the endpoint, and the noun for the sentence.
+ *
+ * Only the two workshop columns are offered today, and that is a fact about the FAILURE rather than
+ * a limit of this panel: a queued record's craft, artisan, product and tool ids come from registers
+ * none of the six forms will let you enter a fabricated id into, while the two workshop links are
+ * the ones an administrator can delete at the office between a courtyard save and the drain. A
+ * column with no entry here still gets the sentence and the honest dead-end wording; it simply gets
+ * no button, which is better than a button that opens an empty panel.
+ */
+const REPICK_SOURCES: Record<string, { endpoint: string; noun: string; label: (row: RepickRow) => string }> = {
+  designWorkshopId: {
+    endpoint: "/design-workshops",
+    noun: "design & prototype workshop",
+    label: (row) => [row.title, row.craftName, row.clusterName ?? row.state].filter(Boolean).join(" · ")
+  },
+  workshopId: {
+    endpoint: "/workshops",
+    noun: "workshop",
+    label: (row) => [row.title, row.place].filter(Boolean).join(" · ")
+  }
+};
+
+type RepickRow = {
+  id: string;
+  title?: string | null;
+  place?: string | null;
+  craftName?: string | null;
+  clusterName?: string | null;
+  state?: string | null;
+};
+
+/**
+ * The panel behind "Re-pick it": choose what this queued record should point at instead.
+ *
+ * ── THE LIST IS FETCHED LIVE, EVERY TIME, AND NEVER FROM `lib/referenceCache.ts` ──
+ *
+ * R6 binds here HARDER than it does on a form. This is a question about which workshops the account
+ * may file against, and a cached answer is wrong in the permissive direction — it would offer a
+ * grant revoked in March, and the drain would meet the identical refusal one release later with the
+ * researcher having been told the problem was fixed. `putCachedRegister` will not compile for
+ * either of these two models; this fetch is what that refusal implies on this surface.
+ *
+ * ── AND WHY THE ANSWER IS NOT JUST AN ARRAY ──
+ *
+ * An empty array is three different facts — still asking, the read failed, the scope holds none —
+ * and the one a reader assumes is the one that says *there are none*, which on this panel tells
+ * somebody their only route out is closed. `repickEmptyLine` words the last two; `rows === null` is
+ * the first.
+ */
+function RepickDialog({
+  entry,
+  field,
+  onClose,
+  onDone
+}: {
+  entry: OutboxEntry;
+  field: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const source = REPICK_SOURCES[field];
+  const [rows, setRows] = useState<RepickRow[] | null>(null);
+  const [listed, setListed] = useState(false);
+  const [choice, setChoice] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!source) return;
+    let cancelled = false;
+    listResource<RepickRow>(source.endpoint, { pageSize: 80 })
+      .then((page) => {
+        if (cancelled) return;
+        setRows(page.items);
+        setListed(true);
+      })
+      .catch(() => {
+        // A THROW IS NOT AN EMPTY LIST. `listed` stays false, and `repickEmptyLine` then says the
+        // list could not be READ rather than that the account has none — two sentences whose next
+        // moves are a connection and an administrator, and somebody sent to the wrong one of those
+        // loses a day.
+        if (!cancelled) setRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+
+  const noun = source?.noun ?? referenceFieldNoun(field);
+  const options = (rows ?? []).map((row) => ({ value: row.id, label: source?.label(row) || row.id }));
+
+  return (
+    <FieldDialog
+      open
+      onClose={onClose}
+      busy={saving}
+      icon={<Link2 className="h-4 w-4" aria-hidden />}
+      title={`Point “${entry.label}” at another ${noun}`}
+      description="Nothing has been sent and nothing has been deleted. Choose one that is on the server and this entry sends itself."
+      footer={
+        <>
+          <button type="button" className="field-button-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="field-button"
+            disabled={saving || rows === null}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                // An empty `choice` is the "none of them" answer and goes as an explicit null — see
+                // `repickOutboxEntry`, which records it as a DECISION rather than as an empty list.
+                await repickOutboxEntry(entry.id!, field, choice || null);
+                onDone();
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {saving ? "Saving…" : "Use this"}
+          </button>
+        </>
+      }
+    >
+      {rows === null ? (
+        <p className="text-sm text-ink-700">Reading the {noun} list{"…"}</p>
+      ) : options.length === 0 ? (
+        <p className="text-sm text-ink-700">{repickEmptyLine(noun, listed)}</p>
+      ) : (
+        <Dropdown
+          value={choice}
+          onChange={setChoice}
+          searchable
+          ariaLabel={`Choose a ${noun}`}
+          placeholder={`File it under no ${noun}`}
+          options={[{ value: "", label: `File it under no ${noun}` }, ...options]}
+        />
+      )}
+    </FieldDialog>
+  );
+}
+
 export function OutboxBanner() {
   const entries = useSyncExternalStore(subscribeOutbox, getOutboxSnapshot, getServerOutboxSnapshot);
   /**
@@ -170,6 +331,14 @@ export function OutboxBanner() {
    */
   const queuedHere = useSyncExternalStore(subscribeOutbox, getOutboxQueuedHere, getServerOutboxQueuedHere);
   const [syncing, setSyncing] = useState(false);
+  /**
+   * The entry whose dangling column is being re-pointed, and which column.
+   *
+   * THE FIELD TRAVELS WITH THE ENTRY rather than being re-derived when the panel opens. An entry can
+   * name more than one candidate (see `OutboxEntry.danglingField`), and re-deriving would let a
+   * refresh between the click and the render change which box the person is answering about.
+   */
+  const [repicking, setRepicking] = useState<{ entry: OutboxEntry; field: string } | null>(null);
   const { toast } = useToast();
 
   // Confirming a queued save belongs HERE, not in each of the six forms that can queue one. A form
@@ -344,6 +513,20 @@ export function OutboxBanner() {
 
   return (
     <>
+    {repicking ? (
+      <RepickDialog
+        entry={repicking.entry}
+        field={repicking.field}
+        onClose={() => setRepicking(null)}
+        onDone={() => {
+          setRepicking(null);
+          // Drain straight away, exactly as "Try again" does: the answer is then immediate — either
+          // the entry goes, or it comes back saying what is now wrong — rather than waiting for the
+          // next `online` event that may not come for a day.
+          void drain("manual");
+        }}
+      />
+    ) : null}
     {troublePanel}
     <section
       aria-live="polite"
@@ -394,6 +577,35 @@ export function OutboxBanner() {
             </div>
             {entry.failure ? (
               <div className="flex shrink-0 items-center gap-3">
+                {/*
+                  THE THIRD BUTTON, AND THE ONLY ROW IN THIS BANNER WITH A REMEDY THAT WORKS.
+
+                  Everything else here is waiting on a permission, a newer build, or a comparison
+                  only a person can make. This one is waiting on one click: the record is complete,
+                  in this browser, with its photographs, and exactly one id in it is wrong. Without
+                  it the row offered *Try again*, which fetches the identical 404, and *Discard*,
+                  which destroys the only copy — "a dead end wearing the costume of a remedy", as
+                  `lib/offline.ts` puts it about the 409 that got its own arm years before this one.
+
+                  DRAWN ONLY WHERE THERE IS SOMETHING TO RE-PICK. A dangling column this panel has no
+                  source for keeps its sentence and loses its button; an empty panel would be the
+                  same dead end one screen further in.
+                */}
+                {danglingKeys(entry)
+                  .filter((key) => key in REPICK_SOURCES)
+                  .slice(0, 1)
+                  .map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700"
+                      disabled={syncing}
+                      onClick={() => setRepicking({ entry, field: key })}
+                    >
+                      <Link2 className="h-3.5 w-3.5" aria-hidden />
+                      Re-pick it
+                    </button>
+                  ))}
                 {/*
                   TRY AGAIN COMES FIRST, AND IT IS THE LOAD-BEARING HALF.
 

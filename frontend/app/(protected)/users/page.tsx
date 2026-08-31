@@ -12,8 +12,10 @@ import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
+import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
 import { adminChromeVisible, useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
+import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
 import { apiFetch, listResource } from "@/lib/api";
 import { requiredText } from "@/lib/forms";
 import {
@@ -26,6 +28,7 @@ import {
   isMasterAdmin,
   roleLabel
 } from "@/lib/permissions";
+import { issuePasswordLink, revokePasswordLink, type IssuedPasswordLink } from "@/lib/signIn";
 import type { PageResult, User } from "@/lib/types";
 
 function GrantCell({
@@ -51,6 +54,18 @@ function GrantCell({
 
 export default function UsersPage() {
   const confirm = useConfirm();
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  /**
+   * A password link an admin has just minted, held on screen until they dismiss it.
+   *
+   * **THE ONLY COPY OF THIS CREDENTIAL IS THE ONE ON SCREEN.** The server stores a SHA-256 of
+   * the token and never the token, so nothing can hand it back a second time: dismissing this
+   * panel loses the link and the remedy is to issue another. That is deliberate and it is why
+   * the panel says so rather than being quietly dismissable.
+   */
+  const [issuedLink, setIssuedLink] = useState<{ user: User; link: IssuedPasswordLink } | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const { user: currentUser } = useAuth();
   const { adminMode } = useAdminView();
   /**
@@ -135,7 +150,11 @@ export default function UsersPage() {
   async function loadAllUsers() {
     if (!masterControls) return;
     try {
-      const result = await listResource<User>("/users", { pageSize: 100 });
+      // `LIST_PAGE_CEILING`, the server's own cap, by name rather than as a literal -- and
+      // deliberately NOT `RENDER_CAP`: the bulk grants panel draws every account as its own
+      // checkbox row, not through a dropdown, so there is no 80-row draw cap to align this with
+      // and asking for 80 would simply hide twenty accounts that are reachable today.
+      const result = await listResource<User>("/users", { pageSize: LIST_PAGE_CEILING });
       setAllUsers(result.items);
     } catch {
       // The bulk panel degrades to whatever is already loaded; the table above still works.
@@ -241,6 +260,76 @@ export default function UsersPage() {
         icon={<ShieldCheck className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+      {issuedLink ? (
+        <div className="mb-4 grid gap-2 rounded-md border border-line-200 bg-field-50 px-3 py-3">
+          <p className="text-sm font-medium text-ink-900">
+            Password link for {issuedLink.user.name} · {issuedLink.user.email}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              readOnly
+              value={issuedLink.link.link}
+              aria-label="Password link"
+              onFocus={(event) => event.currentTarget.select()}
+              className="field-input min-w-0 flex-1 font-mono text-xs"
+            />
+            <button
+              type="button"
+              className="field-button-secondary"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(issuedLink.link.link);
+                  setLinkCopied(true);
+                } catch {
+                  // Clipboard access can be refused outright (an insecure origin, a locked-down
+                  // browser). SAY NOTHING RATHER THAN CLAIM SUCCESS — the link is on screen and
+                  // selectable, which is the fallback, and a "Copied" that did not copy is the
+                  // one outcome that loses the credential.
+                  setLinkCopied(false);
+                }
+              }}
+            >
+              {linkCopied ? "Copied" : "Copy"}
+            </button>
+            <button
+              type="button"
+              className="field-button-secondary"
+              disabled={linkBusy}
+              onClick={async () => {
+                setLinkBusy(true);
+                try {
+                  await revokePasswordLink(issuedLink.link.id);
+                  setIssuedLink(null);
+                  setLinkCopied(false);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Unable to withdraw the link");
+                } finally {
+                  setLinkBusy(false);
+                }
+              }}
+            >
+              Withdraw
+            </button>
+            <button
+              type="button"
+              className="field-button-secondary"
+              onClick={() => {
+                setIssuedLink(null);
+                setLinkCopied(false);
+              }}
+            >
+              Done
+            </button>
+          </div>
+          {/* TERSE, per the owner's instruction of 2026-08-30 — but this sentence is not
+              decoration: nothing can show this link again, and an admin who closes the panel
+              without copying it has to issue another one. */}
+          <p className="text-xs leading-5 text-ink-500">
+            Copy it now and send it yourself — it is shown once, works once, and expires{" "}
+            {new Date(issuedLink.link.expiresAt).toLocaleString()}.
+          </p>
+        </div>
+      ) : null}
       {admin ? (
       <form onSubmit={submit} className="panel mb-5 grid gap-3 p-4 md:grid-cols-5">
         <Field label="Name" required>
@@ -250,7 +339,21 @@ export default function UsersPage() {
           <TextInput name="email" type="email" required />
         </Field>
         <Field label="Password" required>
-          <TextInput name="password" type="password" minLength={8} required />
+          {/*
+            THE EYE, ADDED 2026-08-30. This box is where an administrator TYPES A PASSWORD FOR
+            SOMEBODY ELSE and then has to read it out or message it — the one situation in which
+            masking protects nobody and costs the person on the other end of the telephone a
+            second attempt. The account is created with `mustChangePassword` set, so what is
+            typed here is a hand-over secret and not a lasting one.
+          */}
+          <div className="relative">
+            <TextInput name="password" type={showNewPassword ? "text" : "password"} minLength={8} required className="pr-11" />
+            <PasswordRevealButton
+              revealed={showNewPassword}
+              onToggle={() => setShowNewPassword((value) => !value)}
+              size={18}
+            />
+          </div>
         </Field>
         <Field label="Role">
           <Select name="role" defaultValue="RESEARCHER">
@@ -411,6 +514,31 @@ export default function UsersPage() {
                         <span className="text-xs font-semibold text-amber-700">Protected</span>
                       ) : admin && canManageUser(currentUser, user) ? (
                         <RowActions>
+                          {/* Only for an account that signs in with a password. A Google account
+                              has no password to set, and offering the link would hand an admin a
+                              credential that turns a Google-only account into a password one
+                              without anybody deciding to. */}
+                          {user.authProvider !== "GOOGLE" ? (
+                            <button
+                              className={rowAction("neutral")}
+                              disabled={linkBusy}
+                              onClick={async () => {
+                                setLinkBusy(true);
+                                setError(null);
+                                try {
+                                  const link = await issuePasswordLink(user.id);
+                                  setIssuedLink({ user, link });
+                                  setLinkCopied(false);
+                                } catch (err) {
+                                  setError(err instanceof Error ? err.message : "Unable to issue a password link");
+                                } finally {
+                                  setLinkBusy(false);
+                                }
+                              }}
+                            >
+                              Password link
+                            </button>
+                          ) : null}
                           <button className={rowAction("danger")} onClick={() => remove(user)}>
                             Delete
                           </button>

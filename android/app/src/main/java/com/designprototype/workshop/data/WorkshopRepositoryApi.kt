@@ -32,6 +32,51 @@ interface WorkshopRepositoryApi {
     @GET("me")
     suspend fun me(): UserDto
 
+    /**
+     * The signed-in account replacing its own password. The route `mustChangePassword` sends
+     * somebody to, and until 2026-08-31 nothing on either client called it.
+     *
+     * IT DOES NOT REVOKE SESSIONS, unlike redeeming a link, and the difference is who is asking: a
+     * person changing their own password from inside a session they are using has not lost control
+     * of anything, and signing them out of their own handset for tidiness is the worse answer.
+     */
+    @POST("auth/change-password")
+    suspend fun changeOwnPassword(@Body body: ChangePasswordRequest): Map<String, Boolean>
+
+    /**
+     * Mint a set-password link for another account. Admin only, and throttled PER SUBJECT.
+     *
+     * The throttle belongs to the person being reset rather than to the administrator, because
+     * redeeming a link revokes that account's sessions: without it an admin could sign a colleague
+     * out of their own laptop as often as they could press the button, and two admins taking turns
+     * is the same harm. A 429 here carries the server's own sentence and a `retry-after`.
+     */
+    @POST("auth/password-links")
+    suspend fun issuePasswordLink(@Body body: IssuePasswordLinkRequest): IssuedPasswordLinkDto
+
+    /**
+     * Withdraw a link that has not been used yet — "I pasted that into the wrong window".
+     *
+     * The credential fingerprint alone cannot answer this: the account's password has not changed,
+     * so the token still verifies and would go on working until it expired. This route is the reason
+     * the `PasswordResetToken` table exists at all.
+     */
+    @POST("auth/password-links/{id}/revoke")
+    suspend fun revokePasswordLink(@Path("id") id: String): Map<String, Boolean>
+
+    /**
+     * Is this link still good? UNAUTHENTICATED, because the person holding one cannot sign in — that
+     * is the whole point of holding it. [ApiClient] adds no bearer header when the store is empty,
+     * so this works from a signed-out handset with no special client.
+     */
+    @GET("auth/set-password")
+    suspend fun checkPasswordLink(@Query("token") token: String): PasswordLinkCheckDto
+
+    /** Redeem a link. Also unauthenticated; the token is the entire authority and is checked four ways. */
+    @POST("auth/set-password")
+    suspend fun setPasswordWithLink(@Body body: SetPasswordRequest): Map<String, Boolean>
+
+
     @GET("reference/address")
     suspend fun addressReference(): AddressReferenceDto
 
@@ -76,6 +121,37 @@ interface WorkshopRepositoryApi {
 
     @GET("feedback")
     suspend fun allFeedback(): List<FeedbackDto>
+
+    /**
+     * The closed lists a feedback report is filed against, with their labels.
+     *
+     * ONE DEFINITION, SERVED. The web form and this one render the same dropdowns from the same
+     * response, so a category added on the server reaches both without either being rebuilt and
+     * neither can invent a member the API would refuse.
+     */
+    @GET("feedback/vocabulary")
+    suspend fun feedbackVocabulary(): FeedbackVocabularyDto
+
+    /**
+     * File one grievance, suggestion, recommendation or bug report.
+     *
+     * A POST AND NOT THE PUT ABOVE, and the difference is the whole reason this route exists:
+     * `feedback/me` upserts one row per account, so a second submission destroyed the first.
+     */
+    @POST("feedback/reports")
+    suspend fun createFeedbackReport(@Body body: FeedbackReportCreateRequest): FeedbackReportDto
+
+    /**
+     * This account's own reports, newest first, each with its status and whoever answered it.
+     *
+     * The redressal half: a mechanism that cannot show a person their grievance was seen is not one.
+     * Scoped by the caller's token — there is no `userId` parameter to get wrong.
+     */
+    @GET("feedback/reports/mine")
+    suspend fun myFeedbackReports(
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 25
+    ): FeedbackReportPageDto
 
     @POST("review/{type}/{id}/approve")
     suspend fun approveRecord(
@@ -1076,6 +1152,16 @@ interface WorkshopRepositoryApi {
         @Query("pageSize") pageSize: Int = 20,
         @Query("search") search: String? = null,
         @Query("statusFilter") statusFilter: String? = null,
+        /**
+         * One of the registry's `WORKSHOP_KIND` tokens, or null for "every type".
+         *
+         * EMPTY MEANS EVERYTHING, BY ABSENCE — Retrofit omits a null `@Query` entirely, so "no type
+         * chosen" is a request with no such parameter rather than one asking for the empty string.
+         * The route 422s a token it does not recognise instead of answering an empty list, which is
+         * the behaviour a stale build wants: a filter this handset knows and the server does not
+         * says so, rather than telling a designer that no workshop of that type exists.
+         */
+        @Query("workshopKind") workshopKind: String? = null,
         @Query("craftName") craftName: String? = null,
         @Query("state") state: String? = null,
         @Query("mineOnly") mineOnly: Boolean = false

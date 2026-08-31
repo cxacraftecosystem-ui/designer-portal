@@ -122,11 +122,19 @@ def cell(value: Any) -> str:
     prose sitting in every other row and renders it back down to the words a person wrote.
 
     Every export surface in this repository funnels through this one function — the data browser's
-    info card, the ``/data/report`` workbook, the ``details.txt`` inside the dataset zip, and the
-    ``/export/products.csv`` and ``/export/tools.csv`` downloads. Remove the call below and every
-    one of them starts emitting ``{"blocks":[{"kind":"PARAGRAPH",…`` into files that go to a
-    ministry. Nothing raises when that happens, which is exactly why the guard belongs here, at the
-    chokepoint, rather than at four call sites where the fifth one would be added without it.
+    info card, the ``/data/report`` workbook, the ``details.txt`` inside the dataset zip, the
+    ``answers.txt`` beside it, and the ``/export/products.csv`` and ``/export/tools.csv``
+    downloads. Remove the call below and every one of them starts emitting
+    ``{"blocks":[{"kind":"PARAGRAPH",…`` into files that go to a ministry. Nothing raises when that
+    happens, which is exactly why the guard belongs here, at the chokepoint, rather than at four
+    call sites where the fifth one would be added without it.
+
+    ``answers.txt`` JOINED THAT LIST ON 2026-08-31, AND IT JOINED IT AS THE FIFTH CALL SITE THIS
+    PARAGRAPH PREDICTED. ``export.py``'s ``emit_interview`` interpolated ``r.answerText or ""``
+    straight into the file, and the column it reads — ``QuestionnaireResponse.answerText`` — became
+    a rich-text box on 2026-08-31 while keeping its ``String?`` type. So the one questionnaire
+    surface that had built its own value rendering was also the one that printed a document's JSON
+    into an archive. It now calls this function, like the other four.
 
     A plain string is returned unchanged by ``plain_from_stored`` — by identity, not by round trip —
     so the existing corpus renders byte-for-byte as it did before this line existed.

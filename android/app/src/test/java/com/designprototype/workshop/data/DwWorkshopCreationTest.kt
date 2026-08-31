@@ -136,6 +136,105 @@ class DwWorkshopCreationTest {
         )
     }
 
+    // ── Starting one with no signal ──────────────────────────────────────────────────
+
+    /**
+     * An account that may create is answered CREATE, connection or not — and the ORDER is why.
+     *
+     * An admin's draft is destined to become a workshop on the next pass whether it was started in
+     * an office or a courtyard. Answered LINK_LATER, an admin would be told to go and ask themselves
+     * for a workshop they are entitled to open.
+     */
+    @Test
+    fun `an admin is answered CREATE whether or not the phone can reach the server`() {
+        assertEquals(
+            DwDraftStart.CREATE,
+            dwClassifyDraftStart(mayCreate = true, mayRunWorkshops = true, reachable = true),
+        )
+        assertEquals(
+            DwDraftStart.CREATE,
+            dwClassifyDraftStart(mayCreate = true, mayRunWorkshops = true, reachable = false),
+        )
+    }
+
+    /**
+     * THE HALF THAT MUST NOT MOVE. With signal a designer has two better answers than an unlinked
+     * draft — open a workshop they already hold, or ask an admin for one — and
+     * [DW_WORKSHOP_CREATE_REFUSAL] names both. An unlinked draft minted WITH a connection would be a
+     * second, worse copy of a workshop that could have been the real one from the first keystroke.
+     */
+    @Test
+    fun `a designer with a connection is still refused`() {
+        assertEquals(
+            DwDraftStart.REFUSED,
+            dwClassifyDraftStart(mayCreate = false, mayRunWorkshops = true, reachable = true),
+        )
+    }
+
+    /** The owner's clause: offline, a designer may start one for the time being. */
+    @Test
+    fun `a designer with no connection is answered LINK_LATER`() {
+        assertEquals(
+            DwDraftStart.LINK_LATER,
+            dwClassifyDraftStart(mayCreate = false, mayRunWorkshops = true, reachable = false),
+        )
+    }
+
+    /**
+     * The arm is for the people who run workshops and nobody else.
+     *
+     * `canRunDesignWorkshops` is a SET, so a PROFESSOR outranks a designer and is still outside it —
+     * and a draft minted by an account that can never OPEN a workshop has no future at all, since
+     * adoption needs a workshop the account may be named on.
+     */
+    @Test
+    fun `an account outside the workshop set is refused, reachable or not`() {
+        assertEquals(
+            DwDraftStart.REFUSED,
+            dwClassifyDraftStart(mayCreate = false, mayRunWorkshops = false, reachable = false),
+        )
+        assertEquals(
+            DwDraftStart.REFUSED,
+            dwClassifyDraftStart(mayCreate = false, mayRunWorkshops = false, reachable = true),
+        )
+    }
+
+    /**
+     * A DESIGNER'S DRAFT IS NEVER POSTED, WHOEVER MINTED IT — the invariant the whole arm hangs on.
+     *
+     * [dwClassifyDraftStart] decides what is WRITTEN; [createMustBeDeclined] decides what is SENT,
+     * against the role as of the drain. A draft minted under LINK_LATER therefore meets exactly the
+     * refusal every stranded designer draft has met since the create rule shipped. If this ever
+     * stopped being true the create arm would collect the server's 403 — which is not transient —
+     * and the draft would park for ever behind a retry that can only fetch the same 403.
+     */
+    @Test
+    fun `a draft minted with no signal still takes the adopt path and never the create path`() {
+        assertEquals(
+            DwDraftStart.LINK_LATER,
+            dwClassifyDraftStart(mayCreate = false, mayRunWorkshops = true, reachable = false),
+        )
+        assertTrue(createMustBeDeclined(alreadyOnServer = false, sessionMayCreate = false))
+    }
+
+    /**
+     * The four link-later strings say what they have to say.
+     *
+     * "Not a workshop yet" is not decoration: "saved offline" describes every other record in this
+     * app, all of which send themselves, and a designer who reads this as the usual offline banner
+     * waits a fortnight for a sync that is never coming. The browser holds the same four literals
+     * and `frontend/e2e/design-workshop-offline-start-unit.spec.ts` asserts THIS FILE contains them
+     * byte for byte — which is the only thing that can, since neither client can run the other.
+     */
+    @Test
+    fun `the link-later words name the state and the next move`() {
+        assertTrue(DW_LOCAL_START_NOTE.contains("Not a workshop yet"))
+        assertTrue(DW_LOCAL_DRAFT_UNLINKED.contains("Not a workshop yet"))
+        assertTrue(DW_LOCAL_DRAFT_LINK_PROMPT.contains("workshops"))
+        assertTrue(DW_LOCAL_START_ACTION.isNotBlank())
+    }
+
+
     // ── Which drafts need a workshop ─────────────────────────────────────────────────────────────
 
     /**

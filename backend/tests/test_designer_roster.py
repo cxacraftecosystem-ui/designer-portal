@@ -799,14 +799,98 @@ async def test_the_directory_leaves_out_a_professor_the_viewer_write_would_refus
 # --------------------------------------------------------------------------------------
 
 
-async def test_a_designer_may_write_their_own_profile(world, client):
-    response = client.put(
+async def test_a_new_profile_cannot_be_created_without_an_empanelment_number(world, client):
+    """THE FIRST HALF OF THE OWNER'S DECISION OF 2026-08-30.
+
+    The empanelment number is what a ministry report is filed under and — since the same day —
+    something a designer may SIGN IN with, so a profile created without one is a profile
+    somebody has to chase later through a channel this product does not have.
+
+    THE REFUSAL IS NARROW ON PURPOSE and the next two tests are the other side of it: a save
+    that puts nothing in the profile is not creating one (no refusal), and a profile that
+    already has content may go on saving without a number (the grace path). This one is the
+    only shape that is refused — the save that would bring a profile into being.
+    """
+    refused = client.put(
         "/api/designers/me/profile",
         json={"institution": "NID Ahmedabad", "biography": "Bamboo and cane, Assam."},
         headers=_headers(world, "colleague"),
     )
+    assert refused.status_code == 422, refused.text
+    assert "empanelment number" in refused.json()["detail"].lower()
+
+    # AND IT MUST NOT HAVE WRITTEN. A refusal that saved the other two columns would leave a
+    # profile that is now on the grace path, so the next save would be allowed — the rule
+    # would have talked itself out of existence in one request.
+    stored = client.get("/api/designers/me/profile", headers=_headers(world, "colleague"))
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["institution"] is None
+
+
+async def test_an_empty_save_is_not_a_creation_and_is_not_refused(world, client):
+    """A PUT that puts nothing in the profile is a no-op, not a creation.
+
+    Refusing it would mean a client that saves on blur cannot open the form at all, and the
+    rule would be enforcing itself against somebody who has not typed anything yet.
+    """
+    response = client.put(
+        "/api/designers/me/profile", json={}, headers=_headers(world, "colleague")
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_a_designer_may_write_their_own_profile(world, client):
+    response = client.put(
+        "/api/designers/me/profile",
+        json={
+            "institution": "NID Ahmedabad",
+            "biography": "Bamboo and cane, Assam.",
+            # REQUIRED SINCE 2026-08-30 on a save that CREATES the profile — see the test
+            # above. This body used to carry two keys; the third is the rule, not padding.
+            "empanelmentNo": "DES/2026/0801",
+        },
+        headers=_headers(world, "colleague"),
+    )
     assert response.status_code == 200, response.text
     assert response.json()["institution"] == "NID Ahmedabad"
+    # THE NUMBER IS STORED VERBATIM AND THE KEY IS NORMALISED. The raw column is what a report
+    # prints; ``signInByEmpanelmentNo`` says whether the normalised form was actually claimed,
+    # which is the only way a designer can find out that signing in with it will work.
+    assert response.json()["empanelmentNo"] == "DES/2026/0801"
+    assert response.json()["empanelmentNoMissing"] is False
+
+
+async def test_a_profile_that_already_has_content_may_save_without_an_empanelment_number(
+    world, client
+):
+    """THE GRACE PATH — the second half of the owner's decision, and the half that is easy to
+    lose to a tidier rule.
+
+    ``active``'s profile is seeded with a name, an institution and a biography and no number,
+    which is the shape of every profile that predates the requirement. Refusing its next save
+    would mean a designer correcting a typo in their own name is told to produce a document
+    they may not have at this desk today — and the practical outcome of that is not a filled-in
+    field, it is an abandoned edit and a lost correction.
+
+    ``empanelmentNoMissing`` coming back TRUE is what both clients draw the persistent one-line
+    banner from. It is computed on the server precisely so the web and the handset cannot end
+    up with two definitions of \"has content\".
+    """
+    target = world["people"]["active"].id
+    response = client.put(
+        f"/api/designers/{target}/profile",
+        # DELIBERATELY NOT THE BIOGRAPHY. Two later tests in this file assert that ``active``
+        # still carries ``PROFILE_BIOGRAPHY`` — one about a refused write, one about what a
+        # workshop copies into stage 3 — and a grace-path save that rewrote it would fail both
+        # for a reason that has nothing to do with either. Any column with content will do; the
+        # rule under test is about the empanelment number being absent, not about which field.
+        json={"department": "Textile Design"},
+        headers=_headers(world, "admin"),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["empanelmentNoMissing"] is True, (
+        "the save was allowed but the banner would not be drawn, so nobody is ever asked"
+    )
 
 
 async def test_a_designer_may_not_write_a_colleagues_profile(world, client):

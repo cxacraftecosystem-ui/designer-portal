@@ -361,17 +361,37 @@ class WalkthroughSurfaceTest {
     }
 
     @Test
-    fun `the walkthrough is exempt from the unsaved changes guard and nothing else is`() {
-        // The walkthrough is the one destination that is not a departure: it draws OVER the page
-        // you are on and takes nothing away from it, so prompting would offer to throw away a form
-        // that is not going anywhere. Every OTHER destination must keep asking — that exemption
-        // widening by one enum entry is how the island bar became a silent way out of a half-filled
-        // artisan form once already.
-        val exemption = slice(mainActivity, "if (destination == NavDestination.WALKTHROUGH)", 210)
+    fun `only the destinations that draw OVER a form are exempt from the unsaved changes guard`() {
+        // The walkthrough is not a departure: it draws OVER the page you are on and takes nothing
+        // away from it, so prompting would offer to throw away a form that is not going anywhere.
+        // Every destination that IS a departure must keep asking — that exemption widening by one
+        // enum entry is how the island bar became a silent way out of a half-filled artisan form
+        // once already.
+        //
+        // ── IT IS TWO ENTRIES SINCE 2026-08-30, AND THIS TEST STILL REFUSES A THIRD ──────────────
+        //
+        // `NavDestination.TERMS` joined it when the terms and conditions landed. It qualifies on
+        // exactly the same ground and on no other: `TermsMenuDialog` is a dialog drawn over the
+        // screen the reader was on, so there is nothing to save or discard. Both outcomes of
+        // prompting there are wrong — "Keep editing" makes the menu row do nothing at all, and
+        // "Discard" clears a designer's form because they wanted to check a clause. The rule the
+        // caption used to state as "and nothing else is" was never about the COUNT; it is that an
+        // exemption belongs only to a destination that opens no screen. So the assertion now names
+        // the members instead of assuming there is one, and a third entry still fails here by name.
+        val exemption = slice(mainActivity, "if (destination == NavDestination.WALKTHROUGH", 340)
         assertTrue(
-            "the walkthrough's exemption from the unsaved-changes guard is gone or has changed " +
-                "shape: $exemption",
+            "the exemption from the unsaved-changes guard is gone or has changed shape: $exemption",
             exemption.contains("{ openDestination(destination) } else { attemptExit {"),
+        )
+        assertEquals(
+            "the unsaved-changes exemption widened. Every member listed here must be a DIALOG " +
+                "drawn over the current screen; anything that assigns `screen` is a departure and " +
+                "owes the prompt: $exemption",
+            listOf("WALKTHROUGH", "TERMS"),
+            Regex("""NavDestination\.(\w+)""")
+                .findAll(exemption.substringBefore(") {"))
+                .map { it.groupValues[1] }
+                .toList(),
         )
     }
 

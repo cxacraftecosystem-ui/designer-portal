@@ -8,7 +8,8 @@ import { AlertTriangle, FileAudio, GitCompareArrows, Layers, User, Users } from 
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { DownloadCsvButton } from "@/components/DownloadCsvButton";
 import { EmptyState } from "@/components/EmptyState";
-import { Markdown } from "@/components/Markdown";
+import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
+import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
@@ -332,7 +333,17 @@ function AnswerCard({ row, ordinal }: { row: ConsolidatedAnswer; ordinal?: numbe
       ) : null}
 
       {row.kind === "TYPED" ? (
-        <p className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{row.answerText || "—"}</p>
+        /*
+          FLATTENED, because `QuestionnaireResponse.answerText` became a rich-text column when the
+          interview form's answer boxes did on 2026-08-31. `encodeStoredRichText` writes plain prose
+          for an unformatted answer — which is nearly all of them — and stringifies a document the
+          moment a researcher bolds a word. `plainFromStoredRichText` is identity on the first kind,
+          so nothing about an ordinary answer changes; without it the second kind renders as
+          `{"blocks":[{"kind":…` on the page a ministry report is quoted from.
+        */
+        <p className="whitespace-pre-wrap text-sm leading-6 text-ink-900">
+          {plainFromStoredRichText(row.answerText) || "—"}
+        </p>
       ) : (
         <RecordingBody row={row} />
       )}
@@ -375,9 +386,26 @@ function RecordingBody({ row }: { row: ConsolidatedAnswer }) {
       </div>
       {row.url ? <AudioPlayer src={row.url} /> : null}
       {row.transcriptText ? (
-        <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2">
-          <Markdown text={row.transcriptText} />
-        </div>
+        /*
+          ── ONE COMPONENT FOR RENDER, COPY AND DOWNLOAD ────────────────────────────────────────
+          This was a bare `<Markdown>` in a bordered box, with no way to take the text anywhere. A
+          consolidated interview is the document a researcher quotes from and a ministry report is
+          assembled out of, so "I can read it but I cannot get it out" was the gap the owner named:
+          *"the markdown formatting helper ... for the current implementation of copying and
+          downloading should be there as well"*. `MarkdownDocument` is that helper, and it is the
+          same mount as the one on the interview form — a transcript copied from either surface is
+          the same bytes, which is the property that stops the two pages disagreeing about what the
+          artisan said.
+
+          The flag is `undefined` unless the server said TRUE. See `ConsolidatedAnswer.transcriptEdited`
+          for why "Not edited" is a claim this page is not entitled to make.
+        */
+        <MarkdownDocument
+          text={row.transcriptText}
+          filenameBase={row.filename ? `${row.filename}-transcript` : `${row.interviewTitle}-transcript`}
+        >
+          <EditedFlag edited={row.transcriptEdited ? true : undefined} />
+        </MarkdownDocument>
       ) : (
         <p className="text-xs italic text-ink-500">
           {failed

@@ -158,6 +158,105 @@ const val DW_WORKSHOP_CREATE_DECLINED_BY_APP =
         "workshop” on this row and the whole fortnight goes up into it on the next pass."
 
 // ---------------------------------------------------------------------------------------------
+// STARTING ONE WITH NO SIGNAL - the owner's last unmet clause
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What starting a workshop on this phone MEANS for this session, right now - three answers rather
+ * than two, and the middle one is the whole of the clause.
+ *
+ * -- THE REQUIREMENT, VERBATIM ----------------------------------------------------------------
+ *
+ * *"the designers do not get to create a designer workshop, they simply get to participate in
+ * one... Instead if they are offline, let them create one for the time being, and when the internet
+ * comes back up, let them link it to one of the workshops that they have access to."*
+ *
+ * -- WHY THIS IS NOT A WIDENING OF THE CREATE RULE, WHICH IS THE THING TO CHECK ----------------
+ *
+ * [CREATE] and [LINK_LATER] write a byte-identical [WorkshopDraft]. They differ in what the SYNC
+ * PASS does with it, and that is decided at drain time by [createMustBeDeclined] against the role
+ * THEN - not by anything stamped here. So a designer's draft can never become a
+ * `POST /design-workshops`: the pass declines it by the same rule that has declined every unsent
+ * designer draft since the create rule shipped, and the only route off this phone is
+ * `WorkshopDraftStore.adoptIntoWorkshop`, into a workshop an admin has already created.
+ * [DW_WORKSHOP_CREATOR_ROLES] is untouched and nothing in this file may widen it: **a local draft
+ * is not a create - it is fieldwork waiting for a home.**
+ *
+ * -- AND WHY THE REACHABILITY CLAUSE IS A CONDITION AND NOT DECORATION -------------------------
+ *
+ * With signal, a designer who wants to start a workshop has two better answers than an unlinked
+ * draft: open one of the workshops they already hold, or ask an admin for one - and
+ * [DW_WORKSHOP_CREATE_REFUSAL] names both. An unlinked draft minted WITH a connection would be a
+ * second, worse copy of a workshop that could have been the real one from the first keystroke, and
+ * it would still have to be linked by hand afterwards. With no signal there is no such alternative,
+ * and the only other answer is a paper notebook.
+ *
+ * Pure, so the tri-state is pinned by a JVM test rather than by a device with a courtyard around
+ * it. `classifyDraftStart` in `frontend/lib/designWorkshopStore.ts` is the same three lines, and the
+ * two must not drift.
+ */
+enum class DwDraftStart {
+    /** Mint it, and let the sync pass create the workshop. Admins and the master admin. */
+    CREATE,
+
+    /** Mint it - and it needs an adoption before a byte of it can leave this phone. */
+    LINK_LATER,
+
+    /** Nothing is written. [DW_WORKSHOP_CREATE_REFUSAL] is what the designer reads. */
+    REFUSED,
+}
+
+/**
+ * @param mayCreate [mayMintLocalWorkshop] for this session - asked FIRST, so nothing below can
+ *   narrow an admin.
+ * @param mayRunWorkshops `FieldPermissions.canRunDesignWorkshops` - a designer, an admin or the
+ *   master admin. Passed in rather than derived from a role here, deliberately: the run set is
+ *   already spelled out once in `ui/AppNavigation.kt` and a second literal in the data layer is a
+ *   second copy of the ladder for `backend/tests/test_role_ladder_parity.py` to hold.
+ * @param reachable could a request from this phone reach the repository at all.
+ */
+fun dwClassifyDraftStart(
+    mayCreate: Boolean,
+    mayRunWorkshops: Boolean,
+    reachable: Boolean,
+): DwDraftStart = when {
+    mayCreate -> DwDraftStart.CREATE
+    mayRunWorkshops && !reachable -> DwDraftStart.LINK_LATER
+    else -> DwDraftStart.REFUSED
+}
+
+// -- THE WORDS FOR THE LINK-LATER ARM ---------------------------------------------------------
+//
+// ONE COPY, SAID ON FOUR SURFACES. This handset offers it on the list screen and marks the row; the
+// browser does the same. A designer moves between the two clients mid-workshop, so these are
+// byte-for-byte `DW_LOCAL_START_ACTION`, `DW_LOCAL_START_NOTE`, `DW_LOCAL_DRAFT_UNLINKED` and
+// `DW_LOCAL_DRAFT_LINK_PROMPT` in `frontend/lib/designWorkshopStore.ts`. A rule worded differently
+// depending on which device is in your hand is not a rule, it is two rumours - the argument
+// [DW_WORKSHOP_CREATE_REFUSAL] already makes for itself.
+//
+// TERSE, per the owner's 2026-08-30 ruling: the reasoning is in these comments, never on screen.
+
+/** The control a designer with no signal presses. */
+const val DW_LOCAL_START_ACTION = "Start one on this device"
+
+/**
+ * The one line under that control.
+ *
+ * IT SAYS "NOT A WORKSHOP YET", WHICH IS THE FACT THE DESIGNER HAS TO CARRY FOR A FORTNIGHT. A
+ * sentence that merely said "saved offline" would describe every other record in this app, all of
+ * which send themselves; this one cannot, and somebody who does not know that waits for a sync that
+ * is never coming.
+ */
+const val DW_LOCAL_START_NOTE =
+    "Not a workshop yet. You will link it to one of your workshops when the connection returns."
+
+/** The row's marker, once such a draft exists. */
+const val DW_LOCAL_DRAFT_UNLINKED = "Started on this device. Not a workshop yet."
+
+/** The next move - on the row and in the prompt, in the same words in both places. */
+const val DW_LOCAL_DRAFT_LINK_PROMPT = "Choose which of your workshops this belongs to."
+
+// ---------------------------------------------------------------------------------------------
 // WHO THE WORKSHOP IS FOR — several people, and one name on the report
 // ---------------------------------------------------------------------------------------------
 //
@@ -484,6 +583,21 @@ fun adoptedIntoWorkshop(draft: WorkshopDraft, remoteId: String, now: String): Wo
  * recent thing the designer did and the fastest to undo, and because a narrowed request makes a
  * truncated walk far less likely in the first place.
  *
+ * ── AND THE OFFLINE ARM NOW CARRIES THE REASON THE BUTTON IS DEAD ─────────────────────────────
+ *
+ * The other two arms describe a SHORT list under a live button. Offline is no longer that: the move
+ * is disabled there, because the rows are this phone's memory and a remembered grant is stale in the
+ * permissive direction — the argument is on `AdoptIntoWorkshopDialog` and generalised as
+ * `DROPDOWN_DESIGN.md` R6. A disabled control whose reason is nowhere is the control people tap
+ * repeatedly, and the alternative — a second amber paragraph beside this one — is two sentences
+ * about one state. So the clause lives HERE, in the sentence that already owns this state, and the
+ * test that keeps the three caveats distinct sees it.
+ *
+ * IT SAYS "nothing would be sent before then anyway" BECAUSE THAT IS THE WHOLE ANSWER to the reading
+ * this would otherwise get, which is that the app has become obstructive at the worst moment.
+ * Adoption transmits nothing; the stages cannot leave until there is a connection, which is the same
+ * moment the list becomes checkable. The wait costs the designer no time at all.
+ *
  * Pure, so all four states are pinned by a JVM test rather than by somebody with a phone, a
  * courtyard and a repository of 500 workshops.
  */
@@ -494,8 +608,8 @@ fun dwAdoptCandidateNotice(
 ): String? = when {
     offline ->
         "The server could not be reached, so this list holds only the workshops this phone already " +
-            "knows about. A workshop created for you today may not be here until you open this " +
-            "list with a connection."
+            "knows about and cannot be checked against it. Moving waits for signal — nothing would " +
+            "be sent before then anyway."
     searched ->
         "This list is narrowed by what you typed in the search box on the workshops screen. If the " +
             "workshop you are moving this into is not here, close this, clear that box, and open " +

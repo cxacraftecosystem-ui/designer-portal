@@ -45,6 +45,7 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.visibleQuestionnaires
 import com.designprototype.workshop.ui.SearchableSelectField
+import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.RecordProseField
@@ -462,6 +463,23 @@ private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> U
                         MaterialTheme.field.onWarningContainer
                     )
                 }
+                /*
+                  THE KIND, drawn only where one was STATED — never "Kind not stated". On a list where
+                  most rows predate the column, a chip on every row would be twenty repetitions of an
+                  absence, burying the two rows that carry a real answer under the ones that do not.
+                  The detail screen says it in full, where there is one row to say it about.
+
+                  `row.kindLabel` and not a local lookup: the server sends its own label beside the
+                  token precisely so the two clients cannot word one stored value differently.
+                  [labelForQuestionnaireKind] is the fallback for a build that predates a token.
+                */
+                if (!row.kind.isNullOrBlank()) {
+                    QChip(
+                        row.kindLabel.ifBlank { labelForQuestionnaireKind(row.kind) },
+                        MaterialTheme.field.surface200,
+                        MaterialTheme.field.muted
+                    )
+                }
                 // The version moves on every supersede and every retire, which is the only cheap way a
                 // designer can tell that the form changed under a sitting they are part-way through.
                 if (row.version > 1) {
@@ -497,6 +515,8 @@ private fun CreateQuestionnaireDialog(
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var workshopId by remember { mutableStateOf("") }
+    /** The kind. Blank is the none row and means "not stated", which the server accepts. */
+    var kind by remember { mutableStateOf("") }
     var workshops by remember { mutableStateOf(AttachableWorkshops()) }
     var busy by remember { mutableStateOf(false) }
 
@@ -571,6 +591,50 @@ private fun CreateQuestionnaireDialog(
                 if (attachOptions.isEmpty() && !busy) {
                     workshops.notice()?.let { EmptyNote(it) }
                 }
+                /*
+                  WHAT KIND OF QUESTIONNAIRE THIS IS — the owner's request of 2026-08-30, and the
+                  control that makes it answerable: *"they also do market survey interviews, so
+                  create that differentiation as well, so that we can map the questionnaires and the
+                  transcripts to the correct stage in the report."*
+
+                  THE SAME WORDING AS THE WEB, to the character: the label, the two option labels and
+                  the sentence under the control are all shared, and the option labels come from
+                  QUESTIONNAIRE_KIND_LABELS, which the server's own test holds to
+                  `questionnaire_kinds.py`. A designer moves between the two clients mid-workshop.
+
+                  THE NONE ROW IS A REAL ANSWER. `includeNone` with "Not stated" as the placeholder:
+                  a designer who has not decided must be able to leave it, and the server stores NULL
+                  rather than refusing the create. Nothing here blocks the Start button.
+
+                  NO SEARCH BOX, and none appears: `SearchableSelectField` decides that from
+                  SEARCH_THRESHOLD (8) and this list has two members — which is the case that
+                  threshold answers correctly on its own, unlike the workshop picker above it.
+                */
+                SearchableSelectField(
+                    label = "Kind",
+                    // ``(token, text)`` AND NOT the tidier ``(value, label)``, and this is not a
+                    // preference: naming them after the parameters they fill would write the
+                    // parameter name twice in a row here — and that exact two-word sequence is what
+                    // ``QuestionnaireDictationParityTest`` searches for, taking its FIRST occurrence
+                    // in the file, to prove the shared section-title dialog passes its caption
+                    // through to a dictated box. This dropdown sits above that dialog, so the
+                    // obvious names quietly stole the assertion and left a real guarantee passing
+                    // for a reason that had nothing to do with it. Measured, 2026-08-30: the test
+                    // went red on the first spelling and green on this one.
+                    //
+                    // THE SAME TRAP CATCHES A COMMENT. Do not restore the sequence in prose here
+                    // either — a source-reading test cannot tell code from the paragraph describing
+                    // it, which is how this note failed once before being reworded.
+                    options = QUESTIONNAIRE_KIND_LABELS.map { (token, text) ->
+                        SelectOption(value = token, label = text)
+                    },
+                    selectedValue = kind,
+                    placeholder = "Not stated",
+                    includeNone = true,
+                    enabled = !busy,
+                    onSelect = { kind = it }
+                )
+                EmptyNote("Decides which stage of the report this questionnaire's answers are filed under.")
             }
         },
         confirmButton = {
@@ -597,6 +661,7 @@ private fun CreateQuestionnaireDialog(
                                 title = title,
                                 description = description,
                                 designWorkshopId = workshopId.takeIf { it.isNotBlank() },
+                                kind = kind.takeIf { it.isNotBlank() },
                             )
                         }.onSuccess { created ->
                             if (created != null) {

@@ -8,7 +8,24 @@ import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState }
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
+import {
+  artisanToOption,
+  craftToOption,
+  optionToArtisan,
+  optionToCraft,
+  optionToTool,
+  toolToOption
+} from "@/components/forms/recordPickers";
 import { apiFetch, listResource } from "@/lib/api";
+import { formatDate } from "@/lib/format";
+import { loadCachedRegister } from "@/lib/referenceCache";
+import {
+  cachedListLine,
+  deviceLooksOffline,
+  workshopEmptyLabel,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 import type { Artisan, Craft, ToolDocumentation } from "@/lib/types";
 
 /**
@@ -20,6 +37,15 @@ export function ToolAssignmentSection() {
   const [tools, setTools] = useState<ToolDocumentation[]>([]);
   const [crafts, setCrafts] = useState<Craft[]>([]);
   const [artisans, setArtisans] = useState<Artisan[]>([]);
+  /**
+   * ISO-8601 when the TOOL register came out of storage, null once the network confirms it.
+   *
+   * Only the tool list carries one, and that is not an oversight. It is the control a researcher
+   * hunts a specific toolkit in — the one where a name that is not on the list is read as "this tool
+   * was never documented, I will document it again" — while the craft and artisan pickers below it
+   * are narrowing controls whose own empty sentences already cover them.
+   */
+  const [toolCachedAt, setToolCachedAt] = useState<string | null>(null);
   const [toolId, setToolId] = useState("");
   const [craftIds, setCraftIds] = useState<string[]>([]);
   const [artisanIds, setArtisanIds] = useState<string[]>([]);
@@ -55,27 +81,118 @@ export function ToolAssignmentSection() {
     artisans: null
   });
 
+  /*
+    CACHE-FIRST FOR ALL THREE REGISTERS — DROPDOWN_DESIGN §3.3, on the web.
+
+    This panel used to be one `Promise.all` of three live reads whose single `.catch` set
+    `referenceState` to `unavailable` and put a red line where the tool picker should be. None of the
+    three is a grant set — a tool, a craft and an artisan are records, and §3.3 rules the opposite
+    way for a REGISTER than it does for an access list — so all three now come out of
+    `lib/referenceCache.ts` first and are refreshed behind that. `loadCachedRegister` calls back once
+    or twice; the state below is `loaded` when all three answered from EITHER source, which is the
+    same test Android's `loadToolRegister` / `loadCraftRegister` / `loadArtisanRegister` trio makes.
+
+    THE ERROR LINE IS NOW ONLY FOR THE CASE THAT REALLY HAS NOTHING. It used to fire on any rejected
+    read, including one behind a perfectly good cache, and this panel's message sits above three
+    dropdowns that would then be full of options — a red sentence contradicting the screen under it.
+  */
   useEffect(() => {
-    (async () => {
-      const [toolPage, craftPage, artisanPage] = await Promise.all([
-        listResource<ToolDocumentation>("/tools", { pageSize: LIST_PAGE_CEILING }),
-        listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING }),
-        listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
+    let cancelled = false;
+    void (async () => {
+      const [toolOutcome, craftOutcome, artisanOutcome] = await Promise.all([
+        loadCachedRegister<ToolDocumentation>({
+          model: "tool",
+          decode: optionToTool,
+          encode: toolToOption,
+          fetch: async () => {
+            const page = await listResource<ToolDocumentation>("/tools", { pageSize: LIST_PAGE_CEILING });
+            // Live pages only. A cached document carries no envelope, and a truncation sentence
+            // built from one would be a number invented here about a corpus this browser cannot see.
+            if (!cancelled) setCuts((previous) => ({ ...previous, tools: listCut(page, "tools") }));
+            return page.items;
+          },
+          onList: (rows, cachedAt) => {
+            if (cancelled) return;
+            setTools(rows);
+            setToolCachedAt(cachedAt);
+          }
+        }),
+        loadCachedRegister<Craft>({
+          model: "craft",
+          decode: optionToCraft,
+          encode: craftToOption,
+          fetch: async () => {
+            const page = await listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING });
+            if (!cancelled) setCuts((previous) => ({ ...previous, crafts: listCut(page, "crafts") }));
+            return page.items;
+          },
+          onList: (rows) => {
+            if (!cancelled) setCrafts(rows);
+          }
+        }),
+        loadCachedRegister<Artisan>({
+          model: "artisan",
+          decode: optionToArtisan,
+          encode: artisanToOption,
+          fetch: async () => {
+            const page = await listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING });
+            if (!cancelled) setCuts((previous) => ({ ...previous, artisans: listCut(page, "artisans") }));
+            return page.items;
+          },
+          onList: (rows) => {
+            if (!cancelled) setArtisans(rows);
+          }
+        })
       ]);
-      setTools(toolPage.items);
-      setCrafts(craftPage.items);
-      setArtisans(artisanPage.items);
-      setCuts({
-        tools: listCut(toolPage, "tools"),
-        crafts: listCut(craftPage, "crafts"),
-        artisans: listCut(artisanPage, "artisans")
-      });
-      setReferenceState("loaded");
-    })().catch((err) => {
-      setReferenceState("unavailable");
-      setError(err instanceof Error ? err.message : "Failed to load options");
-    });
+      if (cancelled) return;
+      const missing = [toolOutcome, craftOutcome, artisanOutcome].some((outcome) => outcome.source === "none");
+      setReferenceState(missing ? "unavailable" : "loaded");
+      if (missing) {
+        setError("Failed to load options, and this browser has not been given them before. Reconnect and reload.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  /*
+    THE THREE LISTS AS THE SHARED VOCABULARY SEES THEM.
+
+    All three arrive in one `Promise.all`, so one state answers for all three: they land together or
+    not at all. Read only for its KIND -- each picker below keeps its own genuinely-empty sentence,
+    because "no artisans for THESE CRAFTS" is a narrower claim than the shared "No artisans have
+    been recorded yet" and the two must not be swapped.
+
+    `scoped: false`: none of the three requests carries an access filter, so an empty answer is a
+    statement about the repository. `accessList: false`: a register is not a grant set, so R6's
+    reason for never keeping one on the device does not apply and must not be printed as though it
+    did. `reassurance`: the shared clause is "this record can be saved without it", and nothing on
+    this panel is a record -- the assignment cannot be sent at all without a tool and an artisan, so
+    what an admin needs instead is that the list is short rather than the register empty.
+  */
+  const referenceList: WorkshopListState<never> =
+    referenceState === "pending"
+      ? { kind: "loading" }
+      : referenceState === "unavailable"
+        ? { kind: "failed" }
+        : { kind: "ok", rows: [], total: null };
+  const referenceOnline = !deviceLooksOffline();
+  const voiceFor = (noun: string): WorkshopListVoice => ({
+    table: "field",
+    noun,
+    scoped: false,
+    accessList: false,
+    // All three lists are written to `lib/referenceCache.ts` by the effect above, so the offline
+    // sentence may end "Connect once and the list is kept on the device from then on" — a promise
+    // only a caller that actually caches is allowed to make. See `WorkshopListVoice.cached`.
+    cached: true,
+    online: referenceOnline,
+    reassurance: "Nothing you picked is lost. The message above says what happened."
+  });
+  /** The picker's own sentence once the read has ANSWERED; the shared ones before that. */
+  const emptyLabelFor = (noun: string, own: string) =>
+    referenceList.kind === "ok" ? own : workshopEmptyLabel(referenceList, voiceFor(noun));
 
   // Open with the sitting already loaded: the craft and artisan last documented, and the tool
   // itself. Documenting a tool and then assigning it to the other artisans in the same courtyard is
@@ -197,6 +314,9 @@ export function ToolAssignmentSection() {
               });
             }}
             placeholder="Select a tool"
+            // Never the primitive's literal "No options", which on a read that has not landed is the
+            // claim that this repository documents no tools.
+            emptyLabel={emptyLabelFor("tools", "No tools have been documented yet")}
             /*
               All three pickers in this section pass `searchable`, and none of them may be left to
               the option count: tools, crafts and artisans are all records, all three are capped
@@ -209,6 +329,15 @@ export function ToolAssignmentSection() {
             searchable
             options={tools.map((tool) => ({ value: tool.id, label: `${tool.toolkitName} — ${tool.craftName} · ${tool.artisanName}` }))}
           />
+          {/*
+            §3.5's CACHED-AND-STALE SENTENCE, above the cut and never instead of it. They report two
+            different things — one is how old this copy is, the other is how much of the corpus it
+            holds — and a reader hunting a toolkit that is not on the list needs both to know which
+            of the two explains it.
+          */}
+          {toolCachedAt && tools.length > 0 ? (
+            <p className="mt-1 text-xs text-ink-500">{cachedListLine(tools.length, "tools", formatDate(toolCachedAt))}</p>
+          ) : null}
           <CappedListNotice cuts={[cuts.tools]} />
         </Field>
         <Field label="Crafts">
@@ -216,6 +345,7 @@ export function ToolAssignmentSection() {
             values={craftIds}
             onChange={setCraftIds}
             placeholder="Select crafts"
+            emptyLabel={emptyLabelFor("crafts", "No crafts have been recorded yet")}
             searchable
             options={crafts.map((craft) => ({ value: craft.id, label: craft.name }))}
           />
@@ -236,7 +366,12 @@ export function ToolAssignmentSection() {
               }
             }}
             placeholder={craftIds.length ? "Select artisans" : "Select crafts first"}
-            emptyLabel={craftIds.length ? "No artisans for these crafts" : "Select crafts first"}
+            /* "No artisans for these crafts" is a claim about the register, narrowed to the ticked
+               crafts, and it may only be made off a read that answered -- see `emptyLabelFor`. */
+            emptyLabel={emptyLabelFor(
+              "artisans",
+              craftIds.length ? "No artisans for these crafts" : "Select crafts first"
+            )}
             disabled={craftIds.length === 0}
             searchable
             options={artisansForCrafts.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }))}

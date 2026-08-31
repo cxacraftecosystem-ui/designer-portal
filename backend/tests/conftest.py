@@ -436,3 +436,26 @@ def pytest_terminal_summary(terminalreporter) -> None:
     terminalreporter.write_line(f"skipped {len(skipped)} tests, by reason:")
     for reason, count in sorted(tally.items(), key=lambda item: (-item[1], item[0])):
         terminalreporter.write_line(f"  {count:>5} × {reason}")
+
+
+@pytest.fixture(autouse=True)
+def _clear_account_credential_budget():
+    """Forget the per-account sign-in failure budget between tests.
+
+    ``app/scale/rate_limit.py`` gained a budget keyed on the RESOLVED ACCOUNT on 2026-08-30 — ten
+    failures per account per five minutes, in front of bcrypt — because the ASGI middleware beside
+    it can only see the network a request came from and never the account, and a sign-in may now
+    be attempted with three different identifiers that all name one person.
+
+    IT IS PROCESS-WIDE AND IT DOES NOT RESET ITSELF, which is exactly right in production and wrong
+    across a test suite: several modules here sign in with a deliberately wrong password many times
+    as one account, and without this the eleventh would meet a 429 that has nothing to do with what
+    the test is asserting. The obvious way to make that go away is to raise the ceiling until it
+    stops happening, which is how a security limit ends up set by the test suite instead of by the
+    argument written above it. This clears the buckets instead.
+    """
+    from app.scale.rate_limit import reset_account_credential_budget
+
+    reset_account_credential_budget()
+    yield
+    reset_account_credential_budget()

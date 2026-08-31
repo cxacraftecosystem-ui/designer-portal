@@ -27,7 +27,14 @@ import { FieldDialog } from "@/components/dialogs";
 import { Field, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
-import { reuploadQuestionnaire, uploadQuestionnaire, type QFormUploadResult } from "@/lib/questionnaireForms";
+import {
+  QUESTIONNAIRE_KINDS,
+  QUESTIONNAIRE_KIND_LABELS,
+  reuploadQuestionnaire,
+  uploadQuestionnaire,
+  type QFormKind,
+  type QFormUploadResult
+} from "@/lib/questionnaireForms";
 import { designWorkshopOptions, NO_DESIGN_WORKSHOP, type DesignWorkshopRow } from "@/lib/workshopOptions";
 
 /**
@@ -78,6 +85,8 @@ export function UploadDialog({
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [designWorkshopId, setDesignWorkshopId] = useState("");
+  /** The kind, on the upload door. `""` is the blank row and means "not stated", which is allowed. */
+  const [kind, setKind] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -109,7 +118,8 @@ export function UploadDialog({
         ? await reuploadQuestionnaire(questionnaireId, file, { title: title.trim() || undefined })
         : await uploadQuestionnaire(file, {
             title: title.trim() || undefined,
-            designWorkshopId: designWorkshopId || undefined
+            designWorkshopId: designWorkshopId || undefined,
+            kind: (kind || undefined) as QFormKind | undefined
           });
       reset();
       onUploaded(result);
@@ -276,6 +286,41 @@ export function UploadDialog({
               // and their upload. It has nothing to offer but the un-file row, which is already the
               // value, so there is nothing here to open.
               disabled={!workshops?.length}
+            />
+          </FieldBlock>
+        )}
+        {/*
+          THE KIND, ON THE UPLOAD DOOR TOO — and behind the same `editing` gate as the workshop
+          picker above, for the identical reason: `POST /questionnaires/{id}/upload` (the RE-upload)
+          accepts a title and nothing else, so on that path this is a control whose value the request
+          cannot carry. On a re-upload the kind is changed from the questionnaire's own page, where
+          it already is.
+
+          WHY IT IS HERE AT ALL. The pro-forma has no kind cell and deliberately never will — see
+          `create_from_parsed`, which refuses to parse one, because every workbook already sitting in
+          a designer's Downloads folder predates it and would import as "not stated" while looking as
+          though it had been asked. So the upload FORM is the only place the uploader can say, and
+          without this control the spreadsheet path — which the page above calls the fast path and the
+          one most designers take — was the one door that could not answer the question.
+        */}
+        {!editing && (
+          <FieldBlock
+            label="Kind"
+            hint={
+              <p className="mt-1 text-xs leading-5 text-ink-500">
+                Decides which stage of the report this questionnaire&rsquo;s answers are filed under.
+              </p>
+            }
+          >
+            <Dropdown
+              value={kind}
+              onChange={setKind}
+              options={QUESTIONNAIRE_KINDS.map((value) => ({
+                value,
+                label: QUESTIONNAIRE_KIND_LABELS[value]
+              }))}
+              noneLabel="Not stated"
+              ariaLabel="Kind"
             />
           </FieldBlock>
         )}

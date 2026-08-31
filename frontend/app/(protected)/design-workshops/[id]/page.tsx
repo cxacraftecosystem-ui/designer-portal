@@ -186,6 +186,7 @@ function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
     templateId: draft.header.templateId,
     status: draft.header.status,
     workshopCode: draft.header.workshopCode,
+    workshopKind: draft.header.workshopKind,
     scheme: null,
     craftName: draft.header.craftName,
     clusterName: draft.header.clusterName,

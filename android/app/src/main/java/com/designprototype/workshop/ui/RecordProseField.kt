@@ -1048,7 +1048,10 @@ fun RecordProseField(
                 // they can see are the words that will be saved. Here they are literally in the box.
                 value = if (spoken.isBlank()) value else appendSpokenToRecord(value, spoken),
                 onValueChange = { raw -> if (spoken.isBlank()) onValueChange(raw) },
-                label = label?.let { { Text(it) } },
+                // The plain-box arm. The rich arm a few lines above hands `label` to
+                // `RichTextEditor`, which applies [requiredMarked] at its own render, so both
+                // shapes of this control mark a required field identically.
+                label = label?.let { { Text(requiredMarked(it)) } },
                 placeholder = placeholder?.let {
                     { Text(it, color = MaterialTheme.field.placeholder) }
                 },

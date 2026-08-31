@@ -8,6 +8,7 @@ import { adminChromeVisible, useAdminView } from "@/components/AdminViewProvider
 import { useAuth } from "@/components/AuthProvider";
 import { AppSettingsPanel } from "@/components/settings/AppSettingsPanel";
 import { GetTheAppPanel } from "@/components/settings/GetTheAppPanel";
+import { GrievanceRedressalCard } from "@/components/settings/GrievanceRedressalCard";
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
 import { MyAiKeysPanel } from "@/components/settings/MyAiKeysPanel";
 import { AccessibilityCard, AppearanceCard } from "@/components/settings/PersonalSettingsCards";
@@ -145,6 +146,28 @@ export default function SettingsPage() {
           to find your way back to is an agreement that cannot really be withdrawn.
         */}
         <UsageConsentCard />
+
+        {/*
+          NO ROLE GATE, AND DIRECTLY UNDER THE CONSENT CARD, FOR THE SAME REASON THAT ONE GIVES.
+
+          `POST /feedback/reports` is `get_current_user` and nothing more: raising a grievance,
+          suggesting a change or recommending something needs permission from nobody, so this sits
+          with Appearance, Accessibility and the recording consent — the things this ACCOUNT owns —
+          rather than behind the "Repository administration" links below.
+
+          THIS HUB AND NOT `/admin`, WHICH IS THE OTHER THING CALLED "SETTINGS" (§16: the dashboard's
+          Settings TILE opens the admin hub, the Settings nav ROW opens this page). `/admin` is
+          admin-gated end to end, so a grievance card there would be invisible to every account a
+          grievance mechanism exists for — and it would mean asking the administration for
+          permission to complain about it. That hub already carries a "User feedback" tile pointing
+          at the same destination; that one is the READER's door and this is the WRITER's, and both
+          leading to /feedback is correct because the page shows a person their own reports and an
+          administrator the queue.
+
+          Above `GetTheAppPanel` rather than below it because this is a door somebody opens when
+          something has gone wrong, and the app download is a door they open once.
+        */}
+        <GrievanceRedressalCard />
 
         {/* Everyone sees this: the two apps are one product and each is better at half the job. */}
         <GetTheAppPanel />

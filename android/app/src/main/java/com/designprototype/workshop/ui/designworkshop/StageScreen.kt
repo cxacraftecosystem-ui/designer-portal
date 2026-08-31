@@ -2508,13 +2508,59 @@ private fun CollectionRowCard(
     ) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "${index + 1}. $title",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f).clickable(onClick = onToggle)
-                )
+                /*
+                  ══════════════════════════════════════════════════════════════════════════════════
+                  THE TENTATIVE FLAG IS SAID HERE AND DOES NOT REORDER THIS LIST — THE JUDGEMENT
+                  ══════════════════════════════════════════════════════════════════════════════════
+
+                  `sketch.isTentative` landed on 2026-08-30 with the owner's rule that tentative
+                  sketches come to the top of the list. [dwTentativeFirst] carries that partition and
+                  the rule for where it may be applied: a surface that READS a list, never one that
+                  WRITES it. This is the surface that writes, and it fails that test three times:
+
+                    * the digit printed at the head of this row is `index + 1`, and that index IS the
+                      `ordinal` `buildStageBody` sends and `save_stage` stores. A partitioned display
+                      would print either a number that is not the stored ordinal, or the stored one
+                      out of sequence (1, 4, 2, 3);
+                    * the grip and both arrows move a row BY INDEX inside this same array, so a
+                      partition over the top of it would snap a dragged row back across the group
+                      boundary — a gesture that visibly does nothing;
+                    * the checkbox itself is INSIDE this card's own expanded body, so ticking it would
+                      move the open form out from under the designer's thumb mid-edit.
+
+                  Anything that reordered here would therefore be writing `ordinal`, which is exactly
+                  what makes unticking the box unable to restore a row's place. So the word is drawn
+                  and the ordering is left to the Upload tab's picker, which only reads.
+
+                  STACKED UNDER THE TITLE, NOT BESIDE IT, and that is the platform difference rather
+                  than a paraphrase: the web draws an inline chip, and this header already carries
+                  four 48dp controls beside a title that has to survive a narrow handset. A 48dp row
+                  can afford two lines — the same reason `SelectOption.hint` stacks here and sits
+                  inline on the web.
+
+                  READ OFF THE REGISTRY, so the word is `stage_definitions.py`'s label and the other
+                  collection entities draw nothing at all.
+                */
+                val tentativeWord =
+                    dwTentativeField(entity)?.label?.takeIf { dwIsTentativeRow(row.values) }
+                Column(modifier = Modifier.weight(1f).clickable(onClick = onToggle)) {
+                    Text(
+                        "${index + 1}. $title",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    if (tentativeWord != null) {
+                        Text(
+                            tentativeWord,
+                            // The amber this app uses for "wants attention, nothing is wrong", which
+                            // is what an unfinalised sketch is — the web's chip uses the same pair.
+                            color = MaterialTheme.field.warning,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                }
                 /*
                   THE GRIP, FIRST OF THE THREE REORDER CONTROLS — the web's own ordering in
                   `EntityForm.tsx` (grip, up, down), so a designer moving between the two clients

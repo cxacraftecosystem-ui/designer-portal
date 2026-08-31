@@ -712,15 +712,43 @@ private fun DwChooserUploadHalf(
                 lineHeight = 17.sp,
             )
         } else {
+            /*
+              ── TENTATIVE FIRST, AND THE PAIRS ARE WHY THE NUMBERS STILL READ RIGHT ────────────────
+
+              THE ONE SKETCH SURFACE THIS PARTITION IS APPLIED TO ON THE HANDSET, and it is the one
+              the owner described: mark a sketch tentative "to bring them to the top of the list".
+              Nothing here writes an order back — this picker chooses which row a file lands on — so
+              `ordinal` is untouched, a designer's own arrangement inside each group survives, and
+              unticking the box returns a row to exactly where it was. [dwTentativeFirst] carries the
+              argument, including why the stage form's rows and the design-review list are
+              deliberately NOT partitioned.
+
+              PAIRS AND NOT ROWS, so the index stays the row's position on the STAGE FORM: the hint
+              below prints it, [dwChooserRowLabel] falls back to "Untitled 3" off it, and the web's
+              picker prints the same number. A display position here would send a designer looking
+              for a third sketch that is really the fifth.
+
+              THE WORD RIDES IN THE HINT beside the position, which this picker SEARCHES as well as
+              shows — so on a workshop with forty sketches, typing "tentative" finds them even below
+              the fold. Two facts, one hint, in reading order: what kind of row, then which row.
+            */
+            val tentativeWord = dwTentativeField(dwChooserEntity(spec, half.entityKey))?.label
             SearchableSelectField(
                 label = half.pickerLabel,
-                options = rows.mapIndexed { index, row ->
+                options = dwTentativeFirst(
+                    rows.mapIndexed { index, row -> row to index },
+                ) { (row, _) -> dwIsTentativeRow(row.values) }.map { (row, index) ->
+                    val position = "Row ${index + 1} of ${rows.size}"
                     SelectOption(
                         value = dwChooserRowKey(row),
                         label = dwChooserRowLabel(row, index),
                         // The position rides in the hint, which this picker SEARCHES as well as
                         // shows, so "3" finds the third row on a workshop that named none of them.
-                        hint = "Row ${index + 1} of ${rows.size}",
+                        hint = if (tentativeWord != null && dwIsTentativeRow(row.values)) {
+                            "$tentativeWord · $position"
+                        } else {
+                            position
+                        },
                     )
                 },
                 selectedValue = chosenRow,

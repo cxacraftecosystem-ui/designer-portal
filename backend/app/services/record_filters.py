@@ -34,10 +34,33 @@ from fastapi import HTTPException, status
 from app.services.concurrency import gather_reads
 from app.services.records import add_date_range, contains, viewable_where
 
-# The five buckets, in the order they are counted, read and returned everywhere in the app. Kept
-# here beside the clauses they describe; ``api/routes/search.py`` re-exports its own SEARCH_TYPES
-# from this tuple so the two lists cannot fall out of order.
+# The five buckets that exist on EVERY search-shaped screen, in the order they are counted, read and
+# returned. Kept here beside the clauses they describe.
+#
+# THIS COMMENT USED TO SAY "the five buckets ... everywhere in the app" AND TO PROMISE THAT
+# ``api/routes/search.py`` re-exported its ``SEARCH_TYPES`` from this tuple. Both halves stopped
+# being true on 2026-08-31, when ``GET /search`` grew a sixth bucket the map cannot have. The
+# no-second-copy rule the old comment was defending is intact — ``SEARCH_TYPES`` below is DERIVED
+# from this tuple rather than typed out again, so the five can still only be spelled once — but this
+# is no longer the whole vocabulary of every screen, and a reader who took it for that would put a
+# design workshop on the map. See :data:`DESIGN_WORKSHOP_TYPE`.
 RECORD_TYPES: tuple[str, ...] = ("artisans", "workshops", "products", "tools", "media")
+
+#: The SIXTH bucket, and why it is not in ``RECORD_TYPES`` above.
+#:
+#: ``RECORD_TYPES`` is the map's vocabulary as well as the search box's, and a design workshop
+#: cannot be a map bucket: ``GET /map/points`` groups by ``locationId``/``place``, and
+#: ``DesignWorkshop`` has neither column — its geography is ``state``/``district``/``venue``, three
+#: free-text strings promoted out of stage 1. Adding it to the shared tuple would put it into
+#: ``counted`` at ``map_points.py:793`` and hand Prisma a ``group_by(["locationId", "place"])``
+#: over a model with no such fields, which is a 500 rather than an empty bucket.
+#:
+#: So the map keeps five and search gets six, and the two lists still cannot drift, because the
+#: search vocabulary is DERIVED from the map's rather than restated beside it.
+DESIGN_WORKSHOP_TYPE = "designWorkshops"
+
+#: The six buckets ``GET /search`` covers, in the order they are counted, read and returned.
+SEARCH_TYPES: tuple[str, ...] = (*RECORD_TYPES, DESIGN_WORKSHOP_TYPE)
 
 # Which buckets carry a free-text ``place`` column. Media does NOT: a photo has no place of its own,
 # it inherits the record it belongs to. Naming that here stops a caller from quietly filtering media
@@ -237,8 +260,10 @@ def bucket_workshop_clause(bucket: str, ids: list[str], include_unassigned: bool
     return clause if clause is not None else {"id": {"in": []}}
 
 
-def resolve_types(raw: list[str] | None) -> set[str]:
-    """Which buckets this request covers. Absent, empty, or all-blank means all five.
+def resolve_types(
+    raw: list[str] | None, *, allowed: tuple[str, ...] = RECORD_TYPES
+) -> set[str]:
+    """Which buckets this request covers. Absent, empty, or all-blank means all of ``allowed``.
 
     Accepts both spellings a client might reach for — repeated parameters
     (``?types=artisans&types=media``) and one comma-joined value (``?types=artisans,media``) —
@@ -249,24 +274,39 @@ def resolve_types(raw: list[str] | None) -> set[str]:
     request for "artisan" (singular, a plausible typo) with a perfectly well-formed empty result,
     and the client would report "no matches" for data that is sitting right there — a wrong answer
     dressed as a correct one.
+
+    ``allowed`` IS A PARAMETER BECAUSE TWO SCREENS ASK THIS AND ONLY ONE OF THEM HAS SIX BUCKETS.
+    The map's vocabulary is :data:`RECORD_TYPES` and the search box's is :data:`SEARCH_TYPES`; see
+    :data:`DESIGN_WORKSHOP_TYPE` for why a design workshop cannot be a map bucket. Defaulting to the
+    narrower one means every existing caller is untouched and the WIDER vocabulary has to be asked
+    for by name — the safe direction, because a caller that accidentally got six buckets would hand
+    ``group_by`` a model that has none of the columns it groups on.
+
+    CASE IS FOLDED FOR THE COMPARISON AND THE VOCABULARY'S OWN SPELLING IS WHAT COMES BACK. This
+    function used to lower-case the token and compare it to the members directly, which WAS
+    canonicalisation while every member was lower-case — over ``RECORD_TYPES`` the two readings
+    accept and reject exactly the same strings. ``designWorkshops`` is the first member that is not,
+    so lowering would now reject the one spelling the API itself publishes. The rule is
+    ``enum_filter_list_or_422``'s, restated for the same reason it is written down there: the fold
+    decides only WHETHER a token matches; the member of ``allowed`` is what is returned, so
+    everything downstream can compare bucket names with ``==``.
     """
+    canonical = {member.lower(): member for member in allowed}
     if not raw:
-        return set(RECORD_TYPES)
-    wanted = {
-        part.strip().lower() for value in raw for part in str(value).split(",") if part.strip()
-    }
+        return set(allowed)
+    wanted = [part.strip() for value in raw for part in str(value).split(",") if part.strip()]
     if not wanted:
-        return set(RECORD_TYPES)
-    unknown = sorted(wanted - set(RECORD_TYPES))
+        return set(allowed)
+    unknown = sorted({token for token in wanted if token.lower() not in canonical})
     if unknown:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"Unknown search type{'s' if len(unknown) > 1 else ''}: {', '.join(unknown)}. "
-                f"Valid types are {', '.join(RECORD_TYPES)}."
+                f"Valid types are {', '.join(allowed)}."
             ),
         )
-    return wanted
+    return {canonical[token.lower()] for token in wanted}
 
 
 def enum_filter_list_or_422(
@@ -406,6 +446,162 @@ def enum_filter_list_or_422(
     return {canonical[token.lower()] for token in wanted}
 
 
+#: The promoted columns a free-text query is matched against on a design workshop.
+#:
+#: NOT THE WHOLE ANSWER ANY MORE, AND THAT IS THE POINT OF :data:`DESIGN_WORKSHOP_STAGE_TEXT_COLUMN`
+#: below. This tuple used to carry a long note saying that stage field VALUES were not searchable and
+#: costing the two ways of fixing it — the note §6.1 of
+#: ``docs/DECISION-design-workshop-data-in-view-data.md`` was written from. Option 2 landed on
+#: 2026-08-31, so a free-text query now matches these columns **OR** a stage answer, and the argument
+#: that used to live here lives in the migration
+#: (``20260831120000_dw_stage_entry_search_text``) and on the column in ``schema.prisma``, which is
+#: where a decision about the schema belongs.
+#:
+#: These stay the columns of the WORKSHOP ITSELF — its title, its code, its place, the promoted
+#: values stage 1 copies up — and they are still worth having separately from the stage text: they
+#: are indexed, they are what the result row prints as its subtitle, and a hit on one of them needs
+#: no stage naming beside it.
+DESIGN_WORKSHOP_TEXT_COLUMNS: tuple[str, ...] = (
+    "title",
+    "workshopCode",
+    "scheme",
+    "craftName",
+    "clusterName",
+    "state",
+    "district",
+    "venue",
+    "designerName",
+    "implementingAgency",
+    "sponsor",
+    "notes",
+)
+
+#: The columns that answer "where was this workshop", for the shared ``place`` filter. A design
+#: workshop has no ``place`` column and no ``Location`` relation — its geography is these four free
+#: strings, promoted out of stage 1 — which is also why it cannot be a map bucket.
+DESIGN_WORKSHOP_PLACE_COLUMNS: tuple[str, ...] = ("state", "district", "venue", "clusterName")
+
+#: The relation and column a free-text query reaches THROUGH to search inside the 22 stages.
+#:
+#: ``DesignWorkshop.entries`` is ``DwStageEntry[]``, and ``searchText`` on it is the rendered answers
+#: of one row — ENUM labels resolved, rich text flattened, the designer's own custom questions
+#: included, contact details and identity numbers deliberately absent. See
+#: ``design_workshop_data.entry_search_text`` for what goes in and the migration for why the column
+#: exists at all.
+#:
+#: ``deletedAt: None`` INSIDE THE ``some`` IS NOT OPTIONAL AND IS NOT THE OUTER ONE. The workshop's
+#: own soft-delete flag is tested by the unconditional first clause of
+#: :func:`design_workshop_where`; this is the ROW's, and a stage row is soft-deleted whenever a
+#: designer removes a sketch or a cost line. Without it, a search would surface a live workshop
+#: because of an answer its designer deleted — the row is still in the table, ``searchText`` and all,
+#: and the whole product treats a soft-deleted stage row as gone.
+#:
+#: NO ``rich_text.search_needles`` HERE, and the omission is deliberate rather than an oversight.
+#: That helper exists because a raw ``contains`` over stored rich-text JSON has to try the
+#: JSON-ESCAPED spelling of a term containing a quote (``he said "no"`` is stored as ``he said
+#: \\"no\\"``). This column holds ``rich_text.to_plain`` output — the marks and the JSON are already
+#: gone — so the typed term matches as itself and a second needle would be a second ``ILIKE`` for
+#: zero recall. That is the same trade that function's own docstring makes.
+DESIGN_WORKSHOP_STAGE_RELATION = "entries"
+DESIGN_WORKSHOP_STAGE_TEXT_COLUMN = "searchText"
+
+
+def design_workshop_stage_text_clause(q: str) -> dict[str, Any]:
+    """The ``some`` clause that matches a query against any live stage answer of a workshop.
+
+    A FUNCTION RATHER THAN A LITERAL, because two call sites need the identical predicate and they
+    are in different modules: this one builds the bucket's ``where``, and ``api/routes/search.py``
+    re-uses it to find out WHICH STAGES matched so the result can name them. A hit that does not say
+    which of twenty-two stages it came from is a hit a researcher cannot act on, and the two
+    predicates drifting apart would mean naming a stage the bucket did not match on.
+    """
+    return {
+        DESIGN_WORKSHOP_STAGE_RELATION: {
+            "some": {"deletedAt": None, DESIGN_WORKSHOP_STAGE_TEXT_COLUMN: contains(q)}
+        }
+    }
+
+
+def design_workshop_where(
+    visibility: dict[str, Any],
+    *,
+    q: str | None = None,
+    craft_id: str | None = None,
+    place: str | None = None,
+    artisan_id: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> dict[str, Any]:
+    """The ``DesignWorkshop`` predicate for the shared filter vocabulary.
+
+    ``deletedAt: null`` IS UNCONDITIONAL AND IS THE FIRST THING IN THE CLAUSE. Nothing in this
+    product hard-deletes a design workshop — ``DELETE`` sets ``deletedAt``, and every read filters
+    it out, so a workshop is invisible to its own creator once removed. A search box that returned
+    one would be the single surface in the product that resurrects deleted work, and it would do it
+    to the widest audience.
+
+    ``craft_id`` AND ``artisan_id`` REACH THROUGH THE LINK TABLES, because a design workshop carries
+    neither column. ``craftName`` is a promoted STRING and a craft id is a cuid, so testing the id
+    against it would match nothing at all — a filter that silently empties a bucket. What a design
+    workshop does have is ``artisansLinked``/``productsLinked``/``toolsLinked``, so "workshops
+    involving this craft" is "workshops with a linked artisan, product or tool of that craft",
+    which is the same reading ``artisan_workshop_clause`` takes for the legacy table: a link is a
+    link whichever table records it.
+
+    ``media_type`` IS NOT A PARAMETER, and the omission matches the other four record buckets rather
+    than being an oversight. In ``build_record_wheres`` that filter writes ``media_where`` alone —
+    it does not narrow artisans, workshops, products or tools — so a design workshop bucket that
+    DID narrow on it would be the one bucket in six that answers a different question from its
+    neighbours under the same control.
+
+    THE DATE RANGE READS ``startDate`` AND FALLS BACK TO ``createdAt``, which is the rule the legacy
+    workshop bucket already applies (there the fallback column is ``date``). A workshop's start date
+    is the fact a researcher means by "workshops in July"; ``createdAt`` is when somebody typed it
+    in, and it is the only answer available for a workshop whose stage 1 has not been filled in yet.
+    """
+    where: dict[str, Any] = {"AND": [{"deletedAt": None}]}
+    if visibility:
+        where["AND"].append(visibility)
+
+    if q:
+        # THE WORKSHOP'S OWN COLUMNS **OR** A STAGE ANSWER, which is what §6.1 of the decision record
+        # said this route could not do until the column behind the last clause existed. The two are
+        # one OR rather than two filters because they answer ONE question — "does this workshop have
+        # anything to do with indigo" — and a researcher who had to tick a box to decide whether the
+        # answer was allowed to come from the title or from stage 5 would be being asked about our
+        # storage layout.
+        where["OR"] = [
+            *({column: contains(q)} for column in DESIGN_WORKSHOP_TEXT_COLUMNS),
+            design_workshop_stage_text_clause(q),
+        ]
+    if place:
+        where["AND"].append(
+            {"OR": [{column: contains(place)} for column in DESIGN_WORKSHOP_PLACE_COLUMNS]}
+        )
+    if craft_id:
+        where["AND"].append(
+            {
+                "OR": [
+                    {"artisansLinked": {"some": {"craftId": craft_id}}},
+                    {"productsLinked": {"some": {"craftId": craft_id}}},
+                    {"toolsLinked": {"some": {"craftId": craft_id}}},
+                ]
+            }
+        )
+    if artisan_id:
+        where["AND"].append({"artisansLinked": {"some": {"id": artisan_id}}})
+    if date_from or date_to:
+        date_range: dict[str, Any] = {}
+        if date_from:
+            date_range["gte"] = date_from
+        if date_to:
+            date_range["lte"] = date_to
+        where["AND"].append(
+            {"OR": [{"startDate": date_range}, {"startDate": None, "createdAt": date_range}]}
+        )
+    return where
+
+
 async def build_record_wheres(
     user: Any,
     *,
@@ -417,8 +613,16 @@ async def build_record_wheres(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     workshop_ids: list[str] | None = None,
+    include_design_workshops: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """One Prisma ``where`` per bucket, row visibility already folded in.
+
+    ``include_design_workshops`` ADDS A SIXTH KEY AND IS OFF BY DEFAULT, so the map — the other
+    caller of this function — gets the identical five-key dictionary it has always got. It is an
+    opt-in rather than a value everybody receives because ``map_points`` reaches into ``wheres`` by
+    bucket name from lists derived from :data:`RECORD_TYPES`; a sixth key would be inert there today
+    and a live 500 the day somebody iterates ``wheres.items()`` instead. See
+    :data:`DESIGN_WORKSHOP_TYPE`.
 
     Row visibility is resolved ONCE per owner column rather than once per bucket, and the four record
     buckets all key off ``createdById``, so resolving it bucket by bucket restated the same predicate
@@ -524,6 +728,21 @@ async def build_record_wheres(
         "media": media_where,
     }
 
+    # The sixth bucket is built by its own function rather than assembled inline, because every one
+    # of its readings differs from the five above — no ``place`` column, no ``craftId`` column, a
+    # soft-delete flag none of the others has — and inlining those differences here is how a clause
+    # ends up being copied to a second screen with one of them missing.
+    if include_design_workshops:
+        wheres[DESIGN_WORKSHOP_TYPE] = design_workshop_where(
+            record_visibility,
+            q=q,
+            craft_id=craft_id,
+            place=place,
+            artisan_id=artisan_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
     # THE WORKSHOP SCOPE, applied last and to every bucket at once.
     #
     # A workshop is the unit the fieldwork actually happens in, so "the records from these workshops"
@@ -545,6 +764,11 @@ async def build_record_wheres(
     # the free-text OR instead of overwriting it — and so a bucket that already has an AND (workshops,
     # once a date range is in play) gains a clause rather than losing one. This matters more now than
     # it did: the artisans clause is itself an OR, so assigning it would destroy the free-text search.
+    # THE DESIGN-WORKSHOP BUCKET TAKES THE ORDINARY COLUMN READING, AND THAT IS CORRECT RATHER THAN
+    # A GAP. ``bucket_workshop_clause`` forks on whether the bucket IS the workshop table; a
+    # ``DesignWorkshop`` is NOT a ``Workshop`` — it is a different table that carries a nullable
+    # ``workshopId`` foreign key to one — so the generic column clause is exactly right, and the
+    # reserved "none" correctly selects design workshops not filed under any legacy workshop.
     resolved = resolve_workshop_ids(workshop_ids)
     if resolved is not None:
         ids, include_unassigned = resolved

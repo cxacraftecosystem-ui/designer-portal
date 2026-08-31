@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AudioLines, Loader2 } from "lucide-react";
 
-import { Markdown } from "@/components/Markdown";
+import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { useAuth } from "@/components/AuthProvider";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { transcribeMediaNow } from "@/lib/media";
@@ -111,9 +111,25 @@ export function TranscriptBlock({ media, onUpdated }: { media: MediaFile; onUpda
     return (
       <>
         {player}
-        <div className="mt-2 rounded-md border border-line-200 bg-field-50 p-3">
+        {/*
+          RENDER, COPY AND SAVE, from the one component the interview form and the consolidated page
+          also mount — see `components/richtext/MarkdownDocument.tsx`. A transcript is the artisan's
+          words, and until 2026-08-31 the only way out of this box was to select it with a mouse.
+
+          `edited` is TRUE or UNDEFINED and never false: a null stamp means "nothing on record",
+          which for every row stored before that date is not the same as "nobody edited this". The
+          heading stays above it because this block sits inside a media card that also carries a
+          player, a filename and the transcribe control, and an unlabelled slab of prose in that
+          stack does not announce what it is.
+        */}
+        <div className="mt-2">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">Transcript</div>
-          <Markdown text={current.transcriptText ?? ""} />
+          <MarkdownDocument
+            text={current.transcriptText ?? ""}
+            filenameBase={`${current.originalFilename ?? "recording"}-transcript`}
+          >
+            <EditedFlag edited={current.transcriptEditedAt ? true : undefined} />
+          </MarkdownDocument>
         </div>
         {control}
         {failureNote}

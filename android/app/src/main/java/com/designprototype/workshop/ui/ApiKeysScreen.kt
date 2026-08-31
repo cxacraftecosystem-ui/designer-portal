@@ -60,7 +60,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.ManagedSecretDto
@@ -895,11 +894,24 @@ private fun ApiKeyEditPanel(secret: ManagedSecretDto, state: ApiKeysState, busy:
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
+        // THE EYE, ADDED 2026-08-30. A repository key is a fifty-character string pasted from a
+        // provider's console on a phone; a masked box is exactly where a truncated paste hides,
+        // and the failure then surfaces hours later on somebody else's screen. `noun = "key"`
+        // because the box is labelled "Paste the key" and a spoken "Show password" would name a
+        // control that is not on this screen. See ui/PasswordReveal.kt.
+        var revealDraft by remember { mutableStateOf(false) }
         OutlinedTextField(
             value = state.draft,
             onValueChange = state::onDraftChange,
             singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
+            visualTransformation = passwordTransformation(revealDraft),
+            trailingIcon = {
+                PasswordRevealIcon(
+                    revealed = revealDraft,
+                    onToggle = { revealDraft = !revealDraft },
+                    noun = "key"
+                )
+            },
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
                 imeAction = ImeAction.Done

@@ -146,6 +146,7 @@ from app.core.deps import (
 )
 from app.schemas.design_workshops import (
     DESIGN_WORKSHOP_STATUSES,
+    WORKSHOP_KINDS,
     AiExpandIn,
     AiLayerDecisionIn,
     AiLayerRegisterIn,
@@ -329,6 +330,13 @@ _SERVER_TIER = ai_layers.AiTier.TIER_3
 _HEADER_TEXT_COLUMNS: tuple[str, ...] = (
     "title",
     "templateId",
+    # ``workshopKind`` IS HERE AND ``scheme`` IS IN ``_STAGE_ONE_OWNS`` BELOW, and the two look
+    # similar enough that the difference is worth stating. The rule at the head of the refusal
+    # table is "a promoted column the CREATE BODY collects may also be patched; one collected
+    # nowhere but stage 1 may not" — and the create form carries a Type of workshop dropdown, so
+    # this column has a create-form history exactly as craft, cluster, state, district and the two
+    # dates do. ``scheme`` has none.
+    "workshopKind",
     "craftName",
     "clusterName",
     "state",
@@ -1599,6 +1607,10 @@ async def list_design_workshops(
     pageSize: int = Query(20, ge=1, le=100),
     search: str | None = None,
     statusFilter: str | None = None,
+    # THE TYPE FILTER. Added 2026-08-30 with the column; before it, this route accepted no type
+    # parameter of any kind and the only type narrowing in the product was a HARD-CODED
+    # ``workshopType="DESIGN_PROTOTYPE"`` literal on two request builders against the OTHER table.
+    workshopKind: str | None = None,
     craftName: str | None = None,
     state: str | None = None,
     mineOnly: bool = False,
@@ -1646,6 +1658,17 @@ async def list_design_workshops(
         # its empty option, a stale bookmarked URL — came back as a bare 500 with
         # {"error": "FieldNotFoundError"} rather than a 422 naming the values a client can send.
         where["status"] = enum_filter_or_422(statusFilter, DESIGN_WORKSHOP_STATUSES)
+    if workshopKind:
+        # AN EXACT-MATCH ENUM CHECK, NOT `contains`, AND NOT `plain` EITHER — the three treatments
+        # in this block are each correct for a different kind of column and are not interchangeable.
+        # `craftName` below is free text a researcher hunts through, so it is a substring match.
+        # `state` is a closed list but reaches the column as a literal, so it needs the NUL strip.
+        # This is a closed vocabulary the client draws from the registry: a value outside it can
+        # only be a typo, a stale bookmark, or a client whose dropdown labels its empty option —
+        # and answering those with an empty list would say "no workshops of that kind exist", which
+        # is a claim about the repository made from a malformed request. `enum_filter_or_422` is the
+        # same helper `statusFilter` uses, for the same reason, and it names the six in the refusal.
+        where["workshopKind"] = enum_filter_or_422(workshopKind, WORKSHOP_KINDS)
     if craftName:
         where["craftName"] = contains(craftName)
     if state:
@@ -1983,6 +2006,10 @@ async def create_design_workshop(
     seeded = {
         key: value
         for key, value in (
+            # SEEDED INTO STAGE 1 LIKE THE SIX BELOW IT, because the alternative is a workshop whose
+            # column says one kind and whose stage-1 dropdown is blank — and stage 1 is the writer,
+            # so the next save of that stage would null the column back out.
+            ("workshopKind", payload.workshopKind),
             ("craftName", payload.craftName),
             ("clusterName", payload.clusterName),
             ("state", payload.state),

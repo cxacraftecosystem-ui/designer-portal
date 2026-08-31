@@ -13,18 +13,34 @@ from fastapi.responses import Response, StreamingResponse
 # byte-identical between the two endpoints or the ONE client-side reader that consumes both
 # (WorkshopRepository.readManifest on Android) would need two parsers, which is how the two
 # manifests drifted apart the last time they were written separately.
+#
+# THE DESIGN-WORKSHOP THREE JOINED THAT LIST ON 2026-08-31 FOR THE SAME REASON, ONE LEVEL DOWN.
+# ``_DESIGN_WORKSHOP_TAGS`` is the two spellings a workshop's media can carry (see its own note
+# there); ``_dw_info`` is the workshop's details panel; ``_dw_rows_text`` is one entity's rows as a
+# readable block. All three already decide how a design workshop LOOKS in the tree, and the tree and
+# this manifest unpack into the same folders on the same researcher's disk. A second spelling of any
+# of them is how the browser and the zip come to describe one workshop two ways.
 from app.api.routes.data_browser import (
+    _DESIGN_WORKSHOP_TAGS,
+    _dw_info,
+    _dw_rows_text,
     _seg,
     _uniq,
     manifest_ndjson_response,
     workshop_reaches_artisan,
 )
 from app.core.db import db
-from app.core.deps import can_download_dataset, get_current_user
+from app.core.deps import (
+    can_download_dataset,
+    can_export_design_workshop_data,
+    can_view_design_workshop_data,
+    get_current_user,
+)
+from app.services import design_workshop_data as dw
 from app.services.access import owner_download_scope
 from app.services.concurrency import gather_reads
 from app.services.csv_export import records_to_csv
-from app.services.record_fields import info_panel, info_text, interview_label
+from app.services.record_fields import cell, info_panel, info_text, interview_label
 from app.services.records import owned_or_granted_where
 from app.services.s3 import presign_get_url
 
@@ -161,6 +177,106 @@ UNLINKED_ARTISAN_FOLDER = "_Unlinked/_Artisans"
 _DETACHED_SLOT = ("", "")
 
 
+# =============================================================================================
+# THE DESIGN-WORKSHOP HALF OF THE ARCHIVE - added 2026-08-31
+# =============================================================================================
+#
+# WHAT WAS WRONG, AND IT WAS WORSE THAN AN OMISSION. This archive was called
+# ``design-workshop-dataset.zip`` and contained no design workshop: ``grep -c designWorkshop`` over
+# this file answered ZERO, and the twenty-two-stage record the product is named after - around 523
+# field specs across 44 entities - reached no export anywhere. A researcher archived a file whose
+# NAME promised the workshops, opened it a year later, found artisans and products, and had no way
+# to tell whether the workshops had been left out or had never been recorded. The web renamed the
+# download ``repository-dataset.zip`` to stop the filename asserting something false and left a note
+# at ``REPOSITORY_ARCHIVE_NAME`` saying the real fix belonged here. This is that fix, so the name
+# goes back.
+#
+# THE SHAPE IS THE TREE'S SHAPE, NOT A NEW ONE:
+#
+#   Design workshops/<title>/details.txt                        promoted columns + coverage counts
+#   Design workshops/<title>/not-shown.txt                      rows this server cannot describe
+#   Design workshops/<title>/<loose media>                      files no stage row cites
+#   Design workshops/<title>/Stages/NN <title>/<Entity>.txt     one file per entity that has rows
+#   Design workshops/<title>/Stages/NN <title>/<media>          the files THOSE rows cite
+#
+# - which is ``data_browser``'s ``by-design-workshop`` taxonomy, folder for folder, because the two
+# endpoints feed one client-side zip builder and a researcher who browsed the tree has to find the
+# same workshop in the same place inside the archive. Every text block comes from the same two
+# shared helpers the tree calls (``_dw_info``, ``_dw_rows_text``) over the same pure flattener
+# (``services/design_workshop_data``), so there is no second rendering of a stage answer anywhere.
+#
+# WHY THE STAGE IS A FOLDER AND THE ENTITY IS A FILE is argued at that taxonomy in ``data_browser``:
+# the stage is what a designer, a report and a ministry order the fortnight by, and the entity is a
+# TABLE - a document rather than a place.
+DESIGN_WORKSHOP_FOLDER = "Design workshops"
+DW_STAGES_FOLDER = "Stages"
+
+#: What a professor finds where the design workshops would have been.
+#:
+#: A SENTENCE AND NOT A SILENTLY SMALLER ARCHIVE. ``deps.can_view_design_workshop_data`` admits
+#: Professor, Admin and Master Admin; ``deps.can_export_design_workshop_data`` admits only the two
+#: admins, on the owner's ruling that a screen is a reading and a file is a copy that leaves the
+#: building. So there is a real population that browses these workshops on screen and then downloads
+#: an archive without them - and a file outlives the page it came from, so an archive that simply
+#: lacked the section would read, a year later, as a repository with no design workshops in it. That
+#: is the failure the filename used to commit, arriving through the back door. The workbook makes
+#: exactly this choice one endpoint over (``data_browser``: a professor's workbook "drops the
+#: design-workshop sheets and carries ONE in their place naming what was withheld").
+#:
+#: NOT WRITTEN FOR AN ACCOUNT THAT CANNOT SEE THIS DATA AT ALL. A researcher holding
+#: ``canDownloadDataset`` without the rank behind it never meets a design-workshop folder, sheet or
+#: search bucket anywhere in the product - ``can_view_design_workshop_data``'s own docstring says so
+#: - and telling them in a zip about data no screen offers them would be this module inventing a
+#: disclosure the rest of the product does not make.
+DW_WITHHELD_FILE = "NOT INCLUDED.txt"
+
+#: ``media_by`` slot kinds for design-workshop files. Two, because a file is filed under the STAGE
+#: ROW THAT CITES IT where there is one and under the workshop otherwise, and ``add_media`` is keyed
+#: by slot rather than by file.
+#:
+#: THEY ARE NOT ``_media_slot`` ANSWERS AND MUST NOT COLLIDE WITH ONE. ``_media_slot`` cannot place
+#: these rows and never could: a stage photograph's ONLY record of which stage it answers is the
+#: ``DwStageEntry.data`` that names its id (``services/design_workshop_data`` argues at length why
+#: there is deliberately no stage column on ``MediaFile``), and a workshop's loose upload carries
+#: ``designWorkshopId``, which is not in ``_MEDIA_FK_SLOTS`` - so such a row fell out of
+#: ``_media_slot`` as unattached and landed in ``_Unlinked/_Detached files``, while a stage
+#: photograph that had inherited a legacy ``workshopId`` was filed under a DIFFERENT workshop
+#: entirely. The leading underscore keeps these apart from the lower-cased ``linkedRecordType`` the
+#: generic tag fallback can emit; no client writes a tag beginning with one.
+_DW_STAGE_SLOT_KIND = "_dwstage"
+_DW_LOOSE_SLOT_KIND = "_dwworkshop"
+
+
+def _dw_workshop_id_of(media: Any) -> str:
+    """The design workshop one media row belongs to, by either reading, or "".
+
+    The tag pair is what the capture screens write for a stage photograph and for dictation; the
+    ``designWorkshopId`` column is what the Miscellaneous Media form writes for a loose upload. A row
+    may carry one, both or neither - the same union ``data_browser._dw_media_where`` asks for, and it
+    has to stay the same union or the archive and the tree disagree about which files a workshop has.
+    """
+    tag = (getattr(media, "linkedRecordType", "") or "").strip()
+    if tag in _DESIGN_WORKSHOP_TAGS and getattr(media, "linkedRecordId", None):
+        return str(media.linkedRecordId)
+    return str(getattr(media, "designWorkshopId", None) or "")
+
+
+def _dw_answered_stage_keys(entries: list[Any]) -> set[str]:
+    """The stage keys that have at least one row - the count ``details.txt`` reports.
+
+    The same set ``data_browser._dw_stage_folders`` builds, derived the same way, because the folders
+    a researcher opens and the "8 of 22 stages answered" line beside them have to be the same eight.
+    A row whose entity key this build cannot describe counts towards neither: it is reported by name
+    in ``not-shown.txt`` instead, which is the anti-silence half of the same promise.
+    """
+    keys: set[str] = set()
+    for entry in entries:
+        found = dw.entity_by_key(str(getattr(entry, "entityKey", "") or ""))
+        if found is not None:
+            keys.add(found[0].key)
+    return keys
+
+
 def _media_slot(media: Any) -> tuple[str, str] | None:
     """The one ``(record kind, record id)`` slot a media row belongs in, or None when unattached."""
     tag = (media.linkedRecordType or "").strip().lower()
@@ -283,6 +399,71 @@ async def dataset_manifest(
         tools = [t for t in tools if _in_scope("tool", t.id)]
         interviews = [i for i in interviews if _in_scope("questionnaire", i.id)]
 
+    # ===== THE DESIGN-WORKSHOP READ ==========================================================
+    #
+    # A SECOND WAVE AND NOT A SEVENTH COROUTINE IN THE ONE ABOVE, for the reason that wave's own
+    # comment gives: six is inside ``pool_width()`` (10) and the entries read genuinely depends on
+    # the workshop ids the first read returns, so it could never have joined it anyway. The same
+    # split ``data_browser._dw_report_load`` makes, for the same measurement.
+    #
+    # NOTHING IS READ AT ALL FOR AN ACCOUNT THAT MAY NOT EXPORT THIS DATA, so a granted researcher
+    # and a professor pay exactly zero extra round trips and their archive is byte-for-byte the one
+    # they got before this existed. The professor's ONE extra query is a ``count`` on the refusal
+    # path, which is what buys them a sentence instead of a silence - see ``DW_WITHHELD_FILE``.
+    #
+    # ONLY ON THE WHOLE-REPOSITORY PATH, AND ``ownerId`` IS THE WHOLE TEST. An owner-scoped export
+    # is authorised by ``owner_download_scope`` - tiered grants over the SEVEN LEGACY TABLES - and a
+    # design workshop is not one of them: it is gated by ``load_workshop_or_404`` (its creator, an
+    # admin, or a ``DesignWorkshopViewer`` grant), a different ladder with different rows on it.
+    # Emitting workshops into a grant-scoped archive would hand a grantee data no grant they hold
+    # names, and filtering them by the record grant would silently return none while looking
+    # complete. Neither is an answer this module gets to invent, so the section is simply absent
+    # there and the caller who wants it asks for the repository export they are entitled to.
+    dw_records: list[Any] = []
+    dw_entries: list[Any] = []
+    #: How many workshops a professor was refused. ``None`` means "not refused" - either they were
+    #: included, or this caller cannot see design-workshop data at all and is told nothing.
+    dw_withheld: int | None = None
+    if ownerId is None and can_export_design_workshop_data(current_user):
+        dw_records = await db.designworkshop.find_many(
+            where={"deletedAt": None}, take=EXPORT_TAKE, order=_EXPORT_ORDER
+        )
+        truncated = truncated or len(dw_records) >= EXPORT_TAKE
+        if dw_records:
+            # ``ordinal`` ASCENDING INSIDE EACH WORKSHOP, because ordinal is the single ordering
+            # input in this product and it is a hand-made arrangement a designer dragged into place;
+            # ``services/design_workshop_data`` deliberately does not re-sort what it is handed, so
+            # the order asked for here is the order that reaches the file. The ``id`` tiebreak is the
+            # same discipline ``_EXPORT_ORDER`` states: nothing makes ``ordinal`` unique, and a LIMIT
+            # over a non-total order lets two downloads a week apart hold two different five
+            # thousands while both report ``truncated``.
+            dw_entries = await db.dwstageentry.find_many(
+                where={"designWorkshopId": {"in": [r.id for r in dw_records]}, "deletedAt": None},
+                take=EXPORT_TAKE,
+                order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}, {"id": "asc"}],
+            )
+            truncated = truncated or len(dw_entries) >= EXPORT_TAKE
+    elif ownerId is None and can_view_design_workshop_data(current_user):
+        dw_withheld = await db.designworkshop.count(where={"deletedAt": None})
+
+    dw_entries_by_workshop: dict[str, list[Any]] = {}
+    for entry in dw_entries:
+        dw_entries_by_workshop.setdefault(
+            str(getattr(entry, "designWorkshopId", "") or ""), []
+        ).append(entry)
+
+    # WHICH STAGE, ENTITY, ROW AND FIELD EACH FILE IS EVIDENCE OF, derived from the stage rows just
+    # loaded rather than read off the file - ``services/design_workshop_data`` argues at length why
+    # ``MediaFile`` carries no stage column and must not grow one. Merged across workshops without a
+    # collision check for the reason ``data_browser._dw_attributions`` gives: a media id is a cuid
+    # cited by a stage row, so one file in two workshops' rows is a data defect rather than a shape
+    # this has to arbitrate.
+    dw_attributions: dict[str, dw.MediaAttribution] = {}
+    for record in dw_records:
+        dw_attributions.update(
+            dw.media_attributions(record, dw_entries_by_workshop.get(record.id, []))
+        )
+
     # Media is fetched BY the records that will be emitted rather than by scanning the table: only
     # attached media is ever placed in the tree, so ``where={}`` was a full-table read whose extra
     # rows were all discarded. One OR query, so a row matching several conditions is deduped by id.
@@ -317,6 +498,18 @@ async def dataset_manifest(
     for tag, ids in (("process", proc_ids), ("processstep", step_ids)):
         if ids:
             media_or.append({"AND": [{"linkedRecordType": tag}, {"linkedRecordId": {"in": ids}}]})
+    # A design workshop's files, by the SAME union ``data_browser._dw_media_where`` asks for: the tag
+    # pair the capture screens write for a stage photograph or a dictation, and the
+    # ``designWorkshopId`` column the Miscellaneous Media form writes for a loose upload. Both, or
+    # half of them are missing from the archive while the tree shows them - which is the
+    # half-fixed-so-it-looks-fixed shape ``_DESIGN_WORKSHOP_TAGS`` itself warns about. Empty for
+    # every caller who may not export this data, so their query is unchanged.
+    dw_ids = [record.id for record in dw_records]
+    if dw_ids:
+        media_or.append(
+            {"AND": [{"linkedRecordType": {"in": _DESIGN_WORKSHOP_TAGS}}, {"linkedRecordId": {"in": dw_ids}}]}
+        )
+        media_or.append({"designWorkshopId": {"in": dw_ids}})
     media: list[Any] = []
     if media_or:
         media_where: dict[str, Any] = {"OR": media_or}
@@ -337,7 +530,29 @@ async def dataset_manifest(
     # filed by the detached sweep at the bottom.
     media_by: dict[tuple[str, str], list[Any]] = {}
     slotless_media: list[Any] = []
+    dw_id_set = set(dw_ids)
     for m in media:
+        # A DESIGN-WORKSHOP FILE IS SLOTTED BY THE STAGE ROW THAT CITES IT, NOT BY ``_media_slot``,
+        # and this branch is the media half of the identity fix. ``_media_slot`` reads columns; the
+        # only record that a given photograph answers stage 11's "Sketch photographs" is the stage
+        # row itself. Left to ``_media_slot``, a stage photograph that had inherited a legacy
+        # ``workshopId`` was filed under that unrelated workshop's folder, and a loose upload
+        # carrying only ``designWorkshopId`` matched no FK slot at all and was swept into
+        # ``_Unlinked/_Detached files`` as though its parent had been deleted.
+        #
+        # ``dw_id_set`` IS EMPTY FOR EVERY CALLER WHO MAY NOT EXPORT THIS DATA, so this branch cannot
+        # fire for them and their manifest is exactly what it was.
+        if dw_id_set:
+            wid = _dw_workshop_id_of(m)
+            if wid in dw_id_set:
+                attribution = dw_attributions.get(m.id)
+                media_by.setdefault(
+                    (_DW_STAGE_SLOT_KIND, f"{wid}:{attribution.stage_key}")
+                    if attribution is not None
+                    else (_DW_LOOSE_SLOT_KIND, wid),
+                    [],
+                ).append(m)
+                continue
         slot = _media_slot(m)
         if slot is not None:
             media_by.setdefault(slot, []).append(m)
@@ -484,7 +699,22 @@ async def dataset_manifest(
             q = getattr(r, "question", None)
             prompt = getattr(q, "prompt", r.questionId) if q else r.questionId
             code = getattr(q, "sectionCode", "") if q else ""
-            answers.append(f"[{code}] {prompt}\n  -> {r.answerText or ''}\n")
+            # ``cell`` AND NOT ``r.answerText or ""`` — the rich-text read boundary, and the
+            # one line in this file that needed it. ``QuestionnaireResponse.answerText`` is a
+            # ``String?`` that has always held plain prose and, since the answer box became a
+            # ``RichTextField`` on 2026-08-31, sometimes holds a serialised document instead.
+            # The raw value stringifies to ``{"blocks":[{"kind":"PARAGRAPH",…}]}``, and this
+            # line writes ``answers.txt`` into an archive that goes to a ministry — the exact
+            # failure ``report_builder.format_value`` records at its own RICH_TEXT branch, in a
+            # file nobody reads critically a year later, with no emptiness check anywhere
+            # noticing because a JSON-shaped string is not empty.
+            #
+            # ``record_fields.cell`` is the chokepoint every other export surface in this
+            # repository already passes through — its own docstring names the four and says the
+            # guard belongs at the chokepoint rather than at four call sites where the fifth
+            # would be added without it. This WAS that fifth. A plain string comes back
+            # unchanged by identity, so the existing corpus renders byte-for-byte as it did.
+            answers.append(f"[{code}] {prompt}\n  -> {cell(r.answerText)}\n")
         add_text(base, "answers.txt", _details("interview", interview) + "\n\n" + "".join(answers))
         add_media(base, "questionnaire", interview.id)
 
@@ -613,6 +843,107 @@ async def dataset_manifest(
     for it in interviews:
         if it.id not in placed_interviews:
             emit_interview("_Unlinked", it)
+
+    # ===== THE DESIGN WORKSHOPS ==============================================================
+    #
+    # See the block above ``DESIGN_WORKSHOP_FOLDER`` for what this emits and why it is shaped like
+    # the tree. ``dw_records`` is empty for every caller who may not export this data, so this loop
+    # does nothing at all for them and the archive they get is unchanged.
+    #
+    # A SEPARATE TOP-LEVEL FOLDER RATHER THAN NESTED UNDER ``Workshops/``, and the tables force it:
+    # ``Workshop`` and ``DesignWorkshop`` are different models joined only by a NULLABLE
+    # ``DesignWorkshop.workshopId``, so most design workshops have no legacy workshop to sit under
+    # and the ones that do would then be findable in two places. The taxonomy switcher in View Data
+    # draws the same conclusion by being a switcher.
+    for record in dw_records:
+        entries = dw_entries_by_workshop.get(record.id, [])
+        # ``definition=None``: the designer's own questions are NOT named in this archive, and the
+        # note below says so rather than leaving a hole. Naming their columns needs that workshop's
+        # ``DwCustomSection``/``DwCustomField`` rows, which ``custom_sections.load_definition`` reads
+        # in two queries PER WORKSHOP - so a repository export of four hundred workshops would pay
+        # eight hundred cross-region round trips (~750ms each) to label them. ``data_browser`` draws
+        # exactly this line for exactly this reason and loads a definition only when the path names
+        # ONE workshop; a per-workshop folder in the tree therefore still carries
+        # ``designer-questions.txt``, which is where the note sends the reader.
+        grouped, unknown = dw.flatten(record, entries)
+        answered = _dw_answered_stage_keys(entries)
+
+        wbase = _uniq(f"{DESIGN_WORKSHOP_FOLDER}/{_seg(record.title, record.id)}", used_dirs)
+        add_text(wbase, "details.txt", info_text(_dw_info(record, len(answered), len(entries))))
+
+        # ROWS THIS BUILD CANNOT DESCRIBE ARE NAMED, NOT DROPPED - the same anti-silence rule the
+        # tree applies, and the reason ``dw.flatten`` returns the tally beside the rows instead of
+        # logging it. The two cases are told apart because they are different facts and a reader who
+        # is told the wrong one goes looking in the wrong place: an unknown ENTITY key is a row a
+        # handset one release ahead wrote against a newer registry, while ``_custom`` is this
+        # export's own deliberate limitation, explained where it is taken above.
+        notes: list[str] = []
+        for item in unknown:
+            if item.entity_key == dw.CUSTOM_ENTITY_KEY:
+                notes.append(
+                    f"{item.rows} row(s) hold this workshop's own designer-written questions and "
+                    "are not in this archive - naming their columns needs the workshop's own "
+                    "definition. Open the workshop in View Data (By design workshop) and read "
+                    "designer-questions.txt there."
+                )
+            else:
+                notes.append(
+                    f"{item.rows} row(s) under '{item.entity_key}' were written against a newer "
+                    "version of the form and cannot be shown by this server."
+                )
+        add_text(wbase, "not-shown.txt", "\n".join(notes))
+
+        # Which stages have FILES, read back off the buckets the slotting pass built. A stage can
+        # have photographs and no rows this build can describe, and a folder that appeared only when
+        # there was text would drop those files into nothing. A cuid contains no ":", so the prefix
+        # test cannot match another workshop.
+        cited_stages = {
+            slot[1].split(":", 1)[1]
+            for slot in media_by
+            if slot[0] == _DW_STAGE_SLOT_KIND and slot[1].startswith(f"{record.id}:")
+        }
+        for stage in dw.stages():
+            with_rows = [
+                (entity, rows)
+                for entity in stage.entities
+                if (rows := grouped.get(entity.key) or [])
+            ]
+            has_media = stage.key in cited_stages
+            # ONLY STAGES THAT HOLD SOMETHING, exactly as the tree lists them: twenty-two folders of
+            # which most open on nothing is not navigable, and details.txt carries the "N of 22"
+            # count so a short list can never be mistaken for a short workshop.
+            if not with_rows and not has_media:
+                continue
+            sbase = _uniq(
+                f"{wbase}/{DW_STAGES_FOLDER}/"
+                f"{_seg(f'{stage.number:02d} {stage.title}', f'Stage {stage.number}')}",
+                used_dirs,
+            )
+            for entity, rows in with_rows:
+                add_text(
+                    sbase,
+                    f"{_seg(entity.title, entity.key)}.txt",
+                    _dw_rows_text(entity.title, dw.entity_columns(entity), rows),
+                )
+            if has_media:
+                add_media(sbase, _DW_STAGE_SLOT_KIND, f"{record.id}:{stage.key}")
+
+        # The workshop's own files: everything no stage row cites, named for the workshop. Called
+        # unconditionally so the slot is marked placed and the detached sweep below cannot decide
+        # these files have lost their parent.
+        add_media(wbase, _DW_LOOSE_SLOT_KIND, record.id)
+
+    # WHAT A PROFESSOR IS TOLD INSTEAD. See ``DW_WITHHELD_FILE`` for why this is a file in the
+    # archive rather than nothing at all. Nothing is written when the repository holds no design
+    # workshops: "0 design workshops were left out" is a sentence about an absence that is not one.
+    if dw_withheld:
+        add_text(
+            DESIGN_WORKSHOP_FOLDER,
+            DW_WITHHELD_FILE,
+            f"{dw_withheld} design workshop(s) are in this repository and are not in this "
+            "archive.\n\nOnly an admin can download design workshop data. You can read all of it on "
+            "screen: View Data, then the By design workshop folder.\n",
+        )
 
     # THE LAST SWEEP, AND IT IS THE MEDIA HALF OF THE PROMISE THIS MODULE'S HEADER MAKES.
     #

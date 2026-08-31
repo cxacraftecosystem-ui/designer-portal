@@ -6,6 +6,7 @@ import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictatio
 import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
 import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { FieldLabelProvider } from "@/components/ui/fieldLabel";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 /**
  * A labelled slot for an INPUT — a real `<label>`, which is what an input deserves.
@@ -51,7 +52,7 @@ export function Field({
     <label className="grid min-w-0 gap-1">
       <span id={labelId} className="field-label">
         {label}
-        {required ? " *" : ""}
+        <RequiredMark when={required} />
       </span>
       <FieldLabelProvider value={labelId}>{children}</FieldLabelProvider>
     </label>

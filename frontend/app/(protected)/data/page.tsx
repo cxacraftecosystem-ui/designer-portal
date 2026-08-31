@@ -45,7 +45,11 @@ import { ComboBox, Dropdown } from "@/components/ui/Dropdown";
 import { DataSearchPanel } from "@/components/data/DataSearchPanel";
 import { API_BASE, apiFetch, buildQuery, getToken, listResource } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
-import { canDownloadDataset } from "@/lib/permissions";
+import {
+  canDownloadDataset,
+  canExportDesignWorkshopData,
+  canViewDesignWorkshopData
+} from "@/lib/permissions";
 import type {
   Artisan,
   Craft,
@@ -101,6 +105,9 @@ type TreeResponse = {
   taxonomies?: Taxonomy[];
   /** Which taxonomy the current path sits in; null at the root. */
   taxonomy?: string | null;
+  /** Served with every level; see `ReportResponse` for the split these two express. */
+  designWorkshopsVisible?: boolean;
+  designWorkshopsDownloadable?: boolean;
 };
 
 type ManifestFile = {
@@ -145,7 +152,13 @@ const RECORD_ICONS: Record<string, typeof Folder> = {
   process: GitBranch,
   interview: ClipboardList,
   user: UserCircle,
-  category: Folder
+  category: Folder,
+  // The two folder kinds the by-design-workshop taxonomy adds. `Layers` for the workshop because it
+  // is twenty-two stages stacked, `Brush` for a stage because that is the craft-work icon this app
+  // already uses — and NOT a second workshop icon, because `UsersRound` above is the LEGACY
+  // Workshop table and a reader has to be able to tell the two apart at a glance in one tree.
+  designWorkshop: Layers,
+  designWorkshopStage: Brush
 };
 
 function recordIcon(recordType?: string) {
@@ -172,6 +185,37 @@ function fileIcon(entry: TreeEntry) {
 function mp4Path(path: string) {
   return `${path.replace(/\.[^./\\]+$/, "")}.mp4`;
 }
+
+/**
+ * The whole-repository archive's filename — `design-workshop-dataset.zip`.
+ *
+ * ── IT WENT AWAY AND CAME BACK, AND BOTH MOVES WERE THE SAME RULE ────────────────────────────────
+ * IT WAS A FILENAME THAT MISLED BY ITSELF. `GET /export/dataset` built the seven legacy repository
+ * tables and their media and contained not one field of a design & prototype workshop —
+ * `grep -c designWorkshop backend/app/api/routes/export.py` answered zero. A researcher archived a
+ * file whose name promised the twenty-two-stage record, opened it a year later, found artisans and
+ * products, and had no way to tell whether the workshops had been left out or had never been
+ * recorded. That is worse than an omission: it is an artefact that asserts something false about a
+ * corpus, in the one place nobody reads critically. So the name was retired to
+ * `repository-dataset.zip` and this comment named the real fix — make the name TRUE — as belonging
+ * in `export.py` rather than here.
+ *
+ * THAT FIX LANDED ON 2026-08-31 and the name is therefore back. The archive now carries a
+ * `Design workshops/` section: one folder per workshop, its `details.txt`, one `.txt` per entity
+ * that has rows under the stage that owns it, and the photographs those rows cite — the same shape
+ * as the "By design workshop" folder in the tree below, so a researcher finds the workshop in the
+ * archive where they found it on screen. See the block above `DESIGN_WORKSHOP_FOLDER` in
+ * `backend/app/api/routes/export.py`.
+ *
+ * ── AND IT IS STILL NOT TRUE FOR EVERYONE, WHICH IS WHY THE NOTE BELOW SURVIVED ──────────────────
+ * Reading design-workshop data and taking it out are different entitlements
+ * (`canViewDesignWorkshopData` vs `canExportDesignWorkshopData` — a professor holds only the first),
+ * so a professor's archive genuinely does not contain them. The filename cannot say that and does
+ * not try; the sentence after the download does, and the archive itself carries a `NOT INCLUDED.txt`
+ * saying how many workshops were withheld and where to read them. A name is not the place to encode
+ * a permission — a note is.
+ */
+const REPOSITORY_ARCHIVE_NAME = "design-workshop-dataset.zip";
 
 function zipFilename(path: string) {
   const base = path.split("/").filter(Boolean).pop() ?? "dataset";
@@ -237,11 +281,44 @@ type ReportSheet = {
   color?: string | null;
   columns: string[];
   rows: Array<Array<string | number | null>>;
-  /** Server hit its per-sheet row cap; the last row is an explanatory note, not data. */
+  /** Server hit a cap on this sheet. For the row cap, the last row is an explanatory note, not data. */
   truncated?: boolean;
+  /**
+   * Why THIS sheet is truncated, when the reason is not the row cap.
+   *
+   * The banner below used to be the only sentence, and it says "This sheet hit the server row cap …
+   * Download the .xlsx for the rest". That is right for a 5000-row clip and wrong for the
+   * design-workshop index page, which is 44 rows long and truncated because the TAB budget ran out —
+   * a different fact with a different next move, and the .xlsx does not carry the rest either.
+   */
+  truncatedNote?: string | null;
+  /**
+   * Which family a sheet belongs to. Only `"designWorkshop"` is set today, by
+   * `data_browser._dw_stamp`, and it is what tells this panel which tabs the reader may be looking
+   * at and not allowed to export — a question the colour cannot answer, because a palette edit must
+   * never be able to change who may download what.
+   */
+  group?: string | null;
 };
 
-type ReportResponse = { sheets: ReportSheet[] };
+/**
+ * The `group` the server stamps on every design-workshop sheet
+ * (`data_browser.DW_SHEET_GROUP`). A key and not the tab colour, and the server's own note says why:
+ * a palette edit must never be able to change which sheets a permission notice is about.
+ */
+const DW_SHEET_GROUP = "designWorkshop";
+
+type ReportResponse = {
+  sheets: ReportSheet[];
+  /** Whether this account may read design-workshop tables at all (Professor and above). */
+  designWorkshopsVisible?: boolean;
+  /**
+   * Whether it may take them OUT (Admin and Master Admin). A professor is `true` above and `false`
+   * here, so this panel has to SAY the difference where the download button is — handing them a
+   * button that answers 403 would teach them the product is broken rather than that the rule exists.
+   */
+  designWorkshopsDownloadable?: boolean;
+};
 
 /** Normalize a sheet color (accepts `RRGGBB`, `AARRGGBB`, or `#RRGGBB`) to a CSS color. */
 function sheetColor(raw?: string | null) {
@@ -326,6 +403,19 @@ function DataTablesPanel({
   );
   const sheet = sheets[activeSheet];
 
+  /**
+   * True exactly when this reader is looking at design-workshop tables they may not export.
+   *
+   * BOTH HALVES, and neither alone. `designWorkshopsDownloadable === false` alone would print the
+   * notice on every folder in the repository, including the ones that hold no design workshop at
+   * all — a permission notice about data that is not on the screen reads as a fault. The sheet test
+   * is what ties it to what the reader can actually see.
+   */
+  const exportBlocked = useMemo(
+    () => report?.designWorkshopsDownloadable === false && sheets.some((entry) => entry.group === DW_SHEET_GROUP),
+    [report, sheets]
+  );
+
   /** Case-insensitive match across every cell of a row. */
   const rows = useMemo(() => {
     if (!sheet) return [];
@@ -379,6 +469,17 @@ function DataTablesPanel({
           {downloading ? "Preparing report…" : "Download report (.xlsx)"}
         </button>
       </div>
+      {/* SAID WHERE IT APPLIES — beside the button, not in a help page. This reader can see the
+          design-workshop tabs below and the workbook they download will not carry them, so the
+          sentence has to be where the decision to click is made. The FILE says it too — the server
+          replaces the dropped block with one sheet naming what was withheld — because a workbook
+          outlives this page; these are the two halves of one answer, not a duplicate. The button
+          stays enabled: the rest of the workbook is theirs and always has been. */}
+      {exportBlocked ? (
+        <p className="border-t border-line-200 bg-surface-50 px-4 py-2 text-xs text-ink-500">
+          Design workshop tables are on screen only. The .xlsx carries the rest.
+        </p>
+      ) : null}
       {error ? <div className="border-t border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div> : null}
       <AnimatePresence initial={false}>
         {open ? (
@@ -465,8 +566,8 @@ function DataTablesPanel({
 
                       {sheet.truncated ? (
                         <p className="mx-4 mb-3 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-800">
-                          This sheet hit the server row cap, so it shows the first slice of a larger
-                          set. Download the .xlsx or browse a narrower folder for the rest.
+                          {sheet.truncatedNote ??
+                            "This sheet hit the server row cap, so it shows the first slice of a larger set. Download the .xlsx or browse a narrower folder for the rest."}
                         </p>
                       ) : null}
 
@@ -718,6 +819,11 @@ function mediaTypeIcon(mediaType?: string | null) {
 }
 
 function BrowseByTypePanel() {
+  // WHETHER THIS READER HAS SOMEWHERE ELSE TO GO for the design-workshop half, which decides whether
+  // the note after a download names it. Mirrors `deps.can_view_design_workshop_data`; a reader who
+  // cannot open that folder must not be told to.
+  const { user } = useAuth();
+  const designWorkshopsVisible = canViewDesignWorkshopData(user);
   const [typeKey, setTypeKey] = useState("");
   /**
    * The page on screen, envelope and all. `null` means "loading", `[]` means "there really are
@@ -866,7 +972,7 @@ function BrowseByTypePanel() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = "design-workshop-dataset.zip";
+      anchor.download = REPOSITORY_ARCHIVE_NAME;
       anchor.click();
       URL.revokeObjectURL(url);
       // A capped export that presents itself as complete is the worst outcome here — the researcher
@@ -874,10 +980,30 @@ function BrowseByTypePanel() {
       const capNote = manifest.truncated
         ? " This export hit the server's row cap, so it does NOT contain the whole data set — narrow it down or ask an admin for a full extract."
         : "";
+      // WHAT THIS ARCHIVE IS NOT, said once, to the readers for whom the absence is a question — and
+      // as of 2026-08-31 that is a much smaller group, because `GET /export/dataset` now builds the
+      // design-workshop half. Three states, not two:
+      //
+      //   * an ADMIN gets the workshops and is told so, because a researcher who has read this note
+      //     for weeks would otherwise have to open the zip to find out it had changed;
+      //   * a PROFESSOR may read those workshops and may not download them
+      //     (`canExportDesignWorkshopData` excludes them, deliberately: a screen is a reading, a file
+      //     is a copy that leaves the building), so the sentence ends in the place they CAN read them
+      //     rather than in a refusal;
+      //   * everybody else is told nothing at all, because they meet no design-workshop folder, sheet
+      //     or search bucket anywhere in this product and a note about data no screen offers them
+      //     would be this page inventing a disclosure.
+      const dwNote = !designWorkshopsVisible
+        ? ""
+        : canExportDesignWorkshopData(user)
+          ? " Design workshop stages are in it, under Design workshops."
+          : " Design workshop stages are not in it — open the By design workshop folder below.";
       setDatasetNote(
         (failed.length
           ? `Archive saved — ${manifest.files.length - failed.length} of ${manifest.files.length} files (${failed.length} failed, listed in _failed-downloads.txt).`
-          : `Archive saved — ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"}.`) + capNote
+          : `Archive saved — ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"}.`) +
+          capNote +
+          dwNote
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to download the dataset");

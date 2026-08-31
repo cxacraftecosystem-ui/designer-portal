@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DesignServices
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.FindInPage
+import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.Inventory2
@@ -294,6 +295,42 @@ object FieldPermissions {
      * nothing here and the API refuses every design-workshop write they attempt.
      */
     fun canRunDesignWorkshops(user: UserDto): Boolean = user.role in DESIGN_WORKSHOP_ROLES
+
+    /**
+     * Who may READ design-workshop stage data through a RESEARCH surface — the `designWorkshops`
+     * bucket of `GET /search`, and the design-workshop tables in View Data.
+     *
+     * Byte-for-byte `deps.DESIGN_WORKSHOP_DATA_VIEW_ROLES` and the web's own set
+     * (`lib/permissions.ts`). The owner's ruling of 2026-08-30, verbatim: *"professor can view data
+     * for design workshops as well, admins and master admins can download and view it too."*
+     *
+     * ── IT IS ALMOST THE OPPOSITE SET TO [DESIGN_WORKSHOP_ROLES], AND THAT IS NOT A CONTRADICTION ─
+     *
+     * This one INCLUDES professor and EXCLUDES designer; that one does the reverse. They are
+     * different acts. Running a workshop is WRITING inside somebody's fortnight of work. This is
+     * READING a table of what a corpus of workshops recorded. A designer is not here because a
+     * designer reaches their own workshops through a per-record grant, whereas this predicate opens
+     * EVERY workshop in the repository to a research reader — the two doors are different sizes.
+     * `docs/DECISION-design-workshop-data-in-view-data.md` §2.2 carries the argument in full.
+     *
+     * A SET AND NOT `rank(user.role) >= RANK_PROFESSOR`, for the reason §2.3 gives: the tier
+     * immediately below professor is INSPECTOR (37), somebody who inspects ONE workshop under a
+     * grant, and a floor would hand them every workshop in the repository the day a rank is
+     * renumbered. The owner named three roles, not a threshold.
+     *
+     * WHAT IT GATES HERE IS THE CHIP, NOT THE ANSWER. The server drops the bucket for a caller
+     * without this and names it in `typesRefused`; this predicate only decides whether the handset
+     * OFFERS the tick box, so a researcher is not given a control whose every use is refused.
+     */
+    fun canViewDesignWorkshopData(user: UserDto): Boolean =
+        user.role in DESIGN_WORKSHOP_DATA_VIEW_ROLES
+
+    /**
+     * Who may READ design-workshop stage data on a research surface. See [canViewDesignWorkshopData].
+     *
+     * Byte-for-byte `deps.DESIGN_WORKSHOP_DATA_VIEW_ROLES`.
+     */
+    private val DESIGN_WORKSHOP_DATA_VIEW_ROLES = setOf("PROFESSOR", "ADMIN", "MASTER_ADMIN")
 
     /**
      * `can_create_design_workshops` — START a new design & prototype workshop. ADMIN AND ABOVE ONLY.
@@ -633,7 +670,35 @@ enum class NavDestination {
      */
     ACCESS_ROSTER,
     SETTINGS,
-    GIVE_FEEDBACK
+    GIVE_FEEDBACK,
+    /**
+     * THE TERMS AND CONDITIONS — the agreement the sign-in box accepts, readable again afterwards.
+     *
+     * ── WHY THE MENU NEEDS A ROW FOR SOMETHING THE DOOR ALREADY LINKS TO ─────────────────────────
+     *
+     * On the web the terms are a public URL: a person who has signed in reaches them by typing it,
+     * from a bookmark, or from the sign-in screen they can always go back to. A handset has none of
+     * those. Without this row the ONLY route to the agreement would be the underlined phrase on the
+     * sign-in screen — which is to say, a designer could read what they agreed to right up until the
+     * moment they agreed to it and never again. That is the whole justification; it is not symmetry
+     * for its own sake.
+     *
+     * ── ACCOUNT, AND UNGATED ─────────────────────────────────────────────────────────────────────
+     *
+     * Account, beside Settings and feedback, because the agreement belongs to the PERSON and not to
+     * the repository. `everyone`, because every tier signed the same terms and there is no endpoint
+     * behind the nine clauses at all — they are constants in this binary. Clause 10 does call
+     * `GET /usage/consent/notice`, and a phone that cannot reach it still gets the other nine, which
+     * is exactly what [TermsScreen] is built to do.
+     *
+     * ── IT IS A DIALOG, NOT A `Screen` ───────────────────────────────────────────────────────────
+     *
+     * Routed like [WALKTHROUGH]: it draws OVER whatever the reader was on and takes nothing away, so
+     * it is exempt from the unsaved-changes guard and needs no `goBack` arm. The deeper reason is the
+     * sign-in door — the same composable has to open before there is a token or a `Screen` at all, so
+     * a route would work from the menu and from nowhere else.
+     */
+    TERMS
 }
 
 data class NavEntry(
@@ -790,7 +855,12 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // app would ever read back — and `PUT /designers/me/profile` refuses them anyway.
     NavEntry(NavDestination.DESIGNER_PROFILE, "My designer profile", Icons.Filled.Badge, NavGroup.ACCOUNT, FieldPermissions::canRunDesignWorkshops, "can_run_design_workshops"),
     NavEntry(NavDestination.SETTINGS, "Settings", Icons.Filled.Settings, NavGroup.ACCOUNT, everyone, "get_current_user (PUT /preferences/me)"),
-    NavEntry(NavDestination.GIVE_FEEDBACK, "Give app feedback", Icons.Filled.RateReview, NavGroup.ACCOUNT, everyone, "get_current_user (PUT /feedback/me)")
+    NavEntry(NavDestination.GIVE_FEEDBACK, "Give app feedback", Icons.Filled.RateReview, NavGroup.ACCOUNT, everyone, "get_current_user (PUT /feedback/me)"),
+    // The agreement the sign-in box accepts. `everyone` and no gate at all: the nine clauses are
+    // constants in this binary, and clause 10's `GET /usage/consent/notice` is served to anybody who
+    // asks — it is the text a person is asked to agree to BEFORE they have a token. See
+    // [NavDestination.TERMS] for why the menu needs this row when the door already links to it.
+    NavEntry(NavDestination.TERMS, "Terms and conditions", Icons.Filled.Gavel, NavGroup.ACCOUNT, everyone, "none (static clauses; GET /usage/consent/notice for clause 10, unauthenticated)")
 )
 
 /**

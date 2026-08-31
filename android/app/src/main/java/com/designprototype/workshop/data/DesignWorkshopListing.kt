@@ -211,7 +211,21 @@ suspend fun walkDesignWorkshopPages(
  * the list endpoint in `api/routes/design_workshops.py`). Omitting it is what puts the request in the
  * server's `elif not is_admin` arm, where `visible_to_clause` applies and a grant counts.
  */
-suspend fun WorkshopRepository.visibleDesignWorkshops(search: String? = null): DesignWorkshopListing =
+suspend fun WorkshopRepository.visibleDesignWorkshops(
+    search: String? = null,
+    /**
+     * Narrow to one `WORKSHOP_KIND`, or null for every type.
+     *
+     * ON THE SERVER AND NOT OVER THE GATHERED ROWS, and that is the whole reason it is a parameter
+     * here rather than a `filter` at the call site. This walk stops at [DW_LIST_MAX_PAGES], so a
+     * client-side filter would search only the pages that happened to be fetched and answer "no
+     * Skill Upgradation workshops" about a repository full of them — absence read as non-existence,
+     * over a list the filter could never reach. `total` also comes back narrowed, so the "Showing
+     * N of M" sentence counts the workshops of the chosen type instead of counting all of them and
+     * looking wrong beside a shorter list.
+     */
+    workshopKind: String? = null,
+): DesignWorkshopListing =
     walkDesignWorkshopPages { page, pageSize ->
-        designWorkshops(page = page, pageSize = pageSize, search = search)
+        designWorkshops(page = page, pageSize = pageSize, search = search, workshopKind = workshopKind)
     }

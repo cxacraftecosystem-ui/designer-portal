@@ -567,8 +567,11 @@ fun LocationCaptureCard(
     if (collapsed) return
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // THIS RENDER IS ALSO `LocationFields`' HEADING. That file passes `title = "Captured
+        // coordinates *"` as a literal, so marking it here — rather than at the default below —
+        // is what puts the caller's mark in the error colour too.
         Text(
-            title ?: if (required) "Location *" else "Location",
+            requiredMarked(title ?: if (required) "Location *" else "Location"),
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold
         )
@@ -685,7 +688,7 @@ fun LocationCaptureCard(
             OutlinedTextField(
                 value = latText,
                 onValueChange = { latText = it; emitTyped() },
-                label = { Text("Latitude" + if (required) " *" else "") },
+                label = { Text(requiredMarked("Latitude" + if (required) " *" else "")) },
                 isError = showRequirementError && value == null,
                 singleLine = true,
                 modifier = Modifier.weight(1f)
@@ -693,7 +696,7 @@ fun LocationCaptureCard(
             OutlinedTextField(
                 value = lngText,
                 onValueChange = { lngText = it; emitTyped() },
-                label = { Text("Longitude" + if (required) " *" else "") },
+                label = { Text(requiredMarked("Longitude" + if (required) " *" else "")) },
                 isError = showRequirementError && value == null,
                 singleLine = true,
                 modifier = Modifier.weight(1f)

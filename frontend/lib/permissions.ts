@@ -813,6 +813,62 @@ export function canCreateDesignWorkshops(user: User | null | undefined) {
 }
 
 /**
+ * Who may READ design-workshop stage data on the RESEARCH surfaces — the design-workshop taxonomy
+ * and sheets in View Data, and the design-workshop bucket of Search.
+ *
+ * A NEW CAPABILITY BESIDE {@link DESIGN_WORKSHOP_ROLES}, NOT A WIDENING OF IT, and the two sets are
+ * almost opposites: that one holds DESIGNER and refuses PROFESSOR, this one holds PROFESSOR and
+ * refuses DESIGNER. That is not a contradiction, it is two different acts. Running a workshop is
+ * writing inside somebody's fortnight of work; this is reading a table of what a corpus of them
+ * recorded. A professor who gains this gains nothing at all inside any workshop, and a designer
+ * reaches their OWN workshops through a per-record grant rather than through a door onto every
+ * workshop in the repository.
+ *
+ * IT IS NOT `canDownloadDataset`, WHICH IS THE GATE ON THE SCREEN IT APPEARS ON. That predicate is
+ * "Professor and above, OR the grantable `canDownloadDataset` flag", and the flag is the whole
+ * difference: it is handed to a RESEARCHER who needs the seven legacy tables for a piece of work
+ * and carries no seniority. Design-workshop stage data — artisan dictation, consent decisions,
+ * unpublished prototype work — is gated on RANK, so a researcher holding the flag browses View Data
+ * exactly as they do today and simply never meets a design-workshop folder, sheet or bucket.
+ *
+ * Owner ruling, 2026-08-30: "professor can view data for design workshops as well, admins and
+ * master admins can download and view it too."
+ * `backend/app/core/deps.py::DESIGN_WORKSHOP_DATA_VIEW_ROLES` carries the identical set and must
+ * keep carrying it. See `docs/DECISION-design-workshop-data-in-view-data.md`.
+ */
+export const DESIGN_WORKSHOP_DATA_VIEW_ROLES: readonly UserRole[] = [
+  "PROFESSOR",
+  "ADMIN",
+  "MASTER_ADMIN"
+];
+
+export function canViewDesignWorkshopData(user: User | null | undefined) {
+  return !!user && DESIGN_WORKSHOP_DATA_VIEW_ROLES.includes(user.role);
+}
+
+/**
+ * Who may TAKE design-workshop stage data out of the product — the .xlsx workbook, a CSV, the
+ * whole-repository archive. Admin and Master Admin; a PROFESSOR is deliberately not here.
+ *
+ * THE SPLIT IS THE POINT, AND IT IS THE REASON THIS IS A SECOND PREDICATE RATHER THAN A FLAG ON THE
+ * FIRST. There is a real population — professors — that reads a table on screen and may not export
+ * the same rows, which is narrower than `/data`'s single `canDownloadDataset` gate has ever been
+ * for the seven legacy tables. A screen is a reading; a file is a copy that leaves the building.
+ *
+ * SO EVERY SURFACE THAT OFFERS AN EXPORT BESIDE THOSE ROWS MUST SAY SO WHERE IT APPLIES. Handing a
+ * professor a download button that answers 403 teaches them the product is broken rather than that
+ * the rule exists — this file's standing rule is that the UI never offers what the API refuses, and
+ * a button that appears and then fails is the loudest possible way to break it.
+ *
+ * `backend/app/core/deps.py::DESIGN_WORKSHOP_DATA_EXPORT_ROLES` is its twin.
+ */
+export const DESIGN_WORKSHOP_DATA_EXPORT_ROLES: readonly UserRole[] = ["ADMIN", "MASTER_ADMIN"];
+
+export function canExportDesignWorkshopData(user: User | null | undefined) {
+  return !!user && DESIGN_WORKSHOP_DATA_EXPORT_ROLES.includes(user.role);
+}
+
+/**
  * What a designer is told when they try to start a workshop — ONE sentence, in ONE place, because
  * it is said on four surfaces: the list page's panel, the offline draft store's refusal, the
  * server's 403 (`backend/app/core/deps.py::DESIGN_WORKSHOP_CREATE_REFUSAL`) and any dialog that

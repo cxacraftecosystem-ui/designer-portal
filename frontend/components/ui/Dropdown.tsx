@@ -19,6 +19,7 @@
 import {
   SearchableMultiSelect,
   SearchableSelect,
+  type SelectCreateAction,
   type SelectOption,
   type SelectServerQuery
 } from "@/components/ui/SearchableSelect";
@@ -33,6 +34,14 @@ export type DropdownOption = SelectOption;
  * size and the diacritic folding it costs — is written down.
  */
 export type DropdownServerQuery = SelectServerQuery;
+
+/**
+ * Re-exported for the same reason `DropdownOption` and `DropdownServerQuery` are: this module is the
+ * address most of the app imports a picker from, and a caller wiring a creatable combo should not
+ * have to know which of the two files the type happens to live in.
+ * `components/ui/SearchableSelect` is the source of truth and carries the whole argument.
+ */
+export type DropdownCreateAction = SelectCreateAction;
 
 /** Themed single-select dropdown — the app's replacement for the plain browser <select>. */
 export function Dropdown({
@@ -49,7 +58,8 @@ export function Dropdown({
   capHint,
   advanceOnSelect = true,
   serverQuery,
-  noneLabel
+  noneLabel,
+  createAction
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -112,6 +122,15 @@ export function Dropdown({
    * everything by absence, not by a row. See `SearchableSelectProps.noneLabel`.
    */
   noneLabel?: string;
+  /**
+   * Turn this from a picker into a CREATABLE COMBO: the term the reader typed is offered as an
+   * answer of its own, under the list. Absent — the default — is exactly today's behaviour.
+   *
+   * Forwarded here because it was going to be needed through this adapter first: the design
+   * workshop's own title is reached through `Dropdown`, not through the primitive. The contract, and
+   * the written objection it answers, are on `SelectCreateAction`.
+   */
+  createAction?: DropdownCreateAction;
 }) {
   return (
     <SearchableSelect
@@ -129,6 +148,7 @@ export function Dropdown({
       advanceOnSelect={advanceOnSelect}
       serverQuery={serverQuery}
       noneLabel={noneLabel}
+      createAction={createAction}
     />
   );
 }

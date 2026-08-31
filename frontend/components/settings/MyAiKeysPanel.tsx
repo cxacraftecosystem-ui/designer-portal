@@ -6,6 +6,7 @@ import { ChevronDown, ExternalLink, KeyRound, Loader2, Trash2 } from "lucide-rea
 import { apiFetch } from "@/lib/api";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { FieldLabelProvider } from "@/components/ui/fieldLabel";
+import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
 
 /**
  * **A designer's OWN provider keys.** One card, one row per provider, and an accordion per provider
@@ -203,6 +204,8 @@ function ProviderRow({
   onChanged: (next: KeyState) => void;
 }) {
   const [key, setKey] = useState("");
+  /** Per-render only, never persisted: this is a shared machine. See `PasswordRevealButton`. */
+  const [revealKey, setRevealKey] = useState(false);
   const [model, setModel] = useState(state.model);
   const [busy, setBusy] = useState<null | "save" | "test" | "remove">(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -262,16 +265,30 @@ function ProviderRow({
       <label className="mt-3 block text-xs font-medium text-ink-700" htmlFor={`key-${provider.provider}`}>
         {state.configured ? "Replace the key" : "Paste your key"}
       </label>
-      <input
-        id={`key-${provider.provider}`}
-        type="password"
-        autoComplete="off"
-        spellCheck={false}
-        value={key}
-        onChange={(event) => setKey(event.target.value)}
-        placeholder={provider.keyPrefix ? `${provider.keyPrefix}…` : "Your API key"}
-        className="mt-1 w-full rounded-md border border-line-200 bg-card px-3 py-2 font-mono text-sm text-ink-900"
-      />
+      {/*
+        THE EYE, ADDED 2026-08-30, and the reason is the same one as `ApiKeysPanel`'s with one
+        addition: this key is the PERSON'S OWN, billed to them, and a mistyped one costs them a
+        support conversation about somebody else's provider. `relative` on the wrapper is what
+        the absolutely-positioned button needs; `pr-10` is where it sits.
+      */}
+      <div className="relative mt-1">
+        <input
+          id={`key-${provider.provider}`}
+          type={revealKey ? "text" : "password"}
+          autoComplete="off"
+          spellCheck={false}
+          value={key}
+          onChange={(event) => setKey(event.target.value)}
+          placeholder={provider.keyPrefix ? `${provider.keyPrefix}…` : "Your API key"}
+          className="w-full rounded-md border border-line-200 bg-card px-3 py-2 pr-10 font-mono text-sm text-ink-900"
+        />
+        <PasswordRevealButton
+          revealed={revealKey}
+          onToggle={() => setRevealKey((value) => !value)}
+          size={16}
+          noun="key"
+        />
+      </div>
 
       {/*
         ── THE THEMED DROPDOWN, AND WHY THE ARGUMENT FOR THE NATIVE `<select>` DID NOT SURVIVE ─────

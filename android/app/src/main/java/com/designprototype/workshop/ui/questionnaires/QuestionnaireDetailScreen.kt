@@ -45,7 +45,9 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.cachedQuestionnaireNotice
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
+import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.designWorkshopLabel
+import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.RecordProseField
@@ -317,6 +319,24 @@ fun QuestionnaireDetailScreen(
                                 "Detached from its design workshop."
                             } else {
                                 "Attached to the design workshop."
+                            }
+                        }
+                    },
+                    onSetKind = { kind ->
+                        mutate("The kind could not be changed.") {
+                            repository.updateCustomQuestionnaire(
+                                id = questionnaireId,
+                                // `changeKind` is what turns a blank into "clear it" rather than
+                                // into "leave it alone" — the same pairing `changeWorkshop` above
+                                // needs, and for the same reason. See customQuestionnaireUpdateJson.
+                                kind = kind.takeIf { it.isNotBlank() },
+                                changeKind = true,
+                            )
+                            if (kind.isBlank()) {
+                                "Kind cleared. The report leaves its answers unfiled until a kind is chosen."
+                            } else {
+                                "Filed as ${labelForQuestionnaireKind(kind)}. The report puts its " +
+                                    "answers under that stage."
                             }
                         }
                     },
@@ -688,6 +708,7 @@ private fun HeaderCard(
     workshops: AttachableWorkshops,
     onRename: () -> Unit,
     onAttach: (String) -> Unit,
+    onSetKind: (String) -> Unit,
     onSetActive: (Boolean) -> Unit,
 ) {
     ElevatedCard(
@@ -761,6 +782,44 @@ private fun HeaderCard(
                     // same guard on the create dialog.
                     workshops.notice()?.let { EmptyNote(it) }
                 }
+                /*
+                  THE KIND, CHANGEABLE HERE — the same control and the same wording as the create
+                  dialog and as the web, and it needs no off-page handling of the sort the workshop
+                  picker above does: the vocabulary is two fixed members that every build carries, so
+                  a stored value is always one of the rows unless it came from a NEWER server, and
+                  [labelForQuestionnaireKind] prints such a token as itself rather than as "Not
+                  stated". Nothing here can silently re-file a questionnaire the way a mislabelled
+                  workshop trigger could.
+
+                  It saves on select, like the attach control beside it: a pick has nothing to
+                  proofread, and a designer who chose a kind and left the screen would have chosen
+                  nothing.
+                */
+                SearchableSelectField(
+                    label = "Kind",
+                    // ``(token, text)`` AND NOT the tidier ``(value, label)``, and this is not a
+                    // preference: naming them after the parameters they fill would write the
+                    // parameter name twice in a row here — and that exact two-word sequence is what
+                    // ``QuestionnaireDictationParityTest`` searches for, taking its FIRST occurrence
+                    // in the file, to prove the shared section-title dialog passes its caption
+                    // through to a dictated box. This dropdown sits above that dialog, so the
+                    // obvious names quietly stole the assertion and left a real guarantee passing
+                    // for a reason that had nothing to do with it. Measured, 2026-08-30: the test
+                    // went red on the first spelling and green on this one.
+                    //
+                    // THE SAME TRAP CATCHES A COMMENT. Do not restore the sequence in prose here
+                    // either — a source-reading test cannot tell code from the paragraph describing
+                    // it, which is how this note failed once before being reworded.
+                    options = QUESTIONNAIRE_KIND_LABELS.map { (token, text) ->
+                        SelectOption(value = token, label = text)
+                    },
+                    selectedValue = form.kind.orEmpty(),
+                    placeholder = "Not stated",
+                    includeNone = true,
+                    enabled = !busy,
+                    onSelect = onSetKind
+                )
+                EmptyNote("Decides which stage of the report this questionnaire's answers are filed under.")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(onClick = onRename, enabled = !busy, modifier = Modifier.weight(1f)) {
                         Text("Rename")
@@ -1163,7 +1222,7 @@ private fun QuestionRow(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Text(
-            question.prompt + if (question.isRequired) " *" else "",
+            requiredMarked(question.prompt + if (question.isRequired) " *" else ""),
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 13.sp
         )

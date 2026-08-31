@@ -2,6 +2,8 @@ package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.data.DesignWorkshopDto
 import com.designprototype.workshop.data.DraftRow
+import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.EntityDto
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.StageDraft
@@ -266,6 +268,88 @@ internal fun dwChooserHeldMedia(row: DraftRow?, fieldKey: String): List<String> 
     }
 }
 
+// --------------------------------------------------------------------------------------
+// Tentative sketches, and the one place they are brought to the top
+// --------------------------------------------------------------------------------------
+
+/**
+ * The registry key the "Tentative" flag is stored under. The web's `TENTATIVE_FIELD_KEY`, verbatim.
+ *
+ * NOT INFERRED FROM A PATTERN. It is an exact key on an exact entity (`sketch`, stage 11), and a
+ * pattern would put a chip on some other collection's boolean the day one is added.
+ */
+internal const val DW_TENTATIVE_FIELD_KEY: String = "isTentative"
+
+/**
+ * The registry's own field, or null where this entity declares none.
+ *
+ * READ SO THE WORD ON SCREEN IS THE SCHEMA'S. `stage_definitions.py` labels it "Tentative"; a string
+ * typed into a Composable would be the copy that goes stale when the label is edited, and it has to
+ * match the checkbox on the stage form and the web's chip exactly. `prototype` declares no such
+ * field, so its picker draws nothing — an ordinary state, not an error.
+ */
+internal fun dwTentativeField(entity: EntityDto?): FieldDto? =
+    entity?.liveFields?.firstOrNull {
+        it.key == DW_TENTATIVE_FIELD_KEY && DwFieldType.of(it.type) == DwFieldType.BOOL
+    }
+
+/**
+ * Is this row marked tentative?
+ *
+ * THROUGH [DwValues.bool] AND NOT A HAND-ROLLED CAST, for the reason the whole of that object exists:
+ * `JsonNull` IS a `JsonPrimitive`, and a bare `.content` off one hands back the four-character string
+ * "null" — the trap [dwChooserRowLabel] already carries a note about. It is also the helper the BOOL
+ * control on the stage form reads, so a row that draws as ticked is exactly a row that reads as
+ * tentative here.
+ *
+ * `== true` AND NOT `!= false`. [DwValues.bool] answers null for "not answered", which is NOT the
+ * same as `false` anywhere else in this client and must not become the same thing here: the registry
+ * left the box optional on purpose, and an unanswered sketch is treated exactly as it was before this
+ * feature existed — the owner's own second clause.
+ *
+ * IT TAKES THE VALUES MAP AND NOT A ROW TYPE, because this client has TWO row types over one shape:
+ * `DraftRow` in the store and the chooser, and `StageScreen`'s private `CollectionRow`. An overload
+ * per type would be two answers to one question waiting to drift; the map is what both of them are.
+ */
+internal fun dwIsTentativeRow(values: Map<String, JsonElement>?): Boolean =
+    DwValues.bool(values?.get(DW_TENTATIVE_FIELD_KEY)) == true
+
+/**
+ * THE PARTITION: tentative items first in their existing order, then the rest in theirs.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ * WHAT THIS IS FOR, AND THE ONE RULE ABOUT WHERE IT MAY BE USED
+ * ══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The owner, 2026-08-30: designers mark a sketch tentative "to bring them to the top of the list,
+ * these are not finalised". Nothing in this app can pin a row to the top of a list — `ordinal` is the
+ * only ordering input there is and `buildStageBody` derives it from the ARRAY ORDER at send time — so
+ * this is a STABLE PARTITION applied when a list is DRAWN and never a write. A designer's own
+ * arrangement inside each group survives, and unticking the box returns a row to precisely the
+ * position it would have had, because the stored order never moved.
+ *
+ * **A SURFACE THAT READS A LIST, NEVER ONE THAT WRITES IT.** On the two surfaces where the array on
+ * screen IS the array that gets persisted — the stage form's collection rows in `StageScreen.kt`, and
+ * the design-review list over [DwRankableList] — a display partition would BE a new `ordinal`, saved,
+ * with no way back; both of those show the stored order and say which rows are tentative with a word
+ * instead, and each carries the argument at the point of the decision. The Upload tab's row picker
+ * only chooses which row a file lands on, so it partitions.
+ *
+ * GENERIC, AND THAT IS WHY IT TAKES A PREDICATE. The picker partitions `(row, index)` pairs, because
+ * the index has to stay the row's position on the STAGE FORM: [dwChooserRowLabel] falls back to
+ * "Untitled 3" and the picker's hint reads "Row 3 of 8", and a designer who goes looking for the
+ * third sketch must find the third sketch.
+ *
+ * `partition` RETURNS TWO LISTS IN SOURCE ORDER, which is the whole behaviour — a `sortedBy` would
+ * also have worked (Kotlin's sort is stable) and would have said less. The web's `tentativeFirst`
+ * (`frontend/lib/sketchTentative.ts`) is the same three lines; `DwSketchTentativeTest` pins both
+ * halves of the ordering here and `sketch-tentative-unit.spec.ts` pins them there.
+ */
+internal fun <T> dwTentativeFirst(items: List<T>, isTentative: (T) -> Boolean): List<T> {
+    val (first, rest) = items.partition(isTentative)
+    return first + rest
+}
+
 /**
  * Write [ids] back into [fieldKey] on the row [rowKey] names, and return the whole collection.
  *
@@ -444,11 +528,18 @@ internal fun dwChooserDefaultWorkshop(
  * into a row that does not exist. Falling back to the first row is what the web's upload host does
  * (`setSketchRow(current => current || …)`), and it means a designer who never touched the picker
  * still has somewhere to attach to.
+ *
+ * AND "THE FIRST ROW" IS THE FIRST ROW OF THE LIST AS DRAWN — which since the tentative flag landed
+ * is the first TENTATIVE sketch where there is one. The picker orders its options through
+ * [dwTentativeFirst]; a fallback that pointed at the stored first row instead would leave the control
+ * showing one row at the top and holding a different one as its value, and the capture cards below
+ * write to the VALUE. A designer would attach a photograph to a sketch other than the one the list is
+ * offering them, silently. One partition, read by both. (The web's `firstOffered` is the same line.)
  */
 internal fun dwChooserKeepSelection(chosen: String, rows: List<DraftRow>): String {
     if (rows.isEmpty()) return ""
     if (chosen.isNotBlank() && rows.any { dwChooserRowKey(it) == chosen }) return chosen
-    return dwChooserRowKey(rows.first())
+    return dwChooserRowKey(dwTentativeFirst(rows) { dwIsTentativeRow(it.values) }.first())
 }
 
 /**

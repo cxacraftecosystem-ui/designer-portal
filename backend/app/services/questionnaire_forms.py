@@ -76,6 +76,7 @@ from typing import Any
 
 from app.core.db import db
 from app.services.concurrency import gather_reads
+from app.services.questionnaire_kinds import label_for
 from app.services.questionnaire_xlsx import (
     MAX_QUESTIONS,
     MAX_SECTIONS,
@@ -230,6 +231,12 @@ async def load_form(
         # is where an admin turns it on and off. A screen that could set a flag it cannot see would
         # be a toggle with no state.
         "isShared": questionnaire.isShared,
+        # THE KIND, AND ITS LABEL. On the single read as well as on the list, because this payload is
+        # what the DETAIL page renders and the detail page is where the kind is set — a screen that
+        # could write a value it cannot read back would be a picker with no state, exactly as
+        # ``isShared`` above would have been.
+        "kind": questionnaire.kind,
+        "kindLabel": label_for(questionnaire.kind),
         "version": questionnaire.version,
         "sourceFilename": questionnaire.sourceFilename,
         "createdAt": questionnaire.createdAt,
@@ -401,6 +408,11 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
                 description=str(questionnaire.description or ""),
                 version=int(questionnaire.version or 1),
                 source_filename=str(questionnaire.sourceFilename or ""),
+                # WHAT KIND OF INSTRUMENT THIS IS, and therefore which stage of the report its
+                # answers are filed under. ``None``/``""`` means the designer has not said, and the
+                # annexure prints an unstated form exactly as it printed every form before this
+                # column existed — see ``report_questionnaires._stage_group``.
+                kind=str(questionnaire.kind or ""),
                 # The questions the form ASKS today. Retired ones are printed where they carry an
                 # answer but are not counted here, because this number is what a reader compares
                 # against the instrument, and the instrument no longer contains them.
@@ -522,6 +534,11 @@ async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
         "title": questionnaire.title,
         "description": questionnaire.description,
         "ownerId": questionnaire.ownerId,
+        # THE KIND TRAVELS WITH THE INSTRUMENT. ``reuse_questionnaire`` reads it from here so a copy
+        # inherits it, and the question-set workbook does not print it — this key exists for the
+        # copy, not for the spreadsheet. See ``QuestionnaireReuse.kind`` for why inheriting is right
+        # for the kind while inheriting the WORKSHOP would be wrong.
+        "kind": questionnaire.kind,
         "version": questionnaire.version,
         "sections": [
             {
@@ -659,6 +676,7 @@ async def create_from_parsed(
     title: str | None = None,
     description: str | None = None,
     design_workshop_id: str | None = None,
+    kind: str | None = None,
     source_filename: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Store a freshly parsed workbook as a new questionnaire. Returns ``(id, change report)``.
@@ -715,6 +733,13 @@ async def create_from_parsed(
             "description": (description or parsed.description or None),
             "ownerId": owner_id,
             "designWorkshopId": design_workshop_id,
+            # NOT PARSED OUT OF THE WORKBOOK, and that is the decision rather than a gap. The
+            # pro-forma has no kind cell, and adding one would mean an .xlsx that predates it — every
+            # workbook already in a designer's Downloads folder — silently importing as "not stated"
+            # while looking as though it had been asked. The uploader states the kind on the upload
+            # form instead, where the workshop picker beside it already lives, and both travel on the
+            # same multipart body. ``None`` when nothing was chosen, which is the honest default.
+            "kind": kind,
             "sourceFilename": source_filename,
         }
     )
@@ -938,6 +963,13 @@ def reuse_title(source_title: str, taken: set[str]) -> str:
     return candidate
 
 
+#: What ``reuse_questionnaire``'s ``kind`` argument means when nothing was sent, as a sentinel
+#: rather than ``None`` — because ``None`` is itself a meaningful value here ("make the copy's kind
+#: unstated") and a single default could not tell the two apart. The same tri-state
+#: ``description`` has, spelled out because this one is easy to collapse by accident.
+_INHERIT_KIND = "\u2500inherit\u2500"
+
+
 async def reuse_questionnaire(
     source_id: str,
     *,
@@ -945,6 +977,7 @@ async def reuse_questionnaire(
     design_workshop_id: str | None = None,
     title: str | None = None,
     description: str | None = None,
+    kind: str | None = _INHERIT_KIND,
 ) -> tuple[str, dict[str, Any]] | None:
     """Copy a questionnaire's INSTRUMENT into a new row, optionally attached to another workshop.
 
@@ -1114,6 +1147,13 @@ async def reuse_questionnaire(
                 or None,
                 "ownerId": owner_id,
                 "designWorkshopId": design_workshop_id,
+                # THE SOURCE'S KIND, unless the caller named one. A market survey lifted for another
+                # cluster is still a market survey, so the copy is filed under the same stage of the
+                # new workshop's report — which is the whole point of reuse. This is deliberately
+                # the OPPOSITE default to ``designWorkshopId`` beside it, and the reason is on
+                # ``QuestionnaireReuse.kind``: the workshop is the one thing a copy must not
+                # inherit, and the instrument's own nature is the one thing it must.
+                "kind": (form["kind"] if kind == _INHERIT_KIND else kind),
                 # NOT the source's ``sourceFilename``. There is no spreadsheet behind this row, and
                 # naming one would send a designer off to edit a file that produced something else.
                 "sourceFilename": None,

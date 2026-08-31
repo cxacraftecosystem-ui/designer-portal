@@ -90,7 +90,41 @@ data class UserDto(
     val usageConsent: String? = null,
     val usageConsentAt: String? = null,
     val usageConsentBasis: String? = null,
-    val usageConsentVersion: String? = null
+    val usageConsentVersion: String? = null,
+    /**
+     * WHETHER THE PASSWORD ON THIS ACCOUNT WAS TYPED BY SOMEBODY ELSE.
+     *
+     * True when an administrator chose it — `POST /api/users`, or a password written through
+     * `PATCH /api/users/{id}` for another person. It is a shared secret by construction: one person
+     * picked it, typed it into a form, and read it out or messaged it to another.
+     *
+     * ── IT ARRIVES FOR FREE, AND UNTIL 2026-08-31 NOTHING READ IT ─────────────────────────────
+     *
+     * `auth.serialize_user` is `jsonable_encoder` over the whole row minus the hash, so this reaches
+     * every client on all four doors — both sign-in paths, `GET /auth/me` and `GET /me` — exactly as
+     * [usageConsentGate] does. The flag was set, carried, and CONSUMED BY NO SCREEN on either client:
+     * an account created with a temporary password signed in, worked normally, and nobody was ever
+     * asked to replace it. `ui/PasswordGate.kt` is this client's half of closing that.
+     *
+     * ── THE SERVER REPORTS, THE CLIENT REFUSES ────────────────────────────────────────────────
+     *
+     * `POST /auth/login` still mints a token for an account carrying this, deliberately: the only
+     * route that can change a password needs a bearer token, so a 403 at the door would be a demand
+     * the account could never satisfy. Identical reasoning, identical shape, to the consent gate.
+     *
+     * NULLABLE, and the null means "this server predates the column". Read it through
+     * [mustChangePasswordBlocks], never as a raw `== true` at a call site: an absent field is neither
+     * "must" nor "need not", and the only safe reading of a deployment that cannot answer is that it
+     * is not asking.
+     */
+    val mustChangePassword: Boolean? = null,
+    /**
+     * ISO-8601, or null. A null BESIDE a Google account means "has never had a password", which is
+     * the distinction this column exists to make; see schema.prisma. Read by nothing on this client
+     * today — carried so the field is decoded rather than dropped, the discipline [DwDictateDto]'s
+     * own docstring sets out.
+     */
+    val passwordSetAt: String? = null
 )
 
 /**
@@ -437,6 +471,117 @@ data class FeedbackDto(
     val user: UserDto? = null
 )
 
+/*
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE GRIEVANCE / SUGGESTION / RECOMMENDATION REGISTER.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `FeedbackDto` above is the SATISFACTION SURVEY: one row per account, upserted by `PUT
+ * /feedback/me`, revisable for ever. These are the other thing — one row per thing somebody said,
+ * created and never overwritten, each carrying where it has got to.
+ *
+ * WHY BOTH AND NOT ONE. `Feedback.userId` is unique on the server, so a person who reported a bug on
+ * Monday and filed a grievance on Friday OVERWROTE the bug report. A register whose second entry
+ * destroys the first is not a register, and a standing "how is the app working for you" really is
+ * one answer per person. Two shapes, two tables, two DTOs.
+ *
+ * EVERY CLOSED LIST ARRIVES FROM THE SERVER, LABEL AND ALL — see `FeedbackVocabularyDto`. Nothing in
+ * this file holds a list of kinds, and adding one here is the drift that would let the handset and
+ * the web describe one submission differently.
+ */
+
+/** One member of a served list: the value that is stored, and the words a person reads. */
+@Serializable
+data class FeedbackChoiceDto(
+    val value: String = "",
+    val label: String = ""
+)
+
+/**
+ * Every closed list a report is filed against, from `GET /feedback/vocabulary`.
+ *
+ * Defaulted to empty lists rather than being non-null, so a response from an older server that does
+ * not carry one of them decodes instead of throwing: the screen then draws that dropdown with
+ * nothing in it, which is visible and recoverable, where a decoding failure takes the whole screen.
+ */
+@Serializable
+data class FeedbackVocabularyDto(
+    val kind: List<FeedbackChoiceDto> = emptyList(),
+    val severity: List<FeedbackChoiceDto> = emptyList(),
+    val area: List<FeedbackChoiceDto> = emptyList(),
+    val status: List<FeedbackChoiceDto> = emptyList(),
+    val client: List<FeedbackChoiceDto> = emptyList()
+)
+
+/**
+ * One filed report.
+ *
+ * The `*Label` fields are the SERVER's words for the stored values beside them: render the label,
+ * file and filter on the value. That is what lets a report stored under a category since retired
+ * still print — the server falls back to the raw key rather than failing — and it is what keeps this
+ * client from carrying its own copy of what a GRIEVANCE is called.
+ */
+@Serializable
+data class FeedbackReportDto(
+    val id: String = "",
+    val userId: String = "",
+    val kind: String = "",
+    val kindLabel: String = "",
+    val severity: String? = null,
+    val severityLabel: String = "",
+    val area: String? = null,
+    val areaLabel: String = "",
+    val subject: String = "",
+    val details: String = "",
+    val client: String? = null,
+    val clientLabel: String = "",
+    val clientVersion: String? = null,
+    val platform: String? = null,
+    val pagePath: String? = null,
+    val status: String = "SUBMITTED",
+    val statusLabel: String = "",
+    val acknowledgedAt: String? = null,
+    val resolvedAt: String? = null,
+    val responseNote: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val user: UserDto? = null,
+    val acknowledgedBy: UserDto? = null,
+    val resolvedBy: UserDto? = null
+)
+
+/** The house list envelope for reports, plus the one extra count the two list routes add. */
+@Serializable
+data class FeedbackReportPageDto(
+    val items: List<FeedbackReportDto> = emptyList(),
+    val total: Int = 0,
+    val page: Int = 1,
+    val pageSize: Int = 25,
+    val pages: Int = 0,
+    val openCount: Int = 0
+)
+
+/**
+ * A report being filed.
+ *
+ * THE LAST FOUR ARE CAPTURED, NEVER ASKED. A bug report that does not say which app, which build and
+ * which screen is one nobody can reproduce, and asking a researcher at the end of a field day for
+ * their app's version code is asking them to go and find a number they have no reason to know. The
+ * screen fills them in from `BuildConfig` and `android.os.Build`; see `FeedbackReportSection`.
+ */
+@Serializable
+data class FeedbackReportCreateRequest(
+    val kind: String,
+    val severity: String? = null,
+    val area: String? = null,
+    val subject: String,
+    val details: String,
+    val client: String? = "ANDROID",
+    val clientVersion: String? = null,
+    val platform: String? = null,
+    val pagePath: String? = null
+)
+
 @Serializable
 data class FeedbackUpsertRequest(
     val rating: Int? = null,
@@ -538,6 +683,35 @@ data class MediaFileDto(
     val transcriptStatus: String? = null,
     val transcriptText: String? = null,
     val transcriptError: String? = null,
+    /**
+     * WHEN A PERSON LAST REPLACED THE MACHINE'S WORDS. ISO-8601, or null.
+     *
+     * ── THREE STATES, NOT TWO, AND THE THIRD IS WHY THIS IS A TIMESTAMP ─────────────────────────
+     *
+     * `POST /media/{id}/transcript` is the only route by which a human's words replace a provider's,
+     * and since 2026-08-31 it stamps this column from the SERVER's clock with the SERVER's idea of
+     * who was asking — an edit stamp a client could choose is not an audit stamp, so neither this
+     * nor `transcriptEditedById` is ever on the wire in the other direction.
+     *
+     * **NULL MEANS "NOT STATED" AND NEVER "NEVER EDITED".** Transcripts already in this repository
+     * HAVE been rewritten through that route — it has existed all along — and the column simply did
+     * not exist to record it. Its migration refuses to backfill `false` for exactly that reason. So
+     * a reader gets three answers: edited, not edited, and nothing at all — and only a surface that
+     * holds the MACHINE's own copy to compare against may draw the middle one. This client's
+     * questionnaire form does (`machineText`); every screen that merely displays a stored transcript
+     * does not, and shows the flag only when this is non-null. The web's two read-only surfaces pass
+     * `edited={... ? true : undefined}` for the same reason and in the same words.
+     *
+     * ── THE QUEUE NEVER CLEARS IT ───────────────────────────────────────────────────────────────
+     *
+     * `media_queue` writes `transcriptText` on every provider result, including the refined,
+     * translated pass that lands hours after a quick transcript — and deliberately leaves this
+     * alone, because blanking it would record a designer's corrections as the machine's own words at
+     * the moment they were overwritten. The collision is resolved instead where a person can be
+     * asked: a later transcript is OFFERED against an edited box and never imposed on it. See
+     * `ui/questionnaires/QuestionnaireTranscripts.kt`.
+     */
+    val transcriptEditedAt: String? = null,
     val uploadedBy: UserDto? = null,
     val createdAt: String? = null,
     val linkedRecordType: String? = null,
@@ -584,6 +758,89 @@ data class MediaQueueRunDto(
     val failed: Int = 0
 )
 
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE PASSWORD ROUTES: the first-login change, and the administrator's one-off link
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * THE FIELD NAMES ARE THE SERVER'S, checked against `backend/app/schemas/auth.py` and
+ * `routes/auth.py::_link_payload` rather than remembered — the discipline [DwDictateDto]'s docstring
+ * sets out, and the defect it was written after: a DTO here once declared five keys the endpoint had
+ * never sent, and because this client decodes with `ignoreUnknownKeys = true` nothing threw. Every
+ * field simply defaulted, and a perfect read reached the designer as a failure.
+ */
+
+/**
+ * The signed-in account replacing its own password.
+ *
+ * `currentPassword` IS REQUIRED EVEN WHEN `mustChangePassword` IS SET, and the server is right to
+ * insist: the flag means "the password you hold was typed for you", not "anybody holding this
+ * handset may replace it". The person always has it — they used it to get the token this call is
+ * made with — so the gate screen carries it forward rather than asking twice.
+ */
+@Serializable
+data class ChangePasswordRequest(
+    val currentPassword: String,
+    val newPassword: String
+)
+
+/** An administrator asking for a password link for somebody else's account. */
+@Serializable
+data class IssuePasswordLinkRequest(
+    /**
+     * No `purpose` beside it, and that is the server's decision rather than an omission here: the
+     * purpose is derived from whether the account has ever had a password, because the two differ
+     * only in a lifetime and an admin choosing "invite" for a live account would mint a three-day
+     * credential for it.
+     */
+    val userId: String
+)
+
+/**
+ * One issued link, as the server hands it back.
+ *
+ * **THERE IS NO `token` FIELD BESIDE `link`, AND ADDING ONE WOULD BE A DEFECT.** The canonical route
+ * refuses to return the token separately on the stated grounds that a credential appearing twice in
+ * one answer is a credential in two places to keep out of logs. The link contains it; nothing needs
+ * it twice, and this client must not take it apart to get at it.
+ *
+ * `deliveredBy` is `"COPY_LINK"` today — the server sent nothing and the administrator hands the
+ * link over themselves, the owner's decision of 2026-08-30 and the reason no mail dependency was
+ * added. **Branch on this field, never assume it.** The transport sits behind an interface on the
+ * server precisely so adding SES later is a config change, and a screen that hard-codes "copy this"
+ * would go on saying so after the mail started going out.
+ */
+@Serializable
+data class IssuedPasswordLinkDto(
+    val id: String = "",
+    val link: String = "",
+    val expiresAt: String = "",
+    val purpose: String = "",
+    val deliveredBy: String = ""
+)
+
+/** Redeeming a link. Unauthenticated by necessity — the whole point is that the person cannot sign in. */
+@Serializable
+data class SetPasswordRequest(
+    val token: String,
+    val password: String
+)
+
+/**
+ * Is this link still good, and if not, in a word the screen can branch on.
+ *
+ * IT ANSWERS ABOUT THE LINK AND NEVER ABOUT THE ACCOUNT — no email, no name, no role. The route is
+ * reachable by anybody with a guess, and a body that named the account would turn a forged-token
+ * probe into an account lookup. The screen does not need it: the person knows whose password they
+ * are setting.
+ */
+@Serializable
+data class PasswordLinkCheckDto(
+    val valid: Boolean = false,
+    /** The server's own reason WORD — never its sentence. See `dwSetPasswordRefusal`. */
+    val reason: String? = null,
+    val purpose: String? = null
+)
 @Serializable
 data class UserUpdateRequest(
     val role: String? = null,
@@ -2479,16 +2736,23 @@ data class SearchTotalsDto(
     val workshops: Int = 0,
     val products: Int = 0,
     val tools: Int = 0,
-    val media: Int = 0
+    val media: Int = 0,
+    /** The SIXTH bucket. Zero on a server that predates it, and zero for a caller refused it. */
+    val designWorkshops: Int = 0
 )
 
 /**
- * `GET /search` — five buckets sharing one page/pageSize.
+ * `GET /search` — SIX buckets sharing one page/pageSize.
  *
  * Each bucket is its own slice of its own result set, so a page can be full in one bucket and empty
  * in another; [totals] is how many matches each bucket has in total and [pageCount] is the last page
  * of the LONGEST bucket (at least 1, so an empty result still reads as "page 1 of 1"). Every row is
  * already filtered by what the caller is allowed to see.
+ *
+ * IT WAS FIVE UNTIL 2026-08-31 and the sixth is the one this product is named after. [workshops] is
+ * the LEGACY `Workshop` table, a different model entirely; see [SearchRecordTypes.DESIGN_WORKSHOP].
+ * Every key added for it defaults to empty, so a build talking to an older server reads exactly what
+ * it read before.
  */
 @Serializable
 data class SearchResultsDto(
@@ -2500,10 +2764,35 @@ data class SearchResultsDto(
     val products: List<ProductDetailDto> = emptyList(),
     val tools: List<ToolDetailDto> = emptyList(),
     val media: List<MediaFileDto> = emptyList(),
+    /** The design workshops that matched — the header rows `workshop_summary` serves elsewhere. */
+    val designWorkshops: List<DesignWorkshopDto> = emptyList(),
     val totals: SearchTotalsDto = SearchTotalsDto(),
     /** Every bucket's matches added together. */
     val total: Int = 0,
-    val pageCount: Int = 1
+    val pageCount: Int = 1,
+    /**
+     * Buckets this account ASKED FOR and may not read. The server drops them from the selection and
+     * NAMES them here rather than answering 0, because a bucket that comes back empty is
+     * indistinguishable from a repository with nothing in it — which is the sentence a researcher
+     * would otherwise carry away. Design-workshop data is Professor and above.
+     */
+    val typesRefused: List<String> = emptyList(),
+    /**
+     * What a design-workshop text query actually matched, in the SERVER'S words. Present only when
+     * that bucket was read. Printed as given: a client that wrote its own sentence would be a second
+     * description of one rule, free to drift from the rule that is actually enforced.
+     */
+    val designWorkshopSearchScope: String? = null,
+    /**
+     * Which STAGES a workshop matched in, keyed by workshop id — `{"dw_1": ["Stage 5: …"]}`.
+     *
+     * The bucket matches the workshop's own columns OR any answer inside its 22 stages, so a row can
+     * come back for a reason that appears nowhere on the row. Without this the reader would have to
+     * open twenty-two stages to account for the hit. A workshop found by its title alone is ABSENT
+     * from the map rather than carrying an empty list, which would read as "we looked and found
+     * none".
+     */
+    val designWorkshopStageMatches: Map<String, List<String>> = emptyMap()
 )
 
 // ---------------------------------------------------------------------------
@@ -3239,6 +3528,21 @@ data class DesignerProfileDto(
     /** ISO-8601, and a STRING rather than a date — see [DesignerProfileUpdateBody.empanelmentDate]. */
     val empanelmentDate: String? = null,
     /**
+     * THE GRACE PATH, ANSWERED BY THE SERVER SO BOTH CLIENTS DRAW THE SAME BANNER.
+     *
+     * True means: this profile has content and no empanelment number. The owner's decision of
+     * 2026-08-30 is that such a profile may go on saving while being asked for the number, and
+     * that a NEW profile cannot be created without one. Computing it here instead — "is
+     * empanelmentNo blank" — would be a second definition of "has content" that disagrees with
+     * the web's the day a column is added, and it is also true of a brand-new empty profile,
+     * which is the case the form REFUSES rather than asks about.
+     *
+     * NULLABLE WITH A DEFAULT, so a handset reading a server that predates the key defaults it
+     * to "no grace" — the strict reading, which is the safe direction: the worst case is a
+     * designer being asked for a number the next save would have let them omit.
+     */
+    val empanelmentNoMissing: Boolean? = null,
+    /**
      * ── THE SECOND ADDRESS ON THIS ROW, AND WHY BOTH OF THEM ARE HERE ──────────────────────────
      *
      * `DesignerProfile` is the seventh owner of `Location`, so a designer's DISTRICT and MAP POINT
@@ -3516,6 +3820,26 @@ data class CustomQuestionnaireSummaryDto(
      */
     val isShared: Boolean = false,
     val isActive: Boolean = true,
+    /**
+     * WHAT KIND OF QUESTIONNAIRE THIS IS — `WORKSHOP_INTERVIEW`, `MARKET_SURVEY`, or null for a form
+     * whose designer has not said. It decides which stage of the report its answers are filed under;
+     * see `ui/questionnaires/QuestionnaireKinds.kt` and the server's `questionnaire_kinds.py`.
+     *
+     * DEFAULTS NULL, so a handset a release behind — which on this fleet is a fortnight in a
+     * courtyard — decodes a payload carrying the key and simply treats every form as unclassified,
+     * which is exactly how the world looked before the column existed.
+     */
+    val kind: String? = null,
+    /**
+     * The SERVER'S OWN LABEL for [kind], so the two clients cannot word one stored value
+     * differently. Print this rather than looking [kind] up locally wherever a row is in hand; the
+     * local map exists for the picker, which draws before any row does.
+     *
+     * Empty rather than null when absent, so a call site can print it unconditionally — the server
+     * sends "Kind not stated" for an unstated kind rather than an empty string, and an old build
+     * that has never seen the key prints nothing instead of the word "null".
+     */
+    val kindLabel: String = "",
     val version: Int = 1,
     val sourceFilename: String? = null,
     val createdAt: String? = null,
@@ -3605,6 +3929,10 @@ data class CustomQuestionnaireDto(
     val isActive: Boolean = true,
     /** See [CustomQuestionnaireSummaryDto.isShared] — the published default, offered to everyone. */
     val isShared: Boolean = false,
+    /** See [CustomQuestionnaireSummaryDto.kind]. */
+    val kind: String? = null,
+    /** See [CustomQuestionnaireSummaryDto.kindLabel]. */
+    val kindLabel: String = "",
     val version: Int = 1,
     val sourceFilename: String? = null,
     val createdAt: String? = null,
@@ -3623,6 +3951,15 @@ data class CustomQuestionnaireOptionDto(
     val designWorkshopId: String? = null,
     /** See [CustomQuestionnaireSummaryDto.isShared] — the published default, offered to everyone. */
     val isShared: Boolean = false,
+    /**
+     * See [CustomQuestionnaireSummaryDto.kind]. On the OPTIONS payload as well as the list, because
+     * this is what the attach picker on the design-workshop screen draws — and that picker is the
+     * reason the kind exists. A designer running an interview and a market survey at one cluster
+     * sees two rows there, and before this key the only thing telling them apart was the title.
+     */
+    val kind: String? = null,
+    /** See [CustomQuestionnaireSummaryDto.kindLabel]. */
+    val kindLabel: String = "",
     val attachedElsewhere: Boolean = false,
 )
 
@@ -3631,6 +3968,15 @@ data class CustomQuestionnaireCreateBody(
     val title: String,
     val description: String? = null,
     val designWorkshopId: String? = null,
+    /**
+     * See [CustomQuestionnaireSummaryDto.kind]. Null is "not stated" and the server accepts it — a
+     * picker sitting on its blank row is a real answer, not an unfilled field.
+     *
+     * THIS BODY IS ALSO WHAT THE OUTBOX STORES for an offline create (`OFFLINE_CUSTOM_QUESTIONNAIRE`
+     * encodes this very object), so the kind survives a fortnight on the handset and is posted with
+     * the questionnaire rather than having to be set again once the row lands.
+     */
+    val kind: String? = null,
 )
 
 @Serializable
@@ -3754,6 +4100,8 @@ fun customQuestionnaireUpdateJson(
     changeDescription: Boolean = false,
     designWorkshopId: String? = null,
     changeWorkshop: Boolean = false,
+    kind: String? = null,
+    changeKind: Boolean = false,
     isActive: Boolean? = null,
 ): JsonObject = buildJsonObject {
     // Sent only when non-blank. `title` has `min_length=1` on the server, so a present-and-empty
@@ -3761,6 +4109,12 @@ fun customQuestionnaireUpdateJson(
     title?.trim()?.takeIf { it.isNotEmpty() }?.let { put("title", JsonPrimitive(it)) }
     if (changeDescription) put("description", textOrNull(description))
     if (changeWorkshop) put("designWorkshopId", textOrNull(designWorkshopId))
+    // [changeKind] for [changeDescription]'s reason and not [designWorkshopId]'s: a blank kind means
+    // "clear it back to not stated" and an omitted key means "leave it alone", which one nullable
+    // argument cannot tell apart. `textOrNull` writes JSON null for a blank, and the server names
+    // `kind` in its clearable columns so that null survives `clean_data` and genuinely clears the
+    // column — without the name there it would answer 200 having changed nothing.
+    if (changeKind) put("kind", textOrNull(kind))
     isActive?.let { put("isActive", JsonPrimitive(it)) }
 }
 

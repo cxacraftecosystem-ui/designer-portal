@@ -76,7 +76,7 @@ import asyncio
 import io
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -92,9 +92,15 @@ from fastapi.responses import (
 from starlette.background import BackgroundTask
 
 from app.core.db import db
-from app.core.deps import require_dataset_downloader
-from app.services import memory_budget
+from app.core.deps import (
+    can_export_design_workshop_data,
+    can_view_design_workshop_data,
+    require_dataset_downloader,
+)
+from app.services import design_workshop_data as dw, memory_budget
 from app.services.concurrency import gather_reads
+from app.services.custom_sections import load_definition_or_empty
+from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_MEDIA_TAG
 from app.services.media_naming import (
     RESERVED_NAMES as _RESERVED_NAMES,
     clip as _clip,
@@ -195,7 +201,25 @@ _TYPE_TOKEN = {
 }
 
 # linkedRecordType tags considered "attached to a typed record" (everything else is misc).
-_TYPED_TAGS = [
+#
+# THE DESIGN-WORKSHOP TAG JOINED THIS LIST ON 2026-08-31 AND THAT IS A BUG FIX, NOT AN ADDITION.
+# Every photograph and every dictation recording taken inside a design & prototype workshop carries
+# ``linkedRecordType="designWorkshop"`` (``dictation_consent.MEDIA_TAG``), and while that string was
+# absent from this list the ``misc`` clause below — ``linkedRecordType NOT IN (…)`` — swept all of
+# them into "Miscellaneous", beside the genuinely unattached files. They were browsable and they
+# were anonymous: no workshop, no stage, no field. They are now a typed branch of their own
+# (``_USER_TYPE_WHERE["designworkshops"]``) and are named by ``dw.media_attributions``.
+#
+# BOTH SPELLINGS, and this is the same rule ``media.ORPHAN_TAG_TYPES`` writes down. The clients send
+# the camelCase ``designWorkshop``; ``POST /media/{id}/relink`` lowercases whatever it is handed
+# before storing it, so rows written by a recovery carry ``designworkshop``. Listing one and not the
+# other would leave half of them in Miscellaneous — the exact defect, half-fixed, which is worse
+# than not fixing it because it looks fixed.
+_DESIGN_WORKSHOP_TAGS = [DESIGN_WORKSHOP_MEDIA_TAG, DESIGN_WORKSHOP_MEDIA_TAG.lower()]
+
+# The seven legacy record tags, WITHOUT the design-workshop pair. Kept separate because the misc
+# clause has to be able to answer both readings — see :func:`_user_type_where`.
+_TYPED_TAGS_LEGACY = [
     "artisan",
     "product",
     "process",
@@ -206,19 +230,54 @@ _TYPED_TAGS = [
     "questionnaireinterview",
 ]
 
+_TYPED_TAGS = [*_TYPED_TAGS_LEGACY, *_DESIGN_WORKSHOP_TAGS]
+
 _USER_TYPE_WHERE: dict[str, dict[str, Any]] = {
     "artisans": {"linkedRecordType": "artisan"},
     "products": {"linkedRecordType": {"in": ["product", "process", "processstep"]}},
     "tools": {"linkedRecordType": "tool"},
     "workshops": {"linkedRecordType": "workshop"},
     "questionnaire": {"linkedRecordType": {"in": ["questionnaire", "questionnaireinterview"]}},
-    "misc": {
+    # BOTH READINGS OF "belongs to a design workshop", because the two columns answer different
+    # questions and a researcher wants the union. The tag pair says which stage photographs and
+    # dictation belong to the workshop; ``designWorkshopId`` says which workshop a MISCELLANEOUS
+    # upload was filed under from the dropdown on that form. A file can have one, both or neither —
+    # see the column's own note in schema.prisma — so a branch reading only one of them would hide
+    # whichever half the uploader did not use.
+    "designworkshops": {
         "OR": [
-            {"linkedRecordType": None},
-            {"linkedRecordType": {"not_in": _TYPED_TAGS}},
+            {"linkedRecordType": {"in": _DESIGN_WORKSHOP_TAGS}},
+            {"designWorkshopId": {"not": None}},
+        ]
+    },
+    # NOTHING FILED UNDER A DESIGN WORKSHOP IS MISCELLANEOUS — for a caller who has the
+    # ``designworkshops`` branch to find it in. The ``designWorkshopId`` half has to be said with an
+    # AND rather than left to ``_TYPED_TAGS``: a file uploaded on the Miscellaneous Media form and
+    # filed to a workshop from its dropdown carries the COLUMN and no tag at all, so
+    # ``linkedRecordType IS NULL`` matches it here — it would appear in both branches at once, which
+    # reads to a researcher as two copies of one file rather than as one file with two readings.
+    #
+    # THIS ENTRY IS THE NARROW READING AND IT IS NOT WHAT EVERY CALLER GETS. See
+    # :func:`_user_type_where`, which is what the route asks: an account that may not open the
+    # design-workshop branch keeps seeing these files here, exactly as it did before this change.
+    # Narrowing the clause for everybody would have made files vanish from a folder somebody was
+    # already browsing, to enforce a rule about a screen they cannot reach.
+    "misc": {
+        "AND": [
+            {"OR": [{"linkedRecordType": None}, {"linkedRecordType": {"not_in": _TYPED_TAGS}}]},
+            {"designWorkshopId": None},
         ]
     },
 }
+
+#: The pre-2026-08-31 ``misc`` clause: everything not attached to one of the seven legacy records.
+_MISC_WHERE_LEGACY: dict[str, Any] = {
+    "OR": [
+        {"linkedRecordType": None},
+        {"linkedRecordType": {"not_in": _TYPED_TAGS_LEGACY}},
+    ]
+}
+
 
 _MEDIA_TYPE_WHERE: dict[str, dict[str, Any]] = {
     "images": {"mediaType": "IMAGE"},
@@ -262,6 +321,38 @@ TAXONOMIES: list[dict[str, Any]] = [
         ),
         "default": False,
     },
+    # A ROOT OF ITS OWN RATHER THAN A BRANCH UNDER ``by-workshop``, and the choice matters because
+    # the obvious-looking alternative silently loses records.
+    #
+    # ``Workshop`` and ``DesignWorkshop`` ARE DIFFERENT TABLES. The first is the legacy repository
+    # workshop the other three taxonomies are built from; the second is the twenty-two-stage record
+    # this product is named after.
+    #
+    # THE ONE LINK BETWEEN THEM IS ``DesignWorkshop.workshopId``, AND IT IS NULLABLE — nothing goes
+    # the other way at all. So a design workshop hung under ``by-workshop`` would need a parent most
+    # of them do not have, and every one that does not would end up under a "No workshop"
+    # pseudo-folder. A taxonomy whose rows are mostly in the bucket for rows that do not fit is not a
+    # taxonomy. (This paragraph said "nothing joins them" until 2026-08-31. The column is real —
+    # ``record_filters``' workshop scope narrows this bucket through it — and the conclusion is
+    # unchanged, but a reader who took the stronger claim on trust would go looking for a join that
+    # is sitting right there.)
+    #
+    # It is also the honest answer to what a researcher is asking. The other three ask "where in the
+    # repository does this file sit"; this one asks "what did this fortnight of fieldwork produce",
+    # and its levels are the STAGES, which no other root has. Kept OUT of the default so the screen
+    # opens exactly as it does today for everybody, including the accounts that never see this root
+    # at all (see :func:`_taxonomies_for`).
+    {
+        "id": "by-design-workshop",
+        "name": "By design workshop",
+        "path": "by-design-workshop",
+        "description": (
+            "The twenty-two stages of each design & prototype workshop: every answer as a table, "
+            "the designer's own questions, and each photograph under the stage and field it "
+            "answers."
+        ),
+        "default": False,
+    },
 ]
 
 # Display labels for the static (non-record) folder slugs used across the tree.
@@ -269,6 +360,9 @@ _CATEGORY_LABEL: dict[str, str] = {
     "by-workshop": "By workshop",
     "by-uploader": "By uploader",
     "by-type": "By media type",
+    "by-design-workshop": "By design workshop",
+    "designworkshops": "Design workshops",
+    "stages": "Stages",
     "transcripts": "Transcripts",
     "media": "Media",
     "workshops": "Workshops",
@@ -397,11 +491,53 @@ class Scope:
 
     records: dict[str, Any]
     media: dict[str, Any]
+    #: May this request SEE design-workshop stage data? Professor, Admin, Master Admin.
+    #:
+    #: A THIRD FIELD ON THE SCOPE RATHER THAN A ROUTER DEPENDENCY, because it is not a door — it is a
+    #: narrowing of what is behind one. ``/data`` stays mounted behind ``require_dataset_downloader``
+    #: and every account that reaches it today still reaches it; this decides whether the
+    #: ``by-design-workshop`` root, its sheets and its media branch are part of the answer. Putting
+    #: it here means every lister, the manifest walk and the report all consult the same value, and
+    #: none of them can forget to.
+    #:
+    #: FALSE FOR A GRANTED RESEARCHER, which is the population this narrowing exists for.
+    #: ``canDownloadDataset`` is a per-account boolean an admin hands to a researcher who needs the
+    #: seven legacy tables; it carries no seniority, and stage data — artisan dictation, consent
+    #: state, unpublished prototype work — is gated on RANK. See
+    #: ``deps.can_view_design_workshop_data``.
+    design_workshops: bool = False
+    #: May this request take that data OUT — the .xlsx sheets and the manifest the client zips?
+    #: Admin and Master Admin only. A professor is deliberately True above and False here; see
+    #: ``deps.can_export_design_workshop_data`` for why the two acts are not one permission.
+    design_workshop_downloads: bool = False
 
     @property
     def restricted(self) -> bool:
-        """False for Professor+/admins, whose filters are empty (they see everything)."""
+        """False for Professor+/admins, whose filters are empty (they see everything).
+
+        DELIBERATELY UNCHANGED BY THE TWO DESIGN-WORKSHOP FLAGS. This property means "are the ROW
+        filters narrowing anything", and every helper in this module short-circuits on it back to
+        the exact query it made before. Folding a capability flag into it would make a professor —
+        whose row filters are empty and always have been — take the restricted branch of six
+        queries, changing their query plans to protect data the flags already keep out of the
+        result.
+        """
         return bool(self.records or self.media)
+
+    def for_download(self) -> "Scope":
+        """The same scope as it applies to a path that HANDS OVER A FILE.
+
+        On a download, viewing IS exporting: the manifest is the list of files the browser zips, so
+        anything listed leaves the building. Collapsing the two flags here rather than testing them
+        separately at four call sites means the manifest walk can go on asking one question —
+        "is the design-workshop root part of this tree?" — and get the right answer on both routes.
+        """
+        return Scope(
+            records=self.records,
+            media=self.media,
+            design_workshops=self.design_workshop_downloads,
+            design_workshop_downloads=self.design_workshop_downloads,
+        )
 
 
 async def _scope_for(user: Any) -> Scope:
@@ -423,7 +559,44 @@ async def _scope_for(user: Any) -> Scope:
         owned_or_granted_where(user),
         owned_or_granted_where(user, owner_field="uploadedById"),
     )
-    return Scope(records=record_where, media=media_where)
+    # Both capability answers are pure role reads — no query, no round trip — so they ride along
+    # with the wave rather than being asked for again at each of the four routes.
+    return Scope(
+        records=record_where,
+        media=media_where,
+        design_workshops=can_view_design_workshop_data(user),
+        design_workshop_downloads=can_export_design_workshop_data(user),
+    )
+
+
+def _user_type_where(slug: str, scope: Scope) -> dict[str, Any]:
+    """The media clause for one branch of the legacy ``users`` taxonomy, as THIS caller sees it.
+
+    ONE BRANCH IS CAPABILITY-DEPENDENT AND IT IS ``misc``. Moving design-workshop files out of
+    Miscellaneous is the whole point of the ``designworkshops`` branch — a file in a folder that
+    names its workshop, stage and field is worth more than the same file in a folder that names
+    nothing. But an account that may NOT open that branch would simply have lost the files: they
+    were listed yesterday, they would not be listed today, and nothing on screen would say why. So
+    that account keeps the clause it has always had. Nobody sees less than before; the accounts
+    entitled to the design-workshop surface see the same files better filed.
+    """
+    if slug == "misc" and not scope.design_workshops:
+        return _MISC_WHERE_LEGACY
+    return _USER_TYPE_WHERE[slug]
+
+
+def _taxonomies_for(scope: Scope) -> list[dict[str, Any]]:
+    """The taxonomy switcher as THIS account sees it.
+
+    ``by-design-workshop`` is dropped for an account that may not read design-workshop data — which
+    is the researcher holding a ``canDownloadDataset`` grant without the rank behind it. Offering
+    the tab and refusing what is inside it would be the failure ``frontend/lib/permissions.ts``'s
+    own rule names: never offer what the API refuses. The other three are unchanged for everybody,
+    so nothing any account can do today changes shape.
+    """
+    if scope.design_workshops:
+        return TAXONOMIES
+    return [taxonomy for taxonomy in TAXONOMIES if taxonomy["id"] != "by-design-workshop"]
 
 
 def _and(where: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -842,6 +1015,22 @@ async def _crumb_names(segs: list[str]) -> list[str]:
         names.append("Media types")
         if len(segs) >= 2:
             names.append(_CATEGORY_LABEL.get(segs[1], segs[1]))
+    elif head == "by-design-workshop":
+        names.append(_CATEGORY_LABEL["by-design-workshop"])
+        if len(segs) >= 2:
+            record = await db.designworkshop.find_unique(where={"id": segs[1]})
+            names.append(_seg(getattr(record, "title", None), segs[1]))
+        if len(segs) >= 3:
+            names.append(_CATEGORY_LABEL.get(segs[2], segs[2]))
+        if len(segs) >= 4:
+            # The stage crumb is resolved from the REGISTRY, not the database: a stage key is the
+            # registry's own name for a stage and there is no row anywhere that holds its title. The
+            # number is padded exactly as the folder name is, so the crumb and the folder a person
+            # clicked read the same.
+            stage = next((s for s in dw.stages() if s.key == segs[3]), None)
+            names.append(
+                f"{stage.number:02d} {stage.title}" if stage is not None else _seg(segs[3], segs[3])
+            )
 
     # Any unresolved tail segments (unknown shapes) fall back to the raw segment.
     while len(names) < len(segs):
@@ -876,9 +1065,24 @@ async def _list_level(path: str, scope: Scope) -> Level:
     if not segs:
         # The root is the taxonomy chooser. The hierarchy taxonomy is listed first and is
         # what the client opens by default.
-        return [_folder(t["name"], t["path"], "taxonomy") for t in TAXONOMIES], None
+        return [
+            _folder(t["name"], t["path"], "taxonomy") for t in _taxonomies_for(scope)
+        ], None
 
     head = segs[0]
+
+    # THE ACCESS RULE, AT THE ONE PLACE EVERY LEVEL AND EVERY WALK PASSES THROUGH. ``/tree``,
+    # ``/manifest`` and ``/report`` all funnel here or into ``_report_records``, so a caller who may
+    # not read design-workshop data cannot reach it by typing the path — which is exactly what a
+    # gate hung on the taxonomy LIST would have allowed. A 404 rather than a 403, matching what this
+    # module answers for any path it does not serve: an account that may not read this taxonomy has
+    # no business learning that it exists and holds records.
+    if head == "by-design-workshop":
+        if not scope.design_workshops:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path"
+            )
+        return await _list_design_workshops_level(segs, parent, scope)
 
     # by-workshop / by-uploader / by-type are the current taxonomy roots; workshops /
     # users / media-types are the pre-taxonomy paths, still resolved so links saved
@@ -1406,14 +1610,23 @@ async def _list_users_level(segs: list[str], parent: str, scope: Scope) -> Level
         # /users/directory serves to every authenticated user — and each folder under it lists
         # nothing but visibility-filtered media.
         await _require(db.user, uid, "User")
-        return [
-            _folder(_CATEGORY_LABEL[slug], f"{parent}/{slug}")
-            for slug in ("artisans", "products", "tools", "workshops", "questionnaire", "misc")
-        ], None
+        # ``designworkshops`` is listed only for an account that may read that data — the branch
+        # itself is refused below for anybody else, and a door that answers 404 is worse than no
+        # door. It sits before ``misc`` because ``misc`` no longer holds these files: see the
+        # comment above ``_TYPED_TAGS`` for the leak that closes.
+        slugs = ["artisans", "products", "tools", "workshops", "questionnaire"]
+        if scope.design_workshops:
+            slugs.append("designworkshops")
+        slugs.append("misc")
+        return [_folder(_CATEGORY_LABEL[slug], f"{parent}/{slug}") for slug in slugs], None
 
     if len(segs) == 3 and segs[2] in _USER_TYPE_WHERE:
+        if segs[2] == "designworkshops" and not scope.design_workshops:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path"
+            )
         media = await _media(
-            {"AND": [{"uploadedById": uid}, _USER_TYPE_WHERE[segs[2]]]}, scope, named=True
+            {"AND": [{"uploadedById": uid}, _user_type_where(segs[2], scope)]}, scope, named=True
         )
         return _media_entries(parent, media), None
 
@@ -1466,6 +1679,315 @@ async def _list_media_types_level(segs: list[str], parent: str, scope: Scope) ->
         media = await _media(_MEDIA_TYPE_WHERE[segs[1]], scope, named=True)
         return _media_entries(parent, media), None
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path")
+
+
+
+# ---------------------------------------------------------------------------
+# The by-design-workshop taxonomy: the twenty-two-stage record, as folders.
+#
+#   by-design-workshop                             -> one folder per design workshop
+#   by-design-workshop/<wid>                       -> details.txt, 'stages', the designer's own
+#                                                     questions, and the workshop's loose media
+#   by-design-workshop/<wid>/stages                -> one folder per stage that has answers
+#   by-design-workshop/<wid>/stages/<stageKey>     -> one <Entity>.txt per entity with rows, plus
+#                                                     the photographs those rows cite
+#
+# WHY THE STAGE IS A FOLDER AND THE ENTITY IS A FILE. The stage is what a designer, a report and a
+# ministry all order the fortnight by, so it is the level a person navigates. The entity is the
+# TABLE (see services/design_workshop_data.py's header for why a stage is not one), and a table is a
+# document rather than a place — putting each entity in a folder of its own would mean four clicks
+# to read one answer and forty-four empty folders on a workshop that has reached stage 8.
+#
+# ONLY STAGES WITH ANSWERS ARE LISTED, and the workshop folder says how many of the twenty-two those
+# are. A tree that showed all twenty-two would be twenty-two doors of which most open on nothing;
+# a tree that showed only the answered ones without saying so would be indistinguishable from a
+# workshop that has no other stages. Rule 10: the count is on the details panel, in the folder.
+# ---------------------------------------------------------------------------
+
+
+def _dw_media_where(wid: str) -> dict[str, Any]:
+    """Every file that belongs to one design workshop, by either reading.
+
+    The tag pair is what the capture screens write for a stage photograph and for dictation; the
+    ``designWorkshopId`` column is what the Miscellaneous Media form writes when a researcher files
+    a loose upload under a workshop. A file may carry one, both or neither (see the column's note in
+    schema.prisma), so both are asked and the union is the workshop's media.
+    """
+    return {
+        "OR": [
+            {
+                "AND": [
+                    {"linkedRecordType": {"in": _DESIGN_WORKSHOP_TAGS}},
+                    {"linkedRecordId": wid},
+                ]
+            },
+            {"designWorkshopId": wid},
+        ]
+    }
+
+
+async def _dw_require(wid: str) -> Any:
+    """One design workshop, or a 404.
+
+    ``deletedAt: null``, like every other read of this table. A soft-deleted workshop is invisible
+    to its own creator (``api/routes/design_workshops.py``'s header states the rule), so a research
+    browser that listed it would be the one surface in the product that resurrects deleted work.
+
+    NO ``scope.records`` FILTER, and that is not an omission. ``Scope.records`` narrows the legacy
+    tables by ``createdById`` for an account holding ``canDownloadDataset`` without the rank behind
+    it — and such an account does not reach this taxonomy at all (``scope.design_workshops`` is
+    False for it, checked at :func:`_list_level`). Everybody who does reach it has empty row
+    filters by construction, so a filter here would be a clause that can never fire, sitting where a
+    later reader would take it for the access rule. The access rule is the flag.
+    """
+    record = await db.designworkshop.find_first(where={"id": wid, "deletedAt": None})
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Design workshop not found"
+        )
+    return record
+
+
+async def _dw_entries(wid: str) -> list[Any]:
+    """One workshop's live stage rows, in the order the product itself reads them.
+
+    ``deletedAt: null`` and ``ordinal`` ascending: the same order ``design_workshops.py`` applies,
+    because ``ordinal`` is the single ordering input in this product and it is a hand-made
+    arrangement. ``services/design_workshop_data.py`` deliberately does not re-sort what it is
+    given, so the order this query applies is the order that reaches the file.
+    """
+    return await db.dwstageentry.find_many(
+        where={"designWorkshopId": wid, "deletedAt": None},
+        order=[{"ordinal": "asc"}, {"createdAt": "asc"}],
+        take=TAKE,
+    )
+
+
+def _dw_info(record: Any, answered_stages: int, entry_count: int) -> dict[str, Any]:
+    """The workshop's own fields as an info panel — the promoted columns and the coverage counts.
+
+    THE PROMOTED COLUMNS AND NOTHING ELSE, exactly the set
+    ``design_workshop_data.WORKSHOP_IDENTITY_COLUMNS`` carries onto every flattened row. They exist,
+    per ``schema.prisma``'s own note above ``DesignWorkshop``, because they are "the axes a
+    researcher actually filters and sorts on", so the panel and the table say the same thing about
+    the same workshop rather than two overlapping things.
+
+    THE TWO COUNTS ARE THE ANTI-SILENCE PROMISE. The folder lists only the stages that have answers;
+    without "8 of 22 stages answered" on the panel beside it, a workshop that has reached stage 8
+    and a workshop whose other fourteen stages failed to load look identical.
+    """
+    identity = dw.workshop_identity(record)
+    fields = [
+        {"label": column.label, "value": identity.get(column.key, "")}
+        for column in dw.WORKSHOP_IDENTITY_COLUMNS
+        if identity.get(column.key, "")
+    ]
+    fields.append(
+        {
+            "label": "Stages answered",
+            "value": f"{answered_stages} of {len(dw.stages())}",
+        }
+    )
+    fields.append({"label": "Rows recorded", "value": str(entry_count)})
+    return {"title": str(getattr(record, "title", "") or "Design workshop"), "fields": fields}
+
+
+def _dw_rows_text(title: str, columns: Sequence[Any], rows: list[dict[str, str]]) -> str:
+    """One entity's rows as a readable text block: ``Label: value``, one row per paragraph.
+
+    A .txt AND NOT A .csv, and the reason is that this file is read in the browser's preview pane
+    beside the folder it came from. The CSV of the same rows is the report workbook, which is one
+    click away and is the artefact built for a spreadsheet; a second CSV here would be the same
+    table in two formats that can drift. Blank cells are dropped so a row of six answers is six
+    lines rather than fifty-two, with forty-six of them empty.
+    """
+    blocks: list[str] = []
+    for index, row in enumerate(rows, start=1):
+        lines = [f"— {title} {index} —" if len(rows) > 1 else f"— {title} —"]
+        for column in columns:
+            value = (row.get(column.key) or "").strip()
+            if not value:
+                continue
+            label = f"{column.label} ({column.unit})" if getattr(column, "unit", "") else column.label
+            lines.append(f"{label}: {value}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _dw_stage_folders(parent: str, entries: list[Any]) -> list[dict[str, Any]]:
+    """One folder per stage that has at least one row, in stage order.
+
+    Named "03 Workshop Plan, Participants & Opening" — the NUMBER FIRST and zero-padded, because the
+    tree sorts its folders alphabetically (see ``data_tree``'s sort) and "Stage 10" sorts before
+    "Stage 2" in every file browser in the world. The pad is what makes the alphabetical order and
+    the fortnight's order the same order.
+    """
+    present: dict[str, tuple[int, str]] = {}
+    for entry in entries:
+        found = dw.entity_by_key(str(getattr(entry, "entityKey", "") or ""))
+        if found is None:
+            continue
+        stage, _entity = found
+        present[stage.key] = (stage.number, stage.title)
+    used: set[str] = set()
+    return [
+        _folder(
+            _uniq(_seg(f"{number:02d} {title}", f"Stage {number}"), used),
+            _join(parent, key),
+            "designWorkshopStage",
+        )
+        for key, (number, title) in sorted(present.items(), key=lambda item: item[1][0])
+    ]
+
+
+async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scope) -> Level:
+    """The by-design-workshop taxonomy — see the block comment above for the path shapes."""
+    if len(segs) == 1:
+        workshops = await db.designworkshop.find_many(
+            where={"deletedAt": None}, take=TAKE, order={"title": "asc"}
+        )
+        used: set[str] = set()
+        return [
+            _folder(
+                _uniq(_seg(record.title, "Design workshop"), used),
+                _join(parent, record.id),
+                "designWorkshop",
+            )
+            for record in workshops
+        ], None
+
+    wid = segs[1]
+
+    if len(segs) == 2:
+        # FOUR INDEPENDENT READS, ONE WAVE. None consumes another's output, and a cross-region
+        # hop is ~750ms, so in series this level costs three seconds before a folder appears.
+        record, entries, media, definition = await gather_reads(
+            _dw_require(wid),
+            _dw_entries(wid),
+            _media(_dw_media_where(wid), scope),
+            load_definition_or_empty(wid),
+        )
+        grouped, unknown = dw.flatten(record, entries, definition)
+        stage_folders = _dw_stage_folders(f"{parent}/stages", entries)
+        info = _dw_info(record, len(stage_folders), len(entries))
+        entries_out: list[dict[str, Any]] = list(stage_folders)
+
+        details = _text(parent, "details.txt", _info_text(info))
+        if details:
+            entries_out.append(details)
+
+        # THE DESIGNER'S OWN QUESTIONS, AT THE WORKSHOP LEVEL, because they belong to no stage. The
+        # definition lives per workshop in DwCustomSection/DwCustomField, so a tree driven only by
+        # ``stages()`` would omit every question a designer wrote themselves — the silent-emptiness
+        # class this repository keeps paying for.
+        custom = grouped.get(dw.CUSTOM_ENTITY_KEY) or []
+        if custom:
+            custom_text = _text(
+                parent,
+                "designer-questions.txt",
+                _dw_rows_text("Answers", dw.custom_columns(definition), custom),
+            )
+            if custom_text:
+                entries_out.append(custom_text)
+
+        # ROWS THIS BUILD CANNOT DESCRIBE ARE NAMED, NOT DROPPED. A handset one release ahead syncs
+        # rows written against a newer registry; refusing to mention them would under-report the
+        # corpus while looking complete.
+        if unknown:
+            note = "\n".join(
+                f"{item.rows} row(s) under '{item.entity_key}' were written against a newer "
+                "version of the form and cannot be shown by this server."
+                for item in unknown
+            )
+            future = _text(parent, "not-shown.txt", note)
+            if future:
+                entries_out.append(future)
+
+        # The workshop's own media: everything not cited by a stage row, named for the workshop.
+        attributions = dw.media_attributions(record, entries)
+        loose = [m for m in media if m.id not in attributions]
+        entries_out.extend(
+            _media_entries(
+                parent, loose, record_type="Design workshop", record_name=record.title
+            )
+        )
+        return entries_out, info
+
+    if segs[2] != "stages":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path")
+
+    if len(segs) == 3:
+        # The intermediate 'stages' crumb, reachable from a breadcrumb, listing the same folders as
+        # the workshop level so every displayed crumb resolves.
+        entries = await _dw_entries(wid)
+        return _dw_stage_folders(parent, entries), None
+
+    stage_key = segs[3]
+    if len(segs) != 4:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path")
+
+    stage = next((s for s in dw.stages() if s.key == stage_key), None)
+    if stage is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path")
+
+    record, entries, media = await gather_reads(
+        _dw_require(wid), _dw_entries(wid), _media(_dw_media_where(wid), scope)
+    )
+    grouped, _unknown = dw.flatten(record, entries)
+    out: list[dict[str, Any]] = []
+    for entity in stage.entities:
+        rows = grouped.get(entity.key) or []
+        if not rows:
+            continue
+        text = _text(
+            parent,
+            f"{_seg(entity.title, entity.key)}.txt",
+            _dw_rows_text(entity.title, dw.entity_columns(entity), rows),
+        )
+        if text:
+            out.append(text)
+
+    # THE PHOTOGRAPHS THIS STAGE'S ROWS CITE, under the stage that cites them. This is the media
+    # identity fix at the tree level: the same files used to land anonymously in Miscellaneous.
+    attributions = dw.media_attributions(record, entries)
+    mine = [
+        m
+        for m in media
+        if (attributions.get(m.id) is not None and attributions[m.id].stage_key == stage_key)
+    ]
+    used: set[str] = set()
+    for position, m in enumerate(folder_order(mine), start=1):
+        attribution = attributions[m.id]
+        name = unique_display_filename(
+            m,
+            used,
+            record_type="Stage",
+            record_name=f"{attribution.stage_number:02d} {attribution.field_label}",
+            position=position,
+            fallback=m.id,
+        )
+        out.append(
+            {
+                "name": name,
+                "path": _join(parent, name),
+                "kind": "file",
+                "originalFilename": m.originalFilename,
+                "mediaType": str(_ev(m.mediaType)),
+                "mediaId": m.id,
+                "url": m.url,
+                "sizeBytes": int(m.sizeBytes) if m.sizeBytes is not None else None,
+                "transcriptAvailable": bool((m.transcriptText or "").strip()),
+                "_transcriptText": m.transcriptText,
+            }
+        )
+    return out, {
+        "title": f"Stage {stage.number}: {stage.title}",
+        "fields": [
+            {"label": "Workshop", "value": str(getattr(record, "title", "") or "")},
+            {"label": "Tables with rows", "value": str(len(out) - len(mine))},
+            {"label": "Files", "value": str(len(mine))},
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1758,10 +2280,43 @@ async def _locate_path(record_type: str, record_id: str, scope: Scope) -> str | 
         base = await _artisan_path(link.artisanId, scope)
         return f"{base}/questionnaire/{record_id}" if base else None
 
+    if kind in {"designworkshop", "design_workshop"}:
+        # "Show in folders" on a design & prototype workshop. Refused outright for an account that
+        # may not read the taxonomy — returning the path would name a folder they cannot open, which
+        # is a worse answer than "nothing files this yet" because it looks like a broken link
+        # rather than a rule.
+        if not scope.design_workshops:
+            return None
+        found = await db.designworkshop.find_first(where={"id": record_id, "deletedAt": None})
+        return f"by-design-workshop/{found.id}" if found else None
+
     if kind in {"media", "mediafile"}:
         media = await db.mediafile.find_first(where=_and({"id": record_id}, scope.media))
         if media is None:
             return None
+        # A DESIGN-WORKSHOP FILE IS FILED UNDER ITS STAGE, AND IT IS TRIED FIRST. This is the media
+        # identity fix at the "reveal this file" level: before it, such a file matched none of the
+        # six owners below and fell through to the by-type bucket — "Images", the folder holding
+        # every photograph in the repository, which locates nothing. Both readings are honoured for
+        # the reason ``_dw_media_where`` states, and the STAGE is resolved from the workshop's own
+        # rows because no column on ``MediaFile`` carries it.
+        dw_id = getattr(media, "designWorkshopId", None) or (
+            media.linkedRecordId
+            if (media.linkedRecordType or "") in _DESIGN_WORKSHOP_TAGS
+            else None
+        )
+        if dw_id and scope.design_workshops:
+            record = await db.designworkshop.find_first(where={"id": dw_id, "deletedAt": None})
+            if record is not None:
+                base = f"by-design-workshop/{record.id}"
+                attribution = dw.media_attributions(record, await _dw_entries(record.id)).get(
+                    media.id
+                )
+                # No attribution means no stage row cites it — a miscellaneous upload filed under
+                # the workshop from the dropdown. The workshop folder is where those are listed, so
+                # that is where it is revealed.
+                return f"{base}/stages/{attribution.stage_key}" if attribution else base
+
         # Deepest owner wins: a clip on a product belongs in the product folder, not the artisan's.
         for owner_kind, owner_id in (
             ("interview", media.questionnaireInterviewId),
@@ -1785,7 +2340,11 @@ async def _locate_path(record_type: str, record_id: str, scope: Scope) -> str | 
 @router.get("/locate")
 async def data_locate(
     type: str = Query(
-        ..., description="workshop | craft | artisan | product | tool | process | interview | media"
+        ...,
+        description=(
+            "workshop | craft | artisan | product | tool | process | interview | media | "
+            "designWorkshop"
+        ),
     ),
     id: str = Query(..., min_length=1),
     current_user: Any = Depends(require_dataset_downloader),
@@ -1824,9 +2383,17 @@ async def data_tree(
         "info": info,
         "truncated": len(entries) >= TAKE,
         # The switcher is served with every level so the client always knows which
-        # taxonomy it is inside and can offer the other two without a second call.
-        "taxonomies": TAXONOMIES,
+        # taxonomy it is inside and can offer the others without a second call. Filtered by the
+        # caller's own capabilities — see :func:`_taxonomies_for`.
+        "taxonomies": _taxonomies_for(scope),
         "taxonomy": _taxonomy_of(norm),
+        # WHETHER THE DESIGN-WORKSHOP TABLES ON THIS SCREEN MAY BE TAKEN AWAY, said once per level
+        # so the client never has to re-derive a permission from a role. A professor reads them here
+        # and may not export them; the page has to say that where it applies rather than offering a
+        # button that answers 403. Absent the flag the web would either hide a download the account
+        # has (wrong for an admin) or offer one it does not (wrong for a professor).
+        "designWorkshopsVisible": scope.design_workshops,
+        "designWorkshopsDownloadable": scope.design_workshop_downloads,
     }
 
 
@@ -2075,7 +2642,12 @@ async def data_manifest(
     include_set: set[str] | None = None
     if include is not None and include.strip():
         include_set = {t.strip().lower() for t in include.split(",") if t.strip()}
-    scope = await _scope_for(current_user)
+    # ``for_download()`` AND NOT THE PLAIN SCOPE, because this route is the zip. Everything the walk
+    # lists is a file the browser then fetches and writes to disk, so on this route viewing IS
+    # exporting — and design-workshop stage data may be read on screen by a professor and taken out
+    # only by an admin (``deps.can_export_design_workshop_data``). A professor asking for a manifest
+    # therefore gets exactly the archive they got before this change: the seven legacy tables, whole.
+    scope = (await _scope_for(current_user)).for_download()
     norm = _norm(path)
     files: list[dict[str, Any]] = []
     state = {"truncated": False}
@@ -2144,6 +2716,14 @@ _REPORT_KEYS = (
     "tools",
     "interviews",
     "media",
+    # The design-workshop half, added 2026-08-31. Three keys and not one, because the three carry
+    # different things and merging them would mean a sheet builder guessing which it had been given:
+    # ``designWorkshops`` is DesignWorkshop rows, ``dwEntries`` is the flat DwStageEntry list across
+    # all of them, and ``dwDefinitions`` is ``[(workshopId, CustomDefinition)]`` — populated only
+    # when the path names ONE workshop, for the cost reason argued above ``_dw_report_load``.
+    "designWorkshops",
+    "dwEntries",
+    "dwDefinitions",
 )
 
 
@@ -2173,6 +2753,32 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
     filtered by ``scope`` — the report must never contain a row the tree would not show.
     """
     data: dict[str, list[Any]] = {key: [] for key in _REPORT_KEYS}
+
+    # THE DESIGN-WORKSHOP TAXONOMY IS ITS OWN REPORT, and it is answered before the normalisation
+    # below because there is nothing to normalise it ONTO. ``Workshop`` and ``DesignWorkshop`` are
+    # different tables joined only by a NULLABLE ``DesignWorkshop.workshopId`` (see the taxonomy's
+    # own note in ``TAXONOMIES``), so a design workshop cannot be re-expressed as a workshop path the
+    # legacy loaders understand — most of them have no such parent to be expressed under.
+    if segs and segs[0] == "by-design-workshop":
+        if not scope.design_workshops:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path"
+            )
+        wid = segs[1] if len(segs) >= 2 else None
+        await _dw_report_load(data, scope, [wid] if wid else None)
+        if wid:
+            data["media"] = await _report_media(_dw_media_where(wid), scope)
+        elif data["designWorkshops"]:
+            data["media"] = await _report_media(
+                {
+                    "OR": [
+                        {"linkedRecordType": {"in": _DESIGN_WORKSHOP_TAGS}},
+                        {"designWorkshopId": {"not": None}},
+                    ]
+                },
+                scope,
+            )
+        return data
 
     # Normalise the taxonomy roots onto the shapes the loaders below understand.
     if segs:
@@ -2208,7 +2814,11 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
     if segs and segs[0] == "users":
         where: dict[str, Any] = {"uploadedById": segs[1]} if len(segs) >= 2 else {}
         if len(segs) >= 3 and segs[2] in _USER_TYPE_WHERE:
-            where = {"AND": [where, _USER_TYPE_WHERE[segs[2]]]}
+            if segs[2] == "designworkshops" and not scope.design_workshops:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path"
+                )
+            where = {"AND": [where, _user_type_where(segs[2], scope)]}
         data["media"] = await _report_media(where, scope)
         return data
 
@@ -2288,6 +2898,12 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
             ),
             _report_media(None, scope),
         )
+        # THE WHOLE REPOSITORY INCLUDES THE HALF THIS SCREEN COULD NOT SEE. A root report is what
+        # the "download everything" button produces, and until this line it produced the seven
+        # legacy tables under a filename that promised design workshops. Loaded as its own wave for
+        # the reason argued at :func:`_dw_report_load`, and a no-op for an account that may not read
+        # it — so the query count for a granted researcher is exactly what it was.
+        await _dw_report_load(data, scope, None)
         return data
 
     wid = segs[1]
@@ -2662,9 +3278,34 @@ def _hierarchy_of(kind: str, record: Any) -> tuple[str, str, str]:
     return "", "", ""
 
 
-def _media_link_label(m: Any, proc_names: dict[str, str], step_names: dict[str, str]) -> str:
-    """Human 'record link' for one media row, most specific relation first."""
+def _media_link_label(
+    m: Any,
+    proc_names: dict[str, str],
+    step_names: dict[str, str],
+    dw_attributions: dict[str, dw.MediaAttribution] | None = None,
+) -> str:
+    """Human 'record link' for one media row, most specific relation first.
+
+    THE DESIGN-WORKSHOP BRANCH IS FIRST AND IT IS A BUG FIX. Every photograph and recording taken
+    inside a design & prototype workshop reached the bottom of this function and came back
+    "Miscellaneous" — no relation on the row matches, because a design workshop is reached by the
+    ``designWorkshop`` tag pair and by ``designWorkshopId``, neither of which is one of the six
+    relations tested below. So the four media sheets in the workbook filed the entire stage record
+    of the product this repository is named after under the label for files that belong to nothing.
+
+    ``dw_attributions`` is the index built by ``dw.media_attributions`` from the workshop's own
+    stage rows — the ONLY place the stage is recorded (no column on ``MediaFile`` carries it). It is
+    optional so that a caller with no design workshops loaded pays nothing and reads exactly as
+    before; when it is absent, or the file is a loose upload no stage row cites, the workshop is
+    still named from the row itself rather than falling through to "Miscellaneous".
+    """
     tag = (m.linkedRecordType or "").strip().lower()
+    if tag in {t.lower() for t in _DESIGN_WORKSHOP_TAGS} or getattr(m, "designWorkshopId", None):
+        attribution = (dw_attributions or {}).get(m.id)
+        if attribution is not None:
+            title = attribution.workshop_title or "Design workshop"
+            return f"Design workshop: {title} / {attribution.label}"
+        return "Design workshop"
     if tag == "process":
         name = proc_names.get(m.linkedRecordId or "")
         return f"Process: {name}" if name else "Process"
@@ -2693,7 +3334,10 @@ def _media_link_label(m: Any, proc_names: dict[str, str], step_names: dict[str, 
 
 
 def _media_context(
-    m: Any, proc_names: dict[str, str], step_names: dict[str, str]
+    m: Any,
+    proc_names: dict[str, str],
+    step_names: dict[str, str],
+    dw_attributions: dict[str, dw.MediaAttribution] | None = None,
 ) -> dict[str, str]:
     """Where one media file sits: its workshop/craft/artisan plus what it is attached to.
 
@@ -2720,8 +3364,16 @@ def _media_context(
     if artisan is not None and not craft_name:
         craft_name = _cell(getattr(getattr(artisan, "craft", None), "name", None))
 
-    label = _media_link_label(m, proc_names, step_names)
+    label = _media_link_label(m, proc_names, step_names, dw_attributions)
     attached_kind, _, attached_name = label.partition(": ")
+    # A DESIGN-WORKSHOP FILE FILLS THE "Workshop" COLUMN FROM ITS OWN WORKSHOP. That column is read
+    # off the ``workshop`` relation, which points at the LEGACY Workshop table and is null on every
+    # one of these rows — so without this the workbook printed a blank workshop beside a file whose
+    # workshop is the whole reason it exists, and the sheets sorted by that column put them all
+    # together under the empty string.
+    attribution = (dw_attributions or {}).get(m.id)
+    if attribution is not None and not workshop_name:
+        workshop_name = attribution.workshop_title
     return {
         "workshop": workshop_name,
         "craft": craft_name,
@@ -2874,7 +3526,10 @@ def _all_records_sheet(
 
 
 def _transcript_sheet(
-    media: list[Any], proc_names: dict[str, str], step_names: dict[str, str]
+    media: list[Any],
+    proc_names: dict[str, str],
+    step_names: dict[str, str],
+    dw_attributions: dict[str, dw.MediaAttribution] | None = None,
 ) -> dict[str, Any]:
     columns = [
         "File",
@@ -2891,7 +3546,7 @@ def _transcript_sheet(
     for m in media:
         if not (m.transcriptText or "").strip():
             continue
-        ctx = _media_context(m, proc_names, step_names)
+        ctx = _media_context(m, proc_names, step_names, dw_attributions)
         facts = _media_facts(m)
         rows.append(
             [
@@ -2923,7 +3578,10 @@ def _transcript_sheet(
 
 
 def _media_by_hierarchy_sheet(
-    media: list[Any], proc_names: dict[str, str], step_names: dict[str, str]
+    media: list[Any],
+    proc_names: dict[str, str],
+    step_names: dict[str, str],
+    dw_attributions: dict[str, dw.MediaAttribution] | None = None,
 ) -> dict[str, Any]:
     """Media taxonomy 1 — the default browse order: workshop -> craft -> artisan -> record."""
     columns = [
@@ -2942,7 +3600,7 @@ def _media_by_hierarchy_sheet(
     ]
     rows = []
     for m in media:
-        ctx = _media_context(m, proc_names, step_names)
+        ctx = _media_context(m, proc_names, step_names, dw_attributions)
         f = _media_facts(m)
         rows.append(
             [
@@ -2965,7 +3623,10 @@ def _media_by_hierarchy_sheet(
 
 
 def _media_by_uploader_sheet(
-    media: list[Any], proc_names: dict[str, str], step_names: dict[str, str]
+    media: list[Any],
+    proc_names: dict[str, str],
+    step_names: dict[str, str],
+    dw_attributions: dict[str, dw.MediaAttribution] | None = None,
 ) -> dict[str, Any]:
     """Media taxonomy 2 — who uploaded what, and into which workshop."""
     columns = [
@@ -2982,7 +3643,7 @@ def _media_by_uploader_sheet(
     ]
     rows = []
     for m in media:
-        ctx = _media_context(m, proc_names, step_names)
+        ctx = _media_context(m, proc_names, step_names, dw_attributions)
         f = _media_facts(m)
         rows.append(
             [
@@ -3003,7 +3664,10 @@ def _media_by_uploader_sheet(
 
 
 def _media_by_type_sheet(
-    media: list[Any], proc_names: dict[str, str], step_names: dict[str, str]
+    media: list[Any],
+    proc_names: dict[str, str],
+    step_names: dict[str, str],
+    dw_attributions: dict[str, dw.MediaAttribution] | None = None,
 ) -> dict[str, Any]:
     """Media taxonomy 3 — grouped by kind of file (audios, videos, images, documents)."""
     columns = [
@@ -3021,7 +3685,7 @@ def _media_by_type_sheet(
     ]
     rows = []
     for m in media:
-        ctx = _media_context(m, proc_names, step_names)
+        ctx = _media_context(m, proc_names, step_names, dw_attributions)
         f = _media_facts(m)
         rows.append(
             [
@@ -3042,6 +3706,344 @@ def _media_by_type_sheet(
     return _sheet("Media by type", MEDIA_COLOR, columns, rows, len(media) >= REPORT_TAKE)
 
 
+# ---------------------------------------------------------------------------
+# The design-workshop half of /data/report.
+#
+# WHAT THE WORKBOOK GAINS: an overview page (one row per design workshop), an INDEX page naming all
+# 44 registry entities with the rows found for each, and one sheet per entity that has rows, capped
+# at ``dw.MAX_ENTITY_SHEETS``. The grouping argument — why the entity and not the stage is the
+# sheet, and why the index page exists at all — is written out at ``dw.sheet_plan``.
+#
+# THE DESIGNER'S OWN QUESTIONS ARE A SHEET ONLY WHEN THE PATH NAMES ONE WORKSHOP, and that is a
+# COST decision stated rather than hidden. Their columns are defined per workshop in
+# DwCustomSection/DwCustomField, so naming the columns of four hundred workshops means four hundred
+# definition loads on one request — and the columns would not be shared anyway: two designers write
+# "Dye bath?" and mean different questions, so the merged sheet would be a thousand columns wide
+# with one cell filled per row. At the root the rows are COUNTED on the index page instead, with the
+# sentence that says where to read them. Rule 10 is satisfied by the count, not by the sheet.
+# ---------------------------------------------------------------------------
+
+#: The tab colour of every design-workshop sheet, so they read as one block in a 30-tab workbook.
+#: Defined here rather than in ``services/record_fields.py`` because that module's palette is keyed
+#: by the seven legacy record types and a design workshop is not one of them.
+DW_COLOR = "#0F766E"
+
+#: The ``group`` stamped on every design-workshop sheet.
+#:
+#: A KEY AND NOT THE COLOUR, and the difference is a permission rule rather than a style one. The
+#: xlsx branch of ``/data/report`` drops these sheets for a caller who may read them and not export
+#: them, and selecting them by ``sheet["color"] == DW_COLOR`` would mean any future sheet that
+#: happened to be teal left the building with them — a palette edit silently changing who may
+#: download what. The web viewer also reads it, to badge the block it may not download.
+DW_SHEET_GROUP = "designWorkshop"
+
+
+def _dw_stamp(sheet: dict[str, Any]) -> dict[str, Any]:
+    """Mark one sheet as design-workshop data. See :data:`DW_SHEET_GROUP`."""
+    return {**sheet, "group": DW_SHEET_GROUP}
+
+
+async def _dw_report_load(
+    data: dict[str, list[Any]], scope: Scope, workshop_ids: list[str] | None
+) -> None:
+    """Load design workshops, their live stage rows and (for a single workshop) its definition.
+
+    ``workshop_ids`` of ``None`` means every workshop in the repository — the root report. A LIST
+    narrows to those ids; an EMPTY list would mean "no workshops", which no caller here has any way
+    to ask for, so it is treated as the narrow case and correctly returns nothing.
+
+    NOTHING IS LOADED AT ALL FOR AN ACCOUNT THAT MAY NOT READ THIS DATA, so the professor/researcher
+    split costs a granted researcher exactly zero extra queries and their workbook is byte-for-byte
+    the one they got before this change.
+
+    A SECOND WAVE, DELIBERATELY, AND NOT FOLDED INTO THE ROOT REPORT'S EIGHT-READ GATHER. That
+    gather's own comment records the measurement behind it and warns that eleven coroutines split
+    silently into two waves at ``gather_reads``' semaphore (``pool_width()``, ten). Two more reads
+    there would be ten — right on the edge, and the next person to add a sheet would tip it over
+    without knowing they had. The entries read genuinely depends on the workshop ids anyway, so it
+    could never have been in the same wave.
+    """
+    if not scope.design_workshops:
+        return
+    where: dict[str, Any] = {"deletedAt": None}
+    if workshop_ids is not None:
+        where["id"] = {"in": workshop_ids}
+    records = await db.designworkshop.find_many(
+        where=where, take=REPORT_TAKE, order={"createdAt": "desc"}
+    )
+    data["designWorkshops"] = records
+    if not records:
+        return
+    ids = [record.id for record in records]
+    data["dwEntries"] = await db.dwstageentry.find_many(
+        where={"designWorkshopId": {"in": ids}, "deletedAt": None},
+        take=REPORT_TAKE,
+        order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}],
+    )
+    if len(records) == 1:
+        data["dwDefinitions"] = [(records[0].id, await load_definition_or_empty(records[0].id))]
+
+
+def _dw_by_workshop(data: dict[str, list[Any]]) -> dict[str, list[Any]]:
+    """``{workshopId: its stage rows}`` from the flat entry list the loader returns."""
+    grouped: dict[str, list[Any]] = {}
+    for entry in data["dwEntries"]:
+        grouped.setdefault(str(getattr(entry, "designWorkshopId", "") or ""), []).append(entry)
+    return grouped
+
+
+def _dw_attributions(data: dict[str, list[Any]]) -> dict[str, dw.MediaAttribution]:
+    """Every loaded workshop's media attributions, merged into one index.
+
+    Merged across workshops without a collision check because a ``MediaFile`` id is a cuid and a
+    stage row cites it by that id; the same file appearing in two DIFFERENT workshops' stage rows
+    would be a data defect, not a shape this has to arbitrate. Within one workshop the first
+    citation wins — see ``dw.media_attributions``.
+    """
+    grouped = _dw_by_workshop(data)
+    index: dict[str, dw.MediaAttribution] = {}
+    for record in data["designWorkshops"]:
+        index.update(dw.media_attributions(record, grouped.get(record.id, [])))
+    return index
+
+
+def _dw_overview_sheet(data: dict[str, list[Any]]) -> dict[str, Any]:
+    """One row per design workshop: the promoted columns, plus how much of it has been filled in.
+
+    THE TWO COVERAGE COLUMNS ARE WHY THIS SHEET EXISTS RATHER THAN A LINK TO THE WORKSHOPS LIST. A
+    research question about a corpus of design workshops almost always starts "how many got as far
+    as X" — and a per-workshop sheet with 22 stage columns would be unreadable, while a bare list of
+    titles answers nothing. Stages answered and rows recorded are the two numbers that let a
+    researcher decide which workshops are worth opening.
+    """
+    grouped = _dw_by_workshop(data)
+    columns = [column.label for column in dw.WORKSHOP_IDENTITY_COLUMNS] + [
+        "Stages answered",
+        "Rows recorded",
+    ]
+    rows = []
+    for record in data["designWorkshops"]:
+        identity = dw.workshop_identity(record)
+        entries = grouped.get(record.id, [])
+        answered = {
+            found[0].key
+            for found in (
+                dw.entity_by_key(str(getattr(entry, "entityKey", "") or "")) for entry in entries
+            )
+            if found is not None
+        }
+        rows.append(
+            [identity.get(column.key, "") for column in dw.WORKSHOP_IDENTITY_COLUMNS]
+            + [f"{len(answered)} of {len(dw.stages())}", str(len(entries))]
+        )
+    return _sheet(
+        "Design workshops",
+        DW_COLOR,
+        columns,
+        rows,
+        truncated=len(data["designWorkshops"]) >= REPORT_TAKE,
+    )
+
+
+def _dw_index_sheet(
+    data: dict[str, list[Any]], counts: dict[str, int], plan: dw.SheetPlan, unknown: dict[str, int]
+) -> dict[str, Any]:
+    """THE ANTI-SILENCE PAGE. Every one of the 44 registry entities, whether or not it got a sheet.
+
+    Rule 10 applied to a workbook: a list that quietly stops is indistinguishable from a place with
+    no records. Without this page a reader who found no "Market survey response" tab would conclude
+    the workshops did no market survey, when the truth might be that the tab budget ran out three
+    entities earlier. So every entity is named with its stage, its row count, and one of three
+    verdicts — its own sheet, counted-but-not-shown, or genuinely zero.
+
+    The two rows that are not registry entities are here for the same reason: the designer's own
+    questions (outside the registry by design) and any entity key written against a NEWER registry
+    than this server runs. Both would otherwise be rows nothing in the workbook accounts for.
+    """
+    columns = ["Stage", "Stage name", "Table", "Rows", "In this workbook", "Table key"]
+    rows: list[list[Any]] = []
+    for table in dw.tables():
+        count = counts.get(table.entity_key, 0)
+        if table.entity_key in plan.included:
+            verdict = "Its own sheet"
+        elif table.entity_key in plan.omitted:
+            verdict = f"Not shown — only {dw.MAX_ENTITY_SHEETS} tables fit one workbook"
+        else:
+            verdict = "No rows found"
+        rows.append(
+            [
+                table.stage_number,
+                table.stage_title,
+                table.title,
+                count,
+                verdict,
+                table.entity_key,
+            ]
+        )
+
+    custom_rows = counts.get(dw.CUSTOM_ENTITY_KEY, 0)
+    if custom_rows:
+        rows.append(
+            [
+                "",
+                "Outside the 22 stages",
+                "The designer's own questions",
+                custom_rows,
+                "Its own sheet"
+                if data["dwDefinitions"]
+                else "Not shown — open one design workshop to read these",
+                dw.CUSTOM_ENTITY_KEY,
+            ]
+        )
+    for entity_key, count in sorted(unknown.items()):
+        rows.append(
+            [
+                "",
+                "Unknown to this server",
+                entity_key,
+                count,
+                "Not shown — written against a newer version of the form",
+                entity_key,
+            ]
+        )
+    # NOT ``_sheet(..., truncated=...)``, AND THE DIFFERENCE IS A WRONG SENTENCE ON SCREEN.
+    # ``_sheet`` treats its flag as "the per-sheet ROW cap bit": it clips the rows and appends
+    # "Note: capped at 5000 rows — the full data set has more." This page is 44 rows long and was
+    # never row-capped; what ran out is the TAB budget, which is a different fact with a different
+    # next move. So the flag is set afterwards and carries its own sentence, and the web viewer
+    # prefers that sentence over its default banner.
+    sheet = _sheet("DW tables", DW_COLOR, columns, rows)
+    if not plan.truncated:
+        return sheet
+    return {
+        **sheet,
+        "truncated": True,
+        "truncatedNote": (
+            f"{len(plan.omitted)} more table"
+            f"{'s' if len(plan.omitted) != 1 else ''} have rows and did not fit this workbook. "
+            "They are listed above with their row counts — open one design workshop to read them."
+        ),
+    }
+
+
+def _dw_entity_sheet(entity_key: str, rows: list[dict[str, str]]) -> dict[str, Any] | None:
+    """One entity's rows as a sheet: workshop identity, the row's own ids, then its fields."""
+    found = dw.entity_by_key(entity_key)
+    if found is None:
+        return None
+    stage, entity = found
+    headers = [column.label for column in dw.WORKSHOP_IDENTITY_COLUMNS]
+    headers += ["Row id", "Row order"]
+    headers += [
+        f"{column.label} ({column.unit})" if column.unit else column.label
+        for column in dw.entity_columns(entity)
+    ]
+    body = []
+    for row in rows:
+        cells = [row.get(column.key, "") for column in dw.WORKSHOP_IDENTITY_COLUMNS]
+        cells += [row.get("entry.id", ""), row.get("entry.ordinal", "")]
+        cells += [row.get(column.key, "") for column in dw.entity_columns(entity)]
+        body.append(cells)
+    return _sheet(
+        f"{stage.number:02d} {entity.title}",
+        DW_COLOR,
+        headers,
+        body,
+        truncated=len(rows) >= REPORT_TAKE,
+    )
+
+
+def _dw_custom_sheet(
+    definition: Any, rows: list[dict[str, str]]
+) -> dict[str, Any] | None:
+    """The designer's own questions, for the one-workshop case. See the block comment above."""
+    if not rows:
+        return None
+    columns = dw.custom_columns(definition)
+    headers = [column.label for column in dw.WORKSHOP_IDENTITY_COLUMNS] + ["Row id", "Row order"]
+    headers += [column.label for column in columns]
+    body = []
+    for row in rows:
+        cells = [row.get(column.key, "") for column in dw.WORKSHOP_IDENTITY_COLUMNS]
+        cells += [row.get("entry.id", ""), row.get("entry.ordinal", "")]
+        cells += [row.get(column.key, "") for column in columns]
+        body.append(cells)
+    return _sheet("Designer's own questions", DW_COLOR, headers, body)
+
+
+def _dw_withheld_sheet(dropped: list[dict[str, Any]]) -> dict[str, Any]:
+    """The one sheet a non-exporter's workbook carries in place of the design-workshop block.
+
+    It names each withheld sheet and its row count, so the file states what it is missing rather than
+    looking like a repository with no design workshops in it. The counts are not the data — a row
+    total is a fact about coverage, which is what the reader needs in order to know whether to ask.
+    """
+    rows = [[sheet["name"], len(sheet["rows"])] for sheet in dropped]
+    return {
+        **_sheet(
+            "Design workshops (withheld)",
+            DW_COLOR,
+            ["Sheet not included", "Rows it holds"],
+            rows,
+        ),
+        "truncated": True,
+        "truncatedNote": (
+            "Design & prototype workshop tables are readable on screen at your access level and are "
+            "not included in downloads. An admin or the master admin can export them."
+        ),
+    }
+
+
+def _dw_sheets(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Every design-workshop sheet, in tab order, or nothing at all when there is nothing to say.
+
+    NOTHING AT ALL RATHER THAN EMPTY SHEETS. A subtree with no design workshops in it — an artisan's
+    products, say — gains no tabs, so the workbook a researcher already knows is unchanged wherever
+    this data does not reach. The index page appears only alongside the data it indexes.
+    """
+    records = data["designWorkshops"]
+    if not records:
+        return []
+
+    grouped_entries = _dw_by_workshop(data)
+    definitions = dict(data["dwDefinitions"])
+
+    # One flattened bundle per workshop, merged by entity. ``flatten`` is the shared implementation
+    # (see services/design_workshop_data.py); this loop only concatenates what it returns, so the
+    # sheets and the tree cannot disagree about what a stored value renders as.
+    merged: dict[str, list[dict[str, str]]] = {}
+    unknown: dict[str, int] = {}
+    for record in records:
+        rows, unknowns = dw.flatten(
+            record, grouped_entries.get(record.id, []), definitions.get(record.id)
+        )
+        for entity_key, entity_rows in rows.items():
+            merged.setdefault(entity_key, []).extend(entity_rows)
+        for item in unknowns:
+            unknown[item.entity_key] = unknown.get(item.entity_key, 0) + item.rows
+
+    counts = {key: len(value) for key, value in merged.items()}
+    # The ``_custom`` rows a definition could not name come back as UNKNOWN, not as a count of zero
+    # — that is what ``flatten`` reports when it has no definition. Counting them here as custom
+    # rows keeps the index page's arithmetic honest at the root, where no definition is loaded.
+    counts[dw.CUSTOM_ENTITY_KEY] = counts.get(dw.CUSTOM_ENTITY_KEY, 0) + unknown.pop(
+        dw.CUSTOM_ENTITY_KEY, 0
+    )
+    plan = dw.sheet_plan(counts)
+
+    sheets = [_dw_overview_sheet(data), _dw_index_sheet(data, counts, plan, unknown)]
+    for entity_key in plan.included:
+        sheet = _dw_entity_sheet(entity_key, merged.get(entity_key, []))
+        if sheet is not None:
+            sheets.append(sheet)
+    for _workshop_id, definition in data["dwDefinitions"]:
+        custom = _dw_custom_sheet(definition, merged.get(dw.CUSTOM_ENTITY_KEY, []))
+        if custom is not None:
+            sheets.append(custom)
+    # Stamped in ONE place, on the way out, so a sheet added to this function cannot be the one that
+    # forgets — which for this stamp means leaving the building with an account that may not take it.
+    return [_dw_stamp(sheet) for sheet in sheets]
+
 def _report_sheets(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
     """Every sheet in the workbook, in tab order.
 
@@ -3054,6 +4056,10 @@ def _report_sheets(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
     proc_names = {p.id: _cell(p.name) for p in data["processes"]}
     step_names = {s.id: _cell(s.name) for p in data["processes"] for s in (p.steps or [])}
     media_index = _index_media_by_record(media)
+    # WHAT EACH DESIGN-WORKSHOP FILE IS EVIDENCE OF, resolved once and handed to all four media
+    # sheets. Without it every one of them printed "Miscellaneous" in the "Attached to" column for a
+    # stage photograph — see :func:`_media_link_label`.
+    attributions = _dw_attributions(data)
 
     return [
         _all_records_sheet(data, media_index),
@@ -3066,10 +4072,11 @@ def _report_sheets(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
         _record_sheet("tool", data["tools"], media_index),
         _record_sheet("interview", data["interviews"], media_index),
         _questionnaire_answer_sheet(data["interviews"]),
-        _transcript_sheet(media, proc_names, step_names),
-        _media_by_hierarchy_sheet(media, proc_names, step_names),
-        _media_by_uploader_sheet(media, proc_names, step_names),
-        _media_by_type_sheet(media, proc_names, step_names),
+        *_dw_sheets(data),
+        _transcript_sheet(media, proc_names, step_names, attributions),
+        _media_by_hierarchy_sheet(media, proc_names, step_names, attributions),
+        _media_by_uploader_sheet(media, proc_names, step_names, attributions),
+        _media_by_type_sheet(media, proc_names, step_names, attributions),
     ]
 
 
@@ -3116,7 +4123,36 @@ async def data_report(
     records = await _report_records(segs, scope)
     sheets = _report_sheets(records)
     if fmt == "json":
-        return JSONResponse({"sheets": sheets})
+        # THE VIEW. ``format=json`` is what the View Data page renders on screen — it hands back no
+        # file — so a professor gets the design-workshop sheets here in full. The two flags travel
+        # with them so the page can say, above the tables it is showing, that this account may read
+        # them and not export them. Saying it is the requirement (``deps``' split, and the owner's
+        # ruling behind it): a professor must be told, not handed a button that 403s.
+        return JSONResponse(
+            {
+                "sheets": sheets,
+                "designWorkshopsVisible": scope.design_workshops,
+                "designWorkshopsDownloadable": scope.design_workshop_downloads,
+            }
+        )
+
+    # THE DOWNLOAD. Design-workshop sheets are dropped for anybody but an admin, and the workbook is
+    # still built — REFUSING THE WHOLE FILE WOULD BE THE WRONG SHAPE. A professor has always been
+    # able to download this workbook; 403-ing it now would take away the seven legacy tables to
+    # protect data that is not in them, which is a regression dressed as a permission.
+    #
+    # AND THE OMISSION IS WRITTEN INTO THE FILE, not only onto the screen it was downloaded from.
+    # The web page says it beside the button (``designWorkshopsDownloadable`` above), but a workbook
+    # outlives the page: it is archived, mailed on, and opened a year later by somebody who never saw
+    # the sentence. A file that silently lacks a section it could have carried is the same failure as
+    # a list that quietly stops. So the dropped block is replaced by ONE sheet that names it — and
+    # only when there was something to drop, because a notice about data this account could never see
+    # would be a permission it does not have, announced in a file it did not ask about.
+    if not scope.design_workshop_downloads:
+        dropped = [sheet for sheet in sheets if sheet.get("group") == DW_SHEET_GROUP]
+        sheets = [sheet for sheet in sheets if sheet.get("group") != DW_SHEET_GROUP]
+        if dropped:
+            sheets.append(_dw_withheld_sheet(dropped))
 
     crumbs = await _resolve_crumbs(norm)
     level_name = crumbs[-1]["name"] if crumbs else "Repository"

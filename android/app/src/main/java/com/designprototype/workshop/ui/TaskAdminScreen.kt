@@ -1559,8 +1559,12 @@ private fun StepHeader(number: Int, title: String, hint: String? = null) {
 
 @Composable
 private fun FieldLabel(text: String, required: Boolean = false) {
+    // Appended as text and then painted by [requiredMarked], rather than drawn as a second element:
+    // this screen is the one place in the app that already HAS the Boolean, and it still goes through
+    // the shared helper so the mark is the same glyph, the same leading space and the same colour as
+    // the twenty-odd labels that only ever carry it as a trailing literal. One mark, one owner.
     Text(
-        text + if (required) " *" else "",
+        requiredMarked(text + if (required) " *" else ""),
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )

@@ -65,6 +65,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -192,9 +193,55 @@ data class SelectOption(val value: String, val label: String, val hint: String? 
  * OFFERED WHETHER OR NOT THE SEARCH FOUND ANYTHING, deliberately. A designer usually knows the
  * artisan is absent before they have finished typing the name, and a control that only appears after
  * an empty result is one they have to discover twice.
+ *
+ * ── AND IT NOW KNOWS WHAT WAS TYPED, WHICH IS WHAT THE BROWSER'S ROW HAS ALWAYS SAID ────────────
+ *
+ * [label] used to be a fixed `String`, so the row could only ever say what it was going to do and
+ * never what it was going to do it TO. That is fine for "Create a new artisan" — the name goes into
+ * a record form the designer is about to fill in, and they will see it there. It is not fine for the
+ * one control this app has whose create row IS the commit: the design workshop's own name, where
+ * the web's `SelectCreateAction` draws *Use “Bagru winter 2026” as the name* and its own comment
+ * gives the reason — *"a reader has to be able to see the exact string that would be stored, the
+ * capitals, the punctuation, the double space they did not mean to type, and a paraphrase is the one
+ * shape that cannot show them."* A handset offering a button that does not name the answer back is
+ * asking somebody to commit a string they cannot read.
+ *
+ * ── `null` MEANS "DRAW NO ROW FOR THIS TERM", AND IT IS WHY THE OFFER RULE ABOVE STILL HOLDS ─────
+ *
+ * The two kinds of create row want opposite things from an EMPTY box. A record-making action wants
+ * to be there before a letter is typed (the paragraph above). A commit-the-term action has nothing
+ * to commit and must not draw a button reading *Use “” as the name* — nor may the primitive guess
+ * which kind it is holding. So the decision is the caller's, expressed in the one place it can be
+ * seen: the label lambda returns `null` for a term it will not act on, and neither surface draws a
+ * row it has no words for. The secondary constructor below is the fixed-label case and returns the
+ * same string for every term, so every call site written before this parameter existed is unchanged
+ * in both surfaces.
+ *
+ * THE ANCHORED MENU ASKS WITH `""` because it has no box at all, which falls out correctly on both
+ * kinds: a fixed label still draws, and a term-aware one draws nothing — a row inviting somebody to
+ * use what they typed, on a surface with nowhere to type, is an affordance with no route to it.
  */
 @Immutable
-data class SelectCreateAction(val label: String, val onClick: () -> Unit)
+data class SelectCreateAction(
+    /**
+     * The row's words for what is in the box right now, or `null` to draw no row for that term.
+     *
+     * Quote the term when it appears — the web does, for the reason quoted above.
+     */
+    val label: (query: String) -> String?,
+    /** Act on what is in the box. The term arrives trimmed, and is `""` on the anchored menu. */
+    val onClick: (query: String) -> Unit,
+) {
+    /**
+     * The fixed-label create row — "Create a new artisan" — whose words never mention the term.
+     *
+     * Kept as a constructor rather than asking eleven call sites to write `{ _ -> "…" }`, and kept
+     * as the SHAPE OF THE ORIGINAL so a reader diffing this file sees no call site move. It also
+     * documents the split: an action that ignores the query is one whose work happens somewhere the
+     * designer can still read and correct the name, and it is always offered.
+     */
+    constructor(label: String, onClick: () -> Unit) : this({ label }, { onClick() })
+}
 
 /** Adapt the `value to label` pairs the record forms already build. */
 fun List<Pair<String, String>>.asSelectOptions(): List<SelectOption> =
@@ -397,7 +444,9 @@ fun SearchableSelectField(
     val standDownLine = emptyMessage?.takeIf { options.isEmpty() && !enabled }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        // [requiredMarked] and not a bare `label`: a caller's trailing " *" is painted in the error
+        // colour here, and a label without one is unchanged. `field.muted` still sets the words.
+        Text(requiredMarked(label), color = MaterialTheme.field.muted, fontSize = 12.sp)
         Box(modifier = Modifier.fillMaxWidth()) {
             SelectTrigger(
                 // The visible label sits in a separate Text above the button, which TalkBack reads
@@ -423,6 +472,17 @@ fun SearchableSelectField(
                 // the sentence on the form as a node of its own; appending it here as well makes
                 // TalkBack read the same words twice running, once as the button's name and once
                 // as the text beneath it.
+                //
+                // THE REQUIRED MARK STAYS IN THIS STRING — `label`, not `dwWithoutRequiredMark`.
+                // The mark went red on 2026-08-30 ([requiredMarked], applied to the visible label
+                // above), and colour says nothing to a screen reader, so stripping it here would
+                // take the fact away from the one reader who cannot see the new colour at all.
+                // Nothing else in this control announces it: `SearchableSelectField` has no
+                // `required` parameter — required-ness reaches it ONLY inside the label string —
+                // so this text is the whole of what TalkBack knows. (Checked against the ruling
+                // "keep it in speech only if the control does not otherwise announce required":
+                // it does not.) The web made the same non-change for the same reason — its
+                // `RequiredMark` is deliberately not `aria-hidden`.
                 speech = buildString {
                     append(label)
                     append(". ")
@@ -517,12 +577,18 @@ fun SearchableSelectField(
                     // LAST, and behind a rule. A menu item that makes a record is not one of the
                     // answers to "which of these?", and putting it above or among them is how a
                     // mis-hit on a short list opens a create form instead of picking the neighbour.
-                    createAction?.let { action ->
+                    //
+                    // ASKED WITH `""`, because this surface has no filter box: there is nothing
+                    // typed here and never can be. A fixed-label action answers as it always did; a
+                    // term-aware one answers `null` and draws nothing, which is correct — see
+                    // [SelectCreateAction].
+                    val createRowLabel = createAction?.label("")
+                    if (createAction != null && createRowLabel != null) {
                         HorizontalDivider(color = MaterialTheme.field.hairline)
                         DropdownMenuItem(
                             text = {
                                 Text(
-                                    action.label,
+                                    createRowLabel,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Medium,
                                     maxLines = 2,
@@ -540,7 +606,7 @@ fun SearchableSelectField(
                             // Closed FIRST. The action opens a full-screen record form in its own
                             // window, and an anchored menu left standing under it is still there when
                             // the form is dismissed — over a list that no longer describes the data.
-                            onClick = { menuOpen = false; action.onClick() }
+                            onClick = { menuOpen = false; createAction.onClick("") }
                         )
                     }
                 }
@@ -558,7 +624,15 @@ fun SearchableSelectField(
 
     if (sheetOpen) {
         SearchablePickerSheet(
-            title = label,
+            // THE MARK IS STRIPPED FROM THE SHEET'S HEADING. It is a form control's mark, and the
+            // heading of a sheet is not a form control: it names the list being browsed, and
+            // "Craft *" over a list of crafts marks nothing the reader can act on. This file
+            // already drew that line once — the search box below the heading is labelled just
+            // "Search" rather than "Search $title" because a required field "produced 'Search
+            // Craft *'" — so stripping it from the heading itself is the same rule applied one
+            // level up. Nothing is lost to TalkBack: the trigger that opened this sheet announces
+            // the label WITH its mark (see its `speech`).
+            title = dwWithoutRequiredMark(label),
             options = options,
             selected = if (selectedValue.isBlank()) emptySet() else setOf(selectedValue),
             multiple = false,
@@ -664,8 +738,16 @@ fun SearchableMultiSelectField(
     val chosen = options.filter { it.value in selected }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        /*
+         * THE ONE LABEL IN THE APP WHOSE MARK IS NOT AT THE END OF THE LINE. This control prints a
+         * live count after the label, so the string on screen is "Crafts * (3 selected)" and
+         * [requiredMarked] — which splits a TRAILING " *" — would find nothing to paint if it were
+         * handed the whole line. Marking the label first and concatenating the count afterwards is
+         * what keeps the mark red here, and it is the right split on its own terms: the asterisk
+         * belongs to the field, not to the count of what is in it.
+         */
         Text(
-            "$label (${chosen.size} selected)",
+            requiredMarked(label) + AnnotatedString(" (${chosen.size} selected)"),
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -677,6 +759,10 @@ fun SearchableMultiSelectField(
             Text(emptyMessage, color = MaterialTheme.field.muted, fontSize = 12.sp)
         } else {
             SelectTrigger(
+                // THE REQUIRED MARK STAYS IN THIS STRING, as it does in the single-select's
+                // `speech` a few hundred lines above and for the identical reason: the mark is
+                // red on screen, red is not audible, and this control has no `required`
+                // parameter to announce it from. `label`, never `dwWithoutRequiredMark(label)`.
                 speech = buildString {
                     append(label)
                     append(". ")
@@ -735,7 +821,9 @@ fun SearchableMultiSelectField(
 
     if (sheetOpen) {
         SearchablePickerSheet(
-            title = label,
+            // Stripped, exactly as the single-select strips it — see the note on the other
+            // `SearchablePickerSheet` call in this file.
+            title = dwWithoutRequiredMark(label),
             options = options,
             selected = selected,
             multiple = true,
@@ -998,6 +1086,11 @@ private fun SearchablePickerSheet(
                         // a required field, produced "Search Craft *". The heading directly above
                         // already names the list, and it is the first thing TalkBack lands on inside
                         // the sheet, so the short label loses nothing.
+                        //
+                        // THE SECOND HALF OF THAT REASON EXPIRED ON 2026-08-30 and the rule did
+                        // not. Both callers now hand this sheet a [dwWithoutRequiredMark] title, so
+                        // "Search Craft *" is no longer reachable from here — but the wrapping is,
+                        // and the wrapping was always the bigger of the two complaints.
                         label = { Text("Search") },
                         singleLine = true,
                         leadingIcon = {
@@ -1157,11 +1250,23 @@ private fun SearchablePickerSheet(
              * The sheet is dismissed before the action runs. It is a window of its own; leaving it up
              * under a full-screen record form means the designer comes back to a picker whose options
              * were fetched before the record they just made existed.
+             *
+             * THE TERM IS HANDED IN, TRIMMED, and it is what lets the row read *Use “Bagru winter
+             * 2026” as the name* rather than a sentence that does not name the answer back. It is
+             * also what decides whether the row is drawn at all: a caller whose label answers `null`
+             * for this term wants no row for it. Both halves are [SelectCreateAction]'s.
+             *
+             * TRIMMED HERE AND IN ONE PLACE, so the string the row QUOTES is byte-identical to the
+             * string [SelectCreateAction.onClick] is handed. Quoting the raw box while committing a
+             * trimmed one would show a reader a name with a trailing space and store one without —
+             * and on this field a name is the whole answer.
              */
-            createAction?.let { action ->
+            val createTerm = query.trim()
+            val createRowLabel = createAction?.label(createTerm)
+            if (createAction != null && createRowLabel != null) {
                 HorizontalDivider(color = MaterialTheme.field.hairline)
                 TextButton(
-                    onClick = { close(); action.onClick() },
+                    onClick = { close(); createAction.onClick(createTerm) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 48.dp)
@@ -1175,7 +1280,7 @@ private fun SearchablePickerSheet(
                     )
                     Spacer(Modifier.size(8.dp))
                     Text(
-                        action.label,
+                        createRowLabel,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.weight(1f),

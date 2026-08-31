@@ -39,7 +39,7 @@ import {
 // reading source, because this is the one assertion in this file that is about behaviour: whether an
 // address written before 2026-08-30 comes back as itself is a question with a right answer, and the
 // wrong answer — a round trip through `fromPlainText` — is what the obvious one-liner would produce.
-import { plainFromStoredAddress } from "@/components/designers/storedAddress";
+import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { canSeeDataTile, routeGuardFor } from "@/lib/permissions";
 import type { DesignerProfileField } from "@/lib/designers";
 import type { User, UserRole } from "@/lib/types";
@@ -316,9 +316,26 @@ test.describe("the mandatory fields", () => {
     }
     // The control that spends ONE `required` on both halves. Without this, a single read would be
     // ambiguous — it could be the asterisk with no rule, or the rule with no asterisk.
+    //
+    // ── THE MARK IS A COMPONENT NOW, 2026-08-30, AND THE ASSERTION FOLLOWS IT ──────────────────
+    //
+    // This read `toContain('{required ? " *" : ""}')` — the literal that appeared verbatim at ten
+    // label sites across the client. The owner asked for the asterisk in red, and a red asterisk
+    // cannot be a bare text node inside a label, so the ten literals became `<RequiredMark when={…}
+    // />` (`components/ui/RequiredMark.tsx`). The PROPERTY under test has not moved an inch: one
+    // `required` still feeds both the mark and the browser's own rule, which is the only thing the
+    // two lines below have ever been about. What changed is the spelling of the mark.
     const dictatedInput = stripComments(read("components/richtext/DictatedTextInput.tsx"));
-    expect(dictatedInput, "the asterisk").toContain('{required ? " *" : ""}');
+    expect(dictatedInput, "the asterisk").toContain("<RequiredMark when={required} />");
     expect(dictatedInput, "the browser's own rule").toContain("required={required}");
+    // AND THE MARK ITSELF IS RED, which is the half a source-text assertion is uniquely able to
+    // check here: nothing else in this suite renders the component, and a colour that silently
+    // reverted to plain ink would look exactly like a mark that was never asked to be red.
+    const mark = stripComments(read("components/ui/RequiredMark.tsx"));
+    expect(mark, "the required mark must be red").toContain("text-error-600");
+    expect(mark, "and legible on the dark canvas, where error-600 falls under 4.5:1").toContain(
+      "dark:text-red-400"
+    );
     // And the view marks them from the same function, so an admin reading a colleague's profile can
     // see which blank is the one that will stop the next save.
     expect(VIEW_CODE).toContain("isDesignerProfileFieldRequired(field)");
@@ -598,30 +615,30 @@ test.describe("the designer's address, once it can be formatted", () => {
 
   test("an address written before this change renders exactly as it did", () => {
     /*
-      IDENTITY, NOT A ROUND TRIP, and the difference is the whole reason `plainFromStoredAddress`
+      IDENTITY, NOT A ROUND TRIP, and the difference is the whole reason `plainFromStoredRichText`
       exists rather than a `toPlain(fromStored(raw))` at the call site. `fromStored` reads a string
       through `fromPlainText`, which strips each line, drops blank ones and collapses runs — so the
       obvious one-liner compiles, looks right, and silently reformats every address in the database
       on its way to the screen. These assertions are what that composition would fail.
     */
-    expect(plainFromStoredAddress("12 Nagar Road, Bagru")).toBe("12 Nagar Road, Bagru");
+    expect(plainFromStoredRichText("12 Nagar Road, Bagru")).toBe("12 Nagar Road, Bagru");
     // Whitespace and blank lines a designer typed are theirs, not ours to tidy.
-    expect(plainFromStoredAddress("12 Nagar Road\n\n  Bagru 303007  ")).toBe(
+    expect(plainFromStoredRichText("12 Nagar Road\n\n  Bagru 303007  ")).toBe(
       "12 Nagar Road\n\n  Bagru 303007  "
     );
     // Devanagari, because an address is among the fields most likely to be typed in a local script
     // and a mangled one is unreadable rather than merely wrong.
-    expect(plainFromStoredAddress("१२ नगर रोड, बगरू")).toBe("१२ नगर रोड, बगरू");
+    expect(plainFromStoredRichText("१२ नगर रोड, बगरू")).toBe("१२ नगर रोड, बगरू");
     // A blank column keeps this screen's own "Not filled in" wording rather than gaining a second.
-    expect(plainFromStoredAddress(null)).toBe("");
-    expect(plainFromStoredAddress(undefined)).toBe("");
+    expect(plainFromStoredRichText(null)).toBe("");
+    expect(plainFromStoredRichText(undefined)).toBe("");
     // Prose that merely BEGINS with a brace is prose. `decodeStoredRichText` demands a `blocks`
     // array precisely so a flat number is not reinterpreted as a document.
-    expect(plainFromStoredAddress("{Flat 2} Nagar Road")).toBe("{Flat 2} Nagar Road");
+    expect(plainFromStoredRichText("{Flat 2} Nagar Road")).toBe("{Flat 2} Nagar Road");
   });
 
   test("a formatted address renders as its words and never as braces", () => {
-    const shown = plainFromStoredAddress(FORMATTED);
+    const shown = plainFromStoredRichText(FORMATTED);
     expect(shown).toBe("12 Nagar Road, Bagru");
     expect(
       shown,
@@ -634,7 +651,7 @@ test.describe("the designer's address, once it can be formatted", () => {
     const twoBlocks =
       '{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road"}]},' +
       '{"kind":"PARAGRAPH","spans":[{"text":"Bagru 303007"}]}]}';
-    expect(plainFromStoredAddress(twoBlocks)).toBe("12 Nagar Road\nBagru 303007");
+    expect(plainFromStoredRichText(twoBlocks)).toBe("12 Nagar Road\nBagru 303007");
   });
 
   test("the editor and the read-only view both go through the rich-text boundary", () => {
@@ -655,12 +672,12 @@ test.describe("the designer's address, once it can be formatted", () => {
     // pre-flattened would hand the editor prose and lose the designer's marks on the first save.
     expect(FORM_CODE).toMatch(/<RichTextField[\s\S]*?defaultValue=\{profile\.addressLine \?\? ""\}/);
 
-    expect(VIEW_CODE).toContain("plainFromStoredAddress");
+    expect(VIEW_CODE).toContain("plainFromStoredRichText");
     expect(
       VIEW_CODE,
       "the view must flatten the address BEFORE its generic `String(raw)` branch, or the branch " +
         "order decides whether an admin sees an address or a JSON document"
-    ).toMatch(/field === "addressLine"[\s\S]*?plainFromStoredAddress/);
+    ).toMatch(/field === "addressLine"[\s\S]*?plainFromStoredRichText/);
   });
 
   test("the ceiling the box prints is the ceiling the server applies", () => {

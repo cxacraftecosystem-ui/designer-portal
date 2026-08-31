@@ -347,3 +347,114 @@ def test_unknown_artisan_yields_none(monkeypatch):
         asyncio.run(qc.consolidate_for_artisan("nope", SimpleNamespace(id="v", role="MASTER_ADMIN")))
         is None
     )
+
+
+# --- Requirement: a rich-text answer is prose everywhere this document is read --------------------
+#
+# WHAT WENT WRONG. ``QuestionnaireResponse.answerText`` is a ``String?`` that has held plain prose
+# since this feature was written, and since the answer box became a ``RichTextField`` on 2026-08-31
+# it sometimes holds a serialised document instead (``rich_text``'s "rich text inside a plain String
+# column" section carries the encoding). This module passed the raw column value straight through, so
+# ONE unflattened value went four ways at once:
+#
+#   * onto the web consolidated page and the Android consolidated screen, which printed
+#     ``{"blocks":[{"kind":"PARAGRAPH",…}]}`` at a reader;
+#   * into ``consolidated.csv``, which a researcher archives;
+#   * into ``_answer_key``, which decides whether two sittings CONFLICT — so the SAME sentence typed
+#     in two sittings, one of them formatted, produced two keys and the screen said the two accounts
+#     disagreed. That is the wrong answer dressed as a right one, in the one view built to show a
+#     reader where the record genuinely differs.
+#
+# And the emptiness test above it read a JSON-shaped string as filled, so a box that was focused and
+# left alone was consolidated as a real answer.
+
+
+def _rich(text: str) -> str:
+    """What the web editor writes into the column once a mark is applied.
+
+    Built through ``rich_text`` rather than hand-typed so the fixture cannot drift from the encoder;
+    ``test_rich_text_stored_columns`` is what pins that the two agree.
+    """
+    from app.services.rich_text import Mark, RichBlock, RichDoc, RichSpan, to_stored_text
+
+    return to_stored_text(
+        RichDoc(blocks=(RichBlock(spans=(RichSpan(text, marks=frozenset({Mark.BOLD})),)),))
+    )
+
+
+def _consolidate(monkeypatch, responses):
+    db = _build_db()
+    db.questionnaireresponse = _Delegate(responses)
+    monkeypatch.setattr(qc, "db", db)
+    import asyncio
+
+    return asyncio.run(
+        qc.consolidate_for_artisan(ARTISAN_ID, SimpleNamespace(id="v", role="MASTER_ADMIN"))
+    )
+
+
+class TestRichTextAnswers:
+    def test_the_answer_key_reads_a_formatted_answer_as_its_prose(self):
+        """The pure half, and the one that decides ``conflict``."""
+        assert qc._answer_key(_rich("From my father.")) == qc._answer_key("From my father.")
+
+    def test_the_answer_key_still_folds_whitespace_and_case(self):
+        """Unchanged behaviour for prose — the flattening returns a plain string by identity."""
+        assert qc._answer_key("  from my  FATHER. ") == qc._answer_key("From my father.")
+
+    def test_the_same_answer_typed_once_formatted_is_not_a_conflict(self, monkeypatch):
+        """THE DEFECT, end to end. Two sittings, one sentence, one of them bolded."""
+        result = _consolidate(
+            monkeypatch,
+            [
+                _response("r1", "iv-solo", "q1", "From my father."),
+                _response("r2", "iv-group", "q1", _rich("From my father.")),
+            ],
+        )
+        assert _question_row(result, "A", "q1")["conflict"] is False
+        assert result["summary"]["conflictCount"] == 0
+
+    def test_the_payload_carries_prose_and_never_the_documents_json(self, monkeypatch):
+        """What the web page, the Android screen and the CSV all read."""
+        result = _consolidate(
+            monkeypatch, [_response("r1", "iv-solo", "q1", _rich("From my father."))]
+        )
+        answers = _question_row(result, "A", "q1")["answers"]
+        assert [a["answerText"] for a in answers] == ["From my father."]
+
+    def test_the_csv_cell_carries_prose_too(self, monkeypatch):
+        """``consolidated_rows`` reads the same key, so this is the archived file's half of it."""
+        result = _consolidate(
+            monkeypatch, [_response("r1", "iv-solo", "q1", _rich("From my father."))]
+        )
+        cells = [cell for row in consolidated_rows(result) for cell in row if isinstance(cell, str)]
+        assert "From my father." in cells
+        assert not any("{\"blocks\"" in cell for cell in cells)
+
+    def test_an_empty_document_is_not_consolidated_as_an_answer(self, monkeypatch):
+        """A rich-text box focused and left alone saves ``{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}``.
+        Read raw it is a non-empty string, so it was carried as a real answer with an empty cell under
+        the artisan's name and counted in ``typedAnswerCount``."""
+        result = _consolidate(
+            monkeypatch,
+            [_response("r1", "iv-solo", "q1", '{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}')],
+        )
+        assert result["summary"]["typedAnswerCount"] == 0
+
+    def test_an_empty_document_with_a_note_is_still_kept(self, monkeypatch):
+        """The emptiness test is an AND over the answer and the note, and flattening must not turn it
+        into a drop: an interviewer's note with no typed answer is a real row and always was."""
+        result = _consolidate(
+            monkeypatch,
+            [
+                _response(
+                    "r1",
+                    "iv-solo",
+                    "q1",
+                    '{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}',
+                    notes="would not say",
+                )
+            ],
+        )
+        answers = _question_row(result, "A", "q1")["answers"]
+        assert [a["notes"] for a in answers] == ["would not say"]

@@ -310,7 +310,13 @@ export function ToolForm({
     referenceState,
     craftCut,
     craftArtisanCut,
-    artisansLoadedForCraft
+    artisansLoadedForCraft,
+    // The four state sentences, built in the hook so this form and its twin cannot word one failure
+    // two ways -- see `CraftAndArtisanOptions.craftNotice` for what each of them covers.
+    craftNotice,
+    craftEmptyLabel,
+    craftArtisanNotice,
+    craftArtisanEmptyLabel
   } = useCraftAndArtisanOptions({ craftId, artisanId });
   /**
    * THIS TOOL'S OWN CRAFT IS ALWAYS AN OPTION, wherever it sorts.
@@ -1010,6 +1016,9 @@ export function ToolForm({
             <Select
               name="craftId"
               searchable
+              /* Never the primitive's literal "No options", which on a read that has not landed --
+                 or one that failed -- is the claim that this repository records no crafts. */
+              emptyLabel={craftEmptyLabel || undefined}
               value={craftId}
               onChange={(event) => {
                 const next = event.target.value;
@@ -1036,6 +1045,9 @@ export function ToolForm({
               ))}
             </Select>
             <CappedListNotice cuts={[craftCut]} />
+            {/* R3: a picker that is empty because the read failed has to say so on the page, not
+                only inside a panel a reader has no reason to open. */}
+            {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
           </Field>
           <DictatedTextInput
             name="craftName"
@@ -1053,6 +1065,9 @@ export function ToolForm({
             <Select
               name="artisanId"
               searchable
+              /* "" once the roster has arrived, which hands the slot back to the primitive and to
+                 the form's own sentence below. See `craftArtisanEmptyLabel`. */
+              emptyLabel={craftArtisanEmptyLabel || undefined}
               value={artisanId}
               onChange={(event) => {
                 const next = event.target.value;
@@ -1087,6 +1102,9 @@ export function ToolForm({
               <p className="mt-1 text-xs text-ink-muted">No artisans are linked to this craft yet.</p>
             ) : null}
             <CappedListNotice cuts={[craftId ? craftArtisanCut : null]} />
+            {/* The roster request for this craft failed. Distinct from the sentence above, which is
+                a claim about the craft and may only be printed off an answer that arrived. */}
+            {craftArtisanNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftArtisanNotice}</p> : null}
           </Field>
           <DictatedTextInput
             name="artisanName"

@@ -447,6 +447,21 @@ export function addressListRole(entity: DwEntity, field: DwField): AddressFieldR
  * (`registry_to_dict()`), the three keys below are the only fields in the registry that carry a
  * referenced record's workshop TITLE.
  *
+ * ── WHAT CHANGED ON 2026-08-31, AND WHAT DID NOT ────────────────────────────────────────────────
+ *
+ * The paragraph above is unchanged and is still the ruling: `workshopSetup.workshopTitle` is not in
+ * {@link WORKSHOP_TITLE_FIELD_KEYS}, must never be, and does not get this role. What it refused is a
+ * CLOSED PICKER OF `Workshop` ROWS, and that refusal stands.
+ *
+ * It was ALSO being read as a ruling against offering the designer any list at all on that box, and
+ * it does not support that. {@link ownWorkshopTitleRole} is a second, separate role over the same
+ * key, and it is not this one wearing a different name: it offers `DesignWorkshop` NAMES rather than
+ * `Workshop` rows, it stores the same plain string this field has always stored, and — the clause
+ * the objection turns on — **it cannot refuse an answer**, because whatever is typed into it is
+ * committable in one keystroke. A workshop that has no record anywhere is answered exactly as fast
+ * as one with ten years of history, which is the property the sentence above demands and the only
+ * one it demands. `StageWorkshopNameField` carries the rest of the argument.
+ *
  * THE THIRD KEY ARRIVED WITH THE SIXTH REFERENCE MODEL, AND A STANDING TRIPWIRE IS WHAT FOUND IT.
  * `artisanBaseline.interviewDocumentedAtWorkshop` is filled from `_rel(r, "workshop", "title")` on
  * `REFERENCE_MODELS["QuestionnaireInterview"]` — the same lambda shape as the other two — so it is
@@ -476,6 +491,42 @@ const WORKSHOP_TITLE_FIELD_KEYS = new Set([
 export function workshopTitleRole(field: DwField): boolean {
   if (field.type !== "TEXT" || field.deprecated) return false;
   return WORKSHOP_TITLE_FIELD_KEYS.has(field.key);
+}
+
+/**
+ * The design workshop's OWN name — the box `workshopTitleRole` refuses, and for the reason it gives.
+ *
+ * ── A SECOND ROLE OVER ONE KEY, RATHER THAN A WIDENING OF THE FIRST ─────────────────────────────
+ *
+ * Kept apart, deliberately, and the two are not variants of each other. {@link workshopTitleRole}
+ * answers *"does this box hold a REFERENCED RECORD's workshop title"* — three hydration targets,
+ * filled from `_rel(r, "workshop", "title")`, whose control is a scoped list of `Workshop` rows with
+ * a written escape hatch. This one answers *"is this box the workshop's own NAME"*, which is a
+ * different question about a different table with a different control behind it, and folding them
+ * together would put the reference control on this key — the exact thing the paragraph above
+ * forbids. One key, one role, one mount each.
+ *
+ * ── IT IS NOT ONE OF THE ROLES THAT CAN REFUSE AN ANSWER ───────────────────────────────────────
+ *
+ * This file's header names {@link addressListRole} and {@link workshopTitleRole} as the two roles
+ * that can refuse an answer, and this role does not join them: its control offers the names already
+ * on record and accepts anything typed, so there is no answer it can withhold. That is why the
+ * header's count is untouched by this addition, and it is the whole reason the objection above does
+ * not reach it.
+ *
+ * ── EXACT KEY, AND THE ENTITY IS NOT CHECKED, WHICH IS SAFE HERE AND WOULD NOT BE THERE ─────────
+ *
+ * `workshopTitle` is declared once in the registry, on `workshopSetup` (stage 1), and it is the
+ * field `PROMOTED_COLUMNS` copies onto `DesignWorkshop.title`. Matching the key alone is therefore
+ * exact today; the standing tripwire in `e2e/stage-input-methods-unit.spec.ts` reads the bundled
+ * dump and fails HERE, with the key named, if a second entity ever declares one. The looser match is
+ * affordable precisely because the control refuses nothing: the worst outcome of a false positive is
+ * a box that offers some names beside it, where a false positive on the reference role would be a
+ * closed list on a field it cannot answer.
+ */
+export function ownWorkshopTitleRole(field: DwField): boolean {
+  if (field.type !== "TEXT" || field.deprecated) return false;
+  return field.key === "workshopTitle";
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

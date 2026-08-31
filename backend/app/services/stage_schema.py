@@ -571,6 +571,51 @@ class StageSpec:
 # printed in the report is the dict value, because a report that says "TIE_AND_DYE" is not a
 # report anyone will submit to a ministry.
 ENUMS: dict[str, dict[str, str]] = {
+    # WHAT KIND OF WORKSHOP THIS IS — the first controlled vocabulary in this registry that
+    # classifies the RECORD rather than something inside it, and the reason it did not exist until
+    # 2026-08-30 is worth writing down so nobody concludes it was an oversight in the other
+    # direction.
+    #
+    # ── WHY `DesignWorkshop` HAD NO TYPE AT ALL ────────────────────────────────────────────────
+    #
+    # There IS a `workshopType` in this product and it is on the OTHER table. `Workshop` — the
+    # legacy field-documentation visit — carries `enum WorkshopType { DESIGN_PROTOTYPE, OTHER }`
+    # (`schema.prisma:76`), and its own column comment says what it is for: deciding whether a
+    # legacy row appears in the design-workshop prefill picker. Two members, one narrow job. It was
+    # never a taxonomy of workshop kinds, and reading it as one is the mistake this entry exists to
+    # stop the next reader making. It is also PROFESSOR-gated by `can_manage_workshops`, so a
+    # DESIGNER — rank 35 — cannot operate the only type control the product had.
+    #
+    # ── WHY THESE SIX ─────────────────────────────────────────────────────────────────────────
+    #
+    # Owner's decision, 2026-08-30, from four options put to them. The list is scheme-shaped
+    # because that is how these workshops are actually commissioned and how stage 1's `schemeName`
+    # already describes them in its own help text ("The scheme funding the workshop, e.g. National
+    # Handicrafts Development Programme"). `schemeName` stays: it is the free-text name of the
+    # specific sanctioning scheme, and this is the closed kind the sanction falls under. One is
+    # countable and the other is quotable, and collapsing them would lose whichever half was
+    # dropped.
+    #
+    # OTHER IS PRESENT AND IS NOT A HEDGE. Unlike `PROBLEM_TYPE` — which is closed with no OTHER
+    # on the stated grounds that its three members ARE the categories — this list is a sample of a
+    # space that keeps growing as schemes are announced, and a designer whose workshop is none of
+    # the five must be able to file it truthfully rather than pick the nearest wrong one. A
+    # workshop parked under OTHER is still findable; one mis-filed under "Skill Upgradation" is
+    # not.
+    #
+    # ── IT IS PROMOTED, SO IT IS FILTERABLE ───────────────────────────────────────────────────
+    #
+    # `PROMOTED_COLUMNS` copies it onto `DesignWorkshop.workshopKind`, which is what lets the
+    # workshop list narrow by it without opening every stage document. That map's own header says
+    # adding an entry is a migration — one shipped with this change.
+    "WORKSHOP_KIND": {
+        "DESIGN_PROTOTYPE_DEVELOPMENT": "Design & Prototype Development",
+        "SKILL_UPGRADATION": "Skill Upgradation",
+        "DESIGN_INTERVENTION": "Design Intervention",
+        "CLUSTER_DEVELOPMENT": "Cluster Development",
+        "EXPOSURE_EXHIBITION": "Exposure / Exhibition",
+        "OTHER": "Other",
+    },
     "YES_NO_PARTIAL": {
         "YES": "Yes",
         "NO": "No",
@@ -888,6 +933,10 @@ def enum_label(enum_name: str, value: str) -> str:
 # this is an index, not a second copy of the data.
 PROMOTED_COLUMNS: dict[str, str] = {
     "workshopSetup.workshopTitle": "title",
+    # ADDED 2026-08-30 WITH MIGRATION `20260830150000_design_workshop_kind`. It is promoted for the
+    # one reason this map exists — the workshop list has to narrow by it without opening every JSON
+    # document — and it is the axis the owner asked for a dropdown on, so it will be narrowed by.
+    "workshopSetup.workshopKind": "workshopKind",
     "workshopSetup.schemeName": "scheme",
     "workshopSetup.craftName": "craftName",
     "workshopSetup.clusterName": "clusterName",

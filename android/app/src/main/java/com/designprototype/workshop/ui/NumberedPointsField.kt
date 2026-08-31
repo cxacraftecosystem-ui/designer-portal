@@ -192,11 +192,20 @@ internal fun NumberedListInput(
     // `@Composable` on it cannot be lost on the way into the local.
     val trailing: @Composable ((Int) -> Unit)? = rowTrailing
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        // The mark is still appended as text and NOT drawn as a separate element, because
+        // [requiredMarked] paints it at the render below — see its KDoc for why the convention is
+        // the input. Both arms get it: the muted caption and the on-surface heading are the same
+        // label wearing two weights, and a mark that were red in only one of them would read as a
+        // rendering fault.
         val header = if (required) "$label *" else label
         if (mutedLabel) {
-            Text(header, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(requiredMarked(header), color = MaterialTheme.field.muted, fontSize = 12.sp)
         } else {
-            Text(header, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+            Text(
+                requiredMarked(header),
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold
+            )
         }
         helper?.let { Text(it, color = Muted, fontSize = 12.sp) }
         rows.forEachIndexed { index, item ->

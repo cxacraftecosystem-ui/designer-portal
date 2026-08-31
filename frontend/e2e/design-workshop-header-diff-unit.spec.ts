@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test } from "@playwright/test";
 
 import {
@@ -8,6 +11,23 @@ import {
   type EditableKey
 } from "@/components/designworkshop/headerDiff";
 import type { DwSummary } from "@/lib/designWorkshops";
+
+/** CRLF-normalised, so a marker below cannot depend on which checkout this ran on. */
+const read = (...parts: string[]) =>
+  readFileSync(join(__dirname, "..", ...parts), "utf8").replace(/\r\n/g, "\n");
+
+/**
+ * The SHIPPED CODE, with the prose taken out — the same helper `dropdown-sweep-unit.spec.ts` uses.
+ *
+ * Every `not.toContain` below is a claim about what the form DOES, and this file's subject is a
+ * change whose argument has to name the thing it removed: the comment beside the blank-title guard
+ * says in as many words that it used to call `setCustomValidity` on a `namedItem("title")` that no
+ * longer exists. A raw read cannot tell a shipped call from a sentence explaining why that call is
+ * wrong here, so it would fail on the explanation and pass on the deletion.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/.*/g, "$1");
+}
 
 /**
  * A SAVE THAT TOUCHED NOTHING MUST WRITE NOTHING — requirement 27's one silent failure.
@@ -192,4 +212,91 @@ test("the dates compare in the `yyyy-mm-dd` the column serialises, so an untouch
   */
   expect(changedKeys({ ...untouched(STORED), startDate: "2026-07-20", endDate: "2026-08-02" }, STORED)).toEqual([]);
   expect(changedKeys({ ...untouched(STORED), startDate: "20/07/2026" }, STORED)).toEqual(["startDate"]);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * THE TITLE BOX, WHICH BECAME A THEMED CONTROL ON 2026-08-31
+ *
+ * A previous lane left this box a plain `<input name="title">` deliberately and
+ * wrote down why: *"converting it means a themed control inside `changedKeys`'
+ * value diff on a PATCH that can clear NOT NULL columns."* The conversion has
+ * now happened, so the hazard needs a test rather than a warning. Three things
+ * have to hold, and each of them is a different failure:
+ *
+ *   1. an UNTOUCHED title carries no key — otherwise every save re-writes the
+ *      column stage 1 also owns, and `updatedAt` moves for nothing;
+ *   2. a CLEARED title cannot reach the wire — `title` is NOT NULL and `""` is
+ *      the PATCH's spelling of CLEAR, so a blank would be a 422 at best;
+ *   3. a REAL rename still goes.
+ *
+ * The first and third are `changedKeys`' and are exercised directly. The second
+ * is a property of the CONTROL — there is no route to a blank — so it is read
+ * off the source, which is the only place it can be checked without a browser.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const HEADER_FORM = ["components", "designworkshop", "DesignWorkshopHeaderForm.tsx"];
+
+test("the title survives becoming a dropdown: untouched sends nothing, a rename sends one key", () => {
+  // The state is SEEDED from `initial.title` and compared through the same trim `storedText`
+  // applies, so "the designer opened the form and pressed Save" is still an empty body.
+  expect(changedKeys(untouched(STORED), STORED)).toEqual([]);
+  expect(changedKeys({ ...untouched(STORED), title: STORED.title }, STORED)).toEqual([]);
+  // Whitespace is not a rename either — the control commits a trimmed term and the server strips.
+  expect(changedKeys({ ...untouched(STORED), title: `  ${STORED.title}  `.trim() }, STORED)).toEqual([]);
+  // And a real one still goes, alone.
+  expect(changedKeys({ ...untouched(STORED), title: "Bagru hand-block printing, winter sitting" }, STORED)).toEqual([
+    "title"
+  ]);
+});
+
+test("a blank title has no route to the wire, and the refusal that cannot fire is still there", () => {
+  const source = read(...HEADER_FORM);
+  const code = withoutComments(source);
+
+  /*
+    NO `noneLabel` ON THE TITLE PICKER. That prop is what draws a row carrying `value: ""` — the way
+    a record is UN-FILED — and on a NOT NULL column it would be a row offering to leave a ministry
+    document unnamed. The link picker below it DOES pass one (`NO_FIELD_WORKSHOP`), correctly, which
+    is why this is asserted against the title control's own call rather than against the file.
+  */
+  const titleField = code.slice(code.indexOf('label="Workshop title"'), code.indexOf('label="Report template"'));
+  expect(titleField.length, "the title control has moved — this slice is no longer measuring it").toBeGreaterThan(0);
+  expect(titleField, "a row carrying `value: \"\"` on a NOT NULL column").not.toContain("noneLabel");
+  // The create row is the other door in, and `SelectCreateAction` is offered only for a non-empty
+  // term — `SearchableSelect`'s `createTerm` returns null for a blank query.
+  expect(titleField).toContain("createAction={{ label: workshopNameCreateLabel, onCreate: commitTitle }}");
+
+  /*
+    AND THE GUARD OVER THE STATE THAT NOW HAS NO ROUTE TO IT STAYS. `min_length=1` catches `""` and
+    not `"   "`, so whitespace would reach `_header_patch_data`, be stripped, and answer a 422 the
+    reader has to match to a box themselves. It is cheap, and being wrong once about "that cannot
+    happen" costs a NOT NULL column on a PATCH whose contract is that `""` means CLEAR.
+  */
+  expect(code).toContain("if (!onScreen.title) {");
+  expect(code).toContain("Every workshop has a title");
+  /*
+    IT IS A RENDERED REFUSAL NOW AND NOT `reportValidity`: constraint validation is a property of
+    form CONTROLS, and a themed dropdown is a `<button>` that submits nothing and validates nothing.
+    A leftover call would be a refusal nobody ever sees, on the one box that must not be emptied.
+  */
+  expect(code, "constraint validation on a control that cannot carry it").not.toContain("setCustomValidity");
+  expect(code, "a `title` box that no longer exists").not.toContain('namedItem("title")');
+});
+
+test("the title is read from state, not from the FormData the dropdown does not write", () => {
+  const source = withoutComments(read(...HEADER_FORM));
+
+  /*
+    THE ONE LINE THE WHOLE CONVERSION TURNS ON. A themed dropdown is a `<button>`: it submits
+    nothing, so `new FormData(form).get("title")` is `null` and `box("title")` is `""` — which
+    `changedKeys` reads as "the designer emptied the title" on EVERY save, on a NOT NULL column.
+    `templateId` beside it has been React state since this form was written, for the same reason.
+  */
+  expect(source).toContain("title: title.trim(),");
+  expect(source, "the title read back out of the DOM").not.toContain('title: box("title")');
+  expect(source).toContain('const [title, setTitle] = useState(initial.title ?? "");');
+
+  // A themed control fires no native input event, so the form's `onInput` never sees it: the guard
+  // is armed by hand, through the same function every other themed control on this form calls.
+  expect(source).toContain("function commitTitle(next: string) {\n    noteEdit();");
 });

@@ -47,7 +47,11 @@ import {
   downloadQuestionSet,
   downloadQuestionnaireWorkbook,
   listQuestionnaires,
+  questionnaireKindLabel,
+  QUESTIONNAIRE_KINDS,
+  QUESTIONNAIRE_KIND_LABELS,
   type QForm,
+  type QFormKind,
   type QFormSummary,
   type QFormUploadReport
 } from "@/lib/questionnaireForms";
@@ -122,6 +126,26 @@ export default function QuestionnairesPage() {
   const [newDescription, setNewDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [newWorkshopId, setNewWorkshopId] = useState("");
+  /** The kind on the create form. `""` is the blank row and means "not stated", which is allowed. */
+  const [newKind, setNewKind] = useState("");
+  /**
+   * "Show deactivated" — WHETHER THE LIST ASKS FOR RETIRED FORMS AT ALL.
+   *
+   * ══ WHAT THIS FIXES ═══════════════════════════════════════════════════════════════════════
+   *
+   * `load` always called `listQuestionnaires({page, pageSize, search})`, and the server's
+   * `activeOnly` defaults to TRUE. So "Take out of use" — which this API has INSTEAD of a delete,
+   * precisely so nothing is ever lost — removed the form from the only list the web client can
+   * draw, permanently. "Bring back into use" sat on the detail page of a questionnaire the web had
+   * no route to any more: the designer would have had to keep the URL. A safety feature whose undo
+   * is unreachable is not a safety feature.
+   *
+   * Android has had both since it was written (`QuestionnaireListScreen.kt` — the switch at :338,
+   * the `activeOnly = !showDeactivated` at :158, the "Deactivated" chip at :459). The wording here
+   * is copied from it VERBATIM rather than re-written, because two clients describing one state in
+   * two ways is how a designer comes to believe they are two different states.
+   */
+  const [showDeactivated, setShowDeactivated] = useState(false);
   /**
    * What the design-workshop read answered — three states, and `[]` was never one of them.
    *
@@ -156,7 +180,17 @@ export default function QuestionnairesPage() {
   const load = useCallback(async () => {
     const mine = ++generation.current;
     try {
-      const result = await listQuestionnaires({ page, pageSize: 20, search: applied || undefined });
+      const result = await listQuestionnaires({
+        page,
+        pageSize: 20,
+        search: applied || undefined,
+        // `false` ASKS FOR EVERYTHING, active and deactivated alike — it is not "deactivated only".
+        // The server reads it that way (`if activeOnly: where["isActive"] = True`), so the switch
+        // WIDENS the list rather than swapping it, and the "Deactivated" badge on the row is what
+        // tells the two apart. A filter that swapped them would hide the designer's live forms the
+        // moment they went looking for an old one.
+        activeOnly: showDeactivated ? false : undefined
+      });
       if (mine !== generation.current) return;
       setData(result);
       setError(null);
@@ -167,7 +201,7 @@ export default function QuestionnairesPage() {
       // designer can still read with "no questionnaires yet", which is indistinguishable from having
       // none — the most repeated bug class in this repository.
     }
-  }, [page, applied]);
+  }, [page, applied, showDeactivated]);
 
   useEffect(() => {
     load();
@@ -302,7 +336,12 @@ export default function QuestionnairesPage() {
         body: {
           title,
           description: String(form.get("description") ?? "").trim() || undefined,
-          designWorkshopId: newWorkshopId || undefined
+          designWorkshopId: newWorkshopId || undefined,
+          // `|| undefined` for the blank row, exactly as the workshop above: "" is not a kind, and
+          // the key is simply omitted rather than sent as null. The server reads an absent key and
+          // an explicit null identically on CREATE (both are "not stated"); they differ only on
+          // PATCH, where null means "clear what is there".
+          kind: (newKind || undefined) as QFormKind | undefined
         }
       });
       if (outcome.queued) {
@@ -529,6 +568,42 @@ export default function QuestionnairesPage() {
                 disabled={workshopList.kind !== "loading" && workshopListStandsDown(workshopSet)}
               />
             </FieldBlock>
+            {/*
+              WHAT KIND OF QUESTIONNAIRE THIS IS — the owner's request of 2026-08-30, and the control
+              that makes it answerable: *"they also do market survey interviews, so create that
+              differentiation as well, so that we can map the questionnaires and the transcripts to
+              the correct stage in the report."*
+
+              `FieldBlock` and not `Field`, per the rule a dropdown is a `<button>` and a `<label>`
+              would forward a stray click into it and fold its value into the accessible name.
+
+              NOT `searchable`: two members of a constant vocabulary, which is the case
+              `SEARCH_THRESHOLD` answers correctly on its own. A filter box over two rows is a
+              control in front of a control.
+
+              THE BLANK ROW IS A REAL ANSWER and `noneLabel` says which — a designer who has not
+              decided must be able to leave it, and the server stores NULL for "not stated" rather
+              than refusing the create.
+            */}
+            <FieldBlock
+              label="Kind"
+              hint={
+                <p className="mt-1 text-xs leading-5 text-ink-500">
+                  Decides which stage of the report this questionnaire&rsquo;s answers are filed under.
+                </p>
+              }
+            >
+              <Dropdown
+                value={newKind}
+                onChange={setNewKind}
+                options={QUESTIONNAIRE_KINDS.map((kind) => ({
+                  value: kind,
+                  label: QUESTIONNAIRE_KIND_LABELS[kind]
+                }))}
+                noneLabel="Not stated"
+                ariaLabel="Kind"
+              />
+            </FieldBlock>
           </div>
           <DictatedTextInput
             name="description"
@@ -551,6 +626,39 @@ export default function QuestionnairesPage() {
           </div>
         </form>
       ) : null}
+
+      {/*
+        ══ SHOW DEACTIVATED ═══════════════════════════════════════════════════════════════════════
+
+        THE WORDING IS ANDROID'S, VERBATIM — the label and the sentence under it are copied character
+        for character from `QuestionnaireListScreen.kt:331-336`, per the house rule that Android owns
+        what a thing is CALLED. A designer moves between the two clients mid-workshop, and two
+        descriptions of one state is how they come to believe there are two states.
+
+        ABOVE THE TABLE AND ALWAYS VISIBLE, including while the list is empty. The empty state a
+        designer most needs this control for is the one they reach by deactivating their only
+        questionnaire — putting the switch inside the table would hide it exactly then.
+      */}
+      <div className="mb-4 flex items-start justify-between gap-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2.5">
+        <label className="flex items-start gap-2.5 text-sm leading-6 text-ink-900">
+          <input
+            type="checkbox"
+            className="mt-1.5 h-4 w-4 rounded border-line-200 text-purple-700"
+            checked={showDeactivated}
+            onChange={(event) => {
+              setShowDeactivated(event.target.checked);
+              // BACK TO PAGE 1. The row count changes under the pager, so page 4 of the active-only
+              // list is very often past the end of the wider one — which renders as an empty table
+              // and reads as "there are none", the failure this whole control exists to end.
+              setPage(1);
+            }}
+          />
+          <span className="font-medium">Show deactivated</span>
+        </label>
+        <p className="max-w-md text-right text-xs leading-5 text-ink-500">
+          Deactivation is what this app has instead of deleting. The answers are still there.
+        </p>
+      </div>
 
       <section className="panel overflow-hidden">
         {data === null ? (
@@ -609,12 +717,39 @@ export default function QuestionnairesPage() {
                         its own, and it says what the row is FOR ("everyone can use it") rather than
                         repeating the column's name at the reader.
                       */}
-                      {row.isShared ? (
-                        <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium text-purple-700">
-                          <ClipboardList className="h-3 w-3" aria-hidden />
-                          Standard form — everyone can use it
-                        </div>
-                      ) : null}
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {row.isShared ? (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium text-purple-700">
+                            <ClipboardList className="h-3 w-3" aria-hidden />
+                            Standard form — everyone can use it
+                          </span>
+                        ) : null}
+                        {/*
+                          DEACTIVATED, IN A WORD — Android's chip wording, and the badge that makes
+                          "Show deactivated" above legible. The switch WIDENS the list rather than
+                          swapping it, so without this a retired form is indistinguishable from a
+                          live one in the same table. Amber-100/800 rather than a tint alone: colour
+                          never carries meaning on its own here, so the state survives greyscale, a
+                          colour-blind reader and a printed screenshot.
+                        */}
+                        {!row.isActive ? (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                            Deactivated
+                          </span>
+                        ) : null}
+                        {/*
+                          THE KIND, drawn only when one was stated. An unstated kind prints NOTHING
+                          here rather than "Kind not stated": on a list where most rows predate the
+                          column, a badge on every row would be twenty repetitions of an absence and
+                          would bury the two that carry a real answer. The detail page says it in
+                          full, where there is one row to say it about.
+                        */}
+                        {row.kind ? (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-line-200 bg-surface-50 px-1.5 py-0.5 text-[11px] font-medium text-ink-700">
+                            {row.kindLabel || questionnaireKindLabel(row.kind)}
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">{row.designWorkshopTitle ?? "—"}</td>
                     <td className="px-4 py-3 text-ink-700">{row.ownerName ?? "—"}</td>

@@ -78,6 +78,7 @@ def _row(rid: str, *, deleted_at: datetime | None = None, deleted_by: str | None
         templateId="default",
         status="DRAFT",
         workshopCode=None,
+        workshopKind=None,
         scheme=None,
         craftName=None,
         clusterName=None,

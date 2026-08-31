@@ -291,6 +291,100 @@ def assert_can_create_design_workshops(user: Any) -> None:
         )
 
 
+#: Who may READ design-workshop stage data through the research surface (View Data, and the
+#: design-workshop bucket of Search). Professor, Admin, Master Admin — and NOTHING ELSE.
+#:
+#: **THIS IS A NEW CAPABILITY BESIDE :data:`DESIGN_WORKSHOP_ROLES`, NOT A WIDENING OF IT.** That set
+#: is "the people who sign the report" and it excludes PROFESSOR on purpose (see
+#: :func:`can_run_design_workshops`: seniority is not the same thing as being a designer). This one
+#: is the opposite shape — it INCLUDES professor and excludes designer — because it is a different
+#: act. Reading a stage answer through a research browser is not writing inside somebody's
+#: workshop, and a professor who gains this gains READ of research data and gains nothing at all
+#: inside any workshop: no stage save, no custom section, no capture aid, no consent record.
+#: A DESIGNER is not here either, and that is not an oversight: a designer reaches their OWN
+#: workshops through ``load_workshop_or_404``, which is a per-record grant, whereas this predicate
+#: opens EVERY workshop in the repository to a research reader. The two doors are different sizes.
+#:
+#: Owner ruling, 2026-08-30: "professor can view data for design workshops as well, admins and
+#: master admins can download and view it too." Implemented as stated; see
+#: ``docs/DECISION-design-workshop-data-in-view-data.md`` for the argument.
+DESIGN_WORKSHOP_DATA_VIEW_ROLES = frozenset({"PROFESSOR", "ADMIN", "MASTER_ADMIN"})
+
+#: Who may take design-workshop stage data OUT — the .xlsx workbook, a CSV, the whole-repo archive.
+#: Admin and Master Admin, and a professor is deliberately NOT in it.
+DESIGN_WORKSHOP_DATA_EXPORT_ROLES = frozenset({"ADMIN", "MASTER_ADMIN"})
+
+
+def can_view_design_workshop_data(user: Any) -> bool:
+    """READ design-workshop stage data on screen: Professor, Admin, Master Admin.
+
+    ── WHY IT IS NOT ``can_download_dataset``, WHICH IS THE GATE ON THE SCREEN IT APPEARS ON ──────
+    ``/data`` is mounted behind :func:`require_dataset_downloader`, which is "Professor and above,
+    OR the grantable ``canDownloadDataset`` flag". That flag is the whole difference: it is handed
+    to a RESEARCHER who needs the seven legacy tables for a piece of work, and it carries no
+    seniority with it. Design-workshop stage data is a fortnight of a named designer's fieldwork,
+    including consent state and dictation, so it is gated on RANK ALONE and the grant does not
+    reach it. A researcher holding ``canDownloadDataset`` therefore browses View Data exactly as
+    they do today and simply never sees a design-workshop folder, sheet or search bucket.
+
+    ── A RANK FLOOR, WRITTEN AS A SET, AND THE SET IS THE HONEST SHAPE ───────────────────────────
+    ``PROFESSOR``, ``ADMIN`` and ``MASTER_ADMIN`` happen to be the top three rungs today, so
+    ``has_rank(user, "PROFESSOR")`` would give the same answer. It is a SET because the RULE is a
+    set: the owner named three roles, not a threshold, and the one tier sitting just below professor
+    is ``INSPECTOR`` (rank 37) — somebody who inspects ONE workshop under a grant and must not
+    acquire every workshop in the repository the day a rank is renumbered. A floor would hand it to
+    them silently; a set has to be edited by a person who meant to.
+
+    ── WHY THERE IS NO ``require_design_workshop_data_viewer`` DEPENDENCY BESIDE THIS ────────────
+    Every other capability in this module has a ``Depends`` twin because it gates a whole ROUTE.
+    This one does not gate a route: ``/data`` stays mounted behind :func:`require_dataset_downloader`
+    and every account that reaches it today still reaches it. What this decides is how much of the
+    answer that screen contains — which taxonomy roots are listed, which sheets are built, which
+    search bucket is read — so it is consulted once per request through ``data_browser.Scope`` and
+    ``api/routes/search.py``, where the listers, the manifest walk and the report all see the same
+    value and none of them can forget to ask. A ``Depends`` written here and mounted nowhere would be
+    a second, unexercised statement of the rule; a ``Depends`` mounted on ``/data`` would refuse a
+    granted researcher the seven legacy tables they have always had.
+
+    ``frontend/lib/permissions.ts::canViewDesignWorkshopData`` carries the identical set and MUST
+    keep carrying it — that file's own rule is that the UI never invents a permission and never
+    offers what the API refuses.
+    """
+    return role_value(user) in DESIGN_WORKSHOP_DATA_VIEW_ROLES
+
+
+def can_export_design_workshop_data(user: Any) -> bool:
+    """TAKE design-workshop stage data out of the product: Admin and Master Admin only.
+
+    ── THE SPLIT IS THE POINT ────────────────────────────────────────────────────────────────────
+    A professor passes :func:`can_view_design_workshop_data` and fails this one, so there is a real
+    population that reads a table on screen and may not export the same rows. That is narrower than
+    ``/data``'s existing single ``require_dataset_downloader`` gate, which governs viewing and
+    downloading together for the seven legacy tables, and it is deliberate: a screen is a reading, a
+    file is a copy that leaves the building. Stage data carries artisan dictation, consent decisions
+    and unpublished prototype work, and the institution's answer to "who may carry that out on a
+    USB stick" is not the same as its answer to "who may read it".
+
+    ── SAY IT ON SCREEN, NEVER 403 A BUTTON ──────────────────────────────────────────────────────
+    Because a professor can SEE rows they cannot export, every surface that offers an export beside
+    those rows must say so where it applies. Handing them a download button that answers 403 would
+    teach them the product is broken rather than that the rule exists. The View Data page says it
+    beside the download button; the workbook a professor downloads drops the design-workshop sheets
+    and carries ONE in their place naming what was withheld and how many rows it held — because a
+    file outlives the page it came from, and a workbook that silently lacks a section reads as a
+    repository with no design workshops in it. The whole workbook is never refused: that would take
+    away the seven legacy tables they have always been able to download, to protect data that is not
+    in them.
+
+    ``is_admin`` rather than a rank floor, so this reads as the same set the rest of this module
+    means by "an admin". It has no ``Depends`` twin either, for the reason given at
+    :func:`can_view_design_workshop_data`: the download routes are already mounted and this narrows
+    what they hand over rather than whether they answer.
+    ``frontend/lib/permissions.ts::canExportDesignWorkshopData`` is its twin.
+    """
+    return is_admin(user)
+
+
 def can_manage_designer_roster(user: Any) -> bool:
     """Add, suspend and restore designers on the roster that gates their sign-in: Admin and above.
 
@@ -713,6 +807,33 @@ async def _user_from_bearer(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists"
         )
+
+    # ── SESSION REVOCATION, AND WHY IT IS ONE COMPARISON AND NOT A SESSION TABLE ─────────────
+    #
+    # Bearer tokens here are stateless JWTs with no `jti` and no row behind them, so "sign every
+    # device out" had nowhere to be written. `User.sessionsValidFrom` is that place: a token
+    # minted STRICTLY BEFORE it is refused. Setting a password through an admin's reset link
+    # writes it (see routes/auth.set_password), because the usual reason somebody is resetting
+    # is that a session they no longer control is live somewhere, and leaving it live would make
+    # the reset theatre.
+    #
+    # NULL SKIPS THE CHECK ENTIRELY, which is every account that has never had anything revoked
+    # — i.e. all of them today. So this costs the hot path one `is None` and no query: the row
+    # has already been loaded to authenticate the request.
+    #
+    # `iat` IS ALWAYS PRESENT — `create_access_token` writes it unconditionally and refuses to let
+    # a caller override it — but a token minted by an older build might not carry one, and the
+    # safe direction for a MISSING timestamp is to refuse: a token we cannot date cannot be shown
+    # to post-date a revocation. A 401 sends the client to sign in again, which mints a dated one.
+    revoked_before = getattr(user, "sessionsValidFrom", None)
+    if revoked_before is not None:
+        issued_at = payload.get("iat")
+        cutoff = revoked_before.timestamp()
+        if not isinstance(issued_at, int | float) or issued_at < cutoff:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This session ended when the account password was changed. Sign in again.",
+            )
     return user
 
 

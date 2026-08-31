@@ -365,7 +365,7 @@ object BoundaryAssets {
  * [renderMapPng] rather than silently dropped, because a state a template asked to tint and that did
  * not tint is a difference a reader would otherwise attribute to the data.
  */
-private val STATE_SEATS: Map<String, DoubleArray> = linkedMapOf(
+internal val STATE_SEATS: Map<String, DoubleArray> = linkedMapOf(
     // States, in the order `address.INDIAN_STATES` lists them.
     "Andhra Pradesh" to doubleArrayOf(16.5062, 80.6480),
     "Arunachal Pradesh" to doubleArrayOf(27.0844, 93.6053),
@@ -405,6 +405,29 @@ private val STATE_SEATS: Map<String, DoubleArray> = linkedMapOf(
     "Lakshadweep" to doubleArrayOf(10.5669, 72.6420),
     "Puducherry" to doubleArrayOf(11.9416, 79.8083),
 )
+
+/**
+ * The 36 names of [STATE_SEATS], in its order — the ONE list of states this client compiles in.
+ *
+ * ── IT IS READ OUT OF A TABLE THAT ALREADY HAD TO BE RIGHT ────────────────────────
+ *
+ * `ui/LocationFields.kt` needs a bundled state list so that a fresh install with no signal can answer
+ * a REQUIRED closed field (DROPDOWN_DESIGN §3.2; the web has had `OFFLINE_STATES` since the incident
+ * in which a required list with no members refused a submit and an interview died with the tab). The
+ * one thing such a list must never be is a SECOND copy: thirty-six names typed into an address file
+ * can drift from the server's, silently, until a researcher picks a state the API refuses.
+ *
+ * So it is derived from the seats table above rather than written again. That table is already
+ * exactly the 36, already ported from `services/geography.STATE_SEATS`, already in
+ * `address.INDIAN_STATES` order, and already load-bearing in a way that makes a wrong name visible:
+ * [tintStates] looks a name up here, and a report figure that refuses to shade a state is a defect
+ * somebody chases. Deriving costs one `toList()` and removes the only way the two could disagree.
+ *
+ * DECLARED HERE, BESIDE THE TABLE, rather than in the address card that consumes it: a derivation
+ * living next to its source is one whose author sees it when they edit the source. It is `internal`
+ * for that consumer and for no other reason.
+ */
+internal val INDIAN_STATES_AND_UNION_TERRITORIES: List<String> = STATE_SEATS.keys.toList()
 
 /**
  * Spellings that are not canonical but name a real state — `address._ALIASES`, ported.

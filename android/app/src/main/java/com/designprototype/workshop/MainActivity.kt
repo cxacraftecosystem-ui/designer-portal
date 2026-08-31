@@ -87,6 +87,7 @@ import com.designprototype.workshop.ui.NavGroup
 import com.designprototype.workshop.ui.visibleNavItems
 import com.designprototype.workshop.ui.IslandEntry
 import com.designprototype.workshop.ui.IslandGroup
+import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.OfflineOutboxTray
 import androidx.compose.material3.TimePicker
@@ -116,6 +117,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -126,7 +128,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -138,7 +142,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.designprototype.workshop.ui.PasswordRevealIcon
+import com.designprototype.workshop.ui.passwordTransformation
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -204,11 +209,21 @@ import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopCreateRequest
 import com.designprototype.workshop.data.AccessRefusal
 import com.designprototype.workshop.data.accessRefusal
+import com.designprototype.workshop.data.IssuedPasswordLinkDto
+import com.designprototype.workshop.data.SignInHint
+import com.designprototype.workshop.data.signInHint
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.data.DW_DICTATION_MAX_BYTES
+import com.designprototype.workshop.data.dwDictationServerAnswerSentence
 import com.designprototype.workshop.data.signInErrorMessage
 import com.designprototype.workshop.data.occurrenceDate
 import com.designprototype.workshop.ui.AccessRosterScreen
 import com.designprototype.workshop.ui.accessRefusalChrome
+import com.designprototype.workshop.ui.signInHintHeading
+import com.designprototype.workshop.ui.IssuedPasswordLinkPanel
+import com.designprototype.workshop.ui.PasswordGateScreen
+import com.designprototype.workshop.ui.SetPasswordLinkScreen
+import com.designprototype.workshop.ui.mustChangePasswordBlocks
 import com.designprototype.workshop.ui.WorkshopAccessQueueFailure
 import com.designprototype.workshop.ui.WorkshopAccessQueueView
 import com.designprototype.workshop.ui.workshopAccessQueueFailure
@@ -223,6 +238,10 @@ import com.designprototype.workshop.ui.UsageScreen
 import com.designprototype.workshop.ui.rememberUsageDoorState
 import com.designprototype.workshop.ui.usageAnswerAtTheDoor
 import com.designprototype.workshop.ui.usageConsentBlocks
+// The terms the sign-in box agrees to, readable again from the menu. A dialog for the reason
+// [NavDestination.TERMS] gives: the same screen has to open from the sign-in door, where there is no
+// token, no `Screen` and nothing to route with.
+import com.designprototype.workshop.ui.TermsMenuDialog
 import com.designprototype.workshop.ui.AppPreferences
 import com.designprototype.workshop.ui.AppPreferencesStore
 import com.designprototype.workshop.ui.AppNavigationDrawerContent
@@ -255,6 +274,13 @@ import com.designprototype.workshop.ui.fieldWorkshopOptions
 // designer may request access to): the repository's own worked example, quoted in that
 // function's KDoc, is "No crafts available." — the exact string one of them used to be.
 import com.designprototype.workshop.ui.unscopedEmptyLine
+// The register half of the same file: where a cached list came from, and the five sentences one is
+// allowed to say about itself. See `loadCachedRegister`, which returns the first of these.
+import com.designprototype.workshop.ui.RegisterLoad
+import com.designprototype.workshop.ui.RegisterSource
+import com.designprototype.workshop.ui.registerListNotice
+// The named absence a class-(a) vocabulary passes rather than falling through to null — §3.1.
+import com.designprototype.workshop.ui.BUNDLED_LIST_HAS_NO_SENTENCE
 import com.designprototype.workshop.ui.NO_FIELD_WORKSHOP
 import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
@@ -296,6 +322,16 @@ import com.designprototype.workshop.ui.designworkshop.WorkshopListScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopInspectorsScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopViewersScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireAnswerScreen
+import com.designprototype.workshop.ui.questionnaires.QUESTIONNAIRE_CLIP_MAX_MILLIS
+import com.designprototype.workshop.ui.questionnaires.QuestionnaireQuickTranscript
+import com.designprototype.workshop.ui.questionnaires.QuestionnaireTranscriptOutcome
+import com.designprototype.workshop.ui.questionnaires.questionnaireAcceptOffer
+import com.designprototype.workshop.ui.questionnaires.questionnaireClipCapLine
+import com.designprototype.workshop.ui.questionnaires.questionnaireClipTooLongLine
+import com.designprototype.workshop.ui.questionnaires.questionnaireClipTooLongToDictate
+import com.designprototype.workshop.ui.questionnaires.questionnaireNoWorkshopLine
+import com.designprototype.workshop.ui.questionnaires.questionnaireSectionClipKey
+import com.designprototype.workshop.ui.questionnaires.questionnaireTranscriptOutcome
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireDetailScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireListScreen
 import com.designprototype.workshop.ui.DesignWorkshopTheme
@@ -405,8 +441,13 @@ import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.AddressReferenceDto
 import com.designprototype.workshop.data.LocationDto
 import com.designprototype.workshop.data.AppReleaseDto
+import com.designprototype.workshop.BuildConfig
 import com.designprototype.workshop.data.FeedbackDto
+import com.designprototype.workshop.data.FeedbackReportCreateRequest
+import com.designprototype.workshop.data.FeedbackReportDto
 import com.designprototype.workshop.data.FeedbackUpsertRequest
+import com.designprototype.workshop.data.FeedbackVocabularyDto
+import com.designprototype.workshop.data.readableStamp
 import com.designprototype.workshop.data.MEASUREMENT_GRID_PURPOSE
 import com.designprototype.workshop.data.mediaPurposeMetadata
 import com.designprototype.workshop.data.MediaFileDto
@@ -1092,6 +1133,36 @@ private fun RepositoryApp(
      * approved for the first time has had nothing withdrawn. See [AccessRefusal].
      */
     var refusal by remember { mutableStateOf(AccessRefusal.NOT_REFUSED) }
+    /**
+     * The OTHER classification of a refused sign-in: about the IDENTIFIER rather than about
+     * admission. Held beside [refusal] and never merged into it — see [SignInHint].
+     */
+    var signInHint by remember { mutableStateOf(SignInHint.NONE) }
+    /**
+     * THE PASSWORD TYPED AT THE DOOR, held only long enough for the first-login gate to spend it.
+     *
+     * `POST /auth/change-password` requires the current password even for an account carrying
+     * `mustChangePassword`, and the person typed it into the card ten seconds ago. Carrying it here
+     * is what stops [PasswordGateScreen] asking somebody to re-type a secret this app is already
+     * holding — and it is the ONLY thing this variable is for.
+     *
+     * ── IT IS CLEARED ON EVERY EXIT, AND THAT IS NOT TIDINESS ─────────────────────────────────
+     *
+     * It is process memory on a handset that is passed around a workshop. It is written on a sign-in
+     * attempt, read once by the gate, and blanked the moment the gate is satisfied or anybody signs
+     * out — the same discipline `consentDoor.reset()` gets one line down, and for the same reason:
+     * a value that outlives the person who entered it is a value the next person inherits. It is
+     * never written to `TokenStore`, a preference, or a log.
+     */
+    var doorPassword by remember { mutableStateOf("") }
+    /**
+     * Whether the sign-in card has been replaced by the redeem screen for an administrator's link.
+     *
+     * State on the HOST and not inside [LoginScreen], because the screen it replaces is the one that
+     * would have owned it — a person redeeming a link is by definition not signing in, so the two are
+     * alternatives rather than a screen and its dialog.
+     */
+    var redeemingLink by remember { mutableStateOf(false) }
 
     // Declared HERE rather than beside the outbox block below, because the session effect underneath
     // needs it too: `repository.logout` now clears this device's cached questionnaire forms as well as
@@ -1232,16 +1303,49 @@ private fun RepositoryApp(
     ) {
         when {
             loading -> Text("Loading repository...", color = Muted, modifier = Modifier.align(Alignment.Center))
+            /*
+             * ── REDEEMING AN ADMINISTRATOR'S LINK, WHICH REPLACES THE SIGN-IN CARD ──────────────
+             *
+             * ABOVE the `user == null` arm and not below it, because it is only reachable while the
+             * sign-in card is on screen and it REPLACES that card: somebody holding one of these
+             * links cannot sign in, so leaving a live sign-in form underneath would offer them the
+             * one thing that is going to refuse them. `redeemingLink` is cleared on both exits, so
+             * the card comes straight back either way.
+             */
+            user == null && redeemingLink -> SetPasswordLinkScreen(
+                repository = repository,
+                onDone = {
+                    redeemingLink = false
+                    // The password is now set and the redemption revoked every session this account
+                    // had — including, if this handset happened to be holding one, its own. Land
+                    // them back on the sign-in card with nothing pre-filled and nothing said, which
+                    // is where they were told to go.
+                    error = null
+                    refusal = AccessRefusal.NOT_REFUSED
+                    signInHint = SignInHint.NONE
+                },
+                onCancel = { redeemingLink = false }
+            )
             user == null -> LoginScreen(
                 error = error,
                 refusal = refusal,
+                hint = signInHint,
                 busy = loading,
                 consentDoor = consentDoor,
+                onOpenSetPasswordLink = { redeemingLink = true },
                 onLogin = { email, password ->
                     scope.launch {
                         loading = true
                         error = null
                         refusal = AccessRefusal.NOT_REFUSED
+                        signInHint = SignInHint.NONE
+                        // HELD FOR THE FIRST-LOGIN GATE, and for nothing else. See `doorPassword`:
+                        // an account whose password an administrator typed is sent to
+                        // `PasswordGateScreen` immediately after this, and the route it calls needs
+                        // the current password. Written before the attempt rather than inside the
+                        // success branch so that it is the value the person actually submitted; the
+                        // failure branch below blanks it again.
+                        doorPassword = password
                         runCatching { repository.login(email, password) }
                             // The answer the person gave at the door, sent the moment a token
                             // exists — and ONLY if the server still says this account owes one. See
@@ -1261,8 +1365,16 @@ private fun RepositoryApp(
                                 // `HttpException.message` ("HTTP 403 Forbidden") or the string
                                 // "Login failed", and the person would go and reset a password that
                                 // was never wrong.
+                                // BOTH CLASSIFICATIONS, taken from the headers before the body is
+                                // read. `signInHint` answers a different question from `refusal` —
+                                // what was TYPED rather than where the address stands — and the two
+                                // ride on two headers precisely so neither switch means two things.
                                 refusal = failure.accessRefusal()
+                                signInHint = failure.signInHint()
                                 error = failure.signInErrorMessage()
+                                // The attempt failed, so there is no gate to spend it on and no
+                                // reason for it to survive. See `doorPassword`.
+                                doorPassword = ""
                             }
                         loading = false
                     }
@@ -1272,6 +1384,13 @@ private fun RepositoryApp(
                         loading = true
                         error = null
                         refusal = AccessRefusal.NOT_REFUSED
+                        signInHint = SignInHint.NONE
+                        // NO PASSWORD ON THIS PATH, EVER, and blanking it is what makes that true:
+                        // a failed password attempt followed by a successful Google one would
+                        // otherwise leave the previous typing in hand, and `PasswordGateScreen`
+                        // would send it to `POST /auth/change-password` as this account's current
+                        // password. The gate asks for the box instead when this is empty.
+                        doorPassword = ""
                         runCatching {
                             val idToken = googleAuthClient.getIdToken()
                             repository.loginWithGoogle(idToken)
@@ -1290,6 +1409,7 @@ private fun RepositoryApp(
                                 // below says an administrator has to approve them, which is the only
                                 // true and actionable thing anyone can tell them.
                                 refusal = failure.accessRefusal()
+                                signInHint = failure.signInHint()
                                 error = failure.signInErrorMessage()
                             }
                         loading = false
@@ -1334,6 +1454,56 @@ private fun RepositoryApp(
                         // ticked, and this client posts a GRANTED against THEIR account carrying
                         // the first person's tick moment. See `UsageDoorState.reset`.
                         consentDoor.reset()
+                        doorPassword = ""
+                        user = null
+                    }
+                }
+            )
+            /*
+             * ── THE FIRST-LOGIN PASSWORD, WHICH IS WHERE *THAT* GATE ACTUALLY HOLDS ─────────────
+             *
+             * AFTER THE CONSENT GATE AND BEFORE THE PRODUCT, and the ORDER of these two arms is a
+             * decision rather than an accident. Both can be true of one account at once — an
+             * admin-created account whose owner withdrew consent in Settings — and the consent
+             * screen is the one that must come first: it is a CORRECTION owed to somebody who has
+             * just ticked a box, where this is a REQUEST, and a request stacked on top of an unread
+             * correction is how the correction goes unread. The web's `/login` chains its two in
+             * the same order and says so in the same words.
+             *
+             * A `when` ARM AND NOT A DIALOG, for the reason the consent gate above states: a dialog
+             * is dismissible, and "set a password if you feel like it" is not the requirement. See
+             * `ui/PasswordGate.kt`, which also records why the escape hatch is not a way past it.
+             *
+             * THE SERVER REPORTS AND THIS REFUSES. `POST /auth/login` mints a token for an account
+             * carrying `mustChangePassword` deliberately — the only route that can change a password
+             * needs one — so the blocking half is the client's, exactly as it is for consent.
+             * `mustChangePasswordBlocks` is a `== true` and nothing else; a null flag is a deployment
+             * older than the column and blocks nobody.
+             */
+            mustChangePasswordBlocks(user) -> PasswordGateScreen(
+                repository = repository,
+                user = user!!,
+                // The password typed at the door this session, so the ordinary path never asks for
+                // it twice. Blank on the Google path and on a relaunch into a cached session, and
+                // the screen draws the box in exactly those two cases.
+                doorPassword = doorPassword,
+                onSatisfied = {
+                    user = it
+                    // SPENT AND FORGOTTEN. It existed only to be handed to this screen; keeping it
+                    // afterwards would leave a credential in process memory on a handset that is
+                    // passed around a workshop.
+                    doorPassword = ""
+                },
+                // The same lines as the consent gate's escape above, deliberately repeated rather
+                // than hoisted, for the reason stated there: the two are one gesture today and are
+                // not one concept, and a shared lambda would make a later change to either silently
+                // change both.
+                onSignOut = {
+                    scope.launch {
+                        runCatching { googleAuthClient.clear() }
+                        repository.logout(appContext)
+                        consentDoor.reset()
+                        doorPassword = ""
                         user = null
                     }
                 }
@@ -1354,10 +1524,11 @@ private fun RepositoryApp(
                     scope.launch {
                         runCatching { googleAuthClient.clear() }
                         repository.logout(appContext)
-                        // The same line as the gate screen's escape above, and for the same
+                        // The same two lines as the gate screens' escapes above, and for the same
                         // reason: a shared handset must not offer the next person a box the
-                        // last one ticked.
+                        // last one ticked, nor hold the password the last one typed.
                         consentDoor.reset()
+                        doorPassword = ""
                         user = null
                     }
                 }
@@ -1512,10 +1683,35 @@ private fun LoginScreen(
      * withdrawn, and — the ruling this whole feature was built under — must not be told to check
      * their password either.
      */
-    refusal: AccessRefusal = AccessRefusal.NOT_REFUSED
+    refusal: AccessRefusal = AccessRefusal.NOT_REFUSED,
+    /**
+     * THE OTHER KIND OF REFUSAL: about what was TYPED rather than about admission.
+     *
+     * Held apart from [refusal] and not folded into it, because the server answers the two questions
+     * on two different headers precisely so that one client-side `when` does not come to mean two
+     * kinds of thing — see [SignInHint]. Folding them would also oblige somebody to invent a
+     * precedence for a server that sent both, which is impossible today and cheap to keep impossible.
+     *
+     * UNTIL 2026-08-31 THIS HANDSET HAD NO EQUIVALENT AND THAT WAS NOT A BUG. It fell back to the
+     * server's own sentence under neutral chrome, which is the documented safe direction. But the web
+     * draws a headed panel for both cases, so a designer whose empanelment number matches two
+     * accounts got a sentence on the phone and a panel on the laptop — and the whole point of the two
+     * clients agreeing on wording is that neither of them looks broken next to the other.
+     */
+    hint: SignInHint = SignInHint.NONE,
+    /**
+     * Open the redeem screen for an administrator's password link.
+     *
+     * IT IS ON THIS CARD BECAUSE THERE IS NOWHERE ELSE IT COULD BE. A person holding one of these
+     * links cannot sign in — that is the whole reason they were sent it — so a route to the screen
+     * from inside the app would be a route past a door they cannot open.
+     */
+    onOpenSetPasswordLink: () -> Unit = {}
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    // Per-composition only, and deliberately not saved anywhere: see ui/PasswordReveal.kt.
+    var showPassword by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -1536,17 +1732,76 @@ private fun LoginScreen(
         )
         ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = Canvas)) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
+                // ── THE IDENTIFIER BOX, WHICH IS NO LONGER ONLY AN EMAIL ADDRESS ──────────
+                //
+                // Since 2026-08-30 a designer may sign in with their email, their phone number
+                // or their empanelment number: the server resolves all three to one account
+                // (`app/services/identity.py`) and every admission gate below it still runs on
+                // that account's EMAIL, so nothing about who may sign in has changed. The wire
+                // field is still called `email` for exactly the reason this label had to
+                // change — a shipped handset is not upgraded by a backend deploy, so the
+                // request keeps its name and the screen tells the truth about what may go in
+                // it.
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email, phone or empanelment number") },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text("Password") },
-                    visualTransformation = PasswordVisualTransformation(),
+                    // THE EYE, ADDED 2026-08-30. See ui/PasswordReveal.kt for why all three
+                    // secret boxes on this handset gained one and why the state is remembered
+                    // here rather than persisted anywhere.
+                    visualTransformation = passwordTransformation(showPassword),
+                    trailingIcon = {
+                        PasswordRevealIcon(
+                            revealed = showPassword,
+                            onToggle = { showPassword = !showPassword }
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (!error.isNullOrBlank()) {
                     val chrome = accessRefusalChrome(refusal)
-                    if (chrome != null) {
+                    // THE IDENTIFIER HINT WINS OVER THE ADMISSION CHROME WHERE BOTH APPLY, and today
+                    // both never do: every hint arrives on a 401, which `accessRefusal` classifies as
+                    // BAD_CREDENTIAL, for which `accessRefusalChrome` returns null. The order is
+                    // written down anyway so that adding a hint to a 403 later cannot silently
+                    // produce two headings in one box. The web's `SignInRefusal` states the identical
+                    // precedence in its own comment.
+                    val hintHeading = signInHintHeading(hint)
+                    if (hintHeading != null) {
+                        // AMBER AND NOT THE ERROR CONTAINER. Neither of these two is a refusal of the
+                        // PERSON — one says what was typed is ambiguous and the other says the account
+                        // has no password yet — and both have a next move the reader can actually
+                        // take. Painting them the same red as "your access was suspended" would put a
+                        // typo and a withdrawal in the same visual category.
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.field.warningContainer, RoundedCornerShape(10.dp))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                hintHeading,
+                                display = true,
+                                color = MaterialTheme.field.onWarningContainer,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
+                            // The server's own sentence, verbatim, and NOTHING under it. It already
+                            // names the next move — "sign in with your email address instead", "ask
+                            // an administrator for a set-password link" — so an advice line here
+                            // would be the card repeating itself in different words. This is the one
+                            // place these panels differ from `accessRefusalChrome`'s, and the reason
+                            // is in `signInHintHeading`'s own KDoc.
+                            Text(error, color = MaterialTheme.field.onWarningContainer, fontSize = 13.sp)
+                        }
+                    } else if (chrome != null) {
                         // A FILLED PANEL RATHER THAN A RED LINE, because this message is not a "try
                         // again" — it is the only place the person will ever be told what is actually
                         // happening to their account and what to do about it, and a 13sp line above
@@ -1600,12 +1855,13 @@ private fun LoginScreen(
                 // a more urgent thing to read than a recording notice, and the two must not compete.
                 UsageConsentDoor(door = consentDoor)
                 Button(
-                    // `consentDoor.mayProceed` is the gate. It is TRUE when no notice could be
-                    // obtained from any source, on purpose: the enforcement then moves to
-                    // [UsageConsentGateScreen] one screen later, where a token exists and the
-                    // question can actually be answered. A button permanently disabled by a
-                    // checkbox whose text never arrives would be a fleet-wide lockout on the one
-                    // screen that has no other controls.
+                    // `consentDoor.mayProceed` is the gate, and since 2026-08-30 it is the tick and
+                    // nothing else. It used to be TRUE when no notice could be obtained from any
+                    // source — an escape hatch against a fleet-wide lockout, because a checkbox whose
+                    // text never arrives is a permanently disabled button on the one screen with no
+                    // other controls. The box now agrees to the TERMS, which are compiled into this
+                    // binary, so the question can always be put and that lockout cannot happen; the
+                    // hatch went with it. Read `UsageDoorState.mayProceed` before restoring one.
                     enabled = !busy && email.isNotBlank() && password.isNotBlank() && consentDoor.mayProceed,
                     onClick = { onLogin(email, password) },
                     modifier = Modifier.fillMaxWidth()
@@ -1642,7 +1898,33 @@ private fun LoginScreen(
                 // shipped it is wrong in a second way too — a person who is not on the list is not
                 // let in by Google either, because that path is gated by the same list. The panel
                 // above says what actually happened.
-                if (accessRefusalChrome(refusal) == null) {
+                // THE WAY IN FOR SOMEBODY WHO CANNOT SIGN IN AT ALL.
+                //
+                // A designer whose account an administrator created, or whose password was reset, is
+                // handed a one-off link. Until 2026-08-31 the only thing they could do with it on
+                // this phone was tap it and be taken out to a browser — which works, and is a detour
+                // for somebody standing in a courtyard with this app already open. `TextButton` and
+                // not a third full-height button: it is the least-used of the three ways in, and
+                // giving it the same weight as Google would make the card read as three equal
+                // choices when it is two and an exception.
+                TextButton(
+                    onClick = onOpenSetPasswordLink,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RectangleShape
+                ) {
+                    Text("I have a set-password link", fontSize = 12.sp)
+                }
+                // Steer researchers to Google sign-in. Many were typing into the email/password fields
+                // (meant only for admin-issued password accounts) and getting locked out.
+                //
+                // SUPPRESSED WHENEVER A PANEL IS ON SCREEN — an account refusal (every kind, which is
+                // why the test is the presence of the panel rather than a status code) or an
+                // identifier hint. For an account refusal the note is actively harmful: it sends the
+                // reader back through Google, which refuses them identically, and then to a password
+                // reset that cannot help. For a hint it is merely redundant and therefore still wrong
+                // here — the panel above carries the server's own sentence naming the one next move,
+                // and a generic paragraph under it is the card competing with itself.
+                if (accessRefusalChrome(refusal) == null && signInHintHeading(hint) == null) {
                     Text(
                         "Researchers: please use \"Sign in with Google\" above. The email & password fields are only for special accounts an administrator set up with a password — if you normally use your Google account, do not type a password here.",
                         color = Muted,
@@ -1794,9 +2076,24 @@ internal fun optionToTool(o: DwReferenceOption): ToolDetailDto? =
  * whether the device ended up with an answer from either source, exactly the fact `gotCrafts` /
  * `gotArtisans` used to read off a bare network result, so [CarryScopeState] keeps working unchanged.
  *
- * Returns whether the cache, the fetch, or both answered — false only when this device has never once
- * cached this model AND the live request also failed, which is the one case a caller should treat as
- * "no list to offer".
+ * ── IT RETURNS THE PROVENANCE, AND IT USED TO RETURN A BARE `Boolean` ─────────────────
+ *
+ * The old answer was "did EITHER source produce a list", which is what [CarryScopeState] needs and is
+ * all any caller asked for. What it threw away was the [DwReferenceList] this function had just read
+ * off the disk — `fetchedAt` and all — and that stamp is the whole argument of the sentence
+ * [cachedListLine] exists to print. So `cachedListLine` had exactly ONE caller in the entire app
+ * (the address card), the four record forms could not say how old their registers were, and a
+ * designer looking at a short artisan list had no way to tell "this person has no record, create one"
+ * from "this copy is nine days old" — which is the distinction `DwReferenceStore`'s header calls the
+ * reason the whole cache is dated rather than expired.
+ *
+ * [RegisterLoad.loaded] is the old Boolean under a name that says which question it answers, so the
+ * three call sites that only ever asked about scope read exactly as they did.
+ *
+ * [isTransient] is the OUTBOX'S reading of a failure, handed in rather than re-decided here:
+ * DROPDOWN_DESIGN §3.5 is explicit that "offline" on these sentences is *"the classification the
+ * outbox already makes"* and never a network probe, and a second idea of what offline means is how
+ * one screen comes to call a dead tunnel a server fault while the queue behind it retries happily.
  *
  * [model] IS THE BARE REGISTER NAME ([REGISTER_CRAFT] and its three siblings), NOT A COMPUTED KEY.
  * The cache key ([DwReferenceStore.cacheKey]'s three-segment `model__owner__filter`) is derived once,
@@ -1813,23 +2110,34 @@ internal suspend fun <T> loadCachedRegister(
     decode: (DwReferenceOption) -> T?,
     encode: (T) -> DwReferenceOption,
     fetch: suspend () -> List<T>,
+    isTransient: (Throwable) -> Boolean,
     onList: (List<T>) -> Unit,
-): Boolean {
+): RegisterLoad {
     val key = DwReferenceStore.cacheKey(model, "ALL", "", "")
-    var loaded = false
+    var load = RegisterLoad(source = RegisterSource.NONE)
     DwReferenceStore.load(context, key)?.let { cached ->
         onList(cached.items.mapNotNull(decode))
-        loaded = true
+        // THE STAMP TRAVELS WITH THE ROWS. It is the one value that makes the cached-and-stale
+        // sentence sayable, and the one this function used to drop on the floor.
+        load = RegisterLoad(source = RegisterSource.CACHED, fetchedAt = cached.fetchedAt)
     }
-    val fetched = runCatching { fetch() }.getOrNull()
+    val attempt = runCatching { fetch() }
+    val fetched = attempt.getOrNull()
     if (fetched != null) {
         onList(fetched)
-        loaded = true
-        // See [DwReferenceStore.store]: an empty fetch never overwrites a non-empty cache, so a
-        // permission hiccup or a wrong-scoped 200 cannot wipe a register this device already has.
+        // LIVE OUTRANKS CACHED even when the fresh list is shorter, and the store is what makes that
+        // safe: an empty fetch never overwrites a non-empty cache, so the one answer that could
+        // empty a picker cannot reach the disk. See [DwReferenceStore.store].
+        load = RegisterLoad(source = RegisterSource.LIVE, online = true)
         DwReferenceStore.store(context, key, DwReferenceList(model = model, items = fetched.map(encode)))
+    } else {
+        // ANSWERED-AND-REFUSED versus COULD-NOT-BE-REACHED. Recorded even where the cache answered,
+        // because a caller with rows on screen still prints the cached line and a caller with none
+        // needs to know which of the two silences it is in.
+        val cause = attempt.exceptionOrNull()
+        load = load.copy(online = cause != null && !isTransient(cause))
     }
-    return loaded
+    return load
 }
 
 /** The craft register, ALL-scoped and offline-cached — see the section header above for why. */
@@ -1837,12 +2145,13 @@ internal suspend fun loadCraftRegister(
     context: Context,
     repository: WorkshopRepository,
     onList: (List<CraftDto>) -> Unit,
-): Boolean = loadCachedRegister(
+): RegisterLoad = loadCachedRegister(
     context = context,
     model = REGISTER_CRAFT,
     decode = ::optionToCraft,
     encode = ::craftToOption,
     fetch = { repository.crafts() },
+    isTransient = repository::isTransient,
     onList = onList,
 )
 
@@ -1851,12 +2160,13 @@ internal suspend fun loadArtisanRegister(
     context: Context,
     repository: WorkshopRepository,
     onList: (List<ArtisanDto>) -> Unit,
-): Boolean = loadCachedRegister(
+): RegisterLoad = loadCachedRegister(
     context = context,
     model = REGISTER_ARTISAN,
     decode = ::optionToArtisan,
     encode = ::artisanToOption,
     fetch = { repository.artisans() },
+    isTransient = repository::isTransient,
     onList = onList,
 )
 
@@ -1869,12 +2179,13 @@ internal suspend fun loadProductRegister(
     context: Context,
     repository: WorkshopRepository,
     onList: (List<ProductDetailDto>) -> Unit,
-): Boolean = loadCachedRegister(
+): RegisterLoad = loadCachedRegister(
     context = context,
     model = REGISTER_PRODUCT,
     decode = ::optionToProduct,
     encode = ::productToOption,
     fetch = { repository.products() },
+    isTransient = repository::isTransient,
     onList = onList,
 )
 
@@ -1883,12 +2194,13 @@ internal suspend fun loadToolRegister(
     context: Context,
     repository: WorkshopRepository,
     onList: (List<ToolDetailDto>) -> Unit,
-): Boolean = loadCachedRegister(
+): RegisterLoad = loadCachedRegister(
     context = context,
     model = REGISTER_TOOL,
     decode = ::optionToTool,
     encode = ::toolToOption,
     fetch = { repository.tools() },
+    isTransient = repository::isTransient,
     onList = onList,
 )
 
@@ -2001,6 +2313,17 @@ private fun HomeScreen(
     // carry prefill treats them differently: only a list that actually arrived is entitled to
     // disown a carried id. Held here because the two lookups below feed every create form.
     var lookupState by remember { mutableStateOf(CarryScopeState.PENDING) }
+    /**
+     * WHERE THE CRAFT REGISTER CAME FROM, beside the scope state rather than folded into it.
+     *
+     * [CarryScopeState] answers "is this scope reachable", which is the question the carry banner
+     * asks and which a cached list answers YES to. What it cannot carry is the DATE, and the date is
+     * the whole of §3.5's cached sentence — so the two travel together and neither is derived from
+     * the other. Only the craft register is held here: it is the one whose picker sits on a form
+     * this screen owns the state for (`ArtisanForm`'s `Craft *`), and holding the artisan one as
+     * well would be a value with no reader.
+     */
+    var craftRegister by remember { mutableStateOf(RegisterLoad()) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var message by remember { mutableStateOf<String?>(null) }
     // Every gate below mirrors one backend dependency (see the capability block near ROLE_RANK).
@@ -2111,6 +2434,9 @@ private fun HomeScreen(
      * about recording artisans has nothing to say to somebody who has not signed in yet.
      */
     var showWalkthrough by remember { mutableStateOf(!walkthroughSeen(context)) }
+    // The terms, opened from the menu. No device flag beside it: unlike the walkthrough there is
+    // nothing to remember having seen — an agreement is read when somebody wants to read it.
+    var showTerms by remember { mutableStateOf(false) }
     /*
      * ONE EXIT, USED BY EVERY WAY OUT OF THE DIALOG: Skip, Done, the back gesture on the first card,
      * a tap outside the sheet, and following a step's own "Open …" button. Both halves always happen
@@ -2216,7 +2542,11 @@ private fun HomeScreen(
         // carry-forward work from yesterday's register the instant this composes, offline.
         val gotCrafts = loadCraftRegister(context, repository) { crafts = it }
         val gotArtisans = loadArtisanRegister(context, repository) { artisans = it }
-        lookupState = if (gotCrafts && gotArtisans) CarryScopeState.LOADED else CarryScopeState.UNAVAILABLE
+        craftRegister = gotCrafts
+        // `.loaded` is the old Boolean: did EITHER source answer. A register served from this
+        // device's own copy is every bit as reachable as a live one, which is the whole question
+        // [CarryScopeState] is asking. See [RegisterLoad].
+        lookupState = if (gotCrafts.loaded && gotArtisans.loaded) CarryScopeState.LOADED else CarryScopeState.UNAVAILABLE
     }
 
     fun refreshLookups() {
@@ -2266,6 +2596,9 @@ private fun HomeScreen(
             NavDestination.DASHBOARD -> goDashboard()
             // A dialog rather than a screen: the walkthrough overlays wherever the user already was.
             NavDestination.WALKTHROUGH -> showWalkthrough = true
+            // A dialog for the same reason, and one more: the identical screen opens from the sign-in
+            // door, where there is no `Screen` to route to. See [NavDestination.TERMS].
+            NavDestination.TERMS -> showTerms = true
             NavDestination.RECORD_ARTISAN -> screen = screenFor(EntryMode.ARTISAN)
             NavDestination.RECORD_PRODUCT -> screen = screenFor(EntryMode.PRODUCT)
             NavDestination.DOCUMENT_PROCESS -> screen = screenFor(EntryMode.PROCESS)
@@ -2341,10 +2674,11 @@ private fun HomeScreen(
         // behind the dialog is still open after "Keep editing", covering the form the user chose to
         // stay on.
         scope.launch { drawerState.close() }
-        if (destination == NavDestination.WALKTHROUGH) {
-            // The one destination that is not a departure — it draws OVER the page you are already on
-            // (see the branch above), so there is nothing to save or discard, and prompting would
-            // offer to throw away a form that is not going anywhere.
+        if (destination == NavDestination.WALKTHROUGH || destination == NavDestination.TERMS) {
+            // The two destinations that are not departures — both draw OVER the page you are already
+            // on (see the branches above), so there is nothing to save or discard, and prompting
+            // would offer to throw away a form that is not going anywhere. Reading the terms in the
+            // middle of a half-filled artisan form is a thing a designer may reasonably want to do.
             openDestination(destination)
         } else {
             attemptExit { openDestination(destination) }
@@ -2933,6 +3267,7 @@ private fun HomeScreen(
                     repository = repository,
                     crafts = crafts,
                     lookupState = lookupState,
+                    craftRegister = craftRegister,
                     prefill = s.prefill,
                     adminView = adminView,
                     onArtisanCreated = { prefill ->
@@ -3613,6 +3948,7 @@ private fun HomeScreen(
                         crafts = crafts,
                         artisans = artisans,
                         lookupState = lookupState,
+                        craftRegister = craftRegister,
                         adminView = adminView,
                         onOutcome = { outcome ->
                             // CLEARED FIRST, so the dialog is gone before the picker is told. The
@@ -3661,6 +3997,13 @@ private fun HomeScreen(
                             navigate(destination)
                         },
                     )
+                }
+
+                // The terms, from the Account menu. Behind the same required-update guard as the
+                // walkthrough, and for the same reason: a dialog stacked over a non-dismissable
+                // update prompt is a screen with two modal layers and one way out of neither.
+                if (showTerms && pendingUpdate == null) {
+                    TermsMenuDialog(onDismiss = { showTerms = false })
                 }
 
                 pendingUpdate?.let { release ->
@@ -6138,10 +6481,24 @@ private fun GridMeasurementSection(
 }
 
 /**
- * Every one-of-many field in the record forms. Now a thin adapter over [SearchableSelectField],
- * which keeps this anchored menu for short lists and opens the searchable sheet once the list is
- * long enough to scroll — so the artisan, tool, craft and state pickers all gained a search box
- * without any of the thirty-odd call sites below changing.
+ * Every one-of-many field in the record forms. A thin adapter over [SearchableSelectField], which
+ * keeps the anchored menu for short lists and opens the searchable sheet once the list is long
+ * enough to scroll — so the artisan, tool, craft and state pickers all gained a search box without
+ * any of the thirty-odd call sites below changing.
+ *
+ * ── IT HAD NO `emptyMessage`, AND THAT IS WHY §3.5 NEVER REACHED THE RECORD FORMS ─────────
+ *
+ * `SearchableSelectField` has taken a caller's sentence for a while, and its own KDoc argues at
+ * length that the default must be `null` — *"say nothing I was not told"* — because only the caller
+ * can tell a cached list from a failed read from a genuinely empty register. This adapter did not
+ * forward it, so every control routed through here fell through to that null: `Craft *`,
+ * `Artisan *`, `Product *` and `Tool *` drew a generic line inside an opened menu and said NOTHING
+ * AT ALL from the closed trigger, which is what a TalkBack user hears. The five sentences §3.5 fixes
+ * were written for exactly these class-(c) controls and could not be spoken by one of them.
+ *
+ * Both new parameters keep the defaults every existing call site already has, so the thirty-odd
+ * constant vocabularies below — status, gender, recording mode, record type — are untouched: a
+ * bundled list is always answerable and §3.1 gives it no sentence.
  */
 @Composable
 private fun DropdownField(
@@ -6151,6 +6508,19 @@ private fun DropdownField(
     placeholder: String = "Select",
     includeNone: Boolean = true,
     enabled: Boolean = true,
+    /**
+     * The caller's sentence for an empty list. `null` — the default, and what a class-(a) vocabulary
+     * passes — means "I have not written one"; see [SearchableSelectField.emptyMessage], which is
+     * emphatic that a primitive inventing this string speaks the wrong fact over a caller that had
+     * it right. It is NEVER "there are none".
+     */
+    emptyMessage: String? = null,
+    /**
+     * `null` lets [SEARCH_THRESHOLD] decide, which is correct for a vocabulary written in this file
+     * and only accidentally correct for a list of records. See the same parameter on
+     * [SearchableSelectField] for when a record-backed caller must pass `true`.
+     */
+    searchable: Boolean? = null,
     onSelect: (String) -> Unit
 ) {
     SearchableSelectField(
@@ -6160,8 +6530,73 @@ private fun DropdownField(
         placeholder = placeholder,
         includeNone = includeNone,
         enabled = enabled,
+        emptyMessage = emptyMessage,
+        searchable = searchable,
         onSelect = onSelect
     )
+}
+
+/**
+ * A [DropdownField] over one of the four REGISTERS, with the §3.5 sentence its state actually calls
+ * for — including the one the four record forms could never say.
+ *
+ * ── WHY THE SENTENCE IS DRAWN BESIDE THE FIELD AND NOT ONLY HANDED TO `emptyMessage` ──────
+ *
+ * `SearchableSelectField` prints `emptyMessage` when the list is EMPTY, which is right for four of
+ * the five states and exactly wrong for the fifth. A register served from this device's own copy is
+ * NOT empty — it may hold forty artisans — and it is the one state where a sentence is owed over a
+ * control that is working perfectly: the list is complete as of a date, and whether a missing name
+ * means "create this artisan" or "refresh first" turns entirely on what that date is. So the notice
+ * goes to both slots: to `emptyMessage`, where it is the empty arms' sentence, and to a line under
+ * the control, where it is the cached arm's. They are never both read — with rows the empty slot is
+ * unreachable, and with none the line under it is the same string.
+ *
+ * ── R2, THE ANDROID HALF ──────────────────────────────────────────────
+ *
+ * A control with nothing in it may not be opened, which is what makes the sentence readable at all:
+ * a disabled trigger cannot reach the menu, so a line living only inside the popup could never be
+ * seen. The forms keep their own validators, which already stand down on an empty list (R2b, closed
+ * for the process form at the `artisans.isNotEmpty() &&` guards in `submit`).
+ *
+ * @param noun the plural these sentences are written about — "crafts", "artisans", "products",
+ *   "toolkits". §3.5's strings have a `{noun}` hole in them for exactly this.
+ */
+@Composable
+private fun RegisterDropdownField(
+    label: String,
+    noun: String,
+    options: List<Pair<String, String>>,
+    selectedValue: String,
+    load: RegisterLoad,
+    placeholder: String = "Select",
+    includeNone: Boolean = true,
+    enabled: Boolean = true,
+    onSelect: (String) -> Unit
+) {
+    val notice = registerListNotice(noun, options.size, load)
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        DropdownField(
+            label = label,
+            options = options,
+            selectedValue = selectedValue,
+            placeholder = placeholder,
+            includeNone = includeNone,
+            enabled = enabled && options.isNotEmpty(),
+            emptyMessage = notice,
+            // THE OPTIONS ARE THE WHOLE ANSWER, so the box stays whatever the register's size does.
+            // A register crosses SEARCH_THRESHOLD in both directions as a repository fills — nine
+            // crafts here, three on a new pilot, forty next year — and a reader cannot learn a
+            // control that changes shape with the corpus. §3.6.
+            searchable = true,
+            onSelect = onSelect
+        )
+        // Only ever drawn where the control has rows: with none it is disabled, and the primitive is
+        // already printing this identical string on the form. Two copies of one sentence, stacked,
+        // reads as two problems.
+        if (notice != null && options.isNotEmpty()) {
+            Text(notice, color = Muted, fontSize = 12.sp)
+        }
+    }
 }
 
 @Composable
@@ -6798,7 +7233,7 @@ private fun ArtisanAadhaarField(
             // keyboard — and filter on the ASCII range, because Char.isDigit() would ADMIT the
             // Devanagari and fullwidth digits an Indic IME can produce (see aadhaarValidationError).
             onValueChange = { input -> onValueChange(input.filter { it in '0'..'9' }.take(AADHAAR_LENGTH)) },
-            label = { Text(if (required) "Aadhaar number *" else "Aadhaar number") },
+            label = { Text(requiredMarked(if (required) "Aadhaar number *" else "Aadhaar number")) },
             placeholder = { Text("1234 5678 9012") },
             isError = error != null,
             supportingText = {
@@ -6953,12 +7388,33 @@ private fun AudioClipRecorder(
     onAddClip: (Uri) -> Unit,
     onRemoveLast: () -> Unit,
     onError: (String) -> Unit,
-    idleLabel: String = "Record ●"
+    idleLabel: String = "Record ●",
+    /**
+     * The just-RECORDED take, as a file on this device, for the instant transcript.
+     *
+     * ── WHY A SECOND CALLBACK RATHER THAN RESOLVING [onAddClip]'S Uri ───────────────────────────
+     *
+     * A recorded take is a `File` this app created; a PICKED one is a `content://` Uri owned by
+     * another app, and turning that into a file means copying megabytes through a `ContentResolver`
+     * before anything can be sent. Handing the file over where we already have it costs nothing and
+     * needs no copy.
+     *
+     * ── AND IT DELIBERATELY DOES NOT FIRE FOR A PICKED FILE ─────────────────────────────────────
+     *
+     * The web calls its own instant-transcript path from `recorder.onstop` and from nowhere else, so
+     * picking an existing audio file there has never produced one either. That is the right rule and
+     * not an accident of implementation: an attached file may be an hour of last week's workshop,
+     * the consent question behind sending it is a different question from "the artisan is sitting
+     * here now and has just been recorded", and the media queue transcribes it either way.
+     */
+    onRecorded: (File) -> Unit = {}
 ) {
     val context = LocalContext.current
     var phase by remember { mutableStateOf(RecPhase.IDLE) }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
+    /** Said once, under the controls, when the recorder stopped itself. See [questionnaireClipCapLine]. */
+    var capNotice by remember { mutableStateOf<String?>(null) }
     val pad = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
     // Alternative to recording live: attach one or more existing audio files from the device, so the
     // user gets both facilities. Each picked file is added to this target's clips just like a recording
@@ -6967,31 +7423,97 @@ private fun AudioClipRecorder(
         uris.forEach { onAddClip(it) }
     }
 
+    // `stopAndSave` is declared below and the recorder's own limit callback has to reach it, so the
+    // callback is routed through a holder rather than through a forward reference Kotlin will not
+    // give us. A ref and not state: it is written once per composition and read from a MediaRecorder
+    // callback thread, and recomposing on it would buy nothing.
+    val stopFromLimit = remember { arrayOfNulls<() -> Unit>(1) }
+
     fun startNew() {
         runCatching {
             val file = createAppFile(context, "question-audio-", ".m4a")
-            recorder = createAudioRecorder(context, file).also { it.start() }
+            recorder = createAudioRecorder(context, file).also { rec ->
+                /*
+                 * THE CEILING ON A TAKE, ADDED 2026-08-31 — see [QUESTIONNAIRE_CLIP_MAX_MILLIS].
+                 *
+                 * This recorder ran until Stop, so one left going through a lunch break produced a
+                 * file bounded only by the phone's storage. That was survivable while the clip only
+                 * ever went to the media queue; it is not now that the same bytes are offered to the
+                 * dictation route, which refuses six megabytes.
+                 *
+                 * SET HERE AND NOT IN `createAudioRecorder`, because that function has four callers
+                 * and the other three are different recordings with different lifetimes. A cap
+                 * belongs to the SCREEN that has an argument for its number.
+                 *
+                 * IT ENDS THE TAKE AND KEEPS EVERY SECOND OF IT. `stopAndSave` is the same path the
+                 * Stop button takes, so the clip is added, uploaded and transcribed exactly as if a
+                 * person had pressed it — and the notice says so, because a recorder that stops by
+                 * itself in silence is indistinguishable from one that failed.
+                 *
+                 * `setMaxDuration` takes an Int of milliseconds; the constant is a Long so the
+                 * arithmetic beside it stays honest, and this is the one place it is narrowed.
+                 */
+                runCatching { rec.setMaxDuration(QUESTIONNAIRE_CLIP_MAX_MILLIS.toInt()) }
+                rec.setOnInfoListener { _, what, _ ->
+                    if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
+                        capNotice = questionnaireClipCapLine()
+                        stopFromLimit[0]?.invoke()
+                    }
+                }
+                rec.start()
+            }
             recordingFile = file
+            capNotice = null
             phase = RecPhase.RECORDING
         }.onFailure { onError(it.message ?: "Unable to start recording"); phase = RecPhase.IDLE }
     }
 
     fun stopAndSave() {
+        // GUARDED, because it now has two callers that can both fire: the person's tap on Stop, and
+        // the recorder reaching its own duration ceiling. Arriving twice would add the same clip
+        // twice and post it for transcription twice. `DwDictationControl.finishRecording` guards
+        // itself against the identical pair for the identical reason.
+        if (phase != RecPhase.RECORDING && phase != RecPhase.PAUSED) return
+        var finished: File? = null
         runCatching {
             recorder?.stop()
             recorder?.release()
-            recordingFile?.let { onAddClip(uriForFile(context, it)) }
+            recordingFile?.let {
+                onAddClip(uriForFile(context, it))
+                finished = it
+            }
         }.onFailure { onError(it.message ?: "Unable to stop recording") }
         recorder = null
         recordingFile = null
         phase = RecPhase.RECORDED
+        // AFTER the clip has been registered, never before: the instant transcript writes into the
+        // answer box for this key, and a box that gained words before the recording it came from was
+        // attached would be a transcript with nothing behind it if the attach then failed.
+        finished?.let(onRecorded)
     }
+
+    // Filled every composition so the limit callback above always reaches the CURRENT `stopAndSave`
+    // — the one closed over this composition's `phase` and `onAddClip`.
+    stopFromLimit[0] = ::stopAndSave
 
     DisposableEffect(Unit) {
         onDispose { runCatching { recorder?.stop(); recorder?.release() }; recorder = null }
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // THE RECORDER STOPPED ITSELF, SAID OUT LOUD. Kept above the controls so it is read before
+        // the eye reaches "Record another", which is the very button it is telling somebody to use.
+        // It survives until the next take begins, because a person who was mid-sentence when the
+        // fifteen minutes ran out may look down some seconds later.
+        capNotice?.let {
+            Text(
+                it,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                color = Muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+        }
         when (phase) {
             RecPhase.IDLE -> OutlinedButton(
                 onClick = { startNew() },
@@ -7621,6 +8143,14 @@ private fun DwInlineRecordDialog(
     crafts: List<CraftDto>,
     artisans: List<ArtisanDto>,
     lookupState: CarryScopeState,
+    /**
+     * Where [crafts] came from, carried through to [ArtisanForm]'s picker. See [RegisterLoad].
+     *
+     * PASSED THROUGH RATHER THAN RE-DERIVED FROM [lookupState]. The two answer different questions —
+     * one is "is this scope reachable", the other is "how old is this copy" — and a value invented
+     * here would be this dialog making a claim about a load it did not perform.
+     */
+    craftRegister: RegisterLoad = RegisterLoad(),
     adminView: Boolean,
     onOutcome: (DwInlineRecordOutcome) -> Unit,
     onError: (String) -> Unit
@@ -7746,6 +8276,7 @@ private fun DwInlineRecordDialog(
                                 repository = repository,
                                 crafts = crafts,
                                 lookupState = lookupState,
+                                craftRegister = craftRegister,
                                 adminView = adminView,
                                 // The form has reported the created record this way since long before
                                 // this dialog existed — it is how the "carry forward" handoff works —
@@ -8138,6 +8669,18 @@ private fun ArtisanForm(
     crafts: List<CraftDto>,
     /** Whether [crafts] arrived, could not be reached, or is still coming — see [rememberFormCarry]. */
     lookupState: CarryScopeState = CarryScopeState.PENDING,
+    /**
+     * WHERE [crafts] CAME FROM, which [lookupState] cannot say and which the picker below needs.
+     *
+     * A register served from this device's own copy is reachable — so `lookupState` is `LOADED` and
+     * the carry banner is right to trust it — and it is ALSO a snapshot with a date on it, which is
+     * what decides whether a craft missing from the list means "create it" or "refresh first". See
+     * [RegisterLoad] and §3.5's cached-and-stale sentence.
+     *
+     * Defaulted, so a caller that has not threaded it through gets the honest PENDING reading rather
+     * than a claim this form invented on its behalf.
+     */
+    craftRegister: RegisterLoad = RegisterLoad(),
     editing: ArtisanDetailDto? = null,
     prefill: Prefill? = null,
     adminView: Boolean = false,
@@ -8552,10 +9095,19 @@ private fun ArtisanForm(
         DesignWorkshopField(state = designWorkshop, saving = saving)
         RequiredInput("Name", name, nameError, nameFocus, titleCased = true) { name = it }
         TextInput("Local name", localName) { localName = it }
-        DropdownField(
+        /*
+          §3.5 REACHES THIS CONTROL AT LAST. It drew a silent empty menu before: `DropdownField` did
+          not forward `emptyMessage`, so a craft register that had failed to load and one that is
+          genuinely empty opened the identical popup with no words in it. The free-text escape below
+          ("Or new craft name") is why this field never LOST a record — but a designer who reads an
+          empty picker as "this craft is not in the system" types a duplicate of a craft that is.
+        */
+        RegisterDropdownField(
             label = "Craft *",
+            noun = "crafts",
             options = crafts.map { it.id to it.name },
             selectedValue = craftId,
+            load = craftRegister,
             placeholder = "Select existing craft",
             onSelect = { picked ->
                 craftId = picked
@@ -8745,7 +9297,13 @@ private fun ArtisanForm(
             // The API stores card numbers upper-cased; showing that as it is typed keeps the box
             // honest about what will actually be saved (web parity).
             onValueChange = { pehchanNumber = it.uppercase(); pehchanError = null },
-            label = { Text(if (pehchanAvailable) "Artisan Pehchan Card number *" else "Artisan Pehchan Card number") },
+            label = {
+                Text(
+                    requiredMarked(
+                        if (pehchanAvailable) "Artisan Pehchan Card number *" else "Artisan Pehchan Card number"
+                    )
+                )
+            },
             placeholder = { Text(if (pehchanAvailable) "As printed on the card" else "No card on record") },
             enabled = pehchanAvailable,
             isError = pehchanError != null,
@@ -9992,6 +10550,22 @@ private fun ProcessForm(
     // "I can no longer see this artisan" and "there is no signal" are different answers, and the
     // carry prefill treats them differently — see [rememberFormCarry].
     var artisanListState by remember { mutableStateOf(CarryScopeState.PENDING) }
+    /**
+     * WHERE THE TWO REGISTERS CAME FROM, which [artisanListState] cannot say. See [RegisterLoad].
+     *
+     * This form is the one §3.3 singles out: `"Artisan *"`, `includeNone = false`, no sentence, and
+     * a validator that returned before the save coroutine was ever launched — the `OFFLINE_STATES`
+     * incident reproduced on this client. R2b is closed at the `artisans.isNotEmpty() &&` guards in
+     * `submit`, so the record now reaches the outbox; these two values close the other half, which
+     * is telling the designer WHY the picker is short before they conclude a person has no record.
+     *
+     * [productRegister] is the WHOLE product register's provenance and not the artisan-scoped
+     * fetch's: the cascade below reads its own narrowed list first and falls back to `products`, so
+     * what the box is offering when it is offering anything at all is one of the two, and this is
+     * the one with a date on it.
+     */
+    var artisanRegister by remember { mutableStateOf(RegisterLoad()) }
+    var productRegister by remember { mutableStateOf(RegisterLoad()) }
     var name by remember(editing) { mutableStateOf(editing?.name ?: "") }
     var artisanId by remember(editing) { mutableStateOf(editing?.product?.artisanId ?: "") }
     var productId by remember(editing) { mutableStateOf(editing?.productId ?: "") }
@@ -10027,9 +10601,13 @@ private fun ProcessForm(
         // HomeScreen. `products` doubles as the offline fallback the cascade effect below reads once
         // its own artisan-scoped fetch cannot reach the server, so caching it here is what lets that
         // fallback actually fire offline instead of the whole cascade throwing before reaching it.
-        loadProductRegister(context, repository) { products = it }
+        productRegister = loadProductRegister(context, repository) { products = it }
         val gotArtisans = loadArtisanRegister(context, repository) { artisans = it }
-        artisanListState = if (gotArtisans) CarryScopeState.LOADED else CarryScopeState.UNAVAILABLE
+        artisanRegister = gotArtisans
+        // `.loaded` is the old Boolean under a name that says which question it answers: a register
+        // served from this device's own copy is every bit as reachable as a live one, which is what
+        // [CarryScopeState] is asking. See [RegisterLoad].
+        artisanListState = if (gotArtisans.loaded) CarryScopeState.LOADED else CarryScopeState.UNAVAILABLE
     }
 
     /**
@@ -10326,10 +10904,19 @@ private fun ProcessForm(
         WorkshopField(state = workshop, saving = saving)
         DesignWorkshopField(state = designWorkshop, saving = saving)
         RequiredInput("Name of the process", name, nameError, nameFocus, titleCased = true) { name = it }
-        DropdownField(
+        /*
+          THE CONTROL §3.3 NAMES AS THE WORST LIVE DEFECT IN ITS CLASS, and this is the second half
+          of closing it. The first was R2b — the validator stands down on an empty list, so the
+          process and its step captures reach the outbox instead of dying with the screen. This is
+          R3: the picker now says WHICH of the five states it is in, including the one where it has
+          rows and they are nine days old.
+        */
+        RegisterDropdownField(
             label = "Artisan *",
+            noun = "artisans",
             options = artisans.map { it.id to "${it.name} · ${it.place}" },
             selectedValue = artisanId,
+            load = artisanRegister,
             placeholder = "Select the artisan",
             includeNone = false
         ) { picked ->
@@ -10348,10 +10935,21 @@ private fun ProcessForm(
             }
         }
         if (artisanError != null) Text(artisanError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-        DropdownField(
+        /*
+          THE PLACEHOLDER STAYS AND THE SENTENCE IS ADDED, because they answer different questions.
+
+          "Select an artisan first" is about THIS FORM's order of operations and is right; the four
+          branches below it were the picker's only account of itself and were not — "No products for
+          this artisan" is a claim about the repository made from a read that may simply have timed
+          out in a courtyard. [RegisterDropdownField] supplies §3.5's answer for the read; the
+          placeholder keeps saying what to do next.
+        */
+        RegisterDropdownField(
             label = "Product *",
+            noun = "products",
             options = artisanProducts.map { it.id to it.productName },
             selectedValue = productId,
+            load = productRegister,
             placeholder = when {
                 artisanId.isBlank() -> "Select an artisan first"
                 productsLoading -> "Loading products…"
@@ -10786,6 +11384,15 @@ private fun ToolAssignScreen(
     var tools by remember { mutableStateOf<List<ToolDetailDto>>(emptyList()) }
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
     var artisans by remember { mutableStateOf<List<ArtisanDto>>(emptyList()) }
+    /**
+     * WHERE THE TOOL REGISTER CAME FROM. See [RegisterLoad].
+     *
+     * Only the tool list carries one on this screen, and that is not an oversight: it is the control
+     * a designer hunts a specific toolkit in — the one where a name that is not on the list is read
+     * as "this tool was never documented, I will document it again" — while the craft and artisan
+     * pickers below it are NARROWING controls whose own sentences already cover them.
+     */
+    var toolRegister by remember { mutableStateOf(RegisterLoad()) }
     var toolId by remember { mutableStateOf("") }
     var craftIds by remember { mutableStateOf(setOf<String>()) }
     var artisanIds by remember { mutableStateOf(setOf<String>()) }
@@ -10799,7 +11406,8 @@ private fun ToolAssignScreen(
         // NEVER cached the tool register and the live fetch also failed; a re-open of this screen
         // offline, with a register already on the phone from an earlier session, no longer repeats a
         // "Failed to load tools" complaint about a read that in fact answered from disk.
-        if (!loadToolRegister(context, repository) { tools = it }) {
+        toolRegister = loadToolRegister(context, repository) { tools = it }
+        if (!toolRegister.loaded) {
             onError("Failed to load tools")
         }
         loadCraftRegister(context, repository) { crafts = it }
@@ -10824,10 +11432,12 @@ private fun ToolAssignScreen(
             color = Muted,
             fontSize = 12.sp
         )
-        DropdownField(
+        RegisterDropdownField(
             label = "Tool *",
+            noun = "toolkits",
             options = tools.map { it.id to "${it.toolkitName} · ${it.craftName}" },
             selectedValue = toolId,
+            load = toolRegister,
             placeholder = "Select a tool",
             includeNone = false
         ) { toolId = it }
@@ -10956,7 +11566,48 @@ private fun MediaWithTranscript(context: Context, media: MediaFileDto, repositor
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Transcript", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Text("Transcript", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    /*
+                     * THE EDITED FLAG ON A STORED TRANSCRIPT — "Edited" OR NOTHING, NEVER "Not edited".
+                     *
+                     * This screen shows what the server holds and has no copy of the machine's own
+                     * words to compare it against, so it can prove that a person DID touch the text
+                     * (the stamp is non-null) and can never prove that nobody did: the column is also
+                     * null for every transcript stored before it existed on 2026-08-31, and several of
+                     * those were rewritten by hand through the very route that now stamps it. Drawing
+                     * "Not edited" on those would credit a provider with a researcher's words.
+                     *
+                     * The interview form one screen over DOES draw both, because it holds
+                     * `machineText` and can make the comparison. Same rule, same two words, two
+                     * different amounts of evidence — and the web splits its surfaces the same way
+                     * (`edited={... ? true : undefined}` on the read-only ones).
+                     */
+                    if (!media.transcriptEditedAt.isNullOrBlank()) {
+                        Spacer(Modifier.width(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .background(MaterialTheme.field.warningContainer, RoundedCornerShape(999.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = null,
+                                tint = MaterialTheme.field.onWarningContainer,
+                                modifier = Modifier.size(10.dp)
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            // The word, not the colour — house rule 5, and the same word the web chip
+                            // and the interview form both print.
+                            Text(
+                                "Edited",
+                                color = MaterialTheme.field.onWarningContainer,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
                     // Copy the transcript to the clipboard — available to everyone.
                     TextButton(onClick = { clipboard.setText(AnnotatedString(transcriptText!!)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = "Copy transcript", modifier = Modifier.size(14.dp))
@@ -11372,6 +12023,295 @@ private fun QualitativeRow(label: String, value: String?) {
 }
 
 /**
+ * What this handset can truthfully say about itself, for a report being filed right now.
+ *
+ * CAPTURED, NEVER ASKED. A bug report that does not name the app, the build and the screen is one
+ * nobody can reproduce, and asking a researcher at the end of a field day for their version code is
+ * asking them to go and find a number they have no reason to know.
+ *
+ * The version pair is what the OTA updater already reports about itself, so a report and an update
+ * record name the same build. The platform string is the Android release and the device model,
+ * which is what somebody chasing "uploads stall on this one phone" actually reaches for; nothing
+ * else about the device is collected, and the test applied to each field was "would an
+ * administrator reproducing this fault use it".
+ */
+private fun dwFeedbackPlatform(): String =
+    "Android ${android.os.Build.VERSION.RELEASE} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+        .take(300)
+
+private fun dwFeedbackClientVersion(): String =
+    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})".take(100)
+
+/** The tone a report's status chip is drawn in. A WORD is always beside it — see the card below. */
+@Composable
+private fun dwFeedbackStatusColour(status: String): androidx.compose.ui.graphics.Color = when (status) {
+    "RESOLVED" -> MaterialTheme.colorScheme.primary
+    "ACKNOWLEDGED" -> StarGold
+    else -> Muted
+}
+
+/**
+ * One filed report, read-only, with the whole redressal trail under it.
+ *
+ * EVERY LINE OF THAT TRAIL NAMES A PERSON AND A TIME. "Your grievance was seen" is a claim, and a
+ * claim with no name and no date on it is one an institution can make about a queue nobody read. A
+ * missing name beside a present timestamp is drawn honestly rather than hidden: the server's actor
+ * columns are ON DELETE SET NULL, so a report acknowledged by a colleague who has since left really
+ * was acknowledged and the account that did it really is gone.
+ */
+@Composable
+private fun DwFeedbackReportCard(report: FeedbackReportDto) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.field.hairline, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(report.subject, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(report.kindLabel.ifBlank { report.kind }, color = Muted, fontSize = 11.sp)
+            if (report.severityLabel.isNotBlank()) Text("· ${report.severityLabel}", color = Muted, fontSize = 11.sp)
+            if (report.areaLabel.isNotBlank()) Text("· ${report.areaLabel}", color = Muted, fontSize = 11.sp)
+        }
+        // The status is a WORD in a coloured pill and never a colour alone, so the judgement survives
+        // colour-blindness and a greyscale screenshot in a bug report about this very screen.
+        Text(
+            report.statusLabel.ifBlank { report.status },
+            color = dwFeedbackStatusColour(report.status),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(report.details, color = Body, fontSize = 13.sp)
+        val seen = readableStamp(report.acknowledgedAt)
+        val done = readableStamp(report.resolvedAt)
+        if (seen != null) {
+            Text("Seen by ${report.acknowledgedBy?.name ?: "an administrator (account since removed)"} on $seen",
+                color = Muted, fontSize = 11.sp)
+        }
+        if (done != null) {
+            Text("Resolved by ${report.resolvedBy?.name ?: "an administrator (account since removed)"} on $done",
+                color = Muted, fontSize = 11.sp)
+        }
+        report.responseNote?.takeIf { it.isNotBlank() }?.let { Text(it, color = Body, fontSize = 13.sp) }
+    }
+}
+
+/**
+ * File a grievance, suggestion, recommendation or bug report — and read back the ones you have filed.
+ *
+ * ── WHY THIS IS NOT THE RATING FORM WITH MORE BOXES ─────────────────────────────────────────────
+ *
+ * `PUT /feedback/me` upserts ONE row per account, so a person who reported a bug on Monday and filed
+ * a grievance on Friday overwrote the bug report. This posts to `POST /feedback/reports`, which
+ * creates. The rating form below keeps upserting, because a standing answer to "how is the app
+ * working for you" genuinely is one thing per person, revisable as the answer changes.
+ *
+ * ── THE DICTATION IS THE ON-DEVICE MICROPHONE, AND IT IS ALREADY HERE ───────────────────────────
+ *
+ * Both boxes are `TextInput`, whose `dictate` has defaulted to TRUE since 2026-08-28 — see its own
+ * parameter doc for why the polarity is that way round. So neither box asks for a microphone and
+ * both have one, which is the same rule every record form on this handset follows. The stage
+ * screens' server-backed dictation is not an option here and could not be: it posts to
+ * `design-workshops/{id}/dictate`, which requires a workshop id and a granted dictation consent on
+ * that workshop, and a feedback report has no workshop — it is about the software, not a place.
+ *
+ * ── WHAT THIS SCREEN DELIBERATELY DOES NOT CARRY ────────────────────────────────────────────────
+ *
+ * The ADMINISTRATOR's inbox. `GET /feedback/reports` is `require_admin` and the web client renders
+ * it with the acknowledge and resolve controls; answering a queue of grievances is desk work done on
+ * a laptop, and a decision dialog demanding a written response is the worst thing to put in front of
+ * somebody on a handset. The handset carries the two halves a person in the field needs: filing one,
+ * and seeing what happened to it.
+ */
+@Composable
+private fun FeedbackReportSection(repository: WorkshopRepository, onError: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
+
+    /**
+     * The served lists.
+     *
+     * FETCHED, NEVER COMPILED IN. `services/feedback_vocabulary` on the server is the single
+     * definition, and two clients each holding their own copy of "the kinds of feedback there are"
+     * would one day describe the same submission differently — which is exactly the research this
+     * register exists for, counting two categories that are one.
+     */
+    var vocabulary by remember { mutableStateOf<FeedbackVocabularyDto?>(null) }
+    var kind by remember { mutableStateOf("") }
+    var severity by remember { mutableStateOf("") }
+    var area by remember { mutableStateOf("") }
+    var subject by remember { mutableStateOf("") }
+    var details by remember { mutableStateOf("") }
+    var sending by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(ActionStatus.IDLE) }
+    AutoResetStatus(status) { status = ActionStatus.IDLE }
+
+    var mine by remember { mutableStateOf<List<FeedbackReportDto>?>(null) }
+    var mineTotal by remember { mutableStateOf(0) }
+
+    suspend fun reloadMine() {
+        runCatching { repository.myFeedbackReports() }
+            .onSuccess { page -> mine = page.items; mineTotal = page.total }
+            // A FAILED READ NEVER EMPTIES THE LIST. "You have never reported anything" is a factual
+            // claim and a dropped request is not evidence for it — least of all on the screen
+            // somebody opened to check whether their complaint still exists. Null stays null (the
+            // loading sentence), and a populated list survives a later failure untouched.
+            .onFailure { if (it !is kotlinx.coroutines.CancellationException) mine = mine ?: emptyList() }
+    }
+
+    LaunchedEffect(Unit) {
+        runCatching { repository.feedbackVocabulary() }
+            .onSuccess { served ->
+                vocabulary = served
+                // The form opens on the FIRST served kind, which the server orders deliberately
+                // (SUGGESTION, not BUG — a form that opens on "Bug" invites every remark to be filed
+                // as a defect). Nothing here decides that; the order of the served list does.
+                kind = served.kind.firstOrNull()?.value.orEmpty()
+            }
+            .onFailure { if (it !is kotlinx.coroutines.CancellationException) onError(it.message ?: "Could not load the feedback options") }
+        reloadMine()
+    }
+
+    RecordCard(title = "Report something") {
+        Text(
+            "A grievance, a suggestion, a recommendation or a bug. Each one is kept separately and " +
+                "you can see who reads it.",
+            color = Muted,
+            fontSize = 12.sp
+        )
+        val served = vocabulary
+        if (served == null) {
+            Text("Loading…", color = Muted, fontSize = 12.sp)
+        } else {
+            DropdownField(
+                label = "What is this?",
+                options = served.kind.map { it.value to it.label },
+                selectedValue = kind,
+                // The kind decides which queue an administrator works, so it is REQUIRED — there is
+                // no "none" row to pick. Severity and area below keep theirs.
+                includeNone = false,
+                enabled = !sending
+            ) { kind = it }
+            DropdownField(
+                label = "How pressing is it?",
+                options = served.severity.map { it.value to it.label },
+                selectedValue = severity,
+                placeholder = "Not saying",
+                enabled = !sending
+            ) { severity = it }
+            DropdownField(
+                label = "Which part of the app?",
+                options = served.area.map { it.value to it.label },
+                selectedValue = area,
+                placeholder = "Not sure",
+                enabled = !sending
+            ) { area = it }
+
+            // Both boxes get the on-device microphone by default (`TextInput.dictate` is true) —
+            // see this function's header for why the stage screens' uploading one cannot be used.
+            TextInput("In one line", subject) { subject = it }
+            TextInput("What happened, and what you expected", details, minLines = 4) { details = it }
+
+            Text(
+                "Sends your app version and device too.",
+                color = Muted,
+                fontSize = 11.sp
+            )
+
+            Button(
+                onClick = {
+                    if (subject.isBlank() || details.isBlank()) {
+                        onError("Add a one-line summary and a description first.")
+                        return@Button
+                    }
+                    scope.launch {
+                        sending = true
+                        runCatching {
+                            repository.createFeedbackReport(
+                                FeedbackReportCreateRequest(
+                                    kind = kind,
+                                    // blankToNull on both: an untouched dropdown submits "", and the
+                                    // server reads empty as "not answered" and stores NULL. Sending
+                                    // the empty string would put a member of no vocabulary into the
+                                    // one column the research cut groups by.
+                                    severity = severity.blankToNull(),
+                                    area = area.blankToNull(),
+                                    subject = subject.trim(),
+                                    details = details.trim(),
+                                    client = "ANDROID",
+                                    clientVersion = dwFeedbackClientVersion(),
+                                    platform = dwFeedbackPlatform(),
+                                    // The screen, not a route: this handset has no URLs, and the
+                                    // column's job is to tell somebody reproducing a fault where the
+                                    // reporter was standing.
+                                    pagePath = "Give app feedback"
+                                )
+                            )
+                        }
+                            .onSuccess {
+                                status = ActionStatus.SUCCESS
+                                // Cleared only on SUCCESS. A failed send keeps every word in the
+                                // boxes, because the one thing worse than a report that did not
+                                // send is a report that did not send and took the words with it.
+                                subject = ""
+                                details = ""
+                                severity = ""
+                                area = ""
+                                reloadMine()
+                            }
+                            .onFailure {
+                                if (it !is kotlinx.coroutines.CancellationException) {
+                                    status = ActionStatus.ERROR
+                                    onError(it.message ?: "Could not send that report")
+                                }
+                            }
+                        sending = false
+                    }
+                },
+                enabled = !sending,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = when (status) {
+                        ActionStatus.SUCCESS -> SuccessGreen
+                        ActionStatus.ERROR -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+            ) {
+                Text(
+                    when {
+                        sending -> "Sending…"
+                        status == ActionStatus.SUCCESS -> "Sent"
+                        status == ActionStatus.ERROR -> "Could not send"
+                        else -> "Send report"
+                    }
+                )
+            }
+        }
+    }
+
+    RecordCard(title = "Your reports") {
+        val filed = mine
+        when {
+            filed == null -> Text("Loading…", color = Muted, fontSize = 12.sp)
+            filed.isEmpty() -> Text(
+                "Anything you send above appears here, with who has read it and what they said back.",
+                color = Muted,
+                fontSize = 12.sp
+            )
+            else -> {
+                // The count is printed because the list is ONE PAGE of it. A list that quietly stops
+                // is indistinguishable from a place with no records, and this route's envelope
+                // carries the real total rather than leaving it to be inferred from a length.
+                if (mineTotal > filed.size) {
+                    Text("Showing the latest ${filed.size} of $mineTotal.", color = Muted, fontSize = 11.sp)
+                }
+                filed.forEach { DwFeedbackReportCard(it) }
+            }
+        }
+    }
+}
+
+/**
  * Hamburger-menu screen where any user gives — and later updates — their own detailed feedback on the
  * app: an overall rating plus per-aspect quantitative star ratings (ease of use, reliability,
  * performance, design, features, recommend) and several qualitative prompts (role, what they like,
@@ -11427,11 +12367,23 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
         loading = false
     }
 
-    RecordCard(title = "App feedback") {
+    /*
+     * THE REGISTER FIRST, THE RATING SECOND, AND THE ORDER IS THE DECISION.
+     *
+     * Somebody opening this screen almost always has a specific thing to say — a photograph that
+     * would not upload, a stage that lost their work, a grievance about how something was handled.
+     * The rating is the thing they fill in once. Putting the star grid first meant a person with a
+     * complaint scrolled past seven rating rows to reach a box that could only hold ONE of their
+     * complaints at a time, because the row is upserted. Both surfaces are on this screen and the
+     * one that takes a new thing each time comes first.
+     */
+    FeedbackReportSection(repository = repository, onError = onError)
+
+    RecordCard(title = "Rate the app") {
         Text(
-            "Tell us how the app is working for you — rate it on a few aspects and add anything you'd " +
-                "like in your own words. Everything is optional; fill in what's relevant. You can come " +
-                "back and update this at any time.",
+            "One standing rating per person, which you can revisit and change at any time. Rate it " +
+                "on a few aspects and add anything you'd like in your own words. Everything is " +
+                "optional; fill in what's relevant.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -13581,12 +14533,23 @@ private fun AndroidMediaForm(
             RecordingIndicator(getAmplitude = { runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0) })
         }
         TextInput("Media title / object name", mediaTitle) { mediaTitle = it }
+        /*
+          CLASS (a), AND IT IS NAMED HERE RATHER THAN LEFT TO FALL THROUGH — §3.1.
+
+          `mediaLinkModes` is a vocabulary compiled into this APK, so it cannot be empty, so there is
+          NO FACT TO REPORT and the field may be required. [BUNDLED_LIST_HAS_NO_SENTENCE] is that
+          named absence: passing it looks identical to passing nothing and is not, because the next
+          reader auditing this screen against §3.5 finds the decision made and argued instead of an
+          omission that looks like one. Inventing a sentence for a list that cannot be empty would be
+          the mirror of the defect this whole section is about.
+        */
         DropdownField(
             label = "Linked record type *",
             options = mediaLinkModes.map { it.name to it.label },
             selectedValue = linkedMode?.name ?: "",
             placeholder = "Choose the type of record",
-            includeNone = false
+            includeNone = false,
+            emptyMessage = BUNDLED_LIST_HAS_NO_SENTENCE
         ) { picked -> linkedMode = mediaLinkModes.firstOrNull { it.name == picked } }
         DropdownField(
             label = "Linked entry (optional)",
@@ -14333,6 +15296,159 @@ private fun QuestionnaireForm(
         qMedia.uris = qMedia.uris + uri
         lastEditedSectionId = sectionIdForKey(key)
     }
+
+    /* ══════════════════════════════════════════════════════════════════════════════════════════
+     * THE VOICE NOTE'S QUICK TRANSCRIPT — four pieces of state, and the first is not derivable
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * `machineText` is the machine's own words per clip key, exactly as they were handed to the box.
+     * THE EDITED FLAG IS THE COMPARISON BETWEEN THIS AND WHAT IS IN THE BOX NOW, and there is no
+     * other way to compute it: a researcher who types an answer out by hand and one who accepts a
+     * transcript verbatim both end up holding a string. Keeping the machine's copy is what makes the
+     * two distinguishable, and it is also what lets a second take be OFFERED rather than imposed.
+     *
+     * `offeredTranscript` holds a transcript that arrived while the box already held EDITED text.
+     * The owner's rule is that a later transcript replaces the earlier one *"unless the designer has
+     * edited the text, in which case it must not silently overwrite their words"*. The moment on this
+     * screen where that can actually happen is a researcher recording a SECOND take against the same
+     * question, which the per-question recorder has always allowed.
+     *
+     * `transcribing` and `quickProblem` are the two halves of saying what happened. A round trip to a
+     * provider takes seconds on a village connection and silence in the box would read as a recorder
+     * that ate the take; a refusal must name itself for the same reason.
+     *
+     * All four are keyed exactly as the clips are — a question id, or `section:<id>` — so nothing
+     * here needs a second idea of what a take belongs to.
+     */
+    var machineText by remember(editing) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var offeredTranscript by remember(editing) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var transcribing by remember(editing) { mutableStateOf<Set<String>>(emptySet()) }
+    var quickProblem by remember(editing) { mutableStateOf<Map<String, String>>(emptyMap()) }
+
+    /**
+     * Post one just-recorded clip for an immediate transcript and put the words in the box.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     * THE CONSENT DECISION, WRITTEN DOWN — read this before changing anything here
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * This is the point at which a named artisan's recorded voice leaves the device for ElevenLabs,
+     * Deepgram or OpenAI, synchronously, while she is still sitting there.
+     * `POST /design-workshops/{id}/dictate` is the only route in this application that sends audio to
+     * a provider under a gate, and its gate is `DesignWorkshop.dictationConsent` — per workshop,
+     * because a consent given for one cluster would silently cover the next one and the artisan whose
+     * voice it is changes between them.
+     *
+     * SO THE ANSWER IS: THE INTERVIEW'S OWN DESIGN WORKSHOP, OR NOTHING IS SENT. This form already
+     * asks which design and prototype workshop an interview is filed under, and where it names one
+     * there is an id whose consent column governs exactly this artisan, this cluster, this week.
+     * Where the picker is empty — which is legitimate; an interview is often taken outside any design
+     * workshop — NO REQUEST IS MADE AT ALL and the box says so in one line. The clip still uploads
+     * and the queue still transcribes it, exactly as before this feature existed.
+     *
+     * THE ID IS READ AT THE MOMENT THE CLIP FINISHES, not when Record was pressed. The picker sits at
+     * the top of a long form and is very often filled in AFTER the first take; a value captured
+     * earlier would refuse a transcript this interview is entitled to, and say the workshop was not
+     * named while it is on screen. Kotlin gives us this for free where the web needed a ref — this is
+     * a local function called at stop time, not a closure built at start time — but the REASON is
+     * worth keeping, because the same trap is one refactor away.
+     *
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * IT NEVER THROWS. It is launched un-awaited from the recorder's stop path, and a failure that
+     * escaped would surface in logcat and nowhere on screen — the researcher would be left watching a
+     * box that never fills, with no idea whether to wait or to type.
+     */
+    fun quickTranscribe(key: String, clip: File) {
+        quickProblem = quickProblem - key
+        val workshopId = designWorkshop.value()
+        if (workshopId.isNullOrBlank()) {
+            quickProblem = quickProblem + (key to questionnaireNoWorkshopLine())
+            return
+        }
+        // CHECKED AGAINST THE ACTUAL FILE BEFORE THE UPLOAD, never against elapsed time: the encoder
+        // bit rate is a hint a device may miss, and the connection is the scarce resource in a
+        // district town. Spending six megabytes of it to be told six megabytes is too many is the one
+        // failure this line exists to prevent — `DwDictationControl.finishRecording` says the same.
+        if (questionnaireClipTooLongToDictate(clip.length(), DW_DICTATION_MAX_BYTES)) {
+            quickProblem = quickProblem + (key to questionnaireClipTooLongLine())
+            return
+        }
+        transcribing = transcribing + key
+        scope.launch {
+            runCatching { repository.designWorkshopDictate(workshopId, clip, language) }
+                .onSuccess { answer ->
+                    val text = answer.text.trim()
+                    if (text.isEmpty()) {
+                        // A round trip that worked and found no words is a different next move from a
+                        // round trip that did not happen. `dwDictationServerAnswerSentence` owns every
+                        // non-COMPLETED outcome — EMPTY, FAILED and RATE_LIMITED — so the sentences a
+                        // researcher meets here are the same ones the workshop microphone gives them,
+                        // worded once. It exists as a pure function precisely because this file had
+                        // already got one of them wrong: the chain's "will retry automatically"
+                        // arrives on a FAILED status as well as on a throttled one, and passing it
+                        // through promises a transcript nothing is going to produce.
+                        quickProblem = quickProblem +
+                            (key to dwDictationServerAnswerSentence(answer.status, answer.message))
+                    } else {
+                        when (
+                            val outcome = questionnaireTranscriptOutcome(
+                                key = key,
+                                text = text,
+                                // READ NOW, from the live answer state — a researcher who typed while
+                                // the artisan was still speaking must not have their words replaced.
+                                inBox = answers[key]?.value.orEmpty(),
+                                previousMachine = machineText[key]
+                            )
+                        ) {
+                            is QuestionnaireTranscriptOutcome.Written -> {
+                                answers[key]?.value = outcome.merged
+                                // BOTH, always. The flag is the comparison between the box and this
+                                // value, so writing one without the other flags an untouched answer
+                                // as edited the instant it lands.
+                                machineText = machineText + (key to outcome.merged)
+                                lastEditedSectionId = sectionIdForKey(key)
+                            }
+
+                            is QuestionnaireTranscriptOutcome.Offered ->
+                                offeredTranscript = offeredTranscript + (key to outcome.text)
+
+                            is QuestionnaireTranscriptOutcome.SectionOnly ->
+                                machineText = machineText + (key to outcome.merged)
+                        }
+                    }
+                }
+                .onFailure { failure ->
+                    // THE SERVER'S OWN SENTENCE. A 409 here IS the consent refusal, and the route
+                    // writes two different sentences for it — one for "nobody has asked the artisan"
+                    // and one for "the artisan said no" — because those have different next moves and
+                    // this client cannot tell which state it found. `apiErrorMessage` reads the
+                    // buffered error body ONCE; asking twice hands back an empty string.
+                    quickProblem = quickProblem +
+                        (key to failure.apiErrorMessage("That recording could not be transcribed just now."))
+                }
+            transcribing = transcribing - key
+        }
+    }
+
+    /**
+     * Forget everything the last interview's transcription left behind.
+     *
+     * NOT TIDINESS. `machineText` is what the edited flag is computed against, so a surviving entry
+     * would flag the NEXT interview's question — a fresh, empty box — as differing from a previous
+     * sitting's machine words, which is a chip saying "Edited" on an answer nobody has typed yet. A
+     * surviving `offeredTranscript` would be worse: it would offer one artisan's words as a
+     * replacement for another's answer.
+     *
+     * The four maps are also keyed on `editing` above, which covers opening a DIFFERENT interview;
+     * this covers the create form being reset in place after a save, where `editing` never changes.
+     */
+    fun clearQuickTranscripts() {
+        machineText = emptyMap()
+        offeredTranscript = emptyMap()
+        transcribing = emptySet()
+        quickProblem = emptyMap()
+    }
     fun removeLastClip(key: String) {
         val list = questionAudio[key] ?: return
         val removed = list.lastOrNull()
@@ -14552,7 +15668,7 @@ private fun QuestionnaireForm(
                 // recorded/attached (not only when text is typed). Live per-question/section clips AND
                 // already-saved recordings (edit mode) both count; a whole-section recording marks every
                 // question in that section as answered.
-                val sectionRecorded = (questionAudio["section:${section.id}"]?.isNotEmpty() == true) ||
+                val sectionRecorded = (questionAudio[questionnaireSectionClipKey(section.id)]?.isNotEmpty() == true) ||
                     sectionSavedMedia.any { it.caption?.trim()?.startsWith("Section audio:") == true }
                 val answeredCount = if (sectionRecorded) activeQuestions.size else activeQuestions.count { q ->
                     val hasText = (answers[q.id]?.value?.trim().orEmpty()).isNotEmpty()
@@ -14594,14 +15710,46 @@ private fun QuestionnaireForm(
                         if (expanded) {
                             if (recordMode == "SECTION") {
                                 // One consolidated recording for the whole section.
-                                val sectionKey = "section:${section.id}"
+                                val sectionKey = questionnaireSectionClipKey(section.id)
                                 Text("Record this entire section in one take.", color = Muted, fontSize = 12.sp)
                                 AudioClipRecorder(
                                     clips = questionAudio[sectionKey] ?: emptyList(),
                                     onAddClip = { uri -> addClip(sectionKey, uri) },
                                     onRemoveLast = { removeLastClip(sectionKey) },
                                     onError = onError,
-                                    idleLabel = "Record section ●"
+                                    idleLabel = "Record section ●",
+                                    onRecorded = { clip -> quickTranscribe(sectionKey, clip) }
+                                )
+                                /*
+                                 * A WHOLE-SECTION TAKE IS SHOWN HERE AND WRITTEN INTO NO ANSWER BOX.
+                                 *
+                                 * It covers a dozen questions, so there is no single answer it is the
+                                 * answer to: filing it under the first question would put a section's
+                                 * worth of conversation behind one prompt, and splitting it across
+                                 * the section's boxes would be the app guessing at an attribution
+                                 * only the researcher can make. `questionnaireTranscriptOutcome`
+                                 * returns `SectionOnly` for exactly this reason and touches no answer.
+                                 *
+                                 * `machine = null` and `current = ""`, so NO EDITED FLAG IS DRAWN
+                                 * here: the flag is a claim about a BOX somebody may have typed in,
+                                 * and there is no box on this take to have departed from the words.
+                                 */
+                                machineText[sectionKey]?.takeIf { it.isNotBlank() }?.let { transcript ->
+                                    Text(
+                                        transcript,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 13.sp,
+                                        lineHeight = 19.sp
+                                    )
+                                }
+                                QuestionnaireQuickTranscript(
+                                    busy = sectionKey in transcribing,
+                                    problem = quickProblem[sectionKey],
+                                    machine = null,
+                                    current = "",
+                                    offered = null,
+                                    onAccept = {},
+                                    onDiscard = {}
                                 )
                                 HorizontalDivider()
                             }
@@ -14612,7 +15760,8 @@ private fun QuestionnaireForm(
                                         clips = questionAudio[question.id] ?: emptyList(),
                                         onAddClip = { uri -> addClip(question.id, uri) },
                                         onRemoveLast = { removeLastClip(question.id) },
-                                        onError = onError
+                                        onError = onError,
+                                        onRecorded = { clip -> quickTranscribe(question.id, clip) }
                                     )
                                 }
                                 if (!hideAnswers) {
@@ -14620,6 +15769,38 @@ private fun QuestionnaireForm(
                                         answers[question.id]?.let { state -> state.value = value }
                                         lastEditedSectionId = section.id
                                     }
+                                    QuestionnaireQuickTranscript(
+                                        busy = question.id in transcribing,
+                                        problem = quickProblem[question.id],
+                                        machine = machineText[question.id],
+                                        current = answers[question.id]?.value.orEmpty(),
+                                        offered = offeredTranscript[question.id],
+                                        onAccept = {
+                                            val text = offeredTranscript[question.id]
+                                            if (text != null) {
+                                                /*
+                                                  ADDED TO THE ANSWER, NOT SUBSTITUTED FOR IT. The
+                                                  offer only exists because the box holds words a
+                                                  person wrote, so the button that accepts it must
+                                                  not be the one control on this screen that deletes
+                                                  them.
+
+                                                  AND `machineText` IS DELIBERATELY LEFT ALONE. The
+                                                  box now holds the researcher's words AND the
+                                                  machine's, so it IS edited and the flag must go on
+                                                  saying so. Updating it here would relabel a mixed
+                                                  answer as untouched machine output, which is the
+                                                  one claim the flag exists to prevent.
+                                                */
+                                                answers[question.id]?.let { state ->
+                                                    state.value = questionnaireAcceptOffer(state.value, text)
+                                                }
+                                                offeredTranscript = offeredTranscript - question.id
+                                                lastEditedSectionId = section.id
+                                            }
+                                        },
+                                        onDiscard = { offeredTranscript = offeredTranscript - question.id }
+                                    )
                                 }
                             }
                             // Per-section live upload-progress card: the clips recorded/picked for THIS
@@ -14831,6 +16012,10 @@ private fun QuestionnaireForm(
                         }.getOrNull()
                         if (queued != null) {
                             media.reset(); qMedia.reset(); questionAudio = emptyMap()
+                            // The machine's own words go with the clips they came from — see
+                            // `clearQuickTranscripts`. Left standing, they would flag the NEXT
+                            // interview's empty boxes as edited.
+                            clearQuickTranscripts()
                             title = ""; selectedArtisans = emptySet(); place = ""; language = "Hindi"; notes = ""
                             status = defaultCreateStatus(repository.cachedUser()?.role)
                             capturedLocation = null; answers.values.forEach { it.value = "" }
@@ -14982,6 +16167,9 @@ private fun QuestionnaireForm(
                     // (so a second save can't re-upload them).
                     qMedia.reset()
                     questionAudio = emptyMap()
+                    // And the transcripts those clips produced. `clearQuickTranscripts` says why
+                    // a surviving entry is worse than untidy.
+                    clearQuickTranscripts()
                     // Bank the sitting: the interview itself does not join the bag — nothing else
                     // links to one — but the artisan it was taken with is exactly where the
                     // researcher still is.
@@ -15259,6 +16447,23 @@ private fun UserManagementForm(
     val scope = rememberCoroutineScope()
     var users by remember { mutableStateOf<List<UserDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    /**
+     * A password link an administrator has just minted, held on screen until they dismiss it, with
+     * the name it is FOR beside it.
+     *
+     * ── THIS IS THE ONLY PLACE THE LINK WILL EVER EXIST ─────────────────────────────────────────
+     *
+     * `POST /auth/password-links` returns it once, there is no route that reads one back, and there
+     * is deliberately no `token` field beside it — the canonical route refuses to return the token
+     * separately on the stated grounds that a credential appearing twice in one answer is a
+     * credential in two places to keep out of logs. So it lives in composable state and NOWHERE
+     * ELSE: not `TokenStore`, not a preference, not a log line.
+     *
+     * The pair carries the SUBJECT rather than a user id, because the panel prints a name and
+     * looking one up again from `users` would be a second read of a list this row already resolved.
+     */
+    var issuedLink by remember { mutableStateOf<Pair<String, IssuedPasswordLinkDto>?>(null) }
+    var linkBusy by remember { mutableStateOf(false) }
 
     fun refreshUsers() {
         scope.launch {
@@ -15301,6 +16506,32 @@ private fun UserManagementForm(
             color = Muted,
             fontSize = 12.sp
         )
+        /*
+         * THE ISSUED LINK, AT THE TOP OF THE CARD AND NOT INSIDE THE ROW THAT MINTED IT.
+         *
+         * The rows are an accordion and a long list scrolls; a panel drawn inside one of them would
+         * be off screen for the administrator who has just pressed the button on a row two thirds of
+         * the way down, and this is the ONE panel in the app whose content cannot be recovered by
+         * scrolling back to it. The web places it in exactly the same position, above the table, for
+         * the same reason.
+         */
+        issuedLink?.let { (subject, link) ->
+            IssuedPasswordLinkPanel(
+                link = link,
+                subject = subject,
+                // `formatIsoDate` is this file's own, and it falls back to the raw stamp rather than
+                // to nothing: an expiry an administrator cannot read is still better than none.
+                expires = formatIsoDate(link.expiresAt) ?: link.expiresAt,
+                onWithdraw = {
+                    scope.launch {
+                        runCatching { repository.revokePasswordLink(link.id) }
+                            .onSuccess { issuedLink = null }
+                            .onFailure { onError(it.apiErrorMessage("Unable to withdraw the link")) }
+                    }
+                },
+                onDismiss = { issuedLink = null }
+            )
+        }
         if (loading) {
             Text("Loading users...", color = Muted)
         }
@@ -15436,6 +16667,61 @@ private fun UserManagementForm(
                                 }
                             }
                         )
+                        /*
+                         * ── ISSUE A SET-PASSWORD LINK, WHICH THIS HANDSET COULD NOT DO AT ALL ───
+                         *
+                         * The whole mechanism has existed server-side since 2026-08-30 —
+                         * single-use through a credential fingerprint, expiry inside the signed
+                         * payload, revocation, session revocation on redemption, and a per-SUBJECT
+                         * throttle — and the only surface that could reach it was the web users
+                         * page. An administrator standing in a workshop with a designer who cannot
+                         * sign in had to find a laptop.
+                         *
+                         * ADMIN AND NOT MASTER ADMIN, matching the route (`require_admin`) and
+                         * matching `POST /api/users`: the account that can CREATE somebody with a
+                         * password of the admin's choosing can obviously hand them a link to change
+                         * it, and gating the safer of the two more tightly would only push admins
+                         * back to typing passwords for people. `canManageTarget` is the same
+                         * `assert_can_manage_target` mirror the role dropdown above uses.
+                         *
+                         * NOT OFFERED FOR A GOOGLE ACCOUNT. It has no password to set, and issuing
+                         * a link for one would hand an administrator a credential that turns a
+                         * Google-only account into a password one without anybody deciding to. The
+                         * web's users page omits the button on exactly the same test.
+                         *
+                         * THE THROTTLE'S 429 IS SHOWN VERBATIM. It is per SUBJECT (four an hour),
+                         * because redeeming revokes that account's sessions and a per-admin budget
+                         * would let two admins take turns signing a colleague out of their own
+                         * laptop. The server's sentence names the wait and the alternative; nothing
+                         * this screen could write in its place would know either.
+                         */
+                        if (actorIsAdmin && canManageTarget && appUser.authProvider != "GOOGLE") {
+                            HorizontalDivider()
+                            OutlinedButton(
+                                enabled = !linkBusy,
+                                onClick = {
+                                    scope.launch {
+                                        linkBusy = true
+                                        runCatching { repository.issuePasswordLink(appUser.id) }
+                                            .onSuccess { issuedLink = appUser.name to it }
+                                            .onFailure {
+                                                onError(it.apiErrorMessage("Unable to issue a password link"))
+                                            }
+                                        linkBusy = false
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Issue a set-password link")
+                            }
+                            Text(
+                                // TERSE, and it is the one thing an administrator must know BEFORE
+                                // pressing: the panel that appears is the only copy there will be.
+                                "Shown once. Copy it and send it yourself.",
+                                color = Muted,
+                                fontSize = 11.sp
+                            )
+                        }
                     }
                 }
             }

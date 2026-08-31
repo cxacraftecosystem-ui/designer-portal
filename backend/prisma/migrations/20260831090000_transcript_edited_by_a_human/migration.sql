@@ -1,0 +1,62 @@
+-- Whether a stored transcript is still the machine's words, and who changed them if not.
+--
+-- =============================================================================================
+-- THE REQUIREMENT
+-- =============================================================================================
+--
+-- Owner, 2026-08-30: "...and even when the translation comes in, it should appear in the rich text
+-- box with the flag of whether it has been edited by the user or not, if so, the box would carry an
+-- edited flag as well."
+--
+-- The flag is asked for on a text box, but the FACT it states is a fact about the transcript: is
+-- this still what a provider returned, or has a person corrected it. That question had no answer
+-- anywhere in the schema. `POST /media/{id}/transcript` — the one route by which a human replaces
+-- machine text — wrote `transcriptText`, set `transcriptStatus` to COMPLETED and cleared
+-- `transcriptError`, and recorded neither that an edit had happened nor who made it. So a refined
+-- transcript that a researcher had rewritten line by line and one that came straight off ElevenLabs
+-- were byte-indistinguishable to every reader: the consolidated interview page, the report
+-- annexures, the review panel and both handsets.
+--
+-- =============================================================================================
+-- TWO COLUMNS, NOT A BOOLEAN, AND THE SECOND ONE IS NOT DECORATION
+-- =============================================================================================
+--
+-- `transcriptEditedAt` IS the flag — NULL means "nobody has touched it", non-NULL means "a person
+-- did, and here is when". A `BOOLEAN DEFAULT false` was the smaller column and it is the wrong one
+-- for the same reason `DesignWorkshop.dictationConsentAt` sits beside `dictationConsent`: an edit is
+-- an act by a named person at a named moment, and a bare `true` cannot be argued with later. This
+-- repository has already paid for that lesson once — `dictation_consent`'s module docstring records
+-- that consent columns without a log leave "nothing that explains the nine transcripts sitting in
+-- it".
+--
+-- `transcriptEditedById` is who. It is a bare id column with NO foreign key and NO relation, which
+-- is deliberate and is `MediaFile.reviewedById`'s exact shape one field up in the same model: this
+-- is an audit stamp, not a navigable edge. Adding a relation would oblige a back-relation on `User`,
+-- and `onDelete` would then have to answer a question nobody wants answered — a deleted account must
+-- not silently rewrite the provenance of a transcript into "nobody edited this".
+--
+-- WHY NOT AN APPEND-ONLY LOG TABLE, since `DwWorkshopConsentDecision` is one table over and is
+-- exactly that. A consent can be WITHDRAWN, so its history is a different fact at each point in time
+-- and columns alone would destroy it. A transcript edit is not like that: the current text IS the
+-- answer, every prior version of it is already recoverable from `RecordRevision` on the surfaces
+-- that write one, and the question the flag has to answer is only ever about the text on screen
+-- right now. A log here would be a second history of something that is not disputed.
+--
+-- =============================================================================================
+-- NULLABLE, NO BACKFILL, AND THE FALSE READING THAT WOULD HAVE BEEN
+-- =============================================================================================
+--
+-- Every existing row gets NULL and stays NULL, and NULL must be read as "not stated" and NOT as
+-- "never edited". Some of the transcripts already in this repository HAVE been rewritten through
+-- `POST /media/{id}/transcript` — that route has existed all along — and this column simply did not
+-- exist to record it. Backfilling `false` would write "the machine said this" onto text a person
+-- typed, which is precisely the assertion the owner asked for a flag to stop being made silently.
+-- The two clients therefore render three states and not two: edited, not edited, and — for rows
+-- stored before today — nothing at all.
+--
+-- NO INDEX. Nothing filters on either column: both are read only as part of a media row already
+-- selected by id or by a link, so an index would be paid for on every transcription write and never
+-- chosen. `20260830190000_questionnaire_kind` declined one for the same reason.
+
+ALTER TABLE "MediaFile" ADD COLUMN "transcriptEditedAt" TIMESTAMP(3);
+ALTER TABLE "MediaFile" ADD COLUMN "transcriptEditedById" TEXT;

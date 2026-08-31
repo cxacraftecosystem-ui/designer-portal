@@ -283,6 +283,22 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
     ),
     Mirror(
+        path="frontend/e2e/design-workshop-search-filters-unit.spec.ts",
+        binding="EVERY_ROLE",
+        kind="closed",
+        pattern=r"const EVERY_ROLE: UserRole\[\] = \[([\s\S]*?)\n\];",
+        why=(
+            "Pins the two design-workshop DATA predicates on the web -- who may READ stage data "
+            "through View Data and Search, and the STRICTLY NARROWER set who may export it. Both are "
+            "SETS rather than rank thresholds (see `deps.can_view_design_workshop_data`), so a new "
+            "tier's answer cannot be inferred from the ladder and has to be exercised; this tuple is "
+            "what exercises it. A tier missing here is a tier nobody has decided about on a surface "
+            "that hands out a fortnight of a named designer's fieldwork -- and because the sets are "
+            "not monotonic in rank in the usual direction (they hold PROFESSOR and refuse DESIGNER), "
+            "the ladder gives the wrong answer for it by default."
+        ),
+    ),
+    Mirror(
         path="frontend/e2e/design-workshop-inspections-unit.spec.ts",
         binding="ROLES",
         kind="closed",

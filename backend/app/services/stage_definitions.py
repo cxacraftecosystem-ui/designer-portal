@@ -263,6 +263,44 @@ STAGE_1 = StageSpec(
                     help="As written on the sanction order, e.g. “Design & Prototype Development "
                     "Workshop — Sambalpuri Ikat”.",
                 ),
+                # THE SECOND HALF OF THE PAIR THE OWNER ASKED FOR — "two dropdowns, type of workshop
+                # and name of workshop" — and it is declared here, immediately under the title,
+                # because that is where a reader looks for it and where the create form already
+                # draws a dropdown that is NOT this (see below).
+                #
+                # ── WHY IT SITS BESIDE `schemeName` AND DOES NOT REPLACE IT ───────────────────────
+                #
+                # `schemeName` is the free-text name of the specific sanctioning scheme, quoted in
+                # the report. This is the closed kind that scheme falls under, and it is what a list
+                # can be narrowed by. One is quotable and the other is countable; see `WORKSHOP_KIND`
+                # in `stage_schema.py` for the full argument.
+                #
+                # ── REQUIRED, AND THAT IS SAFE HERE IN A WAY IT IS NOT FOR A REFERENCE PICKER ─────
+                #
+                # `required=True` is enforced by `validate_entry` on every save. It is safe for a
+                # closed ENUM and only for a closed ENUM: the option list is compiled into the
+                # registry and reaches a handset through `StageSchemaStore`'s bundled APK asset, so
+                # unlike a record-backed picker it can never be empty offline. That is rule R2 of
+                # `DROPDOWN_DESIGN.md` — a field may only be mandatory where it is answerable — and
+                # a class-(a) vocabulary is the one class the rule is unconditionally true for.
+                #
+                # ── WHAT A DESIGNER SEES BESIDE IT, AND WHY THAT MATTERED ────────────────────────
+                #
+                # Both create forms already put a six-value dropdown immediately after the title box.
+                # That control is REPORT TEMPLATE — the output document format — so the screen has
+                # looked like it carried a type/name pair for as long as it has existed and carried
+                # neither half. The owner read that as the requirement being half-built. It is worth
+                # keeping the two visually distinct wherever they end up on one form.
+                f(
+                    "workshopKind",
+                    "Type of workshop",
+                    ENUM,
+                    B,
+                    required=True,
+                    enum="WORKSHOP_KIND",
+                    report_role=COVER,
+                    help="The kind of workshop this is. The scheme funding it is the box below.",
+                ),
                 f(
                     "schemeName",
                     "Scheme",
@@ -1666,6 +1704,45 @@ STAGE_4 = StageSpec(
                     min_items=25,
                     help="All 25 are required. Photographs of the contemporary motifs the cluster "
                     "works today — the traditional ones have their own gallery. Each "
+                    "photograph is checked on this device before it uploads, for blur, low "
+                    "resolution and duplicates, and one that fails is not sent. Exposure and "
+                    "subject are not checked — judge those by eye.",
+                ),
+                # A CEILING AND DELIBERATELY NO FLOOR, WHICH IS THE OPPOSITE OF THE TWO GALLERIES
+                # DIRECTLY ABOVE, AND THE DIFFERENCE IS THE OWNER'S OWN WORDS.
+                #
+                # The motif galleries were specified as "all twenty-five are required" and therefore
+                # carry `min_items=25`. This one was specified as *"which would take upto 25 images"*
+                # — a ceiling. So it declares `max_items` and no `min_items`, and the distinction is
+                # load-bearing rather than pedantic: `min_items` is scored by `stage_completeness`,
+                # so a floor here would make stage 4 incomplete, and every workshop in the country
+                # unsubmittable, until twenty-five photographs of something a cluster may no longer
+                # make had been found. A lost craft is by definition the thing there may be no
+                # photographs of.
+                #
+                # ── WHY IT IS A THIRD GALLERY AND NOT A WIDENING OF `motifPhotos` ───────────────────
+                #
+                # Same reason `contemporaryMotifPhotos` is not one either, stated at its own
+                # declaration: every answer already in a gallery is a photograph of what that
+                # gallery's label promised. A lost product is not a motif, traditional or
+                # contemporary, and folding it in would silently reclassify what is already stored
+                # and put the wrong pictures under the report's motif heading.
+                #
+                # ── THE REPORT ─────────────────────────────────────────────────────────────────────
+                #
+                # `report_role=GALLERY` comes from `photos()`, so this prints as an ordinary figure
+                # block under its own heading with the caption beneath, exactly as the two above do.
+                # Nothing in `report_templates.py` needs a new `SpecialSection` — a gallery on a
+                # stage a template already carries is carried with it.
+                *photos(
+                    "lostCraftPhotos",
+                    "Lost craft / product photographs",
+                    S,
+                    "Lost craft or product caption",
+                    max_items=25,
+                    help="Up to 25. Crafts and products the cluster no longer makes — photographs "
+                    "of surviving pieces, archive images, or museum and collection holdings. "
+                    "Say in the caption what it is and where the piece is now. Each "
                     "photograph is checked on this device before it uploads, for blur, low "
                     "resolution and duplicates, and one that fails is not sent. Exposure and "
                     "subject are not checked — judge those by eye.",
@@ -3711,6 +3788,50 @@ STAGE_11 = StageSpec(
                 ),
                 f("image", "Sketch image", IMG, B, required=True, report_role=GALLERY),
                 f("imageCaption", "Sketch caption", T, B, caption_for="image", report_role=CAP),
+                # TENTATIVE — A FLAG ON THE ROW, NOT A SECOND GALLERY, AND THE OWNER CHOSE THIS SHAPE.
+                #
+                # The instruction read two ways — "an additional sketch upload called Tentative
+                # Sketches" (a new media field) and "mark them as tentative to bring them to the top
+                # of the list" (a flag on the row) — and the owner settled it on 2026-08-30: one
+                # checkbox per sketch. It is the right half. A second gallery would be two lists over
+                # one concept, and every reader of sketches — the report's figure block, the design
+                # review's ranking, the sketches-and-prototypes chooser, both on-device report
+                # writers — would then have to decide which list it meant, forever. A boolean on the
+                # row is read by all of them for free.
+                #
+                # ── B TIER, BECAUSE IT MUST EXIST AT BASIC CAPTURE ─────────────────────────────────
+                #
+                # It sits beside `image` and `name`, which are also B. A flag that only appeared at
+                # Standard tier would be a control a designer at Basic could not reach on the very
+                # rows they are most likely to be unsure about.
+                #
+                # ── `report_role=HIDDEN` ───────────────────────────────────────────────────────────
+                #
+                # Deliberately not COL and not KV. This is a WORKING state — "I have not settled on
+                # this one yet" — and it is true of the sketch on the day it is drawn, not of the
+                # submission. Printing "Tentative: Yes" in a document a ministry receives would put a
+                # designer's private hedging into the record, and it would go stale the moment the
+                # sketch was finalised without anybody thinking to untick it. The ORDER it produces
+                # still reaches the report, because the report reads the rows in the order the stage
+                # holds them; the flag itself does not.
+                #
+                # ── ORDERING IS NOT DECLARED HERE ──────────────────────────────────────────────────
+                #
+                # There is no "sort by this field" facility in the registry and this change does not
+                # add one. `DwStageEntry.ordinal` remains the single ordering input, exactly as
+                # `design_workshops.py:4966` reads it. Tentative-first is applied where sketches are
+                # LISTED — see the sketch readers — as a stable partition on top of `ordinal`, so a
+                # designer's own arrangement inside each group survives, and unticking a box returns
+                # a row to precisely the position it would have had.
+                f(
+                    "isTentative",
+                    "Tentative",
+                    BOOL,
+                    B,
+                    report_role=HIDDEN,
+                    help="Not settled yet. Tentative sketches are listed first so they are easy to "
+                    "come back to. Untick when the sketch is final.",
+                ),
                 f(
                     "category",
                     "Product category",

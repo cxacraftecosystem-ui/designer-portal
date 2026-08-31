@@ -28,6 +28,7 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.ui.LocationFieldsSection
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.field
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -133,7 +134,7 @@ internal fun DwGeoField(
     val current = remember(value) { dwLocationFromValue(value) }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(requiredMarked(label), color = MaterialTheme.field.muted, fontSize = 12.sp)
         if (help.isNotBlank()) {
             Text(help, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }

@@ -35,12 +35,23 @@ from app.services.custom_sections import (
     MAX_CUSTOM_UNIT_CHARS,
 )
 from app.services.report_templates import TEMPLATES
+from app.services.stage_schema import ENUMS
 
 # The DesignWorkshopStatus enum, mirrored from schema.prisma. Kept as a frozenset here
 # rather than imported from the generated Prisma client so validating a request body does
 # not require the client to have been generated.
 DESIGN_WORKSHOP_STATUSES = frozenset({"DRAFT", "IN_PROGRESS", "COMPLETE", "SUBMITTED", "ARCHIVED"})
 REPORT_TEMPLATE_IDS = frozenset(t.id for t in TEMPLATES)
+
+#: The kinds a design workshop may be, READ OFF THE REGISTRY rather than restated here.
+#:
+#: The two lists above are frozen sets built from their own sources for the same reason, and this
+#: one has a sharper edge than either: the vocabulary is what both clients DRAW, straight out of
+#: ``registry_to_dict()``. A second copy in this module would be a list the API validates against
+#: that the dropdown does not offer, and the failure is silent in the worst direction — a designer
+#: picks a perfectly ordinary option and the save is refused with a 422 naming values they were
+#: never shown. One list, in ``stage_schema.ENUMS``, and everything else reads it.
+WORKSHOP_KINDS = frozenset(ENUMS["WORKSHOP_KIND"])
 
 # A single stage submission is bounded so one malformed client cannot post an unbounded blob
 # into a JSON column. Twenty-two stages of prose, at these limits, is comfortably under the
@@ -78,6 +89,14 @@ class DesignWorkshopCreate(APIModel):
 
     title: str = Field(min_length=1, max_length=220)
     templateId: str = Field(default="DCH_STANDARD", max_length=48)
+    # THE TYPE OF WORKSHOP, AND IT IS OPTIONAL HERE ON PURPOSE — read this class's own docstring:
+    # "a workshop is created on day one, in a room, before the sanction order number is to hand.
+    # Requiring more here would make the app unusable at exactly the moment it is opened." The stage
+    # field is `required=True` and `validate_entry` enforces that at SUBMISSION, which is where the
+    # answer is actually needed. Making the create body demand it would refuse the one action the
+    # whole app exists to make easy, and would do it for a field a designer can fill in ten seconds
+    # later from a six-option dropdown.
+    workshopKind: str | None = Field(default=None, max_length=48)
     # ── THE DESIGNER THIS WORKSHOP IS FOR ────────────────────────────────────────────────────────
     #
     # THE DEFECT THIS FIELD ENDS, and it is the requirement it ends, not a convenience. Requirement
@@ -208,6 +227,11 @@ class DesignWorkshopCreate(APIModel):
     def _known_template(self) -> "DesignWorkshopCreate":
         if self.templateId not in REPORT_TEMPLATE_IDS:
             raise ValueError(f"templateId must be one of {', '.join(sorted(REPORT_TEMPLATE_IDS))}")
+        # `workshopKind` reaches a plain TEXT column, so Prisma would accept a typo and store it —
+        # the workshop would then be filed under a kind no dropdown offers and no filter matches,
+        # silently. Same check, same wording, as the PATCH body's.
+        if self.workshopKind is not None and self.workshopKind not in WORKSHOP_KINDS:
+            raise ValueError(f"workshopKind must be one of {', '.join(sorted(WORKSHOP_KINDS))}")
         return self
 
 
@@ -223,6 +247,11 @@ class DesignWorkshopUpdate(APIModel):
     templateId: str | None = Field(default=None, max_length=48)
     # See the validators at the foot of this class: both of these reach a typed column or a
     # template lookup, and neither may be a free string.
+    # THE TYPE OF WORKSHOP. Accepted here for the same stated reason as `craftName` and the dates —
+    # so an admin can correct a list entry without opening stage 1 — and validated below, because it
+    # reaches a promoted column that a list filters on. A free string here would produce a workshop
+    # filed under a kind no dropdown offers and no filter can find.
+    workshopKind: str | None = Field(default=None, max_length=48)
     craftName: str | None = Field(default=None, max_length=160)
     clusterName: str | None = Field(default=None, max_length=160)
     state: str | None = Field(default=None, max_length=80)
@@ -249,6 +278,13 @@ class DesignWorkshopUpdate(APIModel):
             raise ValueError(f"status must be one of {', '.join(sorted(DESIGN_WORKSHOP_STATUSES))}")
         if self.templateId is not None and self.templateId not in REPORT_TEMPLATE_IDS:
             raise ValueError(f"templateId must be one of {', '.join(sorted(REPORT_TEMPLATE_IDS))}")
+        # THE SAME TREATMENT, AND THE THIRD REASON IN THAT LIST APPLIES TO IT PARTICULARLY.
+        # `workshopKind` reaches a plain TEXT column, so unlike `status` Prisma would ACCEPT a typo
+        # and store it — the workshop would then be filed under a kind that no dropdown offers and
+        # no filter matches, and nothing anywhere would say so. A 422 naming the six is the only
+        # answer a client can act on.
+        if self.workshopKind is not None and self.workshopKind not in WORKSHOP_KINDS:
+            raise ValueError(f"workshopKind must be one of {', '.join(sorted(WORKSHOP_KINDS))}")
         return self
 
 

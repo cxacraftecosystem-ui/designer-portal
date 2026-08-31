@@ -37,6 +37,20 @@ async def get_address_reference(_: Any = Depends(get_current_user)) -> dict[str,
     11.7 KB of JSON, 5.1 KB gzipped, of which the 795 districts are the large part; see
     ``address_reference`` for why that shape was chosen. The payload is a pure constant — no database
     read — so a client should cache it and re-fetch only when ``version`` changes.
+
+    BOTH CLIENTS NOW DO, AND FOR A LONG TIME NEITHER DID — worth recording here because this is the
+    only invalidation signal this API provides and a request that nobody honours is a field that
+    quietly stops being maintained. Android compares ``version`` in ``AddressReferenceCache.write``
+    (it used to compare the whole encoded document, which reached the same answer by re-reading and
+    re-comparing 11.7 KB on every successful fetch); the web compares it in
+    ``putCachedAddressReference`` and keeps the stored payload object when it has not moved, so the
+    district list survives a laptop losing signal and the address card's ``useMemo``s do not
+    recompute over 795 names for an answer that has not changed.
+
+    SO ``version`` IS NOW LOAD-BEARING AND MUST BE BUMPED WHENEVER THE LISTS MOVE. Before this it
+    was advisory and a stale bump cost nothing; now a state added without one leaves every device
+    that already holds a copy serving the previous list, offline, with no way to notice. It is
+    ``services/address.address_reference``'s to raise, in the same change as the names.
     """
     return address_reference()
 

@@ -1,0 +1,50 @@
+-- What kind of questionnaire this is: a workshop interview, or a market survey.
+--
+-- =============================================================================================
+-- THE REQUIREMENT
+-- =============================================================================================
+--
+-- Owner, 2026-08-30: "the designer can have multiple questionnaires for the same workshop as well,
+-- they also do market survey interviews, so create that differentiation as well, so that we can map
+-- the questionnaires and the transcripts to the correct stage in the report."
+--
+-- The first half of that sentence already worked and this migration does not touch it:
+-- `Questionnaire.designWorkshopId` is a single nullable pointer and `DesignWorkshop.questionnaires`
+-- is a list, so several questionnaires have always been able to hang off one workshop. What did not
+-- exist was any way to tell WHICH KIND each one is, so `report_questionnaires` printed a baseline
+-- interview and a market survey side by side in one undifferentiated annexure with nothing to say
+-- which stage of the workshop either belonged to.
+--
+-- =============================================================================================
+-- WHY TEXT AND NOT AN ENUM, AND WHY NOT IN THE STAGE REGISTRY
+-- =============================================================================================
+--
+-- TEXT for `DesignWorkshop.workshopKind`'s reason, stated in full on that column: a Postgres enum
+-- would be a second copy of a list that already exists in Python, and adding a member would become
+-- a migration on every deployment before a designer could file under it.
+--
+-- NOT in `stage_schema.ENUMS`, which is where `WORKSHOP_KIND` lives, and that is the difference
+-- worth reading before copying either. `workshopKind` is answered INSIDE stage 1's document; this
+-- is a column on a table that is not part of any stage document at all. Publishing its vocabulary
+-- through the stage registry would move `registry_version()` and make every handset in the field
+-- re-download the whole registry for a token no stage will ever ask for. The vocabulary is
+-- therefore `app/services/questionnaire_kinds.py` and the route validates against it.
+--
+-- =============================================================================================
+-- NULLABLE, WITH NO BACKFILL, ON PURPOSE
+-- =============================================================================================
+--
+-- Every existing questionnaire gets NULL and stays NULL. Nothing in the data says which kind an
+-- existing row was, and guessing — "most of them are probably interviews" — would write an
+-- assertion nobody made into a field a ministry report prints. This is the identical ruling
+-- `20260830150000_design_workshop_kind` made for the same reason, and readers must treat NULL as
+-- "not stated" rather than as a kind: the report files an unstated questionnaire under no stage and
+-- renders it exactly as it rendered every questionnaire before this column existed, so no document
+-- already generated changes.
+--
+-- NO INDEX. Every read that touches this column narrows the rows another way first — the report
+-- annexure selects on `designWorkshopId`, which is indexed, and the list applies the visibility
+-- scope — so an index here would be paid for on every write and never chosen. Add one when
+-- something filters on `kind` alone.
+
+ALTER TABLE "Questionnaire" ADD COLUMN "kind" TEXT;

@@ -33,7 +33,10 @@ from typing import Any
 
 import pytest
 
+import app.services.stage_definitions  # noqa: F401  - installs the stage registry
 from app.api.routes import export
+from app.services import design_workshop_data as dwd
+from app.services.rich_text import Mark, RichBlock, RichDoc, RichSpan, to_stored_text
 
 
 class Row(SimpleNamespace):
@@ -60,6 +63,14 @@ class _Delegate:
     async def find_many(self, **_kwargs: Any) -> list[Any]:
         return list(self._rows)
 
+    async def count(self, **_kwargs: Any) -> int:
+        """How many rows there are, for the professor's ``NOT INCLUDED.txt``.
+
+        The only ``count`` this route issues, and only on the refusal path — see ``DW_WITHHELD_FILE``
+        in ``export.py``. A delegate that could not answer it would make that branch untestable.
+        """
+        return len(self._rows)
+
 
 class _DB:
     def __init__(self, **tables: list[Any]) -> None:
@@ -71,6 +82,13 @@ class _DB:
             "questionnaireinterview",
             "process",
             "mediafile",
+            # THE DESIGN-WORKSHOP PAIR, ADDED 2026-08-31 WITH THE HALF OF THE ARCHIVE THAT READS
+            # THEM. They are listed here rather than left to ``tables.get`` on an unknown attribute
+            # because ``_DB`` answers by ATTRIBUTE and a missing one is an ``AttributeError`` inside
+            # the route, which reads as the route being broken rather than as the fixture being
+            # short.
+            "designworkshop",
+            "dwstageentry",
         ):
             setattr(self, name, _Delegate(tables.get(name, [])))
 
@@ -678,3 +696,287 @@ def test_an_all_data_owner_export_does_get_the_detached_file(monkeypatch):
         )
     )
     assert "_Unlinked/_Detached files/step.jpg" in _paths(manifest)
+
+
+# --------------------------------------------------------------------------------------
+# The design-workshop half, and the rich-text answer beside it
+# --------------------------------------------------------------------------------------
+#
+# THE ARCHIVE WAS CALLED ``design-workshop-dataset.zip`` AND CONTAINED NO DESIGN WORKSHOP.
+# ``grep -c designWorkshop backend/app/api/routes/export.py`` answered ZERO, so the twenty-two-stage
+# record this product is named after — around 523 field specs across 44 entities — reached no export
+# anywhere. That is worse than an omission: a researcher archived a file whose NAME promised the
+# workshops, opened it a year later, found artisans and products, and could not tell whether they had
+# been left out or never recorded. The web renamed the download to stop the filename asserting
+# something false; this is the other fix, so the name went back.
+#
+# NOTHING HERE TOUCHES A DATABASE either — same fixture machinery as everything above, and the same
+# reason: the behaviour under test is the SHAPE OF THE TREE once the rows are loaded.
+
+# The two stages these fixtures use, named from the registry rather than typed, so a retitled stage
+# renames the folder here as well and this test cannot pin a title the product has stopped using.
+SETUP_STAGE = next(s for s in dwd.stages() if s.key == "WORKSHOP_SETUP")
+SKETCH_STAGE = next(s for s in dwd.stages() if s.key == "SKETCH_DEVELOPMENT")
+SETUP_FOLDER = f"{SETUP_STAGE.number:02d} {SETUP_STAGE.title}"
+SKETCH_FOLDER = f"{SKETCH_STAGE.number:02d} {SKETCH_STAGE.title}"
+
+
+def _content(manifest: dict[str, Any], path: str) -> str:
+    """The text written at one manifest path. Raises if nothing is written there."""
+    return next(f["content"] for f in manifest["files"] if f["path"] == path)
+
+
+def _dw(**kw: Any) -> Row:
+    base = {
+        "id": "dw-1",
+        "title": "Bagru indigo fortnight",
+        "workshopCode": "DW-01",
+        "craftName": "Block printing",
+        "state": "Rajasthan",
+        "deletedAt": None,
+    }
+    base.update(kw)
+    return Row(**base)
+
+
+def _entry(entity_key: str, data: dict[str, Any], entry_id: str = "e-1", ordinal: int = 0) -> Row:
+    return Row(
+        id=entry_id,
+        designWorkshopId="dw-1",
+        entityKey=entity_key,
+        data=data,
+        ordinal=ordinal,
+        deletedAt=None,
+    )
+
+
+async def _dw_manifest(
+    monkeypatch,
+    *,
+    may_export: bool = True,
+    may_view: bool = True,
+    owner_id: str | None = None,
+    **tables: list[Any],
+) -> dict[str, Any]:
+    """The route, with the two design-workshop predicates pinned rather than derived from a role.
+
+    PINNED, BECAUSE THE SPLIT IS THE THING UNDER TEST. ``can_view_design_workshop_data`` and
+    ``can_export_design_workshop_data`` are exercised as a pair in
+    ``test_design_workshop_data_access``; what matters here is that this route does the right thing
+    for each of the three populations they define, which a role fixture would express only indirectly.
+    """
+
+    async def _open_where(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def _owner_scope(*_args: Any, **_kwargs: Any) -> None:
+        # ``None`` is the all-data answer: every record the owner created, unfiltered. The narrow
+        # subset-grant shape is exercised by the tests above; what this one asks is whether design
+        # workshops appear on the owner path AT ALL, and they must not.
+        return None
+
+    monkeypatch.setattr(export, "db", _DB(**tables))
+    monkeypatch.setattr(export, "owned_or_granted_where", _open_where)
+    monkeypatch.setattr(export, "owner_download_scope", _owner_scope)
+    monkeypatch.setattr(export, "can_download_dataset", lambda _user: True)
+    monkeypatch.setattr(export, "can_export_design_workshop_data", lambda _user: may_export)
+    monkeypatch.setattr(export, "can_view_design_workshop_data", lambda _user: may_view)
+    return await export.dataset_manifest(ownerId=owner_id, current_user=ADMIN)
+
+
+class TestDesignWorkshopHalf:
+    def test_the_workshop_gets_a_folder_with_its_own_details(self, monkeypatch):
+        manifest = asyncio.run(_dw_manifest(monkeypatch, designworkshop=[_dw()]))
+        details = _content(manifest, "Design workshops/Bagru indigo fortnight/details.txt")
+        # The promoted columns — the axes a researcher filters on — and the coverage counts, from the
+        # SAME ``_dw_info`` panel the tree draws, so the archive and the browser describe one
+        # workshop one way.
+        assert "DW-01" in details
+        assert "Block printing" in details
+        assert f"0 of {len(dwd.stages())}" in details
+
+    def test_stage_rows_are_written_under_the_stage_that_owns_them(self, monkeypatch):
+        manifest = asyncio.run(
+            _dw_manifest(
+                monkeypatch,
+                designworkshop=[_dw()],
+                dwstageentry=[_entry("workshopSetup", {"workshopTitle": "Indigo fortnight"})],
+            )
+        )
+        body = _content(
+            manifest,
+            f"Design workshops/Bagru indigo fortnight/Stages/{SETUP_FOLDER}/Workshop details.txt",
+        )
+        assert "Workshop title: Indigo fortnight" in body
+
+    def test_only_stages_that_hold_something_get_a_folder(self, monkeypatch):
+        """Twenty-two folders of which most open on nothing is not navigable — the tree lists only
+        the answered ones and says "N of 22" on the panel, and the archive must agree with it."""
+        manifest = asyncio.run(
+            _dw_manifest(
+                monkeypatch,
+                designworkshop=[_dw()],
+                dwstageentry=[_entry("workshopSetup", {"workshopTitle": "Indigo fortnight"})],
+            )
+        )
+        stage_paths = [p for p in _paths(manifest) if "/Stages/" in p]
+        assert len(stage_paths) == 1
+        details = _content(manifest, "Design workshops/Bagru indigo fortnight/details.txt")
+        assert f"1 of {len(dwd.stages())}" in details
+
+    def test_a_stage_photograph_is_filed_under_the_stage_that_cites_it(self, monkeypatch):
+        """THE MEDIA-IDENTITY HALF. ``_media_slot`` reads columns, and the only record that a given
+        photograph answers stage 11's "Sketch image" is the stage row itself — so left to it, a
+        stage photograph carrying an inherited legacy ``workshopId`` was filed under an unrelated
+        workshop's folder."""
+        photo = Row(
+            id="m-sketch",
+            linkedRecordType="designWorkshop",
+            linkedRecordId="dw-1",
+            originalFilename="sketch-3.jpg",
+            url="https://objects.test/sketch-3.jpg",
+        )
+        manifest = asyncio.run(
+            _dw_manifest(
+                monkeypatch,
+                designworkshop=[_dw()],
+                dwstageentry=[_entry("sketch", {"name": "Sketch 3", "image": "m-sketch"})],
+                mediafile=[photo],
+            )
+        )
+        paths = _paths(manifest)
+        assert (
+            f"Design workshops/Bagru indigo fortnight/Stages/{SKETCH_FOLDER}/sketch-3.jpg" in paths
+        )
+        assert manifest["totalMedia"] == 1
+
+    def test_a_loose_upload_lands_in_the_workshop_folder_and_not_in_detached(self, monkeypatch):
+        """``designWorkshopId`` is not in ``_MEDIA_FK_SLOTS``, so a workshop's miscellaneous upload
+        matched no slot at all and was swept into ``_Unlinked/_Detached files`` — a folder that
+        asserts the file's parent record no longer exists, about a workshop sitting in the same zip."""
+        loose = Row(
+            id="m-loose",
+            designWorkshopId="dw-1",
+            linkedRecordType=None,
+            linkedRecordId=None,
+            originalFilename="courtyard.jpg",
+            url="https://objects.test/courtyard.jpg",
+        )
+        manifest = asyncio.run(
+            _dw_manifest(monkeypatch, designworkshop=[_dw()], mediafile=[loose])
+        )
+        paths = _paths(manifest)
+        assert "Design workshops/Bagru indigo fortnight/courtyard.jpg" in paths
+        assert not any(p.startswith(export.DETACHED_FOLDER) for p in paths)
+
+    def test_rows_this_build_cannot_describe_are_named_rather_than_dropped(self, monkeypatch):
+        """A handset one release ahead syncs rows written against a newer registry. Refusing to
+        mention them would under-report the corpus while looking complete."""
+        manifest = asyncio.run(
+            _dw_manifest(
+                monkeypatch,
+                designworkshop=[_dw()],
+                dwstageentry=[_entry("somethingNewer", {"x": 1})],
+            )
+        )
+        note = _content(manifest, "Design workshops/Bagru indigo fortnight/not-shown.txt")
+        assert "somethingNewer" in note
+
+    def test_the_designers_own_questions_are_named_as_absent(self, monkeypatch):
+        """A DELIBERATE LIMITATION, STATED. Naming those columns needs that workshop's own
+        definition, which is two queries PER WORKSHOP — so a repository export of four hundred
+        workshops would pay eight hundred cross-region round trips to label them. The note sends the
+        reader to the per-workshop folder in the tree, which does carry them."""
+        manifest = asyncio.run(
+            _dw_manifest(
+                monkeypatch,
+                designworkshop=[_dw()],
+                dwstageentry=[_entry(dwd.CUSTOM_ENTITY_KEY, {"f-1": "indigo"})],
+            )
+        )
+        note = _content(manifest, "Design workshops/Bagru indigo fortnight/not-shown.txt")
+        assert "designer-written questions" in note
+        assert "By design workshop" in note
+
+    def test_a_professor_gets_a_sentence_rather_than_a_silently_smaller_archive(self, monkeypatch):
+        """A professor may READ these workshops and may not download them, so their archive really
+        does lack the section — and a file outlives the page it came from, so an archive that simply
+        lacked it would read a year later as a repository with no design workshops in it."""
+        manifest = asyncio.run(
+            _dw_manifest(
+                monkeypatch,
+                may_export=False,
+                may_view=True,
+                designworkshop=[_dw(), _dw(id="dw-2", title="Kutch weaving fortnight")],
+            )
+        )
+        paths = _paths(manifest)
+        note = _content(manifest, f"Design workshops/{export.DW_WITHHELD_FILE}")
+        assert "2 design workshop(s)" in note
+        assert "By design workshop" in note
+        assert "Design workshops/Bagru indigo fortnight/details.txt" not in paths
+
+    def test_nothing_is_said_to_an_account_that_cannot_see_this_data_at_all(self, monkeypatch):
+        """A researcher holding ``canDownloadDataset`` without the rank meets no design-workshop
+        folder, sheet or search bucket anywhere in this product. Telling them in a zip about data no
+        screen offers them would be this route inventing a disclosure."""
+        manifest = asyncio.run(
+            _dw_manifest(monkeypatch, may_export=False, may_view=False, designworkshop=[_dw()])
+        )
+        assert not any(p.startswith("Design workshops") for p in _paths(manifest))
+
+    def test_an_owner_scoped_export_carries_no_design_workshops(self, monkeypatch):
+        """An owner export is authorised by ``owner_download_scope`` — tiered grants over the seven
+        legacy tables — and a design workshop is on a different ladder entirely
+        (``load_workshop_or_404``). Emitting them there would hand a grantee data no grant they hold
+        names."""
+        manifest = asyncio.run(
+            _dw_manifest(monkeypatch, owner_id="user-9", designworkshop=[_dw()])
+        )
+        assert not any(p.startswith("Design workshops") for p in _paths(manifest))
+
+
+class TestRichTextQuestionnaireAnswers:
+    """``answers.txt`` was the fifth call site ``record_fields.cell``'s docstring predicted.
+
+    ``QuestionnaireResponse.answerText`` is a ``String?`` that became a rich-text box on 2026-08-31
+    while keeping its type, and this file interpolated the raw column value — so an archive that goes
+    to a ministry carried ``{"blocks":[{"kind":"PARAGRAPH",…}]}`` where the artisan's answer should
+    have been, with no emptiness check anywhere noticing, because a JSON-shaped string is not empty.
+    """
+
+    @staticmethod
+    def _interview(answer: str) -> Row:
+        return Row(
+            id="iv-1",
+            title="Loom interview",
+            artisans=[],
+            responses=[
+                Row(
+                    questionId="q1",
+                    answerText=answer,
+                    question=Row(prompt="How many looms?", sectionCode="A"),
+                )
+            ],
+        )
+
+    def test_a_formatted_answer_is_written_as_prose(self, monkeypatch):
+        stored = to_stored_text(
+            RichDoc(
+                blocks=(RichBlock(spans=(RichSpan("Twelve looms", marks=frozenset({Mark.BOLD})),)),)
+            )
+        )
+        manifest = asyncio.run(
+            _manifest(monkeypatch, questionnaireinterview=[self._interview(stored)])
+        )
+        body = _content(manifest, "_Unlinked/Questionnaires/Loom interview/answers.txt")
+        assert "Twelve looms" in body
+        assert '{"blocks"' not in body
+        assert "PARAGRAPH" not in body
+
+    def test_plain_prose_is_written_exactly_as_before(self, monkeypatch):
+        manifest = asyncio.run(
+            _manifest(monkeypatch, questionnaireinterview=[self._interview("Twelve looms")])
+        )
+        body = _content(manifest, "_Unlinked/Questionnaires/Loom interview/answers.txt")
+        assert "[A] How many looms?\n  -> Twelve looms" in body

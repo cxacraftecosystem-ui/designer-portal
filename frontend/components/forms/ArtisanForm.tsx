@@ -45,6 +45,7 @@ import { hasRank } from "@/lib/permissions";
 import { deriveAge, deriveExperienceYears } from "@/lib/recordDerivations";
 import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
@@ -232,7 +233,7 @@ function PehchanFields({
       </div>
       <div className="grid content-start gap-1">
         <label className="field-label" htmlFor={numberId}>
-          Artisan Pehchan Card number{available ? " *" : ""}
+          Artisan Pehchan Card number<RequiredMark when={available} />
         </label>
         <input
           id={numberId}

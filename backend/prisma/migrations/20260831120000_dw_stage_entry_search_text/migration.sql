@@ -1,0 +1,97 @@
+-- Stage field VALUES become searchable: `DwStageEntry.searchText`, the rendered answers of one row.
+--
+-- =============================================================================================
+-- THE GAP THIS CLOSES, AND WHERE THE ARGUMENT ALREADY LIVES
+-- =============================================================================================
+--
+-- `docs/DECISION-design-workshop-data-in-view-data.md` §6.1, verbatim: "No call site in this
+-- repository applies a text filter to `DwStageEntry.data` ... So a search for 'indigo' finds a
+-- workshop whose title or craft name says indigo, and does not find the workshop whose stage 5
+-- dye-bath answer says it."
+--
+-- That section costed two fixes and chose neither, on the grounds that "neither is worth doing
+-- before somebody has asked to search inside stage answers". Somebody has. This is option 2.
+--
+-- =============================================================================================
+-- WHY OPTION 2 (A MAINTAINED COLUMN) AND NOT OPTION 1 (`pg_trgm` OVER `data::text`)
+-- =============================================================================================
+--
+-- Three reasons, and only the first is about cost.
+--
+--   1. `pg_trgm` needs `CREATE EXTENSION` -- a superuser step. This repository's migration path
+--      (piping .sql through `psql`) can issue it; whether the MANAGED instance permits it is not
+--      something anybody can find out from here, and a migration that may or may not be allowed to
+--      run is a deployment that may or may not have a working search box.
+--
+--   2. A GIN index over `data::text` indexes the JSON's KEYS AND PUNCTUATION beside its answers. A
+--      researcher types a dye name into a box; the index matches on field names and structure. That
+--      is noise in the one place it costs the most.
+--
+--   3. IT INDEXES THE STORED TOKEN, AND THAT IS THE ONE THAT DECIDES IT. A designer picks
+--      "Design & Prototype Development" from a dropdown and the row holds
+--      `DESIGN_PROTOTYPE_DEVELOPMENT`. Over raw JSON, the one string the product itself showed that
+--      designer finds nothing, and the reader has to know the token to search for it. This column
+--      holds what a PERSON READ: `design_workshop_data.cell` resolves an ENUM to its label and
+--      flattens a rich-text document through `rich_text.to_plain`, and the designer's own custom
+--      questions -- whose wording nobody else can guess -- are included through their own
+--      per-workshop option labels. That is a better search, not a cheaper one.
+--
+-- §6.1's stated objection to option 2 is "a second copy of every answer -- which can disagree with
+-- `data` the moment a write path forgets it". It is answered STRUCTURALLY rather than with a promise
+-- to be careful: `DwStageEntry.data` has exactly TWO writers (`design_workshops.save_stage` and
+-- `design_workshops.seed_designer_prefill` -- the same pair `clientKey` names in schema.prisma, for
+-- the same reason), both write this column in the same statement, and
+-- `tests/test_stage_search_text_writers.py` sweeps `backend/app` and FAILS the day a third appears.
+--
+-- =============================================================================================
+-- NULLABLE, NO DEFAULT, AND THE BACKFILL IS DELIBERATELY NOT IN THIS FILE
+-- =============================================================================================
+--
+-- A migration that rewrote every stage row of every workshop is a migration that times out on a
+-- managed instance -- and it would have to run the Python renderer to do it, which no .sql file can.
+-- So the column arrives empty and `backend/scripts/backfill_stage_search_text.py` fills it:
+-- idempotent, resumable, and it reports how many rows it touched.
+--
+-- NULL IS SAFE IN THE MEANTIME, WHICH IS THE WHOLE REASON THIS SPLIT IS ALLOWED. `NULL ILIKE
+-- '%x%'` is NULL, never true, so a deployment that has taken the migration and not yet run the
+-- backfill searches FEWER rows -- exactly the pre-2026-08-31 behaviour it already had -- rather than
+-- wrong ones. A `DEFAULT ''` would have been worse than useless: it makes every row non-null, so the
+-- backfill could no longer tell "not computed yet" from "nothing searchable in it" and would stop
+-- being resumable.
+--
+-- =============================================================================================
+-- THERE IS NO INDEX HERE, AND THAT IS A MEASURED DECISION RATHER THAN AN OMISSION
+-- =============================================================================================
+--
+-- The match this column exists for is `searchText ILIKE '%term%'` -- a LEADING wildcard, case
+-- insensitive. NO BTREE CAN ANSWER THAT, whatever operator class it is built with: `text_pattern_ops`
+-- serves anchored LIKE only, and folding case removes even that. An index created here would be
+-- decoration that is read every time this table is written, and decoration is worse than nothing,
+-- because the next person to look at a slow search would see an index on the column and go and look
+-- somewhere else.
+--
+-- WHAT THE QUERY ACTUALLY COSTS, SO THE NEXT READER CAN RE-MEASURE IT RATHER THAN TRUST THIS. The
+-- design-workshop bucket becomes
+--
+--     "DesignWorkshop"."id" IN (SELECT "designWorkshopId" FROM "DwStageEntry"
+--                               WHERE "deletedAt" IS NULL AND "searchText" ILIKE '%term%')
+--
+-- i.e. one sequential scan of this table with a string comparison per row, on the searches that
+-- carry text AND ask for that bucket. The comparison is against a string that is strictly SMALLER
+-- than the `data` it was rendered from (no keys, no braces, no escaping, only the text-shaped
+-- types), which is the same reason the storage cost of the "second copy" is below the column it
+-- shadows. The reference point for the size of this table is `@@index([entityKey])`'s own note in
+-- schema.prisma: 6,952 rows, warm.
+--
+-- THE UPGRADE PATH IS ONE STATEMENT, AND HAVING WAITED MAKES IT BETTER. The day the deployment
+-- permits the extension:
+--
+--     CREATE EXTENSION IF NOT EXISTS pg_trgm;
+--     CREATE INDEX CONCURRENTLY "DwStageEntry_searchText_trgm_idx"
+--       ON "DwStageEntry" USING gin ("searchText" gin_trgm_ops);
+--
+-- That is §6.1's option 1 -- arriving over RENDERED text rather than over raw JSON, so it inherits
+-- reasons 2 and 3 above instead of suffering them. The two options were never really alternatives;
+-- one is the foundation of the other.
+
+ALTER TABLE "DwStageEntry" ADD COLUMN "searchText" TEXT;

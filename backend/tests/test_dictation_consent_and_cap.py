@@ -98,6 +98,7 @@ _SUMMARY_COLUMNS = (
     "templateId",
     "status",
     "workshopCode",
+    "workshopKind",
     "scheme",
     "craftName",
     "clusterName",

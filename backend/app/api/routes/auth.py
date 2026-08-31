@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,12 +14,20 @@ from app.core.deps import (
     get_current_user,
     invalidate_cached_user,
     is_break_glass_master,
+    require_admin,
     role_rank,
     role_value,
 )
-from app.core.security import create_access_token, verify_password
-from app.schemas.auth import LoginRequest, TokenResponse
-from app.services import access_roster, usage
+from app.core.security import create_access_token, hash_password, verify_password
+from app.scale.rate_limit import account_credential_attempt, account_credential_refund
+from app.schemas.auth import (
+    ChangePasswordRequest,
+    IssuePasswordLinkRequest,
+    LoginRequest,
+    SetPasswordRequest,
+    TokenResponse,
+)
+from app.services import access_roster, credential_links, identity, usage
 from app.services.designers import ensure_empanelled, mark_roster_seen, roster_allows
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -114,6 +123,64 @@ DESIGNER_SUSPENDED_STATUS = "DESIGNER_SUSPENDED"
 def _access_headers(access_status: str) -> dict[str, str]:
     """The one place the refusal header is spelled, so a raise cannot forget its own name."""
     return {ACCESS_STATUS_HEADER: access_status}
+
+
+# ----------------------------------------------------------------------------------------------
+# THE SECOND HEADER: TWO REFUSALS THAT ARE ABOUT THE IDENTIFIER RATHER THAN ABOUT ADMISSION
+# ----------------------------------------------------------------------------------------------
+#
+# ``X-Access-Status`` above answers "where does this address stand with the allow-list". Neither
+# of the two refusals below is an allow-list answer — one is "what you typed names two accounts"
+# and the other is "this account has never had a password" — and putting them on that header
+# would make a client's `accessRefusalKind` switch mean two different kinds of thing. So they get
+# their own header, following the identical pattern, for the identical reason.
+#
+# **THE BODY STILL CARRIES EXACTLY ONE KEY.** ``tests/test_platform_access_gate.py`` asserts
+# ``set(body) == {"detail"}`` at :395 and :1148, and the comment on ACCESS_STATUS_HEADER above
+# explains that a second field beside ``detail`` "would be the first crack in a rule the whole
+# feature's privacy argument rests on". Nothing here adds one. The sentence says the whole thing
+# in English; the header only saves the clients from matching on prose.
+#
+# IT MUST BE IN ``expose_headers`` IN app/main.py, or the browser hides it from JavaScript while
+# the phone reads it — the divergence that is invisible to every test not running in a browser.
+SIGN_IN_HINT_HEADER = "X-Sign-In-Hint"
+
+#: What was typed names more than one account. See ``services/identity.resolve_identifier``:
+#: the two unique indexes make this rare and cannot make it impossible, because a value that is
+#: one designer's phone key and another's empanelment key satisfies both of them.
+AMBIGUOUS_IDENTIFIER_HINT = "AMBIGUOUS_IDENTIFIER"
+AMBIGUOUS_IDENTIFIER_DETAIL = (
+    "That number is registered to more than one account. Sign in with your email address "
+    "instead, and ask an administrator to correct the duplicate."
+)
+
+#: The account exists and has never had a password of its own.
+#:
+#: **THIS WIDENS THE ENUMERATION SURFACE BY ONE FURTHER BIT AND THAT WAS THE TRADE.** The block
+#: above records the owner's ruling that a vague refusal is worse than a narrow leak for this
+#: product, because there is no self-service remedy here: told "invalid email or password",
+#: somebody whose admin created their account and handed them a link resets a password they never
+#: had. The bit leaked is "an account at this identifier has no password" — not the person's name,
+#: not their role, not anything about any other account. The wrong-credential answer for an
+#: account that DOES hold a password is untouched.
+PASSWORD_NOT_SET_HINT = "PASSWORD_NOT_SET"
+PASSWORD_NOT_SET_DETAIL = (
+    "This account has no password yet. Ask an administrator for a set-password link, or sign "
+    "in with Google if that is how the account was created."
+)
+
+#: The per-account guessing budget is spent. Deliberately the same shape of sentence as the
+#: middleware's, and deliberately NOT a 401 — a 401 here would be charged again by the per-network
+#: budget in app/scale/rate_limit.py and the two would compound.
+ACCOUNT_THROTTLED_DETAIL = (
+    "Too many failed sign-in attempts for this account. Wait a few minutes and try again — "
+    "a sign-in that succeeds does not count against this limit."
+)
+
+
+def _hint_headers(hint: str) -> dict[str, str]:
+    """The one place the sign-in hint header is spelled, so a raise cannot forget its own name."""
+    return {SIGN_IN_HINT_HEADER: hint}
 
 
 #: The key the usage-consent gate rides back on, beside the account's own columns.
@@ -490,9 +557,62 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         # so it cannot be checked out here after the fact.
         user, access = await login_with_google(payload.googleIdToken)
     else:
-        user = await db.user.find_unique(where={"email": payload.email.lower()})
+        # ── THREE IDENTIFIER SPACES IN, ONE ACCOUNT OUT, AND THE GATES BELOW NEVER LEARN ──────
+        #
+        # `resolve_identifier` reads an email, a phone number or an empanelment number and hands
+        # back at most one `User`. From the next line down there is one account and one
+        # `user.email`, which is what every gate in this file and in services/designers.py is
+        # keyed on — `assert_access_admits`, `access_row`, `roster_allows`, `ensure_empanelled`,
+        # `mark_roster_seen`, and both rosters' `@@unique` on email. **Nothing below was widened,
+        # reworded or skipped to make a phone login work**: the identifier is resolved to an
+        # ACCOUNT first and the account's address is what is gated, exactly as before.
+        lookup = await identity.resolve_identifier(payload.email)
+        if lookup.outcome == identity.AMBIGUOUS:
+            # BEFORE any credential check, and that is the one place in this function where a
+            # refusal precedes the password. It has to: there is no account to check a password
+            # against, and asking for the password again would loop somebody whose typing is
+            # correct. It leaks that two accounts share a number, which is the only fact that
+            # makes the sentence actionable.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=AMBIGUOUS_IDENTIFIER_DETAIL,
+                headers=_hint_headers(AMBIGUOUS_IDENTIFIER_HINT),
+            )
+        user = lookup.user
+        if user is not None and user.passwordHash is None:
+            # "HAS NO PASSWORD" AND "SIGNS IN WITH GOOGLE" WERE ONE STATE UNTIL `passwordSetAt`
+            # EXISTED, and `verify_password` answers False for both — so both used to read as a
+            # mistyped password. See PASSWORD_NOT_SET_DETAIL for the bit this leaks and why the
+            # owner's ruling above already accepted that trade.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=PASSWORD_NOT_SET_DETAIL,
+                headers=_hint_headers(PASSWORD_NOT_SET_HINT),
+            )
+        # ── THE PER-ACCOUNT GUESSING BUDGET, TAKEN HERE AND NOWHERE ELSE ──────────────────────
+        #
+        # `app/scale/rate_limit.py` is ASGI middleware: it runs before this handler has resolved
+        # anything, so it can only key on the network the request came from. That budget stays
+        # exactly as it is and is still the right shape for what it does. What it cannot see is
+        # the ACCOUNT — and an attacker spread across a botnet, or simply behind a different
+        # mobile network each time, never meets it twice for one victim.
+        #
+        # This is the other half, and it is taken at the first moment the account is known and
+        # BEFORE bcrypt, which is the expensive part. Keyed on `user.id`, which is what collapses
+        # the three identifier spaces into one bucket: the same account guessed at by email, by
+        # phone and by empanelment number spends one budget, not three.
+        #
+        # Take-then-refund, like the middleware, for the middleware's reason: a hundred parallel
+        # guesses would otherwise all pass a check-then-charge before any of them was counted.
+        if user is not None:
+            allowed, _retry = account_credential_attempt(user.id)
+            if not allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=ACCOUNT_THROTTLED_DETAIL,
+                )
         if not user or not verify_password(payload.password or "", user.passwordHash):
-            # UNCHANGED, AND DELIBERATELY SO. An unknown address and a wrong password are one
+            # UNCHANGED, AND DELIBERATELY SO. An unknown identifier and a wrong password are one
             # answer, and it is not the "awaiting approval" answer: somebody who mistyped their
             # password must be sent to the password, not to an administrator. The whole point of
             # the distinct refusal below is that it is DISTINCT from this one.
@@ -500,6 +620,10 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
+        # The password was right, so nothing was spent. See the module docstring of
+        # app/scale/rate_limit.py: charging attempts rather than failures would lock a whole
+        # village office out of an app they are typing the correct password into.
+        account_credential_refund(user.id)
         # AFTER THE CREDENTIAL, and that ordering is a security property rather than a style
         # choice. It is what keeps the pending refusal reachable only by somebody who has PROVED
         # they hold the account — so a stranger cannot use this endpoint to discover which
@@ -557,6 +681,20 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
     # was accepted". Both rosters carry the stamp, for the same reason, on the same rule.
     await mark_roster_seen(user.email)
     await access_roster.mark_access_seen(access)
+
+    # ── "THE FIRST TIME THIS ACCOUNT GOT IN", WHICH THE TWO ROSTERS ABOVE CANNOT ANSWER ────────
+    #
+    # Both of those stamp an ADDRESS an administrator invited. This stamps the ACCOUNT, and the
+    # two differ for everybody whose account predates the roster row that admits it — which, after
+    # the grandfathering migration, is every account that existed before the allow-list shipped.
+    # Written once and never moved, so "has this person ever actually used the product" stays
+    # answerable.
+    #
+    # ONE EXTRA WRITE, AND ONLY EVER ONCE PER ACCOUNT. The guard is a `getattr` off the row
+    # already in hand, so an account that has signed in before pays nothing at all.
+    if getattr(user, "firstLoginAt", None) is None:
+        await db.user.update(where={"id": user.id}, data={"firstLoginAt": datetime.now(UTC)})
+        invalidate_cached_user(user.id)
 
     # ── THE USAGE-CONSENT GATE, AT THE ONE POINT BOTH CREDENTIALS JOIN ──────────────────────────
     #
@@ -626,3 +764,208 @@ async def logout() -> dict[str, bool]:
 @router.get("/me")
 async def me(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     return serialize_user(current_user)
+
+
+# ==================================================================================================
+# PASSWORD LINKS: the whole mechanism, delivered by the administrator copying it
+# ==================================================================================================
+#
+# Owner, 2026-08-30: *"implement all the measures, we will use just admin copies the link for now
+# though."* So: a single-use expiring token bound to the account's credential state, revocation, a
+# per-account issuing throttle, session revocation on redemption, and a transport behind an
+# interface — with the one shipped transport being "hand it to the admin to copy". **No mail
+# dependency was added.** See app/services/credential_links.py, which carries the whole argument
+# and names what was and was not ported from C:/dev/cxa-cms.
+
+
+def _link_payload(issued: credential_links.DeliveredLink) -> dict[str, Any]:
+    """The answer to an issuing request.
+
+    **THE TOKEN IS NOT A FIELD HERE, AND THAT IS DELIBERATE AND PORTED.** cxa-cms's canonical route
+    refuses to return the token separately from the link on the grounds that a credential appearing
+    twice in one answer is a credential in two places to keep out of logs. The link contains it;
+    nothing needs it twice.
+    """
+    return {
+        "id": issued.id,
+        "link": issued.link,
+        "expiresAt": issued.expiresAt,
+        "purpose": issued.purpose,
+        "deliveredBy": issued.deliveredBy,
+    }
+
+
+@router.post("/password-links", status_code=status.HTTP_201_CREATED)
+async def issue_password_link(
+    payload: IssuePasswordLinkRequest, current_user: Any = Depends(require_admin)
+) -> dict[str, Any]:
+    """Mint a set-password link for another account. Admin only.
+
+    ADMIN AND NOT MASTER ADMIN, matching ``POST /api/users`` — the account that can CREATE somebody
+    with a password of the admin's choosing can obviously hand them a link to change it, and gating
+    the safer of the two more tightly would only push admins back to typing passwords for people.
+
+    THE THROTTLE IS PER SUBJECT, NOT PER ADMIN. Redeeming a link revokes the account's sessions, so
+    without it an administrator could sign a colleague out of their own laptop as often as they
+    could press the button — the gap cxa-cms has and this deliberately does not copy. Two admins
+    taking turns is the same harm, which is why the budget belongs to the person being reset.
+    """
+    target = await db.user.find_unique(where={"id": payload.userId})
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    try:
+        issued = await credential_links.issue_link(user=target, issued_by_id=current_user.id)
+    except credential_links.IssueThrottled as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Several password links have already been issued for this account. Wait an hour, "
+                "or ask the person to use one of them."
+            ),
+            headers={"retry-after": str(exc.retry_after_minutes * 60)},
+        ) from exc
+    logger.info(
+        "auth: %s issued a %s password link for %s",
+        current_user.email,
+        issued.purpose,
+        target.email,
+    )
+    return _link_payload(issued)
+
+
+@router.post("/password-links/{link_id}/revoke")
+async def revoke_password_link(
+    link_id: str, current_user: Any = Depends(require_admin)
+) -> dict[str, bool]:
+    """Withdraw a link that has not been used yet — "I pasted that into the wrong window".
+
+    The fingerprint alone cannot answer this: the account's password has not changed, so the token
+    still verifies and would go on working until it expired. This is the reason the table exists.
+    """
+    found = await credential_links.revoke_link(link_id)
+    if not found:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found")
+    logger.info("auth: %s revoked password link %s", current_user.email, link_id)
+    return {"ok": True}
+
+
+@router.get("/set-password")
+async def check_set_password_token(token: str = "") -> dict[str, Any]:
+    """Is this link still good? Unauthenticated, because the person cannot sign in — that is the
+    whole point of holding one.
+
+    **IT ANSWERS ABOUT THE LINK AND NEVER ABOUT THE ACCOUNT.** No email, no name, no role. A valid
+    link is held only by somebody an administrator handed it to, but this endpoint is reachable by
+    anybody with a guess, and a body that named the account would turn a forged-token probe into an
+    account lookup. The screen has no need for it either: the person knows whose password they are
+    setting.
+
+    The reason IS returned, because every one of them has a different next action — expired means
+    "ask for another", revoked means "ask the administrator what happened", used means "you already
+    set it, go and sign in" — and a single "invalid link" leaves a person with none of them.
+    """
+    verdict = await credential_links.describe_token(token)
+    return {"valid": verdict.ok, "reason": verdict.reason, "purpose": verdict.purpose}
+
+
+@router.post("/set-password")
+async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
+    """Redeem a link. Four checks, and the fingerprint is the one that cannot be skipped.
+
+    ``describe_token`` runs the signature, the shape, the expiry, the row (revoked? already used?)
+    AND the credential fingerprint. A caller that skipped the last of those would have built a link
+    that works for ever.
+
+    ── WHAT A REDEMPTION WRITES, AND WHY EACH OF THE FIVE IS THERE ───────────────────────────────
+
+    * ``passwordHash`` — the point.
+    * ``passwordSetAt`` — so "has never had a password" stays distinguishable from "signs in with
+      Google", which is the state this whole column was added for.
+    * ``mustChangePassword: False`` — the person has now chosen their own; that is exactly what the
+      flag was waiting for.
+    * ``sessionsValidFrom`` — **SESSION REVOCATION, PORTED FROM cxa-cms AND THE REASON THE COLUMN
+      EXISTS.** The usual reason somebody is resetting is that a session they no longer control is
+      live somewhere; leaving it live would make the reset theatre. Every token minted before this
+      instant is refused by ``deps._user_from_bearer``.
+    * the ``usedAt`` stamp on the row — belt to the fingerprint's braces, and what lets the screen
+      say "this link has already been used" instead of a bare refusal.
+    """
+    verdict = await credential_links.describe_token(payload.token)
+    if not verdict.ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_SET_PASSWORD_REFUSALS.get(
+                verdict.reason or "", "This password link is not valid."
+            ),
+        )
+    now = datetime.now(UTC)
+    await db.user.update(
+        where={"id": verdict.user_id},
+        data={
+            "passwordHash": hash_password(payload.password),
+            "passwordSetAt": now,
+            "mustChangePassword": False,
+            "sessionsValidFrom": now,
+        },
+    )
+    invalidate_cached_user(verdict.user_id)
+    await credential_links.mark_used(payload.token)
+    logger.info("auth: password set through a %s link for account %s", verdict.purpose, verdict.user_id)
+    return {"ok": True}
+
+
+#: One sentence per refusal, because each has a different next action. Kept beside the route rather
+#: than in the service: the service answers WHY in a word a client can branch on, and the words a
+#: person reads are this layer's job.
+_SET_PASSWORD_REFUSALS = {
+    credential_links.MISSING: "This link is incomplete. Open the whole link the administrator sent.",
+    credential_links.MALFORMED: "This is not a link this site issued. Ask the administrator for another.",
+    credential_links.EXPIRED: "This link has expired. Ask the administrator for a new one.",
+    credential_links.REVOKED: "This link was withdrawn. Ask the administrator for a new one.",
+    credential_links.SPENT: "This link has already been used. Sign in with the password you set.",
+    credential_links.UNKNOWN_ACCOUNT: "This link no longer points at an account.",
+}
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePasswordRequest, current_user: Any = Depends(get_current_user)
+) -> dict[str, bool]:
+    """The signed-in account replacing its own password. The route ``mustChangePassword`` sends
+    somebody to.
+
+    THE CURRENT PASSWORD IS REQUIRED EVEN WHEN ``mustChangePassword`` IS SET. That flag means "the
+    password you hold was typed for you by an administrator", not "anybody at this keyboard may
+    replace it" — and the person always has the password, because they used it to get the token they
+    are calling this with.
+
+    AN ACCOUNT WITH NO PASSWORD CANNOT USE THIS ROUTE and is told which route it should use. There
+    is nothing to prove here, and accepting an empty current password would turn a stolen Google
+    session into a permanent password on the account.
+
+    IT DOES NOT REVOKE SESSIONS, unlike a link redemption, and the difference is who is asking. A
+    person changing their own password from inside a session they are using has not lost control of
+    anything; signing them out of their own phone for tidiness is a worse answer than leaving it.
+    """
+    if current_user.passwordHash is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This account has no password to change. Ask an administrator for a "
+                "set-password link."
+            ),
+        )
+    if not verify_password(payload.currentPassword, current_user.passwordHash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect"
+        )
+    await db.user.update(
+        where={"id": current_user.id},
+        data={
+            "passwordHash": hash_password(payload.newPassword),
+            "passwordSetAt": datetime.now(UTC),
+            "mustChangePassword": False,
+        },
+    )
+    invalidate_cached_user(current_user.id)
+    return {"ok": True}

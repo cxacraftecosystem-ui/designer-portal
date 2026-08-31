@@ -189,6 +189,74 @@ def _identity(scope: Scope, *, ignore_bearer: bool = False) -> str:
     return f"ip:{client[0]}" if client else "ip:unknown"
 
 
+# =================================================================================================
+# THE PER-ACCOUNT GUESSING BUDGET — the half the middleware structurally cannot provide
+# =================================================================================================
+#
+# Everything above this line is ASGI middleware. It runs BEFORE any handler, so the only identity
+# available to it is the one carried by the transport: a bearer token's digest, or the client
+# address. That is the correct key for what it does — it is a courtesy limit on a small box — and
+# nothing here changes it.
+#
+# WHAT IT CANNOT DO, AND WHY THAT MATTERS MORE NOW THAN IT DID. A sign-in may now be attempted with
+# an email address, a phone number OR an empanelment number (``app/services/identity.py``). The
+# middleware sees three different strings and cannot know they name one account, because resolving
+# them takes two database reads it has no business doing on every request in the product. And it
+# never saw the account even when there was only one spelling: an attacker on a different mobile
+# network for each guess meets a fresh, full bucket every time.
+#
+# THE FIX IS NOT TO TEACH THE MIDDLEWARE TO READ BODIES. It is a second, small budget keyed on the
+# RESOLVED ACCOUNT ID, spent by ``routes/auth.login`` at the first moment the account is known and
+# before bcrypt runs. One account is one bucket however it was addressed, which is the property the
+# three identifier spaces would otherwise have destroyed — an account reachable three ways would
+# have had three budgets.
+#
+# **IT IS NOT GATED ON ``SCALE_RATE_LIMIT_ENABLED``, UNLIKE EVERYTHING ELSE IN THIS PACKAGE.** The
+# flag answers "is this optional performance layer installed on this box"; a per-account limit in
+# front of a password check is not a performance layer, and a deployment that has the flag off
+# would have had no per-account protection at all. It costs one dict lookup on a bucket table that
+# is already bounded, on a route that is called a handful of times a person a day.
+#
+# IN-PROCESS, for the reason ``_credential_attempt`` gives at length: this deployment runs one
+# uvicorn worker per box, a shared window has no honest refund, and the refund is what lets the
+# ceiling be this low.
+
+#: Ten rather than the network budget's twenty, because the key is now one PERSON rather than one
+#: village office. Ten wrong passwords in five minutes for one account is already well past what a
+#: reader who knows their password produces, and the refund means a correct password costs nothing.
+#: Once spent, the refill gives one further guess every 30 seconds — 2,880 a day against a bcrypt
+#: hash, which is negligible.
+_ACCOUNT_FAILURES = 10
+_ACCOUNT_WINDOW_SECONDS = 300.0
+
+_account_buckets = _TokenBuckets(
+    capacity=_ACCOUNT_FAILURES,
+    refill_per_second=_ACCOUNT_FAILURES / _ACCOUNT_WINDOW_SECONDS,
+)
+
+
+def account_credential_attempt(account_id: str) -> tuple[bool, float]:
+    """Spend one guess against ``account_id``. Returns ``(allowed, retry_after_seconds)``."""
+    return _account_buckets.take(f"acct:{account_id}")
+
+
+def account_credential_refund(account_id: str) -> None:
+    """Give the token back — called only after a password actually verified."""
+    _account_buckets.refund(f"acct:{account_id}")
+
+
+def reset_account_credential_budget() -> None:
+    """Forget every account bucket.
+
+    FOR TESTS ONLY, and it exists because the alternative is worse: a suite that signs in with a
+    deliberately wrong password more than ten times as one account would otherwise start failing on
+    a 429 that has nothing to do with what it is testing, and the obvious way to make that go away
+    is to raise the ceiling until it stops happening — which is how a limit ends up set by the test
+    suite instead of by the argument above it. ``tests/conftest.py`` calls this between tests.
+    """
+    _account_buckets._buckets.clear()  # noqa: SLF001 - the module owns this object
+
+
 class RateLimitMiddleware:
     """Pure-ASGI token-bucket limiter. Installed only by ``install_rate_limit``.
 

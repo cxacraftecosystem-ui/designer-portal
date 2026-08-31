@@ -128,6 +128,58 @@ export type QFormEntryRow = {
   updatedAt: string | null;
 };
 
+/**
+ * WHAT KIND OF QUESTIONNAIRE THIS IS, and therefore which stage of the report its answers are filed
+ * under. `null` means the designer has not said, which is every questionnaire that existed before
+ * the column did — there is no backfill, deliberately.
+ *
+ * Owner, 2026-08-30: *"the designer can have multiple questionnaires for the same workshop as well,
+ * they also do market survey interviews, so create that differentiation as well, so that we can map
+ * the questionnaires and the transcripts to the correct stage in the report."*
+ */
+export type QFormKind = "WORKSHOP_INTERVIEW" | "MARKET_SURVEY";
+
+/**
+ * The picker's labels — **copied by hand from `backend/app/services/questionnaire_kinds.py`**.
+ *
+ * THE SERVER OWNS THIS LIST AND THIS IS A MIRROR. It is duplicated rather than fetched because a
+ * picker has to be drawable before any row exists to label, and a round trip for two words on every
+ * form screen is a round trip the offline paths cannot make. Nothing compiles the two against each
+ * other — exactly the drift `backend/tests/test_role_ladder_parity.py` was written for — so
+ * `backend/tests/test_questionnaire_kinds.py` reads THIS FILE as text and holds it to the Python.
+ * **When that test fails, the Python is the expectation.** Android carries the third copy in
+ * `ui/questionnaires/QuestionnaireKinds.kt` and the same test holds it too.
+ *
+ * `Record<QFormKind, string>` and not a plain object: a member added to the union without a label
+ * here is then a compile error rather than a picker row that silently prints a token.
+ */
+export const QUESTIONNAIRE_KIND_LABELS: Record<QFormKind, string> = {
+  WORKSHOP_INTERVIEW: "Workshop interview",
+  MARKET_SURVEY: "Market survey"
+};
+
+/** The order both clients draw the picker in. */
+export const QUESTIONNAIRE_KINDS: QFormKind[] = ["WORKSHOP_INTERVIEW", "MARKET_SURVEY"];
+
+/**
+ * What an unstated kind is called. Never a member of the vocabulary: a questionnaire nobody has
+ * classified has not been filed anywhere, and giving that state a token would make "nobody has said"
+ * indistinguishable from "somebody said none of them".
+ */
+export const QUESTIONNAIRE_KIND_NOT_STATED = "Kind not stated";
+
+/**
+ * The label for a kind off the wire.
+ *
+ * An UNKNOWN token — a row written by a newer deployment than this bundle — prints ITSELF rather
+ * than "not stated", matching the server's `label_for`. Relabelling a value somebody chose as a
+ * value nobody chose is the one wrong answer available here.
+ */
+export function questionnaireKindLabel(kind: string | null | undefined): string {
+  if (!kind) return QUESTIONNAIRE_KIND_NOT_STATED;
+  return QUESTIONNAIRE_KIND_LABELS[kind as QFormKind] ?? kind;
+}
+
 export type QForm = {
   id: string;
   title: string;
@@ -137,6 +189,10 @@ export type QForm = {
   isActive: boolean;
   /** See {@link QFormSummary.isShared} — the published default, offered to every designer. */
   isShared: boolean;
+  /** See {@link QFormKind}. `null` is "not stated" and is not an error. */
+  kind: string | null;
+  /** The server's own label for {@link kind}, so the two clients cannot word one value differently. */
+  kindLabel: string;
   /**
    * Bumped on every supersede and every retire, so a client holding a cached copy can tell it is
    * stale with an integer compare rather than a deep diff.
@@ -173,6 +229,10 @@ export type QFormSummary = {
    */
   isShared: boolean;
   isActive: boolean;
+  /** See {@link QFormKind}. `null` is "not stated" and is not an error. */
+  kind: string | null;
+  /** The server's own label for {@link kind}, so the two clients cannot word one value differently. */
+  kindLabel: string;
   version: number;
   sourceFilename: string | null;
   createdAt: string | null;
@@ -187,6 +247,15 @@ export type QFormOption = {
   designWorkshopId: string | null;
   /** See {@link QFormSummary.isShared} — the published default, offered to every designer. */
   isShared: boolean;
+  /**
+   * See {@link QFormKind}. On the OPTIONS payload as well as the list, because this is what the
+   * attach dropdown on the design-workshop screen draws — and that screen is the reason the kind
+   * exists. A designer running an interview and a market survey at one cluster now sees two rows
+   * there, and before this key the only thing telling them apart was the title they happened to type.
+   */
+  kind: string | null;
+  /** The server's own label for {@link kind}. */
+  kindLabel: string;
   /** True when this questionnaire is already attached to a DIFFERENT workshop than the one asked about. */
   attachedElsewhere: boolean;
 };
@@ -336,6 +405,11 @@ export type QFormCreateBody = {
   title: string;
   description?: string | null;
   designWorkshopId?: string | null;
+  /**
+   * See {@link QFormKind}. Omitted or `null` is "not stated", which the server accepts — a picker
+   * left on its blank row is a real answer and must not be a validation error.
+   */
+  kind?: QFormKind | null;
 };
 
 /**
@@ -349,6 +423,12 @@ export type QFormUpdateBody = {
   title?: string;
   description?: string | null;
   designWorkshopId?: string | null;
+  /**
+   * See {@link QFormKind}. `null` CLEARS it back to "not stated"; omitting the key leaves it alone —
+   * the same `clean_data` asymmetry `designWorkshopId` above has, and the server names `kind` in its
+   * clearable columns so the null genuinely lands instead of being dropped.
+   */
+  kind?: QFormKind | null;
   isActive?: boolean;
   /**
    * Publish this form to every designer, or withdraw it. **ADMIN ONLY** — the server answers 403 to
@@ -381,6 +461,18 @@ export type QFormReuseBody = {
   designWorkshopId?: string | null;
   title?: string;
   description?: string | null;
+  /**
+   * See {@link QFormKind}. **OMITTING IT CARRIES THE SOURCE'S KIND ACROSS** — the opposite default to
+   * `designWorkshopId` above, and deliberately so: a market survey lifted for another cluster is
+   * still a market survey, so the copy lands in the new workshop's market-survey stage without the
+   * designer restating it, while the WORKSHOP is the one thing a copy must not inherit. An explicit
+   * `null` makes the copy's kind "not stated".
+   *
+   * No control sends this today — `ReuseDialog` deliberately does not ask, because inheriting is the
+   * right answer for every reuse anybody has described. It is typed so that a caller which does ask
+   * cannot get the tri-state wrong.
+   */
+  kind?: QFormKind | null;
 };
 
 export type QFormSectionCreateBody = {
@@ -648,11 +740,21 @@ export function downloadQuestionSet(id: string) {
  * the URL instead would have them silently ignored: an untitled questionnaire attached to nothing,
  * with a 201 saying it went fine.
  */
-export function uploadQuestionnaire(file: File, options?: { title?: string | null; designWorkshopId?: string | null }) {
+export function uploadQuestionnaire(
+  file: File,
+  options?: { title?: string | null; designWorkshopId?: string | null; kind?: QFormKind | null }
+) {
   const body = new FormData();
   body.append("file", file);
   if (options?.title) body.append("title", options.title);
   if (options?.designWorkshopId) body.append("designWorkshopId", options.designWorkshopId);
+  // APPENDED ONLY WHEN CHOSEN. The route reads these as multipart `Form` fields, and an appended
+  // empty string arrives as `""` rather than as absence — which `coerce_kind` does treat as "not
+  // stated", so this guard is belt rather than braces. It is here anyway because the workshop field
+  // above needs exactly the same guard for a reason that IS load-bearing (an empty workshop id
+  // reaches Prisma as a foreign key), and two adjacent fields with different rules is how the wrong
+  // one gets copied.
+  if (options?.kind) body.append("kind", options.kind);
   return apiFetch<QFormUploadResult>("/questionnaires/upload", { method: "POST", body });
 }
 

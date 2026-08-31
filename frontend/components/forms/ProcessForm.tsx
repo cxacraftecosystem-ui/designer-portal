@@ -16,7 +16,7 @@ import { FieldProvenance } from "@/components/FieldProvenance";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import type { InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
-import { useRecordOffPage } from "@/components/forms/recordPickers";
+import { optionToProduct, productToOption, useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import {
   DesignWorkshopSelect,
@@ -28,9 +28,19 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch, listResource } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import { handleFormEnter } from "@/lib/formNav";
 import { describePreProcess, describeProcessStep, renameMediaFile, uploadMediaFile } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { loadCachedRegister } from "@/lib/referenceCache";
+import {
+  cachedListLine,
+  deviceLooksOffline,
+  workshopEmptyLabel,
+  workshopListNotice,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, ExtraMetadata, MediaFile, ProductDocumentation, RecordStatus, User, Workshop } from "@/lib/types";
 import { useConfirm } from "@/components/dialogs";
@@ -455,6 +465,14 @@ export function ProcessForm({
   const [productCut, setProductCut] = useState<ListCut | null>(null);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productLoadError, setProductLoadError] = useState<string | null>(null);
+  /**
+   * THE PRODUCT LIST'S PROVENANCE, CARRYING THE ARTISAN ID — never a bare stamp.
+   *
+   * A date left over from the previous artisan would describe THIS artisan's products with the
+   * previous one's age, on the one sentence a designer uses to decide whether a missing product
+   * means it was never documented. Cleared to null the moment the live answer lands.
+   */
+  const [productCache, setProductCache] = useState<{ artisanId: string; cachedAt: string } | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -553,6 +571,76 @@ export function ProcessForm({
   );
 
   /**
+   * WHY THIS PICKER IS EMPTY, IN THE FOUR SENTENCES THE REST OF THE APP ALREADY USES.
+   *
+   * `artisanListState` was built for `carryScope` and nothing else, so the picker itself said
+   * nothing at all: a failed read and an empty repository drew the identical control. Re-read as a
+   * {@link WorkshopListState} it feeds the shared sentences of `DROPDOWN_DESIGN.md` §3.5 through
+   * {@link workshopListNotice}, with `noun: "artisans"` because those sentences are written with a
+   * `{noun}` hole in them for callers that are not workshops.
+   *
+   * `scoped: false` — `GET /artisans` carries no `accessibleOnly`, so an empty answer is a
+   * statement about the REPOSITORY ("No artisans have been recorded yet") and never about this
+   * account's grants; sending a researcher to an administrator over an empty register wastes a day.
+   * `accessList: false` — the register is not a grant set, so R6's reason for never caching a list
+   * does not apply and must not be printed as though it did.
+   */
+  const artisanList: WorkshopListState<Artisan> = useMemo(() => {
+    if (artisanListState === "pending") return { kind: "loading" };
+    if (artisanListState === "unavailable") return { kind: "failed" };
+    return { kind: "ok", rows: artisanOptions, total: artisanCut?.total ?? artisanOptions.length };
+  }, [artisanListState, artisanOptions, artisanCut]);
+  const artisanVoice: WorkshopListVoice = {
+    table: "field",
+    noun: "artisans",
+    scoped: false,
+    accessList: false,
+    // The artisan register reaches this form through `useCraftAndArtisanOptions`, which writes it to
+    // `lib/referenceCache.ts` — so the offline sentence may promise it will be there next time.
+    cached: true,
+    online: !deviceLooksOffline()
+  };
+  const artisanNotice = workshopListNotice(artisanList, artisanVoice);
+
+  /**
+   * R2 AND R2b: A FIELD MAY ONLY BE MANDATORY WHERE IT IS ANSWERABLE.
+   *
+   * ── THE INCIDENT, WHICH THIS REPOSITORY HAS ALREADY PAID FOR ONCE ──────────────────────────
+   *
+   * `components/forms/LocationFields.tsx:176-179` is the precedent and states it in full: the state
+   * dropdown was fed only by `GET /reference/address`, it was REQUIRED, and on a dropped connection
+   * the fetch failed, the list arrived empty, and a required closed list with no members refused the
+   * submit. `saveOrQueue` was never reached, the IndexedDB outbox that exists precisely so a
+   * half-finished record survives no signal never saw it, and the interview plus its photographs
+   * died with the tab. Both of that file's required flags therefore end in `&& options.length > 0`
+   * (`:879`, `:892`), and its comment says why the clause is kept on the state even though the
+   * bundled `OFFLINE_STATES` list means it can never fire: *the invariant is what matters.*
+   *
+   * THIS FORM HAD THE SAME SHAPE AND NO SUCH CLAUSE. The artisan list comes from one
+   * `listResource("/artisans")` whose `.catch` leaves the array empty, and `submit()` set
+   * `artisanError`/`productError` and `blocked = true` on a blank id unconditionally, returning
+   * before `saveOrQueue`. With no signal the picker was empty, the validator refused, and the
+   * process record and every step capture died with the tab. Android closed the identical defect at
+   * `MainActivity.kt:10129-10130`; `DROPDOWN_DESIGN.md:806-807` names it R2b — *never let a
+   * CLIENT-SIDE validator block a save on an empty closed list* — and R2a, its other half: *never
+   * LABEL a field required while its list is empty*, which is why the two `Field`s below take these
+   * same booleans rather than a literal `required`.
+   *
+   * ── WHAT STANDING THE PRODUCT DOWN COSTS, SAID PLAINLY RATHER THAN DISCOVERED ─────────────
+   *
+   * `artisanId` is not in the payload at all — it only scopes the product list — so standing the
+   * artisan down cannot produce a request the server will refuse. `productId` IS in it, and
+   * `ProcessCreate.productId` is `Field(min_length=1)`, so a process saved with no product is a 422.
+   * The choice is therefore between a save the server later refuses and a save that never happens,
+   * and it is not close: a refused save is an outbox entry `OutboxBanner` names, holding the typed
+   * record and its media on the device, while the alternative is the tab eating both. The screen
+   * already carries the online repair beside the control ("Create a product for them first, then
+   * return here"), so the only reader who reaches the refusal is the one this clause exists for.
+   */
+  const artisanRequired = artisanOptions.length > 0;
+  const productRequired = artisanProducts.length > 0;
+
+  /**
    * The carried product, held until the artisan's product list arrives.
    *
    * A process is documented against a product, so "I just recorded a product, now let me record how
@@ -599,36 +687,75 @@ export function ProcessForm({
     setProductsLoading(true);
     setProductLoadError(null);
     const artisanName = artisanOptions.find((artisan) => artisan.id === artisanId)?.name?.trim();
-    listResource<ProductDocumentation>("/products", { artisanId, artisanName, pageSize: LIST_PAGE_CEILING })
-      .then((result) => {
+    /*
+      CACHE-FIRST, UNDER THE ARTISAN'S OWN KEY — DROPDOWN_DESIGN §3.3, and the cascade case.
+
+      `product__ALL__<artisanId>` is the narrowed key `DwReferenceStore` was built around: the
+      products of ONE artisan are the answer the picker actually offers, and the design workshop's
+      stage forms have had them on the device since that store landed. This form did not — a
+      researcher documenting a second process for a product they wrote up an hour earlier, with the
+      signal now gone, met "Couldn't load this artisan's products" and a disabled required control.
+      R2b is what stopped that costing the record (`productRequired` stands the field down); this is
+      what stops it costing the LINK.
+
+      THE RECONCILIATION BELOW RUNS ONCE, ON THE FINAL LIST, and that is not tidiness. `onList` fires
+      up to twice — storage, then the network — and running "clear the product if it is no longer
+      offered" against the CACHED pass would clear a perfectly good selection a second before the
+      live list arrived carrying it. Same for the carried-product prefill, which is one-shot and
+      consumed by the first pass to see it. So the callback only paints the options, and everything
+      that makes a DECISION about the researcher's own choice waits for the outcome.
+    */
+    let settled: ProductDocumentation[] = [];
+    void loadCachedRegister<ProductDocumentation>({
+      model: "product",
+      filterValue: artisanId,
+      decode: optionToProduct,
+      encode: productToOption,
+      fetch: async () => {
+        const result = await listResource<ProductDocumentation>("/products", {
+          artisanId,
+          artisanName,
+          pageSize: LIST_PAGE_CEILING
+        });
+        // Live pages only: a cached document carries no envelope, so a truncation sentence built
+        // from one would be a number this browser invented about a corpus it cannot see.
+        if (!cancelled) setProductCut(listCut(result, "products of this artisan"));
+        return result.items;
+      },
+      onList: (rows, cachedAt) => {
         if (cancelled) return;
-        setArtisanProducts(result.items);
-        setProductCut(listCut(result, "products of this artisan"));
+        settled = rows;
+        setArtisanProducts(rows);
         setProductsLoading(false);
-        // This list is both the dropdown's options and the only proof the carried product is still
-        // this artisan's and still reachable, so the deferred half of the prefill resolves here.
-        const carried = carriedProductRef.current;
-        if (carried) {
-          carriedProductRef.current = null;
-          if (result.items.some((product) => product.id === carried)) {
-            setProductId(carried);
-            return;
-          }
-          // Deleted, or it turned out not to belong to this artisan. Either way it is dropped from
-          // the bag and from the banner rather than offered as a link nobody can follow.
-          pruneCarried("product");
-        }
-        // Keep a valid selection: clear product if it is no longer offered for this artisan.
-        setProductId((current) => (current && result.items.every((product) => product.id !== current) ? "" : current));
-      })
-      .catch((err) => {
-        if (cancelled) return;
+        setProductCache(cachedAt ? { artisanId, cachedAt } : null);
+      }
+    }).then((outcome) => {
+      if (cancelled) return;
+      setProductsLoading(false);
+      if (outcome.source === "none") {
         setArtisanProducts([]);
-        setProductsLoading(false);
         setProductLoadError(
-          `Couldn't load this artisan's products: ${err instanceof Error ? err.message : "network error"}. Tap the artisan again to retry.`
+          "Couldn't load this artisan's products, and this browser has not been given them before. Tap the artisan again to retry."
         );
-      });
+        return;
+      }
+      setProductLoadError(null);
+      // This list is both the dropdown's options and the only proof the carried product is still
+      // this artisan's and still reachable, so the deferred half of the prefill resolves here.
+      const carried = carriedProductRef.current;
+      if (carried) {
+        carriedProductRef.current = null;
+        if (settled.some((product) => product.id === carried)) {
+          setProductId(carried);
+          return;
+        }
+        // Deleted, or it turned out not to belong to this artisan. Either way it is dropped from
+        // the bag and from the banner rather than offered as a link nobody can follow.
+        pruneCarried("product");
+      }
+      // Keep a valid selection: clear product if it is no longer offered for this artisan.
+      setProductId((current) => (current && settled.every((product) => product.id !== current) ? "" : current));
+    });
     return () => {
       cancelled = true;
     };
@@ -803,11 +930,13 @@ export function ProcessForm({
       blocked = true;
       focusId = focusId ?? "process-name";
     }
-    if (!artisanId) {
+    // R2b, and the `&& options.length > 0` half is the whole point of these two lines — see
+    // `artisanRequired` above for the incident, the precedent and what a stood-down product costs.
+    if (artisanRequired && !artisanId) {
       setArtisanError("Please select an artisan");
       blocked = true;
     }
-    if (!productId) {
+    if (productRequired && !productId) {
       setProductError("Please select a product");
       blocked = true;
     }
@@ -1174,7 +1303,9 @@ export function ProcessForm({
       </div>
 
       <div>
-        <Field label="Artisan" required>
+        {/* R2a: the asterisk is COMPUTED. A field that has stood down because it has nothing to
+            offer must not still be marked required — see `artisanRequired`. */}
+        <Field label="Artisan" required={artisanRequired}>
           {/*
             `Dropdown` DIRECTLY, not `FormControls.Select`, and the reason is no longer the one that
             used to be written here.
@@ -1201,6 +1332,21 @@ export function ProcessForm({
           <Dropdown
             value={artisanId}
             describedBy={artisanError ? artisanErrorId : undefined}
+            /*
+              R3: the panel says WHICH of the four states this is instead of the primitive's default
+              literal "No options", which on a mid-flight or failed read is the claim that there are
+              no artisans. Loading answers with the one word this app uses for "an answer is
+              outstanding"; a failed read says so and says nothing is at risk.
+            */
+            emptyLabel={workshopEmptyLabel(artisanList, artisanVoice)}
+            /*
+              R3's other half. Not while LOADING: the panel covers that wait in the slot where it
+              belongs, and a control that disables itself for a second on every mount reads as
+              broken. Options — not the state — decide it, so an edit form whose read failed but
+              whose own artisan was recovered off-page stays usable rather than showing a correct
+              value nobody can change.
+            */
+            disabled={artisanList.kind !== "loading" && artisanOptions.length === 0}
             /*
               `searchable` because this list is the artisan CORPUS — it is capped, and the cap is
               reported right below the control by `CappedListNotice`, which is as plain a statement
@@ -1230,6 +1376,9 @@ export function ProcessForm({
           />
         </Field>
         <CappedListNotice cuts={[artisanCut]} />
+        {/* R3: a picker that is empty because the read failed must say so. Silent, it is
+            indistinguishable from a repository with no artisans in it. */}
+        {artisanNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{artisanNotice}</p> : null}
         {artisanError ? (
           <p id={artisanErrorId} role="alert" className="mt-1 text-xs text-error-600">
             {artisanError}
@@ -1238,7 +1387,8 @@ export function ProcessForm({
       </div>
 
       <div>
-        <Field label="Product" required>
+        {/* R2a, as above. */}
+        <Field label="Product" required={productRequired}>
           {/* `Dropdown` directly, and `describedBy` alone — see the artisan picker above for both. */}
           <Dropdown
             value={productId}
@@ -1287,7 +1437,20 @@ export function ProcessForm({
             that is wrong. When the list is whole — which it is for every artisan on this database —
             the count is exactly what it always was. */}
         {!productsLoading && !productLoadError && artisanId && artisanProducts.length > 0 && !productCut ? (
-          <p className="mt-1 text-xs text-ink-500">{artisanProducts.length} product(s) available for this artisan.</p>
+          <p className="mt-1 text-xs text-ink-500">
+            {/*
+              THE CACHED LIST GETS §3.5's SENTENCE INSTEAD OF THE PLAIN COUNT, AND IT REPLACES IT
+              RATHER THAN JOINING IT — for the same reason the comment above gives about the cut:
+              "12 product(s) available" over "12 products on this device, last refreshed 22 Aug" is
+              the screen saying one thing twice, and the half that carries the date is the half that
+              lets a designer judge what a missing product means. `DwReferenceStore`: a list
+              refreshed an hour ago that does not hold it means it was never documented; the same
+              list refreshed nine days ago means nothing of the kind.
+            */}
+            {productCache && productCache.artisanId === artisanId
+              ? cachedListLine(artisanProducts.length, "products", formatDate(productCache.cachedAt))
+              : `${artisanProducts.length} product(s) available for this artisan.`}
+          </p>
         ) : null}
         {!productsLoading && !productLoadError && artisanId ? <CappedListNotice cuts={[productCut]} /> : null}
         {productError ? (

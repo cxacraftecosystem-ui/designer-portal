@@ -58,6 +58,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.ArtisanDto
+// The cache-first register loaders and their provenance type. They live beside the record forms in
+// `MainActivity.kt` for the reason `DwReferenceStore` gives about codecs: the store owns a document
+// with a date on it, and which columns a picker reads is a fact about the screens.
+import com.designprototype.workshop.loadArtisanRegister
+import com.designprototype.workshop.loadCraftRegister
 import com.designprototype.workshop.data.CraftDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.SearchResultsDto
@@ -100,13 +105,34 @@ object SearchRecordTypes {
     const val MEDIA = "media"
 
     /**
+     * The twenty-two-stage record this product is NAMED AFTER, and the bucket this screen was
+     * missing outright until 2026-08-31.
+     *
+     * [WORKSHOP] above is the LEGACY `Workshop` table — a craft-documentation visit, a different
+     * model with no join to this one — so before this constant existed the handset searched FIVE
+     * record types where the web searched six, and neither a design workshop, nor its stages, nor
+     * its fields, nor the designer's own questions was reachable from the screen labelled Search.
+     * The scope filter for it (`workshopIds`) had already landed here; the bucket had not, which is
+     * the half nobody notices, because a bucket that is not asked for comes back empty and an empty
+     * result reads as "the repository holds none of those".
+     *
+     * SPELLED `designWorkshop` — the singular vocabulary the rest of the app uses, and the same
+     * string as `DwWorkshopRecordType.DESIGN_WORKSHOP.wire`, so a scanned `G` code and a tapped
+     * search row name one record type rather than two.
+     */
+    const val DESIGN_WORKSHOP = "designWorkshop"
+
+    /**
      * Every bucket, in the order `GET /search` counts, reads and returns them.
      *
      * Type selections are always re-derived by filtering THIS list, never stored in the order the
      * user happened to tick them. Two researchers who picked the same three buckets in different
      * orders are asking one question, and it must reach the API as one query string.
+     *
+     * [DESIGN_WORKSHOP] IS LAST, matching the server's own order (`search.SEARCH_TYPES`), so the
+     * chips, the checkboxes and the result sections all read in the order the API counts them.
      */
-    val ALL: List<String> = listOf(ARTISAN, WORKSHOP, PRODUCT, TOOL, MEDIA)
+    val ALL: List<String> = listOf(ARTISAN, WORKSHOP, PRODUCT, TOOL, MEDIA, DESIGN_WORKSHOP)
 
     /** The bucket's own heading, as the web's `TYPE_LABEL` words it. */
     fun label(recordType: String): String = when (recordType) {
@@ -115,6 +141,7 @@ object SearchRecordTypes {
         PRODUCT -> "Products"
         TOOL -> "Tools"
         MEDIA -> "Media"
+        DESIGN_WORKSHOP -> "Design workshops"
         else -> recordType.replaceFirstChar { it.uppercase() }
     }
 
@@ -138,6 +165,13 @@ object SearchRecordTypes {
         PRODUCT -> "products"
         TOOL -> "tools"
         MEDIA -> "media"
+        // `designWorkshops`, and the CASE MATTERS ON THE WIRE even though this app lower-cases the
+        // whole list before sending it (`WorkshopRepository.search`). `resolve_types` folds case for
+        // the comparison and answers with the vocabulary's own spelling — a rule it grew precisely
+        // because this is the first bucket name that is not all lower-case — so `designworkshops`
+        // resolves and `types` comes back reading `designWorkshops`. Written in the API's spelling
+        // here so a reader comparing this line with the response is comparing like with like.
+        DESIGN_WORKSHOP -> "designWorkshops"
         // Unreachable while every caller filters [ALL] first, and left as-is rather than guessed at:
         // an unknown name reaching the API as itself is a 422 naming the real problem, where a name
         // this function invented would be a 422 naming something the app made up.
@@ -169,6 +203,17 @@ const val SEARCH_PAGE_SIZE = 20
 
 /** How long the inputs must settle before a query is sent. One request per typed word, not per key. */
 const val SEARCH_DEBOUNCE_MILLIS = 350L
+
+/**
+ * How many "matched in" entries a result row names before the rest are counted.
+ *
+ * A workshop can legitimately answer one word in a dozen of its twenty-two stages, and a dozen stage
+ * titles on a result row is a paragraph where a subtitle should be. THE REMAINDER IS COUNTED AND
+ * NEVER DROPPED: a list that quietly stops is indistinguishable from a list that ended there, and
+ * here it would understate how much of a fortnight's fieldwork the researcher's word appears in.
+ * Three matches the web's `MATCHED_IN_SHOWN`.
+ */
+internal const val MATCHED_IN_SHOWN = 3
 
 /**
  * Everything `GET /search` filters on, for BOTH surfaces that search: this screen and the panel at
@@ -316,6 +361,31 @@ fun SearchScreen(
      * included: the previous bucket's rows must not sit under the new bucket's heading.
      */
     val seed = remember(initialRecordType) { SearchFilters(types = setOfNotNull(initialRecordType)) }
+
+    /*
+     * WHICH BUCKETS THIS READER IS OFFERED — five for most accounts, six for a professor and above.
+     *
+     * Design-workshop stage data is Professor / Admin / Master Admin (the owner's ruling of
+     * 2026-08-30). The server enforces it: a caller without the capability gets the bucket dropped
+     * and NAMED in `typesRefused`, so nothing here is a security boundary. What it prevents is a chip
+     * that never works — a researcher ticking "Design workshops", getting a refusal sentence, and
+     * concluding the search box is broken. The web hides the same chip for the same reason.
+     *
+     * FROM THE CACHED USER, deliberately, and not from a new screen parameter. The host that mounts
+     * this screen owns its parameter list, and this lane may not edit it; the token store already
+     * holds the account the API issued, which is what every other permission read on this screen's
+     * neighbours uses. A null (a store cleared under a screen that is still composed) offers the
+     * FIVE, which is the safe direction: a missing chip is a control to go and find, where an
+     * offered one that always refuses is a bug report.
+     */
+    val offeredTypes = remember {
+        val user = repository.cachedUser()
+        if (user != null && FieldPermissions.canViewDesignWorkshopData(user)) {
+            SearchRecordTypes.ALL
+        } else {
+            SearchRecordTypes.ALL - SearchRecordTypes.DESIGN_WORKSHOP
+        }
+    }
     // Live inputs.
     var filters by remember(seed) { mutableStateOf(seed) }
     // The filters the CURRENT results belong to. The pager and the rendered buckets walk THESE,
@@ -334,12 +404,53 @@ fun SearchScreen(
 
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
     var artisans by remember { mutableStateOf<List<ArtisanDto>>(emptyList()) }
+    // The registers below are cached under `filesDir`, which needs a Context. See [loadCraftRegister].
+    val context = androidx.compose.ui.platform.LocalContext.current
+    /** Where each register came from, and how old it is - see [RegisterLoad]. */
+    var craftRegister by remember { mutableStateOf(RegisterLoad()) }
+    var artisanRegister by remember { mutableStateOf(RegisterLoad()) }
 
-    // Craft/artisan pickers are a convenience, not a dependency: if either lookup fails the picker
-    // simply stays hidden and the text, place, type and date filters still work.
+    /*
+     * THE WORKSHOP SCOPE — the filter this screen was missing, and the web has had since the map
+     * started linking here.
+     *
+     * `workshopIds` occurred ZERO times in this file while `WorkshopRepository.search` has taken it
+     * all along and every other cross-workshop screen on this handset offers it: the completion
+     * matrix, the consolidated questionnaire, the map. So a researcher could scope the map to last
+     * week's workshop, tap through to a record, come here to look for a second one, and be handed the
+     * whole repository with nothing on screen to say the scope had been dropped. Two surfaces
+     * disagreeing about what "this workshop" contains is two surfaces disagreeing about what the
+     * workshop's data IS — which is exactly what `ui/WorkshopScope.kt` exists to prevent, and it was
+     * being prevented everywhere but here.
+     *
+     * `defaultToMostRecent = false`, matching the web's `/search` and for its stated reason: this is
+     * the general way IN to the corpus and its default has always been "everything". The matrix and
+     * the map default the other way because they are read DURING a workshop. Quietly narrowing this
+     * screen would change what every existing route into it means.
+     */
+    val workshopScope = rememberWorkshopScope(
+        repository = repository,
+        defaultToMostRecent = false,
+        onError = { message -> error = message }
+    )
+
+    /*
+      CACHE-FIRST, AND THE PICKERS NO LONGER VANISH - two changes, and the second depends on the first.
+    
+      This was two bare `repository.crafts()` / `repository.artisans()` calls whose failure was
+      swallowed, under a comment saying the picker "simply stays hidden". Hiding it was the honest
+      thing to do while the alternative was a menu that could not say why it was empty; it is still
+      the worst possible reading for the designer, because a filter that is ABSENT is
+      indistinguishable from a filter this screen never had, and neither of those is what happened.
+    
+      Routing both through `loadCraftRegister` / `loadArtisanRegister` gives them the same offline
+      copy the record forms use (DROPDOWN_DESIGN 3.3: a register is not an access list, so it may be
+      cached), so in a courtyard the filters are usually simply THERE. When they are not, they are
+      drawn stood down with 3.5's sentence rather than removed - see the `extraFilters` slot.
+    */
     LaunchedEffect(Unit) {
-        runCatching { repository.crafts() }.onSuccess { crafts = it }
-        runCatching { repository.artisans() }.onSuccess { artisans = it }
+        craftRegister = loadCraftRegister(context, repository) { crafts = it }
+        artisanRegister = loadArtisanRegister(context, repository) { artisans = it }
     }
 
     // Editing any input restarts this effect, so a change is only promoted to `applied` once the
@@ -356,8 +467,19 @@ fun SearchScreen(
 
     // The one place a request is made. Re-keying cancels the in-flight call, so a stale response can
     // never overwrite a newer one.
-    LaunchedEffect(applied, page, browseAll, runCount) {
-        if (applied.isEmpty && !browseAll) {
+    LaunchedEffect(applied, page, browseAll, runCount, workshopScope.requestKey, workshopScope.settled) {
+        // HELD UNTIL THE SCOPE HAS SETTLED, which is `rememberWorkshopScope`'s own instruction. The
+        // default selection is only known once the workshops have loaded, so a request issued before
+        // that would be answered against a scope the researcher never chose — and this effect re-runs
+        // the moment `settled` flips, so nothing is lost by waiting. Nothing is reset here either:
+        // clearing `results` would blank a list the reader is looking at on every recomposition
+        // before the load returns.
+        if (!workshopScope.settled) return@LaunchedEffect
+        // A WORKSHOP PICK IS A SEARCH IN ITS OWN RIGHT. "Everything from this workshop" is a complete
+        // question with an empty text box, exactly as "everything of this type" is — so without this
+        // the picker would move and the list would not, which reads as the control not working. The
+        // web's `/search` page carries the same rule in the same words.
+        if (applied.isEmpty && !browseAll && workshopScope.isAllRecords) {
             results = null
             error = null
             loading = false
@@ -378,6 +500,10 @@ fun SearchScreen(
                 types = applied.bucketTypes(),
                 dateFrom = dateFrom,
                 dateTo = dateTo,
+                // Read from the scope state rather than from `applied`, because it is a PICKER and
+                // not a typed box: it applies at once, like a chip and unlike the query. The effect
+                // is keyed on `requestKey`, so a change here is what re-runs this request.
+                workshopIds = workshopScope.workshopIds.takeIf { it.isNotEmpty() },
                 page = page,
                 pageSize = SEARCH_PAGE_SIZE
             )
@@ -401,6 +527,13 @@ fun SearchScreen(
         page = 1
         runCount += 1
     }
+
+    // THE PAGE GOES BACK TO 1 WHEN THE SCOPE CHANGES, as it does for every other filter on this
+    // screen. Narrowing from four pages of results to one while sitting on page 4 produces five empty
+    // buckets and a "No more results" message — for a scope that plainly has records in it. Keyed on
+    // `requestKey` rather than on the raw set so re-picking the same two workshops in the other order
+    // is not a change.
+    LaunchedEffect(workshopScope.requestKey) { page = 1 }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (showBackAction) {
@@ -443,37 +576,52 @@ fun SearchScreen(
             SearchFilterBar(
                 value = filters,
                 onChange = { filters = it },
+                offeredTypes = offeredTypes,
                 // Craft, artisan and media type are this screen's own, and the slot says so out
                 // loud: the shared filters above them are one implementation, and an addition
                 // declared here cannot quietly become a second copy that drifts.
                 extraFilters = {
-                    if (crafts.isNotEmpty()) {
-                        SearchDropdownField(
-                            label = "Craft",
-                            options = crafts.map { craft ->
-                                craft.id to listOfNotNull(
-                                    craft.name.ifBlank { "Untitled craft" },
-                                    craft.place?.takeIf { it.isNotBlank() }
-                                ).joinToString(" · ")
-                            },
-                            selectedValue = filters.craftId,
-                            placeholder = "Any craft",
-                            onSelect = { filters = filters.copy(craftId = it) }
-                        )
-                    }
-                    if (artisans.isNotEmpty()) {
-                        SearchDropdownField(
-                            label = "Artisan",
-                            options = artisans.map { artisan ->
-                                artisan.id to listOf(artisan.name, artisan.place)
-                                    .filter { it.isNotBlank() }
-                                    .joinToString(" · ")
-                            },
-                            selectedValue = filters.artisanId,
-                            placeholder = "Any artisan",
-                            onSelect = { filters = filters.copy(artisanId = it) }
-                        )
-                    }
+                    /*
+                      DRAWN WHETHER OR NOT THEY HAVE ROWS, AND STOOD DOWN WITH A REASON WHEN THEY DO
+                      NOT — which is the change, and it is R3 rather than a layout preference.
+
+                      `if (crafts.isNotEmpty())` removed the control entirely, so a designer with no
+                      signal opened the filter sheet and found a Craft filter that simply was not
+                      there. Absent reads as "this screen has no such filter", which is a claim about
+                      the app; the truth is a claim about the read, and §3.5 has the sentence for
+                      whichever one it was. Disabled-with-a-reason is the same treatment
+                      `DesignReviewScreen` gives its own picker and the same one the record forms now
+                      give theirs.
+                    */
+                    SearchDropdownField(
+                        label = "Craft",
+                        options = crafts.map { craft ->
+                            craft.id to listOfNotNull(
+                                craft.name.ifBlank { "Untitled craft" },
+                                craft.place?.takeIf { it.isNotBlank() }
+                            ).joinToString(" · ")
+                        },
+                        selectedValue = filters.craftId,
+                        placeholder = "Any craft",
+                        emptyMessage = registerListNotice("crafts", crafts.size, craftRegister),
+                        enabled = crafts.isNotEmpty(),
+                        onSelect = { filters = filters.copy(craftId = it) }
+                    )
+                    SearchDropdownField(
+                        label = "Artisan",
+                        options = artisans.map { artisan ->
+                            artisan.id to listOf(artisan.name, artisan.place)
+                                .filter { it.isNotBlank() }
+                                .joinToString(" · ")
+                        },
+                        selectedValue = filters.artisanId,
+                        placeholder = "Any artisan",
+                        emptyMessage = registerListNotice("artisans", artisans.size, artisanRegister),
+                        enabled = artisans.isNotEmpty(),
+                        onSelect = { filters = filters.copy(artisanId = it) }
+                    )
+                    // Class (a): `SEARCH_MEDIA_TYPES` is compiled into this APK and cannot be empty,
+                    // so §3.1 gives it no sentence and it passes none.
                     SearchDropdownField(
                         label = "Media type",
                         options = SEARCH_MEDIA_TYPES.map { it to it },
@@ -488,6 +636,11 @@ fun SearchScreen(
                     )
                 }
             )
+
+            // Below the filters and above Search, which is where the web puts it. It applies
+            // IMMEDIATELY, like the chips and unlike the typed boxes: a picker that needed a second
+            // button press to take effect reads as broken.
+            WorkshopScopeSelect(scope = workshopScope, label = "Workshops")
 
             Button(onClick = { runNow() }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -519,10 +672,15 @@ fun SearchScreen(
         when {
             data == null && loading -> SearchCard(title = "Searching…") {
                 Text(
+                    // COUNTED FROM `offeredTypes`, never written out as a word. This sentence read
+                    // "all five record types" until the sixth bucket landed, at which point it was
+                    // wrong for every professor and right for everybody else — the shape of error a
+                    // literal count in copy always takes, and the same one the web's guide header
+                    // paid for. It is also correctly FIVE for a reader who is not offered the sixth.
                     if (applied.types.isEmpty()) {
-                        "Looking across all five record types."
+                        "Looking across all ${offeredTypes.size} record types."
                     } else {
-                        "Looking in ${applied.types.size} of the five record types."
+                        "Looking in ${applied.types.size} of the ${offeredTypes.size} record types."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -549,8 +707,13 @@ fun SearchScreen(
                 // five buckets, and a screen that trusted that would show artisans to a researcher
                 // who asked for media.
                 val allBuckets = remember(data) { data.toSearchBuckets() }
-                val buckets = remember(allBuckets, applied) {
-                    allBuckets.filter { applied.includes(it.recordType) }
+                val buckets = remember(allBuckets, applied, offeredTypes) {
+                    // NARROWED BY `offeredTypes` AS WELL AS BY THE TICKS, so a bucket this reader is
+                    // not offered cannot appear on screen at all — a stale `applied` (a screen left
+                    // open across a role change) must not put a section here that the chips above it
+                    // can neither express nor clear. The web drops the same bucket from its render
+                    // for the same reason.
+                    allBuckets.filter { it.recordType in offeredTypes && applied.includes(it.recordType) }
                 }
                 val shown = buckets.sumOf { it.rows.size }
                 val matched = buckets.sumOf { it.total }
@@ -583,6 +746,21 @@ fun SearchScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    // WHAT THE SERVER REFUSED. A bucket that comes back empty is indistinguishable
+                    // from a repository with nothing in it, so a bucket this account may not read
+                    // has to be NAMED — the difference between "no design workshops matched" and
+                    // "design workshops were not looked at". The LIST is the server's; the sentence
+                    // is this client's, because it names the next move and an API has no business
+                    // writing a screen's copy. It is reachable in practice from a link or a stale
+                    // filter set, both of which can ask for a bucket the chips no longer offer.
+                    if (data.typesRefused.isNotEmpty()) {
+                        Text(
+                            "Design workshops are not searched at your access level. Ask an admin.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
                     if (shown == 0) {
                         HorizontalDivider(color = MaterialTheme.field.hairline)
@@ -631,7 +809,16 @@ internal data class SearchRow(
     val title: String,
     val subtitle: String,
     val status: String,
-    val date: String?
+    val date: String?,
+    /**
+     * WHERE INSIDE THE RECORD THE QUERY MATCHED, when the match is on nothing the row prints.
+     *
+     * Only the design-workshop bucket fills it today: that bucket matches stage ANSWERS as well as
+     * the workshop's own columns, so a hit whose word is in neither the title nor the subtitle is
+     * otherwise unaccountable. The strings are the SERVER'S resolved stage names — this app holds no
+     * copy of the twenty-two titles, and one built here would disagree the day a stage was retitled.
+     */
+    val matchedIn: List<String> = emptyList()
 )
 
 /** A result type with its page of rows and how many matches it has in total. */
@@ -641,7 +828,28 @@ private data class SearchBucket(
     val recordType: String,
     val title: String,
     val total: Int,
-    val rows: List<SearchRow>
+    val rows: List<SearchRow>,
+    /**
+     * Whether tapping a row of this bucket goes anywhere. TRUE for the five record buckets and
+     * FALSE for design workshops, which is a limitation stated rather than a tap that misfires.
+     *
+     * A tapped row reports through `onOpenRecord`, and the host resolves that string in
+     * `MainActivity.searchRecordEntryMode`, whose `else` is `EntryMode.ARTISAN`. There is no
+     * `EntryMode` for a design workshop — the handset reaches one through `Screen.DesignWorkshops`,
+     * a different route entirely — so a tappable row here would open somebody's fortnight of
+     * fieldwork AS AN ARTISAN. That is the same trap `RecordCodeLookup` declined to walk into with a
+     * scanned `G` code, written up at length beside its `DESIGN_WORKSHOP` branch, and the answer is
+     * the same: do not report a type the host cannot route.
+     *
+     * FINDING THE WORKSHOP IS THE FEATURE; opening it from here is not. The row names it, says which
+     * stage matched, and [noRouteNote] says where to open it. Wiring the tap needs a route the host
+     * owns and is a change to `MainActivity`, which this lane does not touch.
+     */
+    val openable: Boolean = true,
+    /** Printed under the heading when [openable] is false: where a row of this bucket is opened. */
+    val noRouteNote: String? = null,
+    /** The server's own sentence about what a text query in this bucket matched, when it sent one. */
+    val scopeNote: String? = null
 )
 
 /**
@@ -651,7 +859,7 @@ private data class SearchBucket(
  */
 private fun SearchResultsDto.totalsReported(): Boolean =
     total > 0 || totals.artisans > 0 || totals.workshops > 0 || totals.products > 0 ||
-        totals.tools > 0 || totals.media > 0
+        totals.tools > 0 || totals.media > 0 || totals.designWorkshops > 0
 
 private fun SearchResultsDto.toSearchBuckets(): List<SearchBucket> {
     val reported = totalsReported()
@@ -719,12 +927,44 @@ private fun SearchResultsDto.toSearchBuckets(): List<SearchBucket> {
         )
     }
 
+    val designWorkshopRows = designWorkshops.map { item ->
+        SearchRow(
+            recordType = SearchRecordTypes.DESIGN_WORKSHOP,
+            id = item.id,
+            title = item.title.ifBlank { "Untitled design workshop" },
+            // The PROMOTED columns, which are the axes a researcher filters on — and which are null
+            // until stage 1 has been saved, so a freshly opened workshop legitimately shows a title
+            // and nothing else rather than a row of the word "null". Same four, in the same order,
+            // as the web's design-workshop result row.
+            subtitle = listOfNotNull(
+                item.workshopCode?.takeIf { it.isNotBlank() },
+                item.craftName?.takeIf { it.isNotBlank() },
+                (item.clusterName ?: item.district)?.takeIf { it.isNotBlank() },
+                item.state?.takeIf { it.isNotBlank() }
+            ).joinToString(" · "),
+            status = item.status,
+            date = item.startDate,
+            matchedIn = designWorkshopStageMatches[item.id].orEmpty()
+        )
+    }
+
     return listOf(
         SearchBucket(SearchRecordTypes.ARTISAN, "Artisans", total(totals.artisans, artisanRows.size), artisanRows),
         SearchBucket(SearchRecordTypes.WORKSHOP, "Workshops", total(totals.workshops, workshopRows.size), workshopRows),
         SearchBucket(SearchRecordTypes.PRODUCT, "Products", total(totals.products, productRows.size), productRows),
         SearchBucket(SearchRecordTypes.TOOL, "Tools", total(totals.tools, toolRows.size), toolRows),
-        SearchBucket(SearchRecordTypes.MEDIA, "Media", total(totals.media, mediaRows.size), mediaRows)
+        SearchBucket(SearchRecordTypes.MEDIA, "Media", total(totals.media, mediaRows.size), mediaRows),
+        SearchBucket(
+            SearchRecordTypes.DESIGN_WORKSHOP,
+            "Design workshops",
+            total(totals.designWorkshops, designWorkshopRows.size),
+            designWorkshopRows,
+            // See [SearchBucket.openable]: there is no `EntryMode` for a design workshop, and the
+            // host's fallback for an unrecognised record type is ARTISAN.
+            openable = false,
+            noRouteNote = "Open these from Design workshops.",
+            scopeNote = designWorkshopSearchScope
+        )
     )
 }
 
@@ -895,20 +1135,53 @@ private fun SearchBucketSection(bucket: SearchBucket, onOpenRecord: (String, Str
             emphasised = true
         )
     }) {
+        // The SERVER'S sentence about what a text query in this bucket matched, printed where the
+        // matches are — the web prints the same string under the same heading. Nothing is invented
+        // here: a client that wrote its own would be a second description of one rule.
+        bucket.scopeNote?.takeIf { it.isNotBlank() }?.let { note ->
+            Text(
+                note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        // WHERE A ROW OF THIS BUCKET IS OPENED, when it is not opened from here. Said once at the
+        // top rather than on every row, and said at all because a list of records that do not
+        // respond to a tap reads as a broken screen. See [SearchBucket.openable].
+        bucket.noRouteNote?.takeIf { !bucket.openable && it.isNotBlank() }?.let { note ->
+            Text(
+                note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         bucket.rows.forEach { row ->
-            SearchResultRow(row = row, onOpen = { onOpenRecord(row.recordType, row.id) })
+            SearchResultRow(
+                row = row,
+                onOpen = { onOpenRecord(row.recordType, row.id) },
+                openable = bucket.openable
+            )
         }
     }
 }
 
+/**
+ * One result.
+ *
+ * [openable] false draws the row without the "Open ›" affordance and without a click target, which
+ * is the honest rendering for a bucket whose records this app cannot route to — see
+ * [SearchBucket.openable]. It is NOT `enabled = false`: a greyed row would say "this record is
+ * unavailable", when the record is perfectly available and it is this screen that has nowhere to
+ * send it. The section prints where to open it instead.
+ */
 @Composable
-internal fun SearchResultRow(row: SearchRow, onOpen: () -> Unit) {
+internal fun SearchResultRow(row: SearchRow, onOpen: () -> Unit, openable: Boolean = true) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.field.surface50, MaterialTheme.shapes.medium)
             .border(1.dp, MaterialTheme.field.hairline, MaterialTheme.shapes.medium)
-            .clickable(onClick = onOpen)
+            .then(if (openable) Modifier.clickable(onClick = onOpen) else Modifier)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -921,19 +1194,36 @@ internal fun SearchResultRow(row: SearchRow, onOpen: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "Open ›",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold
-            )
+            if (openable) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Open ›",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
         if (row.subtitle.isNotBlank()) {
             Text(
                 row.subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.field.body,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        // WHY THIS ROW CAME BACK, when nothing above it says so. A design-workshop hit can be on an
+        // answer inside one of twenty-two stages, and a researcher who cannot see which one has to
+        // open all of them. Only the first few are named and the REMAINDER IS COUNTED — a list that
+        // quietly stops would understate how much of the fortnight the word appears in.
+        if (row.matchedIn.isNotEmpty()) {
+            val shown = row.matchedIn.take(MATCHED_IN_SHOWN).joinToString(" · ")
+            val extra = row.matchedIn.size - MATCHED_IN_SHOWN
+            Text(
+                "Matched in $shown" + if (extra > 0) " · and $extra more" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1025,6 +1315,17 @@ internal fun SearchFilterBar(
     value: SearchFilters,
     onChange: (SearchFilters) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * The buckets this reader is OFFERED, in [SearchRecordTypes.ALL] order. Defaults to all of them.
+     *
+     * It exists for the sixth bucket alone: design-workshop stage data is Professor and above, and
+     * the server drops the bucket for anybody else and names it in `typesRefused`. A chip whose
+     * every use is refused is a control that teaches a researcher the app is broken, so the tick box
+     * is not offered where the answer cannot be read. The DEFAULT is every bucket, so the Data
+     * Browser's copy of this bar is untouched — a panel that searches for a file path has no reason
+     * to grow a permission question, and its five buckets are what it has always shown.
+     */
+    offeredTypes: List<String> = SearchRecordTypes.ALL,
     extraFilters: (@Composable ColumnScope.() -> Unit)? = null
 ) {
     // Not seeded from any parameter, so an unkeyed remember is right here: whether the sheet is open
@@ -1043,6 +1344,10 @@ internal fun SearchFilterBar(
         val next = if (recordType in value.types) value.types - recordType else value.types + recordType
         // Stored in bucket order so the state reads the same as the row of chips above it, whatever
         // order the ticks went in. `bucketTypes()` re-derives it anyway; this keeps the state honest.
+        // Ordered by [SearchRecordTypes.ALL] and NOT by `offeredTypes`, deliberately: this is the
+        // canonical order the chips, the checkboxes and the API all read in, and a per-reader order
+        // would make two accounts send the same question as two different query strings. Anything
+        // not offered cannot be in `next` — there is no control for it.
         onChange(value.copy(types = SearchRecordTypes.ALL.filter { it in next }.toSet()))
     }
 
@@ -1053,7 +1358,7 @@ internal fun SearchFilterBar(
                 tone = if (value.types.isEmpty()) ChipTone.ON else ChipTone.OFF,
                 onClick = { onChange(value.copy(types = emptySet())) }
             )
-            SearchRecordTypes.ALL.forEach { recordType ->
+            offeredTypes.forEach { recordType ->
                 SearchChip(
                     text = SearchRecordTypes.label(recordType),
                     tone = when {
@@ -1165,7 +1470,7 @@ internal fun SearchFilterBar(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                SearchRecordTypes.ALL.forEach { recordType ->
+                offeredTypes.forEach { recordType ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -1349,6 +1654,29 @@ private fun searchStatusLabel(status: String): String = when (status) {
     else -> status.replace('_', ' ').lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() }
 }
 
+/**
+ * This screen's filter dropdowns — now a thin adapter over [SearchableSelectField].
+ *
+ * ── IT WAS A HAND-ROLLED MENU, AND §3.4 IS ABOUT WHAT THAT COST ───────────────────────
+ *
+ * Sixty lines duplicating `SelectTrigger` + `DropdownMenu`, down to `"▾"` and `"✓"` written out as
+ * string glyphs — which are not spoken as anything useful, do not follow the type scale, and do not
+ * change with the theme. That was the visible half. The half §3.4 is written about is that it could
+ * not say WHICH of the four empty states it was in: with no options it drew a menu containing one
+ * "Any craft" row and nothing else, which reads as "this repository documents no crafts".
+ *
+ * Everything the shared field brings is a thing this control silently lacked: the sheet above
+ * [SEARCH_THRESHOLD] (749 artisans is not a menu), the diacritic-folding filter box, the
+ * "N options / M of N match" live region, the pinned selection past the render cap, the IME commit
+ * path, and a trigger whose accessible name is the label AND the value.
+ *
+ * ── `allowNone` KEEPS ITS MEANING AND ITS NAME ───────────────────────────────
+ *
+ * It maps to `includeNone`, which is the primitive's word for the same row. R1 — *empty means
+ * everything, by absence* — is what that row expresses on a FILTER: the blank value is "do not
+ * narrow by this", not an all-ticked state, and `SearchRange` opts out because "Any time" is already
+ * a real member of its own vocabulary.
+ */
 @Composable
 private fun SearchDropdownField(
     label: String,
@@ -1357,55 +1685,26 @@ private fun SearchDropdownField(
     placeholder: String,
     onSelect: (String) -> Unit,
     /** False when "no filter" is already one of [options], so the list does not offer it twice. */
-    allowNone: Boolean = true
+    allowNone: Boolean = true,
+    /**
+     * The caller's §3.5 sentence for an empty list, or null where the list cannot be empty.
+     *
+     * The two record-backed filters below pass one; the two constant vocabularies pass nothing,
+     * which is §3.1 — a list compiled into the APK has no fact to report. NEVER "there are none".
+     */
+    emptyMessage: String? = null,
+    enabled: Boolean = true
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = options.firstOrNull { it.first == selectedValue }?.second
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    selectedLabel ?: placeholder,
-                    color = if (selectedLabel != null) MaterialTheme.field.body else MaterialTheme.field.placeholder,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Text("▾", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MaterialTheme.colorScheme.surface)
-            ) {
-                if (allowNone) {
-                    DropdownMenuItem(
-                        text = { Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                        trailingIcon = {
-                            if (selectedValue.isBlank()) Text("✓", color = MaterialTheme.colorScheme.primary)
-                        },
-                        onClick = { onSelect(""); expanded = false }
-                    )
-                }
-                options.forEach { (value, text) ->
-                    val isSelected = value == selectedValue
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.field.body,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        trailingIcon = { if (isSelected) Text("✓", color = MaterialTheme.colorScheme.primary) },
-                        onClick = { onSelect(value); expanded = false }
-                    )
-                }
-            }
-        }
-    }
+    SearchableSelectField(
+        label = label,
+        options = remember(options) { options.map { SelectOption(value = it.first, label = it.second) } },
+        selectedValue = selectedValue,
+        placeholder = placeholder,
+        includeNone = allowNone,
+        enabled = enabled,
+        emptyMessage = emptyMessage,
+        onSelect = onSelect
+    )
 }
 
 // ---------------------------------------------------------------------------------------------

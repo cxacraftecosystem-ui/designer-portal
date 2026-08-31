@@ -856,6 +856,11 @@ def test_the_shared_column_list_still_spells_the_create_loop_it_replaced():
     same six names in the same order, so the literal is asserted here once rather than trusted.
     """
     assert _routes()._CREATE_OPTIONAL_COLUMNS == (
+        # ``workshopKind`` joined the header on 2026-08-30 with the "Type of workshop" dropdown, and
+        # this literal moving is the whole point of the assertion: the create body, the patch
+        # columns and this tuple have to gain the column together or the endpoints disagree about
+        # what a workshop header consists of.
+        "workshopKind",
         "craftName",
         "clusterName",
         "state",
@@ -897,6 +902,7 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
         templateId="DCH_STANDARD",
         status="DRAFT",
         workshopCode="DCH/2026/017",
+        workshopKind="DESIGN_PROTOTYPE_DEVELOPMENT",
         scheme="NHDP",
         craftName="Ikat",
         clusterName="Barpali",
@@ -1397,6 +1403,7 @@ def _dw_row(rid: str, *, created_at: datetime | None = None) -> Any:
         templateId="default",
         status="DRAFT",
         workshopCode=None,
+        workshopKind=None,
         scheme=None,
         craftName=None,
         clusterName=None,

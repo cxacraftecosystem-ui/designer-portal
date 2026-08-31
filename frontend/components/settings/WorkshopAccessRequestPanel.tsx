@@ -22,6 +22,12 @@ import { Field } from "@/components/FormControls";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
 import { apiFetch } from "@/lib/api";
+import {
+  deviceLooksOffline,
+  workshopEmptyLabel,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 import { formatDateTime } from "@/lib/format";
 
 /**
@@ -59,6 +65,14 @@ export function WorkshopAccessRequestPanel() {
   // null = still loading. Distinguished from [] so the picker can say "loading" rather than the far
   // more discouraging "no workshops to ask about" while the fetch is in flight.
   const [workshops, setWorkshops] = useState<RequestableWorkshop[] | null>(null);
+  /**
+   * DID THAT READ FAIL? `workshops` alone cannot say: the catch below sets it to `[]` so the
+   * placeholder stops reading "Loading workshops...", and an empty array then drew "No workshops
+   * have been recorded yet" -- a claim about the repository produced by a request that never
+   * arrived. The error banner above says what went wrong; this is what stops the picker saying
+   * something else at the same time.
+   */
+  const [workshopsFailed, setWorkshopsFailed] = useState(false);
   const [mine, setMine] = useState<WorkshopAccessRow[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [level, setLevel] = useState<WorkshopAccessLevel>(DEFAULT_ACCESS_LEVEL);
@@ -79,11 +93,13 @@ export function WorkshopAccessRequestPanel() {
     try {
       const rows = await apiFetch<RequestableWorkshop[]>("/workshops/requestable");
       setWorkshops(sortWorkshopsByOccurrence(rows));
+      setWorkshopsFailed(false);
     } catch (err) {
       // Surfaced rather than swallowed: an empty picker that is empty because the call failed reads
       // exactly like an empty picker that is empty because there is nothing to ask about.
       setError(err instanceof Error ? err.message : "Unable to load the workshops you can ask about");
       setWorkshops([]);
+      setWorkshopsFailed(true);
     }
   }, []);
 
@@ -93,6 +109,31 @@ export function WorkshopAccessRequestPanel() {
   }, [loadMine, loadWorkshops]);
 
   const options = useMemo(() => requestableOptions(workshops ?? []), [workshops]);
+
+  /*
+    WHICH OF THE FOUR EMPTY STATES THIS IS. `total: null` because `/workshops/requestable` returns a
+    bare array with no envelope -- it cannot say how many exist, and inventing a count from the rows
+    in hand is how a truncation sentence comes to contradict itself.
+
+    `scoped: false`: this route answers "every workshop, with your standing on each" rather than
+    "the ones open to you", so an empty answer means the repository is empty -- which is what the
+    panel's existing wording already said, and it is now said only when it is true. `accessList` is
+    left at its default: these rows carry `accessStatus`, so a stored copy really would read a
+    revoked grant as a grant. `reassurance`: the shared clause is about saving a record and this
+    form files access requests, which cannot be filed at all without a workshop.
+  */
+  const workshopList: WorkshopListState<RequestableWorkshop> =
+    workshops === null
+      ? { kind: "loading" }
+      : workshopsFailed
+        ? { kind: "failed" }
+        : { kind: "ok", rows: workshops, total: null };
+  const workshopVoice: WorkshopListVoice = {
+    table: "field",
+    scoped: false,
+    online: !deviceLooksOffline(),
+    reassurance: "Nothing you have typed is lost. The message above says what happened."
+  };
 
   // What is already settled, said once under the picker. Both counts are things a user would
   // otherwise discover only by asking and being told nothing happened.
@@ -166,7 +207,7 @@ export function WorkshopAccessRequestPanel() {
             <Field label="Workshops">
               <MultiSelectDropdown
                 confirmLabel="Confirm workshops"
-                emptyLabel="No workshops have been recorded yet"
+                emptyLabel={workshopEmptyLabel(workshopList, workshopVoice)}
                 onChange={setSelected}
                 options={options}
                 placeholder={workshops === null ? "Loading workshops…" : "Select one or more workshops"}

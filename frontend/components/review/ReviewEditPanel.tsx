@@ -13,6 +13,7 @@ import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { INTERVIEW_LANGUAGE_PLACEHOLDER, interviewLanguageOptions } from "@/lib/interviewLanguages";
 import { readableError } from "@/components/review/reviewErrors";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 /**
  * Fix a pending record's field values from inside the review queue, instead of bouncing it back to
@@ -170,7 +171,7 @@ export function ReviewEditPanel({
       <label key={field.key} className="grid gap-1">
         <span className="field-label">
           {field.label}
-          {field.required ? " *" : ""}
+          <RequiredMark when={field.required} />
           {dirty ? <span className="ml-1.5 font-semibold normal-case text-purple-700">changed</span> : null}
         </span>
         {field.multiline ? (

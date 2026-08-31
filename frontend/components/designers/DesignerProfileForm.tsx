@@ -909,9 +909,50 @@ export function DesignerProfileForm({
     ),
     empanelment: (
       <>
-        <Field label={DESIGNER_PROFILE_LABELS.empanelmentNo}>
-          <TextInput name="empanelmentNo" defaultValue={profile.empanelmentNo ?? ""} maxLength={MAX.empanelmentNo} />
+        {/*
+          ── REQUIRED, WITH A GRACE PATH, WHICH IS WHY IT IS NOT IN
+             `DESIGNER_PROFILE_REQUIRED_FIELDS` ──────────────────────────────────────────────
+
+          That array means something narrower than "mandatory": it is the list the server's
+          `REQUIRED_COLUMNS` refuses a body for CLEARING, and `e2e/designer-profile-unit.spec.ts`
+          diffs the two. Putting `empanelmentNo` in it would refuse exactly the save the owner's
+          grace path exists to allow — an existing profile with content, no number, and a
+          correction to make somewhere else — because this form posts every box and an empty one
+          arrives as an explicit null.
+
+          So the rule is expressed here instead, in two halves that match the decision exactly:
+
+            * the ASTERISK is unconditional — the number is mandatory, and a designer reading
+              this form should be told so whichever state their profile is in;
+            * the native `required` attribute is dropped ONLY on the grace path, so a profile
+              that already has content is not held hostage by a box its owner may not be able to
+              answer at this desk today. The banner at the top of the form is the ask.
+
+          The server enforces the other half — `_assert_empanelment_number` in
+          `app/api/routes/designers.py` 422s a save that would CREATE a profile without one — so
+          this is not a client-only rule, and the handset gets the same refusal.
+        */}
+        <Field label={DESIGNER_PROFILE_LABELS.empanelmentNo} required>
+          <TextInput
+            name="empanelmentNo"
+            defaultValue={profile.empanelmentNo ?? ""}
+            maxLength={MAX.empanelmentNo}
+            required={!profile.empanelmentNoMissing}
+          />
         </Field>
+        {/*
+          THE SIGN-IN HALF, SAID ONLY WHEN IT IS FALSE OF A FILLED-IN BOX. A designer may sign in
+          with this number, and the key is unique — so a number another profile already holds is
+          not claimed. The save still succeeds and the number still prints on the report; the one
+          thing that does not work is typing it at the sign-in page, and nothing else on this
+          screen could tell them that.
+        */}
+        {profile.empanelmentNo && profile.signInByEmpanelmentNo === false ? (
+          <p className="text-xs leading-5 text-amber-800 md:col-span-2">
+            Another designer already holds this number, so you cannot sign in with it. Use your
+            email.
+          </p>
+        ) : null}
         {/* Not `Field`, which is a `<label>`: `DateField` carries a calendar button, and a wrapping
             label folds that button's own name into the input's — the field then announces itself as
             "Empanelment date Open calendar". The same reason `FieldBlock` is used for the phone and
@@ -1100,6 +1141,28 @@ export function DesignerProfileForm({
       >
         {notice}
       </div>
+
+      {/*
+        ── THE EMPANELMENT GRACE BANNER ──────────────────────────────────────────────────────
+
+        Owner's decision, 2026-08-30: the empanelment number is required to save, and a profile
+        that ALREADY has content may go on saving without one while being asked for it. This is
+        the ask, and it is persistent rather than a toast for that reason — it is a standing
+        state of the record, not an event, and a `aria-live="polite"` toast is gone before the
+        designer has scrolled to the box it is about.
+
+        DRAWN FROM THE SERVER'S OWN BOOLEAN (`empanelmentNoMissing`), never from
+        `!profile.empanelmentNo` — that test is true of a brand-new empty profile too, which is
+        the case the form REFUSES rather than asks about, and the banner would then greet every
+        designer opening the page for the first time with an accusation.
+
+        TERSE. The reasoning belongs here, not on screen.
+      */}
+      {profile.empanelmentNoMissing ? (
+        <p className="mb-4 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-900">
+          Add your empanelment number — it is required on every report.
+        </p>
+      ) : null}
 
       <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-4 py-3 text-sm leading-6 text-ink-muted">
         {DESIGNER_PROFILE_COPY_NOTICE}

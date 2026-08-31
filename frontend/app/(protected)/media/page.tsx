@@ -31,6 +31,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { ComboBox, Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { apiFetch, listResource } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
@@ -588,7 +589,24 @@ function MediaPageBody() {
             placeholder="Names the uploaded object (optional)"
             explainWhenUnavailable={false}
           />
-          <Field label="Linked record type *">
+          {/*
+            TWO THINGS WERE WRONG HERE AND ONLY ONE OF THEM WAS VISIBLE.
+
+            THE ASTERISK WAS TYPED INTO THE LABEL STRING — `label="Linked record type *"` — so it was
+            the one required mark in the web client that no shared primitive could reach. When the
+            ten `{required ? " *" : ""}` sites became `<RequiredMark />` and turned red on
+            2026-08-30, this one would have stayed grey, on a screen beside them, looking exactly
+            like a field whose mark had been forgotten. `required` on the wrapper is the same fact
+            said in a way a component can act on.
+
+            AND THE WRAPPER WAS `Field`, WHICH IS A `<label>`, AROUND A THEMED DROPDOWN. §12.3 of the
+            frontend reference forbids exactly this: a `<label>` forwards a stray click to the first
+            labelable control inside it, which for a themed dropdown is the trigger button — so a
+            click meant for an option also fires the toggle. `FieldBlock` is the `<div>` twin that
+            exists for this case, and it names the control through `role="group"` plus the label
+            context instead of through label-for.
+          */}
+          <FieldBlock label="Linked record type" required>
             <Dropdown
               value={linkedType}
               onChange={setLinkedType}
@@ -596,7 +614,7 @@ function MediaPageBody() {
               placeholder="Choose the type of record"
               ariaLabel="Linked record type"
             />
-          </Field>
+          </FieldBlock>
         </div>
         {linkedType ? (
           <Field label="Linked entry (optional)">

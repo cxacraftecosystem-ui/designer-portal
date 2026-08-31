@@ -16,6 +16,11 @@ import { QuestionnaireCaptureControls, useCapturePrefs } from "@/components/form
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
+import { RichTextField } from "@/components/richtext/RichTextField";
+import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
+import { readableError } from "@/components/review/reviewErrors";
+import { dictateAudio, dictationAnswerSentence } from "@/lib/designWorkshops";
 import {
   DesignWorkshopSelect,
   useDesignWorkshopSelection
@@ -54,6 +59,7 @@ import {
   type BatchResult
 } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { canManageQuestionnaire, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
@@ -72,6 +78,52 @@ const sectionClipKey = (sectionId: string) => `${SECTION_CLIP_PREFIX}${sectionId
 const isSectionClipKey = (key: string) => key.startsWith(SECTION_CLIP_PREFIX);
 /** Tray section id for a clip key — ":" is stripped so the id stays a plain slug. */
 const clipTraySectionId = (key: string) => `question-audio-${key.replace(SECTION_CLIP_PREFIX, "section-")}`;
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE VOICE NOTE'S QUICK TRANSCRIPT: the caps, and why there are caps at all
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Owner, 2026-08-30: *"whenever the conversation is recorded even using the voice note, that voice
+ * note is then to be streamed to the same api through which the dictate button is facilitated as
+ * well, until the elevenlabs, deepgram, or whisper api transcription and translation comes in"*.
+ *
+ * That makes this page a caller of `POST /design-workshops/{id}/dictate`, which 413s over six
+ * megabytes — and until today NOTHING bounded a questionnaire recording. `startRecording` ran until
+ * somebody pressed Stop, so a recorder left running through a lunch break produced a file whose only
+ * ceiling was the disk. Adding the upload without adding a ceiling would have made the feature's
+ * FIRST REAL USE a 413, on a village connection, after the bytes had already been sent.
+ *
+ * ── THE TWO NUMBERS ARE ONE NUMBER, DERIVED ─────────────────────────────────────────────────────
+ * `CLIP_BITS_PER_SECOND` pins the encoder instead of accepting the browser's default, which is the
+ * only way the duration cap can be turned into a size guarantee: Chrome's Opus default is around
+ * 128 kbps and Safari's differs again, so "fifteen minutes" would mean 14 MB on one browser and
+ * 3 MB on another. 32 kbps is the rate Android already ships for its own dictations
+ * (`DwDictationUpload.kt`), so the two clients hand the providers audio of the same quality.
+ *
+ * At 32 kbps, fifteen minutes is 3.6 MB — comfortably inside the six-megabyte ceiling with room for
+ * container overhead and for a browser that treats the bitrate as the hint it formally is. The
+ * duration is what a researcher sees and the byte count is what the route enforces, so BOTH are
+ * checked: the timer stops the recorder, and `DICTATE_MAX_BYTES` below is re-checked against the
+ * actual blob before anything is posted. A cap that is only a timer trusts an encoder hint with an
+ * artisan's interview.
+ *
+ * ── AND THE CAP STOPS THE RECORDER, IT DOES NOT DISCARD THE CLIP ────────────────────────────────
+ * Hitting fifteen minutes ends the take and keeps every second of it — the clip uploads and is
+ * transcribed by the queue exactly as before. Non-negotiable 10: it is announced on screen rather
+ * than left to look like a crash, because a recorder that stops by itself with nothing said is
+ * indistinguishable from one that failed.
+ */
+const CLIP_MAX_MS = 15 * 60 * 1000;
+const CLIP_BITS_PER_SECOND = 32000;
+/**
+ * `DICTATION_MAX_BYTES` in `backend/app/api/routes/design_workshops.py`, mirrored.
+ *
+ * Mirrored rather than fetched: `GET /design-workshops/dictate` reports it as `maxBytes`, but that
+ * probe is a round trip this page would have to make before it could decide whether to spend a
+ * SECOND round trip, and the answer is a deployment constant. The server stays the authority — a
+ * clip that slips past this still meets a 413, and `dictationAnswerSentence` has a sentence for it.
+ */
+const DICTATE_MAX_BYTES = 6 * 1024 * 1024;
 
 /**
  * Why a batch was refused, in one clause — WITHOUT the advice `MediaBatchError`'s own message ends
@@ -183,11 +235,54 @@ function QuestionnairePageBody() {
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const elapsedTimerRef = useRef<number | null>(null);
+  /** Stops a take that has reached `CLIP_MAX_MS`. See that constant for why the ceiling exists. */
+  const clipCapTimerRef = useRef<number | null>(null);
+
+  /*
+    ── THE QUICK TRANSCRIPT'S FOUR PIECES OF STATE, AND WHY THE FIRST ONE IS NOT DERIVABLE ────────
+
+    `machineText` is the machine's own words per clip key, exactly as they were handed to the box.
+    THE EDITED FLAG IS THE COMPARISON BETWEEN THIS AND WHAT IS IN THE BOX NOW, and there is no other
+    way to compute it: "did a human change this" cannot be answered from the answer alone, because a
+    researcher who types an answer by hand and one who accepts a transcript verbatim both end up
+    holding a string. Keeping the machine's copy is what makes the two distinguishable, and it is
+    also what lets a second take be offered rather than imposed.
+
+    `offeredTranscript` holds a transcript that arrived while the box already held EDITED text. The
+    owner's rule is that a later transcript replaces the earlier one *"unless the designer has edited
+    the text, in which case it must not silently overwrite their words"* — so an unedited box takes
+    the new words directly and an edited one gets an offer with the words visible in it. This is the
+    two-stage rule applied at the point on this page where it can actually happen: a researcher
+    recording a second take against the same question, which the per-question recorder has always
+    allowed. The refined, translated pass lands hours later from the media queue and cannot reach a
+    create-only form that has been submitted and reset; see this file's note at `quickTranscribe`.
+
+    `transcribing` and `quickProblem` are the two halves of saying what happened. A round trip to a
+    provider takes seconds on a village connection and silence in the box would read as a recorder
+    that ate the take; a refusal must name itself for the same reason.
+  */
+  const [machineText, setMachineText] = useState<Record<string, string>>({});
+  const [offeredTranscript, setOfferedTranscript] = useState<Record<string, string>>({});
+  const [transcribing, setTranscribing] = useState<Record<string, boolean>>({});
+  const [quickProblem, setQuickProblem] = useState<Record<string, string>>({});
+  /**
+   * Bumped to remount a `RichTextField` after the page writes into its box.
+   *
+   * `RichTextField` parses `defaultValue` exactly ONCE and never reads it again — deliberately, and
+   * its own comment explains the caret that feeding it back would throw to position zero. So the
+   * only honest way to put new words into a mounted editor is to give it a new `key`, which is the
+   * same remount the record forms already do with `key={editing?.id ?? "new"}`.
+   */
+  const [answerSeed, setAnswerSeed] = useState<Record<string, number>>({});
 
   function stopElapsedTimer() {
     if (elapsedTimerRef.current !== null) {
       window.clearInterval(elapsedTimerRef.current);
       elapsedTimerRef.current = null;
+    }
+    if (clipCapTimerRef.current !== null) {
+      window.clearTimeout(clipCapTimerRef.current);
+      clipCapTimerRef.current = null;
     }
   }
 
@@ -208,6 +303,44 @@ function QuestionnairePageBody() {
     edited through the review panel rather than re-opened here — so the picker may always prefill.
   */
   const designWorkshop = useDesignWorkshopSelection(null);
+
+  /**
+   * The four values the transcript path must read as they are NOW, not as they were at Record.
+   *
+   * ── THE CLOSURE THIS EXISTS TO ESCAPE ──────────────────────────────────────────────────────────
+   * `quickTranscribe` is reached from `recorder.onstop`, and that handler was built inside the
+   * `startRecording` call that began the take. So every value it closes over is the value from the
+   * render in which the researcher pressed Record — which is minutes and a whole conversation before
+   * the transcript comes back. Three of the four go wrong in a way somebody would actually hit:
+   *
+   *   * `answers` — a researcher who types while the artisan is still speaking would have their
+   *     words silently replaced, because the stale copy says the box was empty. That is exactly the
+   *     overwrite the owner's "offer it, do not impose it" rule forbids, arriving through the back
+   *     door of a closure rather than through the rule.
+   *   * `machineText` — the edited flag is computed against it, so a stale copy mis-states the flag.
+   *   * `designWorkshop.workshopId` — the picker sits at the top of a long form and is very often
+   *     filled in AFTER the first clip. A stale empty id would refuse a transcript this interview is
+   *     entitled to, and say the workshop was not named while it is on screen.
+   *
+   * A ref written in an EFFECT rather than during render: a render can be discarded under concurrent
+   * rendering, and this repository already records what a ref written on a discarded render costs
+   * (`useLeaveGuard`). By the time an upload has crossed the network every render before it has
+   * committed, so the effect has always run.
+   */
+  const liveRef = useRef({
+    answers,
+    machineText,
+    workshopId: designWorkshop.workshopId,
+    language
+  });
+  useEffect(() => {
+    liveRef.current = {
+      answers,
+      machineText,
+      workshopId: designWorkshop.workshopId,
+      language
+    };
+  }, [answers, machineText, designWorkshop.workshopId, language]);
 
   const questions = useMemo(() => sections.flatMap((section) => section.questions), [sections]);
   const questionsById = useMemo(() => new Map(questions.map((question) => [question.id, question])), [questions]);
@@ -317,7 +450,13 @@ function QuestionnairePageBody() {
     try {
       const [sectionList, artisanResult] = await Promise.all([
         apiFetch<QuestionnaireSection[]>("/questionnaire/sections"),
-        listResource<Artisan>("/artisans", { pageSize: 100 })
+      // `RENDER_CAP` and not the round `100` this used to ask for. Both dropdowns below draw
+      // at most `RENDER_CAP` rows, so a hundred-row page put twenty artisans on the wire that
+      // no reader could ever reach and let the panel print one truncation total while a notice
+      // underneath printed another. One number governs the fetch and the render, which is the
+      // only arrangement in which two such sentences cannot disagree -- see
+      // `WORKSHOP_OPTION_PAGE_SIZE`, the same alias every workshop picker already uses.
+        listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })
       ]);
       setSections(sectionList);
       setArtisans(artisanResult.items);
@@ -483,7 +622,15 @@ function QuestionnairePageBody() {
       // Ask the browser what it can actually record: Safari/iOS produces audio/mp4, so a hardcoded
       // "audio/webm" name and type would lie about the bytes and break playback and transcription.
       const preferredType = pickAudioRecorderMimeType();
-      const recorder = new MediaRecorder(stream, preferredType ? { mimeType: preferredType } : undefined);
+      // `audioBitsPerSecond` PINNED, not left to the browser — see `CLIP_BITS_PER_SECOND`. It is what
+      // turns the duration ceiling below into a size guarantee the dictation route's 6 MB limit can
+      // be reasoned about against; without it "fifteen minutes" is 3 MB on one browser and 14 on
+      // another. Spread beside the mime type rather than replacing that branch, because a browser
+      // that reports no supported type must still get `undefined` for it.
+      const recorder = new MediaRecorder(stream, {
+        ...(preferredType ? { mimeType: preferredType } : {}),
+        audioBitsPerSecond: CLIP_BITS_PER_SECOND
+      });
       recorderRef.current = recorder;
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
@@ -497,6 +644,13 @@ function QuestionnairePageBody() {
           ...current,
           [key]: [...(current[key] ?? []), file]
         }));
+        // THE SAME BYTES GO TWO WAYS, and they are two different acts on two different clocks. The
+        // clip above is evidence: it uploads with the interview and the media queue transcribes it
+        // into refined, translated, speaker-labelled Markdown whenever the drain next runs. This
+        // call is the immediate one — plain text, seconds, straight into the box the researcher is
+        // looking at. Fired and not awaited, because `onstop` must return for the recorder teardown
+        // below to run; `quickTranscribe` owns its own failures and never rejects.
+        void quickTranscribe(key, file);
         stream.getTracks().forEach((track) => track.stop());
         // Tapping "Record this question" on ANOTHER question stops this recorder while the next one
         // is already running — only tear down the shared recording UI if this is still the live one.
@@ -514,6 +668,17 @@ function QuestionnairePageBody() {
         const startedAt = Date.now();
         setQuestionElapsedMs(0);
         elapsedTimerRef.current = window.setInterval(() => setQuestionElapsedMs(Date.now() - startedAt), 250);
+        // THE CEILING. It stops the take and keeps every second of it — see `CLIP_MAX_MS`. The
+        // sentence is written before `stop()` because `onstop` clears `recordingKey`, and a message
+        // keyed on a clip whose recorder has already been torn down would have nowhere to render.
+        clipCapTimerRef.current = window.setTimeout(() => {
+          if (recorderRef.current !== recorder || recorder.state === "inactive") return;
+          setQuickProblem((current) => ({
+            ...current,
+            [key]: `Recording stopped at ${CLIP_MAX_MS / 60000} minutes. The take is kept — record again to continue.`
+          }));
+          recorder.stop();
+        }, CLIP_MAX_MS);
       };
       recorder.start();
       setQuestionStream(stream);
@@ -523,8 +688,171 @@ function QuestionnairePageBody() {
     }
   }
 
+  /**
+   * Forget everything the transcription of the LAST interview left behind.
+   *
+   * Called from both reset paths beside `setAnswers({})`, and it is not tidiness. `machineText` is
+   * what the edited flag is computed against, so a surviving entry would flag the NEXT interview's
+   * question — a fresh, empty box — as differing from a previous sitting's machine words, which is a
+   * chip saying "Edited" on an answer nobody has typed yet. A surviving `offeredTranscript` would be
+   * worse: it would offer one artisan's words as a replacement for another's answer.
+   *
+   * `answerSeed` is deliberately NOT cleared. It only ever increments, and it exists solely to force
+   * a remount; resetting it to zero for a key whose editor is still mounted at seed 3 would produce
+   * the same key twice across two different documents, which is the one thing a remount key must
+   * never do.
+   */
+  function clearQuickTranscripts() {
+    setMachineText({});
+    setOfferedTranscript({});
+    setQuickProblem({});
+  }
+
   function stopRecording() {
     recorderRef.current?.stop();
+  }
+
+  /**
+   * Put the machine's words where they belong, and never over a person's own.
+   *
+   * A QUESTION KEY has a box, so the words go into it — and they are APPENDED, never substituted.
+   * Two clips against one question are two parts of one answer: a researcher stops the recorder when
+   * the artisan pauses and starts it again when she resumes, so the second take is the rest of the
+   * sentence and not a better version of the first. This is the rule `appendDictatedPhrase` already
+   * exists for on every dictated box in the repository — *"a commit that replaced the box would
+   * delete everything already in it at the first pause for breath"* — and it is reused rather than
+   * re-decided, so the microphone in the editor's toolbar and the voice note behave identically.
+   *
+   * WHERE THE BOX HAS BEEN EDITED, NOTHING IS WRITTEN AT ALL. The owner's rule is that a later
+   * transcript *"must not silently overwrite their words. Offer it, do not impose it"*, so an edited
+   * box gets an offer with the text visible in it. An empty box, and a box still holding exactly what
+   * this page last put there, both count as untouched — there is nothing of anybody's to lose.
+   *
+   * `machineText` IS SET TO THE WHOLE MERGED VALUE, not to the new fragment, because it is what the
+   * edited flag compares the box against. Storing only the last take would make the box differ from
+   * it the instant a second clip landed and flag an untouched answer as edited.
+   *
+   * A SECTION KEY has no box, and that is not an oversight to fix later. A whole-section take covers
+   * a dozen questions, so there is no single answer it is the answer to; writing it into the first
+   * question would file a section's worth of conversation under one prompt, and splitting it across
+   * the section's boxes would be the page guessing at attribution only the researcher can make. It is
+   * rendered under the section recorder instead, where it can be read, copied and downloaded.
+   */
+  function applyTranscript(key: string, text: string) {
+    if (isSectionClipKey(key)) {
+      // A section's takes accumulate the same way, so a second take does not erase the first.
+      setMachineText((current) => ({
+        ...current,
+        [key]: appendDictatedPhrase(current[key] ?? "", text)
+      }));
+      return;
+    }
+    // Read live, never from this function's closure — see `liveRef` for the three ways the closure
+    // is wrong by the time a transcript comes back.
+    const inBox = liveRef.current.answers[key] ?? "";
+    const previous = liveRef.current.machineText[key] ?? "";
+    if (inBox.trim() && inBox.trim() !== previous.trim()) {
+      setOfferedTranscript((current) => ({ ...current, [key]: text }));
+      return;
+    }
+    const merged = appendDictatedPhrase(inBox, text);
+    setAnswers((current) => ({ ...current, [key]: merged }));
+    setMachineText((current) => ({ ...current, [key]: merged }));
+    // The editor seeds from `defaultValue` once and never re-reads it, so a new key is the only way
+    setAnswerSeed((current) => ({ ...current, [key]: (current[key] ?? 0) + 1 }));
+  }
+
+  /**
+   * Post one just-recorded clip to the dictation API and put the words in the box.
+   *
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * THE CONSENT DECISION, WRITTEN DOWN — read this before changing anything here
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * This is the point at which a named artisan's recorded voice leaves the device for ElevenLabs,
+   * Deepgram or OpenAI, synchronously, while she is still sitting there. The route
+   * `POST /design-workshops/{id}/dictate` is the only one in this application that sends audio to a
+   * provider under a gate, and its gate is `DesignWorkshop.dictationConsent` — per workshop, because
+   * (`services/dictation_consent.py`) "a consent given for one cluster would silently cover the next
+   * one, and the artisan whose voice it is changes between them".
+   *
+   * SO THE ANSWER IS: THE INTERVIEW'S OWN DESIGN WORKSHOP, OR NOTHING IS SENT.
+   *
+   * This form already asks which design and prototype workshop an interview is filed under
+   * (`useDesignWorkshopSelection`), and where it names one there is an id whose consent column
+   * governs exactly this artisan, this cluster, this week. That id is what goes in the URL. Where the
+   * picker is empty — which is legitimate, an interview is often taken outside any design workshop —
+   * NO REQUEST IS MADE AT ALL, and the box says so in one line. The clip still uploads and the queue
+   * still transcribes it, exactly as before this feature existed.
+   *
+   * ── THE TWO ALTERNATIVES, AND WHY BOTH ARE WORSE ───────────────────────────────────────────────
+   * A WORKSHOP-LESS DICTATION ROUTE WITH ITS OWN GATE would be a second consent regime to keep in
+   * step with the first, and the only thing it could gate on is the account or the interview — an
+   * account-level switch is the one this repository has already refused by name, and an interview has
+   * no artisan-signed answer to carry. The id-less `POST /design-workshops/dictate` already exists
+   * and answers 410, retired precisely because it enforced nothing.
+   *
+   * MAKING THE WORKSHOP PICKER REQUIRED would buy the gate by breaking the record: interviews are
+   * taken by researchers who are not running a design workshop at all, and a required picker would
+   * either block those sittings or teach everyone to pick an unrelated workshop to get past it, which
+   * is a consent answer with the wrong artisan's name on it.
+   *
+   * ── AND THE GATE IS NOT THEATRE, WHICH TOOK A BACKEND CHANGE ───────────────────────────────────
+   * The same bytes also go to the media queue, and until 2026-08-31 `transcription_verdict` read a
+   * questionnaire clip as NOT_WORKSHOP_MATERIAL and sent it ungated. So a clip on a REFUSED workshop
+   * would have been refused here and handed to a provider by the drain two hours later — one voice,
+   * one consent answer, two opposite outcomes, and the second one silent.
+   * `dictation_consent.interview_workshop_id` closes that: where an interview names a workshop, both
+   * paths now ask the same column. Where it names none, both behave exactly as they always have.
+   *
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * IT NEVER REJECTS. It is called un-awaited from `recorder.onstop`, and an unhandled rejection
+   * there would surface as a console error and nothing on screen — the researcher would be left
+   * watching a box that never fills, with no idea whether to wait or to type.
+   */
+  async function quickTranscribe(key: string, file: File) {
+    // Live, because the workshop picker is at the top of a long form and is very often filled in
+    // after the first clip is recorded. See `liveRef`.
+    const workshopId = liveRef.current.workshopId;
+    const refuse = (message: string) => setQuickProblem((current) => ({ ...current, [key]: message }));
+    setQuickProblem((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    if (!workshopId) {
+      refuse("Instant transcript needs a design workshop named above. The clip is saved and transcribed later.");
+      return;
+    }
+    if (file.size > DICTATE_MAX_BYTES) {
+      // Checked against the ACTUAL blob and not against the elapsed time: `audioBitsPerSecond` is a
+      // hint the encoder may miss. Saying it plainly beats spending the upload to be told.
+      refuse("Too long for an instant transcript. The clip is saved and transcribed later.");
+      return;
+    }
+    setTranscribing((current) => ({ ...current, [key]: true }));
+    try {
+      const result = await dictateAudio(file, liveRef.current.language, workshopId);
+      const text = (result.text ?? "").trim();
+      // `dictationAnswerSentence` owns every non-COMPLETED outcome — EMPTY, FAILED, RATE_LIMITED and
+      // a status this build has not heard of — so the sentences a designer meets here are the same
+      // ones the workshop microphone gives them, worded once.
+      if (!text) refuse(dictationAnswerSentence(result));
+      else applyTranscript(key, text);
+    } catch (err) {
+      // A 409 here IS the consent refusal, and `gate_refusal` writes a sentence naming the next move
+      // (ask the artisan, or record the answer instead). `readableError` surfaces the server's own
+      // words rather than replacing them with a generic failure, which is the whole point of that
+      // sentence having been written where the consent state is known.
+      refuse(readableError(err, "That recording could not be transcribed just now."));
+    } finally {
+      setTranscribing((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
   }
 
   /**
@@ -641,6 +969,7 @@ function QuestionnairePageBody() {
         setPlace("");
         setLanguage("");
         setAnswers({});
+        clearQuickTranscripts();
         setMediaFiles([]);
         setQuestionAudioFiles({});
         setAdditionalArtisanIds([]);
@@ -864,6 +1193,7 @@ function QuestionnairePageBody() {
       setPlace("");
       setLanguage("");
       setAnswers({});
+      clearQuickTranscripts();
       setMediaFiles([]);
       setQuestionAudioFiles({});
       setAdditionalArtisanIds([]);
@@ -1162,7 +1492,7 @@ function QuestionnairePageBody() {
                       {response.question?.sectionCode ? `[${response.question.sectionCode}] ` : ""}
                       {response.question?.prompt ?? "Question"}
                     </div>
-                    <div className="mt-1 whitespace-pre-wrap text-ink-muted">{response.answerText}</div>
+                    <div className="mt-1 whitespace-pre-wrap text-ink-muted">{plainFromStoredRichText(response.answerText)}</div>
                     {response.answeredBy?.name ? (
                       <div className="mt-1 text-amber-800">Recorded by {response.answeredBy.name}</div>
                     ) : null}
@@ -1250,6 +1580,30 @@ function QuestionnairePageBody() {
                       label={`Section ${group.section.code} audio`}
                       className="mt-2"
                     />
+                    {/*
+                      ── A WHOLE-SECTION TAKE'S TRANSCRIPT HAS NO BOX, AND IS SHOWN ANYWAY ────────
+                      It covers a dozen questions, so there is no single answer it is the answer to
+                      — `applyTranscript` says at length why writing it into one of them, or
+                      splitting it across all of them, would be the page inventing an attribution
+                      only the researcher can make. So it is rendered here to be read, copied and
+                      saved, and the researcher moves what belongs where. No flag: nothing on screen
+                      can be edited, so "edited or not" has nothing to be about.
+                    */}
+                    <QuickTranscript
+                      busy={!!transcribing[sectionClipKey(group.section.id)]}
+                      problem={quickProblem[sectionClipKey(group.section.id)]}
+                      current=""
+                      filenameBase={`Section-${group.section.code}-transcript`}
+                      onAccept={() => undefined}
+                      onDismiss={() => undefined}
+                    />
+                    {machineText[sectionClipKey(group.section.id)] ? (
+                      <MarkdownDocument
+                        className="mt-2"
+                        text={machineText[sectionClipKey(group.section.id)] ?? ""}
+                        filenameBase={`Section-${group.section.code}-${group.section.title}-transcript`}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
                 {group.items.map((question) => (
@@ -1298,48 +1652,92 @@ function QuestionnairePageBody() {
                     ) : null}
                     {capture.hideAnswers ? null : (
                       <>
-                        <TextArea
-                          aria-labelledby={`question-label-${question.id}`}
-                          value={answers[question.id] ?? ""}
-                          onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
-                        />
                         {/*
-                          ── THE ANSWER BOXES ARE THE POINT OF THE DICTATION SWEEP ──────────────
-                          A questionnaire answer is prose spoken by an artisan and typed by somebody
-                          holding a phone in a workshop; it is the longest typing on this screen and
-                          the most worth replacing with speech. It sits BESIDE the per-question
-                          recorder rather than instead of it, and the two are different acts: the
-                          recorder keeps the artisan's own voice as evidence and is transcribed by
-                          the server later, this writes the researcher's words into the answer now.
-                          Both are offered because a researcher with no signal still wants the text.
+                          ── THE ANSWER BOX IS A RICH TEXT BOX, AND THE MICROPHONE MOVED INTO IT ──
 
-                          `fieldLabel` is the question's CODE, not its prompt. The accessible label
-                          becomes "Dictate the answer to QA3 in English (India)"; a prompt may be
-                          two thousand characters and an aria-label that long is read out in full
-                          before the reader learns what the button does. QA3 is the same shorthand
-                          this page already prints on the audio tray rows.
+                          Owner, 2026-08-30: the transcript *"should appear in the rich text box"*.
+                          This was a plain `<TextArea>` with an `OnDeviceDictationButton` under it
+                          until 2026-08-31. Both halves of that arrangement survive inside
+                          `RichTextField` — the editor carries its own dictation button, so the
+                          researcher who was pressing "Dictate" under the box is now pressing it in
+                          the box's own toolbar, and `explainWhenUnavailable={false}` still defers to
+                          the single `DictationUnavailableNotice` at the top of the form. What the
+                          separate button could not do is hold the words a provider sends back with
+                          any formatting at all, and a refined transcript's speaker labels ARE
+                          formatting.
 
-                          `explainWhenUnavailable={false}` on every one of these — the notice at the
-                          top of the form says it once. See that component.
+                          NOTHING ABOUT STORAGE CHANGES. `onValueChange` reports the same plain
+                          string the textarea reported, because `encodeStoredRichText` writes prose
+                          for an unformatted document and only stringifies a document once somebody
+                          actually applies a mark — see `components/richtext/storedRichText.ts`. So
+                          `answers[question.id]` is still a string, the payload is unchanged, and
+                          every existing reader of `QuestionnaireResponse.answerText` sees exactly
+                          what it saw before for every answer nobody formatted.
 
-                          NOT INSIDE A `<label>`: this whole block is a plain `<div>` with an
-                          `aria-labelledby` heading precisely because a `<label>` forwards a stray
-                          click to its first labelable control, so a `<label>` here would mean
-                          pressing "Dictate" also focuses the textarea and throws the on-screen
-                          keyboard up over the interim readout being watched.
+                          `labelledBy` RATHER THAN A SECOND LABEL: the question is already printed
+                          above as the heading for this whole block — the recorder and the upload
+                          readout sit under it too — so the box is named by that heading and the
+                          short `label` is left to name the ACT for the microphone ("Dictate Answer
+                          in English (India)"). Printing the prompt twice, or moving a two-thousand
+                          character prompt into a button's accessible name, are the two things that
+                          prop exists to avoid.
+
+                          `key` IS LOAD-BEARING. The editor parses `defaultValue` once and never
+                          re-reads it, so a transcript arriving from `applyTranscript` reaches a
+                          mounted box only through a remount. See `answerSeed`.
                         */}
-                        <OnDeviceDictationButton
-                          fieldLabel={`the answer to Q${question.sectionCode}${question.sortOrder}`}
+                        <RichTextField
+                          key={`answer-${question.id}-${answerSeed[question.id] ?? 0}`}
+                          // Read by nothing: this page builds its payload from the `answers` state,
+                          // not from `FormData`. The prop is required because every other mount of
+                          // this component IS read through the form, and a name that names the
+                          // question is the one that would be least surprising if that ever changed.
+                          name={`answer-${question.id}`}
+                          label="Answer"
+                          labelledBy={`question-label-${question.id}`}
+                          defaultValue={answers[question.id] ?? ""}
                           explainWhenUnavailable={false}
-                          onCommit={(phrase) =>
-                            // Functional updater, and appended through the shared rule: a long
-                            // answer is dictated in many phrases, and a commit that replaced the
-                            // box would delete everything already in it at the first pause for
-                            // breath. See `dictatedValue.appendDictatedPhrase`.
-                            setAnswers((current) => ({
-                              ...current,
-                              [question.id]: appendDictatedPhrase(current[question.id] ?? "", phrase)
-                            }))
+                          onValueChange={(value) =>
+                            setAnswers((current) => ({ ...current, [question.id]: value }))
+                          }
+                        />
+                        <QuickTranscript
+                          busy={!!transcribing[question.id]}
+                          problem={quickProblem[question.id]}
+                          machine={machineText[question.id]}
+                          current={answers[question.id] ?? ""}
+                          offered={offeredTranscript[question.id]}
+                          filenameBase={`Q${question.sectionCode}${question.sortOrder}-transcript`}
+                          onAccept={() => {
+                            const text = offeredTranscript[question.id];
+                            if (!text) return;
+                            /*
+                              ADDED TO THE ANSWER, NOT SUBSTITUTED FOR IT. The offer only exists
+                              because the box holds words a person wrote, so the button that accepts
+                              it must not be the one thing on this page that deletes them — "offer it,
+                              do not impose it" is not satisfied by asking first and then overwriting.
+                              Appending means neither branch of the whole feature can lose a syllable.
+
+                              AND `machineText` IS DELIBERATELY LEFT ALONE. The box now holds the
+                              researcher's words AND the machine's, so it IS edited and the flag must
+                              go on saying so. Updating it here would relabel a mixed answer as
+                              untouched machine output, which is the claim the flag exists to prevent.
+                            */
+                            const merged = appendDictatedPhrase(answers[question.id] ?? "", text);
+                            setAnswers((current) => ({ ...current, [question.id]: merged }));
+                            setAnswerSeed((current) => ({ ...current, [question.id]: (current[question.id] ?? 0) + 1 }));
+                            setOfferedTranscript((current) => {
+                              const next = { ...current };
+                              delete next[question.id];
+                              return next;
+                            });
+                          }}
+                          onDismiss={() =>
+                            setOfferedTranscript((current) => {
+                              const next = { ...current };
+                              delete next[question.id];
+                              return next;
+                            })
                           }
                         />
                       </>
@@ -1414,7 +1812,7 @@ function QuestionnairePageBody() {
                             {interview.responses?.map((response) => (
                               <div key={response.id} className="rounded-md bg-field-100 p-2 text-xs">
                                 <div className="font-semibold text-ink">{response.question?.prompt}</div>
-                                <div className="mt-1 whitespace-pre-wrap text-ink-muted">{response.answerText}</div>
+                                <div className="mt-1 whitespace-pre-wrap text-ink-muted">{plainFromStoredRichText(response.answerText)}</div>
                               </div>
                             ))}
                           </div>
@@ -1498,6 +1896,91 @@ function safeFileName(value: string) {
  * the two modes cannot drift into two slightly different recorders, and so a clip list is rendered
  * identically whether or not its recorder's button is currently on offer.
  */
+/**
+ * What happened to the voice note, and what the box holds because of it.
+ *
+ * FOUR STATES, AND EVERY ONE OF THEM IS SAID IN WORDS. A round trip to a transcription provider
+ * takes seconds on a village connection, so silence under the box would read as a recorder that ate
+ * the take; a refusal that says nothing reads the same way. Non-negotiable 10 is the rule here as
+ * everywhere: a thing that quietly did not happen is indistinguishable from a thing that was never
+ * offered.
+ *
+ * THE FLAG IS DERIVED, NOT STORED, and it can only be derived because the page keeps the machine's
+ * own copy (`machineText`). "Has a human changed this" is unanswerable from the answer alone — a
+ * researcher who typed the answer out and one who accepted a transcript verbatim both end up holding
+ * a string. `machine === undefined` therefore draws NO flag at all rather than "Not edited": an
+ * answer nobody dictated has no machine text to have departed from, and stamping "Not edited" on a
+ * hand-typed sentence would credit a provider with a researcher's words.
+ *
+ * THE OFFER IS THE OWNER'S RULE MADE LITERAL: *"unless the designer has edited the text, in which
+ * case it must not silently overwrite their words. Offer it, do not impose it."* The offered text is
+ * rendered in full inside a `MarkdownDocument` rather than hidden behind a button, because a person
+ * deciding whether to replace their own writing needs to read what would replace it — and having it
+ * on screen means it can be copied or saved even if the answer is kept.
+ */
+function QuickTranscript({
+  busy,
+  problem,
+  machine,
+  current,
+  offered,
+  filenameBase,
+  onAccept,
+  onDismiss
+}: {
+  busy: boolean;
+  problem?: string;
+  /** The machine's words as last written into the box, or undefined if it never wrote any. */
+  machine?: string;
+  current: string;
+  /** A newer transcript held back because the box had been edited. */
+  offered?: string;
+  filenameBase: string;
+  onAccept: () => void;
+  onDismiss: () => void;
+}) {
+  const edited = machine === undefined ? undefined : current.trim() !== machine.trim();
+  if (!busy && !problem && !offered && edited === undefined) return null;
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {busy ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
+            {/* A static ring plus the word, never a spinner alone: the CSS reduced-motion rules zero
+                the animation, and a signal that exists only as motion is one a reduced-motion reader
+                never gets. */}
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-purple-300 border-t-purple-700" aria-hidden />
+            Transcribing…
+          </span>
+        ) : null}
+        <EditedFlag edited={edited} />
+      </div>
+      {offered ? (
+        <div className="rounded-md border border-amber-500 bg-amber-100 p-3">
+          {/* Terse, and it states the one thing a person needs before pressing either button: their
+              own words survive whichever they choose. */}
+          <p className="mb-2 text-xs font-semibold text-amber-800">
+            Another take was transcribed. Your words are kept either way.
+          </p>
+          <MarkdownDocument text={offered} filenameBase={filenameBase} />
+          <div className="mt-2 flex flex-wrap gap-2">
+            {/* "Add to answer", not "Use this": the accept path appends, and a button whose word
+                implies replacement would have a person expecting to lose their edits — or, worse,
+                pressing Discard to protect words that were never at risk. */}
+            <button type="button" className="field-button !min-h-8 !px-2.5 !py-1 text-xs" onClick={onAccept}>
+              Add to answer
+            </button>
+            <button type="button" className="field-button-secondary !min-h-8 !px-2.5 !py-1 text-xs" onClick={onDismiss}>
+              Discard
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {problem ? <p className="text-xs text-ink-muted">{problem}</p> : null}
+    </div>
+  );
+}
+
 function ClipRecorder({
   hint,
   showRecordButton,

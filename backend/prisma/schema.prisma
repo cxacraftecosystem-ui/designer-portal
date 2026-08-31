@@ -182,6 +182,42 @@ model User {
   canReview              Boolean @default(false)
   canViewProvenance      Boolean @default(false)
   canDownloadDataset     Boolean @default(false)
+
+  /// ── "HAS NO PASSWORD YET" VERSUS "SIGNS IN WITH GOOGLE", WHICH WERE ONE STATE UNTIL NOW ────
+  ///
+  /// `passwordHash` is nullable and every Google-provisioned account carries NULL, so until this
+  /// column existed the two were indistinguishable and no screen could honestly say "set a
+  /// password" to one and not the other. This is stamped every time a password is written — by an
+  /// admin at `POST /api/users`, by the owner at `POST /api/auth/change-password`, or through a
+  /// reset link — so NULL alongside a NULL hash means nobody has ever set one.
+  passwordSetAt      DateTime?
+  /// The account must set its own password before it does anything else. Set when an ADMIN types
+  /// a password for somebody (`POST /api/users`, and a password written through `PATCH
+  /// /api/users/{id}` for anybody but yourself), cleared the moment the owner sets their own.
+  ///
+  /// IT REPORTS, IT DOES NOT REFUSE, and that is the same decision `usageConsentGate` took one
+  /// column over, for the same reason: the only way to change a password is a route that needs a
+  /// bearer token, so refusing the sign-in would leave the account permanently unable to comply.
+  /// It rides out on `serialize_user`, both clients read it, and both send the person to the
+  /// change-password screen and nowhere else.
+  mustChangePassword Boolean  @default(false)
+  /// The first time this account actually got IN. `AccessRoster.firstSeenAt` and
+  /// `DesignerRoster.firstSeenAt` answer the same question about an ADDRESS an admin invited;
+  /// this one is about the ACCOUNT, and the two differ for anybody whose account predates the
+  /// roster row. Written once and never moved.
+  firstLoginAt       DateTime?
+  /// ── SESSION REVOCATION, EXPRESSED AS ONE TIMESTAMP RATHER THAN A SESSION TABLE ─────────────
+  ///
+  /// Bearer tokens here are stateless JWTs with no `jti` and no row behind them, so "sign every
+  /// device out" has nowhere to write itself. Every token carries `iat`; a token minted STRICTLY
+  /// BEFORE this instant is refused by `deps._user_from_bearer`. One column, no table, no
+  /// expiry job, and it revokes retroactively — which is exactly what a password reset has to do,
+  /// because the reason somebody is resetting is usually that a session they no longer control
+  /// exists somewhere.
+  ///
+  /// NULL means "nothing has ever been revoked", which is every account today; the check is
+  /// skipped entirely for those, so this costs the hot path one `is None`.
+  sessionsValidFrom  DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
@@ -198,6 +234,13 @@ model User {
   questionnaireResponses QuestionnaireResponse[] @relation("QuestionnaireAnsweredBy")
   appReleases AppRelease[] @relation("AppReleasePublishedBy")
   feedback    Feedback?    @relation("FeedbackUser")
+  /// The grievances, suggestions, recommendations and bug reports this account has FILED, and the
+  /// ones it has acknowledged or resolved as an administrator. Cascade on the first (what a person
+  /// said goes with their account) and SetNull on the other two, so the record that a named person
+  /// read a grievance outlives them without holding up a deletion. See FeedbackReport.
+  feedbackReports             FeedbackReport[] @relation("FeedbackReportUser")
+  feedbackReportsAcknowledged FeedbackReport[] @relation("FeedbackReportAcknowledgedBy")
+  feedbackReportsResolved     FeedbackReport[] @relation("FeedbackReportResolvedBy")
   preferences UserPreference? @relation("UserPreferenceUser")
   sectionStatusesSet QuestionnaireSectionStatus[] @relation("SectionStatusSetBy")
   workshopAssignments     WorkshopAssignment[] @relation("WorkshopAssignmentUser")
@@ -205,6 +248,12 @@ model User {
   workshopAccessRequests  WorkshopAssignment[] @relation("WorkshopAssignmentRequestedBy")
   workshopAccessDecisions WorkshopAssignment[] @relation("WorkshopAssignmentDecidedBy")
   managedSecretsUpdated   ManagedSecret[]      @relation("ManagedSecretUpdatedBy")
+  /// Password-reset links minted FOR this account, and the ones it minted as an admin. Cascade on
+  /// the first (a spent link is not authorship and must not hold up an account deletion) and
+  /// SetNull on the second (who issued it outlives the admin who left) — the same pairing every
+  /// other actor/subject relation on this model uses.
+  passwordResetTokens       PasswordResetToken[] @relation("PasswordResetTokenUser")
+  passwordResetTokensIssued PasswordResetToken[] @relation("PasswordResetTokenIssuedBy")
   aiCredentials           UserAiCredential[]   @relation("UserAiCredentialOwner")
   dataAccessAsOwner   DataAccessGrant[] @relation("DataAccessOwner")
   dataAccessAsGrantee DataAccessGrant[] @relation("DataAccessGrantee")
@@ -404,9 +453,19 @@ model AssignedTask {
   @@index([batchId])
 }
 
-/// One piece of app feedback per user: a quantitative rating (1–5) plus a qualitative comment.
-/// Upserted, so a user can revisit and update their feedback at any time. The master admin reviews
-/// everyone's feedback on the View Data screen.
+/// ONE SATISFACTION SURVEY PER USER — a quantitative rating (1–5) plus per-aspect sub-ratings and
+/// several free-text prompts. Upserted on `userId`, so a user can revisit and update their answers
+/// at any time and there is exactly one row per account, for ever.
+///
+/// THAT UPSERT IS WHY `FeedbackReport` EXISTS BESIDE THIS TABLE AND DID NOT REPLACE IT. `userId` is
+/// `@unique`, so a person who reports a bug on Monday and files a grievance on Friday OVERWRITES
+/// the bug report: this table cannot hold two things one person said, and a grievance register whose
+/// second entry destroys the first is not a register. Making this table multi-row was the obvious
+/// alternative and it is refused — `PUT /feedback/me` and both clients' feedback screens are built
+/// on "there is one of these and I am editing mine", which is the RIGHT shape for a satisfaction
+/// survey: a standing answer to "how is the app working for you", revisable as the answer changes,
+/// and pointless to accumulate. A ticket is the opposite shape — many per person, each frozen at
+/// the moment it was written, each with its own life. Two shapes, two tables.
 model Feedback {
   id        String   @id @default(cuid())
   userId    String   @unique
@@ -431,6 +490,86 @@ model Feedback {
   user User @relation("FeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([updatedAt])
+}
+
+/// A GRIEVANCE, SUGGESTION, RECOMMENDATION OR BUG REPORT — one row per thing said, never upserted.
+///
+/// The owner asked for "a card for grievances, suggestions, and recommendations redressal" and for
+/// the feedback that comes in to be "properly documented ... for the sake of the research". Both
+/// halves need a table `Feedback` above cannot be: many rows per person, each preserved as written,
+/// each carrying where it got to. See that model's own comment for why it was not widened.
+///
+/// EVERY CLOSED LIST HERE IS A `String`, VALIDATED SERVER-SIDE, NOT A PRISMA ENUM. This follows the
+/// `DesignWorkshop.workshopKind` precedent, and `services/feedback_vocabulary` carries the three
+/// reasons in full — the short one is that a new category must be a deploy rather than an
+/// `ALTER TYPE` against a pooled database, and that a retired category must keep printing on the
+/// rows already filed under it rather than becoming a read error on the oldest grievances.
+model FeedbackReport {
+  id     String @id @default(cuid())
+  userId String
+  /// FEEDBACK_KINDS. Required: it decides which queue an administrator works, and a report nobody
+  /// can route is a report that is not in a register.
+  kind   String
+  /// FEEDBACK_SEVERITIES and FEEDBACK_AREAS. Both nullable with no backfill — a person filing a
+  /// grievance must not be made to rank their own distress on a four-point scale before the app
+  /// will accept it, and "which screen" is very often "all of it".
+  severity String?
+  area     String?
+  /// What the person wrote. `subject` is the line an inbox lists; `details` is the account.
+  subject String
+  details String
+
+  // ── CAPTURED, NEVER ASKED ─────────────────────────────────────────────────────────────
+  //
+  // A bug report that does not say which app, which version and which screen is a bug report nobody
+  // can reproduce — and asking a person to type their app version is asking them to go and find a
+  // number they have no reason to know. The client fills these in from what it already holds.
+  // All nullable: a caller that sends none of them still files a valid report, because a report
+  // refused for want of a version number is a report that never gets written.
+  /// FEEDBACK_CLIENTS — WEB or ANDROID.
+  client        String?
+  /// The client's own version string, verbatim, whatever shape that client versions in.
+  clientVersion String?
+  /// Operating system / browser, as the client reports it. Free text on purpose: this is a hint for
+  /// a human reproducing a fault, not a dimension anybody should GROUP BY.
+  platform      String?
+  /// The route or screen the reporter was on. A path on the web, a screen name on the handset.
+  pagePath      String?
+
+  // ── REDRESSAL ───────────────────────────────────────────────────────────────────────
+  //
+  // WHO and WHEN are stored for each transition rather than only the current status, because "your
+  // grievance was seen" is a claim, and a claim with no name and no date on it is one an institution
+  // can make about a queue nobody read. Both actor columns are SetNull: the record that somebody
+  // acknowledged a grievance must outlive their account, and an unresolved pointer to a departed
+  // colleague must never become a new reason an admin cannot delete a user (see `_undeletable_detail`
+  // in api/routes/users.py).
+  /// FEEDBACK_STATUSES: SUBMITTED → ACKNOWLEDGED → RESOLVED.
+  status           String    @default("SUBMITTED")
+  acknowledgedById String?
+  acknowledgedAt   DateTime?
+  resolvedById     String?
+  resolvedAt       DateTime?
+  /// What the institution said back. REQUIRED on RESOLVED and optional on ACKNOWLEDGED — the route
+  /// enforces that, and its docstring says why. Readable by the person who filed the report; that
+  /// is the whole difference between a redressal mechanism and an inbox.
+  responseNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user           User  @relation("FeedbackReportUser", fields: [userId], references: [id], onDelete: Cascade)
+  acknowledgedBy User? @relation("FeedbackReportAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+  resolvedBy     User? @relation("FeedbackReportResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  /// The four reads this table has. `[status, createdAt]` is the administrator's inbox (the open
+  /// queue, oldest first); `[userId, createdAt]` is a person's own list on the settings card;
+  /// `[kind, createdAt]` is the research cut ("every grievance this year"); `[createdAt]` alone is
+  /// the keyset walk the dataset export does. Each is a read that exists, not a guess.
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@index([kind, createdAt])
+  @@index([createdAt])
 }
 
 /// One row per user holding their appearance + accessibility choices, upserted exactly like
@@ -1079,6 +1218,21 @@ model MediaFile {
   transcriptSummary String?
   transcriptStatus String?
   transcriptError  String?
+  /// Whether the transcript above is still the machine's words, and who changed them if not.
+  ///
+  /// `transcriptEditedAt` IS THE FLAG, and NULL on it means "not stated" rather than "never
+  /// edited" — `POST /media/{id}/transcript` has been able to replace a transcript since long
+  /// before these columns existed, so rows written before 2026-08-31 genuinely do not say. Both
+  /// clients render three states because of that: edited, not edited, and silent. Backfilling a
+  /// `false` would have printed "the machine said this" over text a researcher typed, which is the
+  /// single assertion the flag was asked for in order to stop making silently.
+  ///
+  /// `transcriptEditedById` carries NO relation, exactly as `reviewedById` above carries none: this
+  /// is an audit stamp rather than a navigable edge, and a foreign key would force `onDelete` to
+  /// answer whether removing an account may rewrite a transcript's provenance into "nobody edited
+  /// this". It may not. See the migration for the rest of the argument.
+  transcriptEditedAt DateTime?
+  transcriptEditedById String?
   linkedRecordType String?
   linkedRecordId   String?
   status           RecordStatus @default(PENDING)
@@ -1430,6 +1584,51 @@ model Questionnaire {
   ///
   /// ADMIN-ONLY TO SET. Default false, so nothing that exists today changes.
   isShared    Boolean @default(false)
+  /// WHAT KIND OF QUESTIONNAIRE THIS IS — `WORKSHOP_INTERVIEW` or `MARKET_SURVEY`, and NULL for
+  /// "not stated". It is what decides which stage of the report this instrument's answers are filed
+  /// under; see `app/services/questionnaire_kinds.py`, which owns the vocabulary and the mapping.
+  ///
+  /// ── WHY THE COLUMN EXISTS ───────────────────────────────────────────────────────────────────
+  ///
+  /// Owner, 2026-08-30: *"the designer can have multiple questionnaires for the same workshop as
+  /// well, they also do market survey interviews, so create that differentiation as well, so that we
+  /// can map the questionnaires and the transcripts to the correct stage in the report."* Several
+  /// questionnaires per workshop already worked — `designWorkshopId` is a plain nullable pointer and
+  /// the far side is `Questionnaire[]` — so nothing here widens that. What was missing was any way
+  /// to tell the two KINDS apart, and the report therefore printed a market survey and a baseline
+  /// interview in one undifferentiated annexure, which is the thing the owner could not use.
+  ///
+  /// ── A `String?` AND NOT A POSTGRES ENUM, WHICH IS `DesignWorkshop.workshopKind`'S CHOICE ─────
+  ///
+  /// Same reasoning as that column, one rung down: a second copy of the list as a Postgres enum is
+  /// two lists that can disagree, and the one that wins is the one that refuses the write. Adding a
+  /// member would become a migration on every deployment before a designer could file under it.
+  ///
+  /// **WHERE IT DIFFERS FROM `workshopKind`, AND THIS IS THE PART TO READ BEFORE COPYING EITHER.**
+  /// `workshopKind` is a STAGE field: it is answered inside stage 1's document, its vocabulary lives
+  /// in `stage_schema.ENUMS["WORKSHOP_KIND"]`, `coerce_value` validates it, and the column is only a
+  /// promoted copy so the workshop list can filter without opening every stage. This one is NOT a
+  /// stage field. A `Questionnaire` is its own table with its own API and it is not part of any
+  /// stage document, so putting its vocabulary in the stage registry would publish a token to both
+  /// clients' stage renderers that no stage will ever ask for — and would move
+  /// `registry_version()`, forcing every handset to re-sync the whole registry for a value no stage
+  /// uses. So the vocabulary is a frozenset in `questionnaire_kinds.py` and the ROUTE validates it,
+  /// which is the alternative the lane brief names for a value that belongs to the table.
+  ///
+  /// ── NULLABLE, AND EVERY EXISTING ROW IS NULL ────────────────────────────────────────────────
+  ///
+  /// No backfill, and deliberately not one — the same ruling `workshopKind` made and for the same
+  /// reason. Nothing in the data says whether an existing questionnaire was a market survey or a
+  /// baseline interview, and defaulting them all to one would write an assertion nobody made into a
+  /// field a report prints. Any read that groups by this column must treat NULL as "not stated" and
+  /// never as a kind: `report_questionnaires` files unstated forms under no stage at all and prints
+  /// them exactly as it printed every questionnaire before this column existed.
+  ///
+  /// NO INDEX, unlike `isShared`. Every read that touches this column has already narrowed the rows
+  /// another way — the report reads `designWorkshopId` (indexed) and the list applies the
+  /// visibility scope first — so an index here would be paid for on every write and never chosen by
+  /// a planner. Add one when a query filters on `kind` ALONE.
+  kind        String?
   version     Int     @default(1)
   /// The name of the .xlsx it was uploaded from, shown so a designer can tell two drafts apart.
   sourceFilename String?
@@ -1984,6 +2183,27 @@ model DesignWorkshop {
 
   // Denormalised from stage 1 by promoted_values(). Never written by hand; see the note above.
   workshopCode       String?
+  /// WHAT KIND OF WORKSHOP THIS IS — a token from the registry's `WORKSHOP_KIND` vocabulary,
+  /// promoted from `workshopSetup.workshopKind` so the workshop list can narrow by it without
+  /// opening every stage document.
+  ///
+  /// **A `String?`, NOT A POSTGRES ENUM, AND THAT IS THE SAME CHOICE EVERY OTHER PROMOTED COLUMN
+  /// MADE.** The vocabulary lives in `stage_schema.ENUMS`, which is the registry both clients read
+  /// and the only place it may be defined; a second copy as a Postgres enum would be two lists that
+  /// can disagree, and the one that would win is the one that refuses the write. Adding a member
+  /// would then be a migration on every deployment before a designer could file under it, which is
+  /// precisely the friction that makes a vocabulary go stale. `coerce_value` validates the token
+  /// against the registry before it ever reaches this column.
+  ///
+  /// **NULLABLE, AND EVERY EXISTING ROW IS NULL.** There is no backfill and there deliberately is
+  /// not one: nothing in the data says which of the six an existing workshop was, and guessing —
+  /// defaulting them all to DESIGN_PROTOTYPE_DEVELOPMENT because most of them probably are — would
+  /// write an assertion nobody made into a field a report prints. The stage field is `required`,
+  /// which `validate_entry` enforces only at SUBMISSION (`enforce_required=payload.submit`), so an
+  /// existing workshop goes on saving exactly as before and is asked for the answer once, at the
+  /// point where the answer is actually needed. Any list that filters on this column must treat
+  /// NULL as "not yet stated" and never as a kind.
+  workshopKind       String?
   scheme             String?
   craftName          String?
   clusterName        String?
@@ -2141,6 +2361,12 @@ model DesignWorkshop {
   @@index([createdById])
   @@index([status])
   @@index([craftName])
+  /// The type filter the owner asked for a dropdown on. Composite with `deletedAt` rather than
+  /// bare, because EVERY read of this table filters `deletedAt: null` — a bare index on the kind
+  /// would still leave Postgres testing the soft-delete predicate on every row it returned, and the
+  /// list this serves is the one screen a designer opens first. `craftName` and `status` above are
+  /// bare for historical reasons and are not a precedent to copy.
+  @@index([workshopKind, deletedAt])
   @@index([state, district])
   @@index([workshopId])
   @@index([deletedAt])
@@ -2929,6 +3155,50 @@ model DwStageEntry {
   /// Orders a collection's rows. A singleton's is always 0.
   ordinal   Int    @default(0)
   data      Json
+
+  /// THE ANSWERS IN `data`, RENDERED AS TEXT, so `GET /search` can match inside a stage.
+  ///
+  /// Until this column existed, no call site in the repository applied a text filter to `data` and
+  /// the search route said so on the wire: a query for "indigo" found a workshop whose TITLE said
+  /// indigo and not the workshop whose stage 5 dye-bath answer did. The cost of both ways of fixing
+  /// that is written up in §6.1 of `docs/DECISION-design-workshop-data-in-view-data.md`; this is
+  /// option 2, and `services/design_workshop_data.entry_search_text` decides the contents.
+  ///
+  /// RENDERED, NOT `data::text`, WHICH IS WHY THIS IS BETTER THAN THE INDEX IT REPLACED and not
+  /// merely cheaper. A trigram index over the raw JSON matches the JSON's own KEYS and punctuation,
+  /// and matches the STORED TOKEN — a designer who picked "Design & Prototype Development" from a
+  /// dropdown has `DESIGN_PROTOTYPE_DEVELOPMENT` in the row, so the one string the product showed
+  /// them would find nothing. This column holds what a person actually read: ENUM labels resolved,
+  /// rich text flattened, the designer's own custom questions included.
+  ///
+  /// NOT EVERY ANSWER, AND THE OMISSIONS ARE RULES RATHER THAN GAPS. Media ids, references,
+  /// coordinates, booleans, numbers and dates are out (nobody types a cuid; "₹ 6,500.00" does not
+  /// contain "6500"), and so are contact details and identity numbers — see
+  /// `design_workshop_data.UNSEARCHABLE_FIELD_KEYS`, which exists so that `access.py`'s ruling that
+  /// a stage entry "is not indexed by identity number … a RESIDUE, not a ledger" stays TRUE.
+  ///
+  /// NULLABLE WITH NO DEFAULT, AND THE BACKFILL IS A SCRIPT. A migration that rewrote every stage
+  /// row of every workshop is a migration that times out on a managed instance; NULL means "not
+  /// computed yet" and can never match, so an un-backfilled deployment searches fewer rows rather
+  /// than wrong ones. `backend/scripts/backfill_stage_search_text.py` is idempotent and resumable.
+  ///
+  /// THERE IS DELIBERATELY NO INDEX ON IT, AND THAT IS MEASURED RATHER THAN FORGOTTEN. The match is
+  /// `ILIKE '%term%'` — a LEADING wildcard, case-insensitive — which no btree can answer, whatever
+  /// operator class it is built with. An index here would be decoration, and decoration is worse
+  /// than nothing because the next reader trusts it. The scan is over this table's live rows with a
+  /// string comparison per row, and the string is strictly SMALLER than the `data` it comes from (no
+  /// keys, no braces, no escaping, a subset of the types). The day the deployment permits
+  /// `CREATE EXTENSION pg_trgm`, one statement makes it indexed —
+  /// `CREATE INDEX CONCURRENTLY … USING gin ("searchText" gin_trgm_ops)` — and it will then be a
+  /// trigram index over RENDERED text rather than over raw JSON, which is §6.1's option 1 arriving
+  /// strictly better for having waited. See the migration for the full argument.
+  ///
+  /// EVERY WRITER OF `data` MUST WRITE THIS COLUMN IN THE SAME STATEMENT. There are two, named on
+  /// `clientKey` below for the same reason. `test_stage_search_text_writers` fails the day a third
+  /// appears, because the failure mode of a second copy is not that it is missing — it is that it
+  /// DISAGREES, and a search that silently answers from a stale copy is a wrong answer dressed as a
+  /// right one.
+  searchText String?
 
   /// WHO LAST SET EACH FIELD OF `data`, sparse: `{fieldKey: {by, byName, at, source, ...}}`.
   ///
@@ -4215,8 +4485,37 @@ model DesignerProfile {
   cvMediaId        String?
 
   /// Empanelment identifiers a government report is expected to carry.
+  ///
+  /// `empanelmentNo` IS ALSO A SIGN-IN IDENTIFIER SINCE 2026-08-30 — see `empanelmentKey` below,
+  /// which is the half that is indexed and unique. This column stays exactly as the designer typed
+  /// it, punctuation and all, because it is printed on a ministry report and "EMP/2026/0042" is
+  /// what the certificate says.
   empanelmentNo   String?
   empanelmentDate DateTime?
+
+  /// ── THE TWO SIGN-IN KEYS, AND WHY THEY ARE SEPARATE COLUMNS RATHER THAN INDEXES ON THE TEXT ──
+  ///
+  /// A designer may sign in with their email, their phone number or their empanelment number. The
+  /// last two live on this row as free text a person typed — "+91 98765 43210" and
+  /// "EMP/2026/0042" are the same phone and the same empanelment as "9876543210" and
+  /// "emp 2026 0042", and an index on the raw column would match neither. So the NORMALISED form
+  /// is stored beside the raw one and the lookup is against that. `app/services/identity.py` owns
+  /// both normalisations and is the ONLY place either is computed — a second copy is a login that
+  /// works on one client and not the other.
+  ///
+  /// **UNIQUE, AND NULLABLE, AND THE NULL IS LOAD-BEARING.** Postgres allows any number of NULLs
+  /// under a unique index, which is what lets this constraint be added to a live table that
+  /// already contains duplicates: the migration backfills a key ONLY for a value held by exactly
+  /// one profile, and leaves every member of a colliding group NULL. On this database that is 44
+  /// profiles all carrying `EMP/2026/0042` (seeded), and NULL is the correct answer for all 44 —
+  /// an ambiguous number must not sign anybody in, and picking a winner among them would sign the
+  /// wrong person in silently. The same rule applies on every save: a key already held by another
+  /// profile is not claimed, the raw number is stored anyway, and the profile API says so.
+  ///
+  /// NEVER READ THESE FOR DISPLAY. They are lookup keys; the report and every screen read
+  /// `phone` and `empanelmentNo`.
+  phoneKey        String? @unique
+  empanelmentKey  String? @unique
 
   /// WHERE THE DESIGNER IS BASED, in the same table and the same shape every other record page in
   /// this system uses — which is what "like the rest of the record pages" actually asks for. The
@@ -4272,6 +4571,84 @@ model DesignerProfile {
 
   user     User      @relation("DesignerProfileUser", fields: [userId], references: [id], onDelete: Cascade)
   location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+}
+
+// ======================================================================================
+// Password reset / first-password links
+// ======================================================================================
+
+/// What a credential link is for. The two differ in how long they last and in what the
+/// set-password screen says; nothing else branches on it.
+enum CredentialLinkPurpose {
+  /// An account an admin created that has never had a password of its own.
+  INVITE
+  /// Somebody locked out of an account they already had.
+  RESET
+}
+
+/// ONE ROW PER PASSWORD LINK AN ADMIN HAS ISSUED.
+///
+/// ── WHY THERE IS A TABLE HERE WHEN THE CONSTRUCTION IT IS PORTED FROM HAS NONE ───────────────
+///
+/// `C:\dev\cxa-cms/lib/auth/credential-token.ts` is the canonical minting this is built from, and
+/// it deliberately has NO table: the token carries a 16-hex digest of the account's current
+/// password hash (`cred`), so setting a password changes the digest and every token minted before
+/// it stops verifying — single-use for free, with nothing to expire and nothing to clean up. That
+/// property is kept exactly as it is (see `app/services/credential_links.py`, which computes the
+/// same fingerprint over `passwordHash`), and it is still what makes a spent link dead.
+///
+/// This table adds the three things the fingerprint alone cannot express, all of which the owner
+/// asked for by name:
+///
+///   * **REVOCATION.** "I pasted that link into the wrong chat window" has no answer in a
+///     stateless token — the account's password has not changed, so the fingerprint still matches
+///     and the link still works until it expires. `revokedAt` is the answer, and it is checked on
+///     redemption.
+///   * **A THROTTLE ON ISSUING.** cxa-cms has none, and the gap is real: because minting a link is
+///     free and setting a password revokes the account's sessions, an admin could sign a colleague
+///     out of their own laptop repeatedly by doing nothing but pressing a button. Counting recent
+///     rows for one subject is what makes `RESET_ISSUE_*` in the service enforceable.
+///   * **AN AUDIT TRAIL.** Who issued a credential for whose account, and when it was used. That
+///     is not derivable from a token nobody kept.
+///
+/// **THE TOKEN ITSELF IS NOT STORED — ONLY A SHA-256 OF IT.** A table of live credentials is a
+/// table worth stealing; a table of digests is not. `tokenHash` is what a redemption is looked up
+/// by, so the row can be found without the row ever having held the secret.
+model PasswordResetToken {
+  id String @id @default(cuid())
+
+  /// The account the link sets a password for.
+  userId String
+  user   User   @relation("PasswordResetTokenUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 hex of the token string. Unique so a redemption is one indexed read, and so two rows
+  /// can never describe one link.
+  tokenHash String @unique
+
+  purpose CredentialLinkPurpose @default(RESET)
+
+  /// The signed payload carries its own `exp` and that is what actually refuses a stale link; this
+  /// column is the same instant, denormalised, so an admin screen can say "expires in 40 minutes"
+  /// without holding the token.
+  expiresAt DateTime
+  /// Stamped when the link was redeemed. Belt to the fingerprint's braces: the fingerprint already
+  /// refuses a second use, and a row that says WHEN it was used is what makes "this link has
+  /// already been used" a sentence the screen can print instead of a bare refusal.
+  usedAt    DateTime?
+  /// Stamped when an admin withdrew it. Distinct from `usedAt` because they are different answers
+  /// to the person holding the link, and an admin reading the list needs to know which happened.
+  revokedAt DateTime?
+
+  createdAt   DateTime @default(now())
+  /// The admin who issued it. SetNull, not Cascade: the record that a credential was issued for
+  /// somebody outlives the account of whoever issued it.
+  issuedById String?
+  issuedBy   User?   @relation("PasswordResetTokenIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  /// The throttle reads (userId, createdAt) and the admin list reads (userId, createdAt desc); one
+  /// composite index serves both.
+  @@index([userId, createdAt])
+  @@index([issuedById])
 }
 
 // ======================================================================================

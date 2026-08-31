@@ -164,3 +164,46 @@ export function appendStoredParagraph(
   });
   return encodeStoredRichText(toStored(appended), join) || null;
 }
+
+/**
+ * A stored rich-text column as the words in it — prose returned untouched, a document flattened.
+ *
+ * ── THE READ BOUNDARY, AND WHY IT NOW LIVES IN THE SHARED MODULE ──────────────────────────────
+ * {@link encodeStoredRichText} writes JSON into a `String?` column the moment somebody applies a
+ * mark, and the header of this file sets out the bounded cost that buys: a reader that has not
+ * learnt to flatten shows `{"blocks":[{"kind":…` for that one record. Every surface that mounts
+ * `RichTextField` decodes for itself; a surface that RENDERS one of these columns without an editor
+ * has to flatten, and there was exactly one of those until 2026-08-31: the designer profile's own
+ * private address reader, which set the condition for its own deletion in its header —
+ * *"When the shared module grows one, delete this and import that: two spellings of a read boundary
+ * is how the two come to disagree about what a document is."*
+ *
+ * **That condition was met and that module is gone.** The designer profile now imports this
+ * function, and the two bodies were character-for-character identical when they were merged, so
+ * nothing about what an address renders as has changed. The sentence is quoted rather than dropped
+ * because it is the ARGUMENT for this module existing, and whoever meets a third such surface should
+ * meet it too. (Its path is deliberately not written out: `docs/tools/check-docs.mjs` opens every
+ * backticked path it finds, so naming a deleted file here would fail the docs gate.)
+ *
+ * The questionnaire is the second, which is what makes this the shared one. `QuestionnaireResponse.
+ * answerText` became a rich-text column when the interview form's answer boxes did, and the
+ * consolidated interview page renders those answers as prose for a reader who is quoting them into a
+ * ministry report. Braces there are not a cosmetic defect: they are the artisan's answer, unreadable,
+ * on the surface the report is assembled from.
+ *
+ * Returns `""` for null, undefined and an empty column, so callers keep their own blank wording — the
+ * consolidated page already draws an em dash for an unanswered question and must go on drawing it.
+ *
+ * The flattening is `toPlain`, the same flattener the report builder and the search index use, list
+ * markers included, so what this prints is what the .docx would print rather than an approximation.
+ */
+export function plainFromStoredRichText(raw: string | null | undefined): string {
+  if (raw === null || raw === undefined) return "";
+  const decoded = decodeStoredRichText(raw);
+  // Prose, and the string identity is the point: a value that merely begins with a brace but is not
+  // a block document has already fallen through inside `decodeStoredRichText`, which is what it is —
+  // somebody's typing.
+  if (decoded === null) return "";
+  if (typeof decoded === "string") return decoded;
+  return toPlain(fromStored(decoded));
+}

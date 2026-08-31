@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { SearchInput } from "@/components/SearchInput";
 import { useWorkshopScope, WorkshopScopeSelect } from "@/components/WorkshopScopeSelect";
+import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
 import { buildQuery, listResource } from "@/lib/api";
 import type { Artisan } from "@/lib/types";
 
@@ -40,7 +41,11 @@ export default function ConsolidatedIndexPage() {
     if (scope.settling) return;
     let active = true;
     setLoading(true);
-    listResource<Artisan>("/artisans", { pageSize: 100, workshopIds: scope.queryValue })
+    // `LIST_PAGE_CEILING`, the server's own cap, named rather than repeated as a literal -- and
+    // deliberately NOT `RENDER_CAP`: these artisans are rendered as a card per row in the grid
+    // below, never through a dropdown, so nothing here draws only 80 and cutting the request to 80
+    // would remove twenty cards a reader can open today.
+    listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING, workshopIds: scope.queryValue })
       .then((result) => {
         if (active) {
           setArtisans(result.items);

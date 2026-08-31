@@ -576,6 +576,69 @@ fun Throwable.accessRefusal(): AccessRefusal {
 }
 
 /**
+ * THE SECOND REFUSAL HEADER: two refusals that are about the IDENTIFIER rather than about admission.
+ *
+ * ── WHY THIS IS NOT AN [AccessRefusal] ───────────────────────────────────────────────────────────
+ *
+ * `X-Access-Status` answers "where does this address stand with the platform allow-list". Neither of
+ * the two below is an allow-list answer — one is "what you typed names two accounts" and the other
+ * is "this account has never had a password" — so folding them into [AccessRefusal] would make that
+ * enum, and every `when` over it, mean two different kinds of thing. The server keeps them on their
+ * own header for exactly this reason (`SIGN_IN_HINT_HEADER` in backend/app/api/routes/auth.py) and
+ * the web keeps them in their own type (`SignInHint` in frontend/lib/signIn.ts).
+ *
+ * ── READ OFF THE HEADER, NEVER OUT OF THE BODY ───────────────────────────────────────────────────
+ *
+ * **THE REFUSAL BODY CARRIES EXACTLY ONE KEY AND MUST GO ON DOING SO.**
+ * `tests/test_platform_access_gate.py` asserts `set(body) == {"detail"}`, and the server's own
+ * comment explains that a second field beside `detail` "would be the first crack in a rule the whole
+ * feature's privacy argument rests on". So a client that wanted a discriminator had to be given one
+ * somewhere else, and the header is where. Do not go looking for this in the JSON; there is nothing
+ * there, and adding it server-side would break that test on purpose.
+ *
+ * Nor from the SENTENCE. The sentences are English written for the person reading them and they will
+ * be reworded; a client matching on prose stops distinguishing the two cases the first time somebody
+ * fixes a comma, and the screen goes on looking correct.
+ *
+ * ── AND AN ABSENT HEADER IS "NONE", WHICH IS A REAL ANSWER ───────────────────────────────────────
+ *
+ * A proxy that strips unknown headers, or a deployment older than this handset, produces the same
+ * absence as an ordinary wrong password. [SignInHint.NONE] draws no panel and leaves the server's own
+ * sentence in the plain line — the documented safe direction, and the same treatment
+ * [AccessRefusal.UNCLASSIFIED] gets one type up.
+ *
+ * READS ONLY THE STATUS AND THE HEADERS, NEVER THE BODY, so it is safe to call before
+ * [signInErrorMessage] — which consumes the buffered error body and can therefore be called once.
+ */
+enum class SignInHint {
+    /**
+     * What was typed names more than one account.
+     *
+     * Rare and not impossible: `services/identity.resolve_identifier` has two unique indexes, and a
+     * value that is one designer's phone key and another's empanelment key satisfies both.
+     */
+    AMBIGUOUS_IDENTIFIER,
+
+    /** The account exists and has never had a password of its own. */
+    PASSWORD_NOT_SET,
+
+    /** No hint on this refusal, or none this build understands. Say only what the server said. */
+    NONE,
+}
+
+/** The header the API classifies an identifier-shaped refusal with. Mirrors `auth.SIGN_IN_HINT_HEADER`. */
+const val SIGN_IN_HINT_HEADER = "X-Sign-In-Hint"
+
+fun Throwable.signInHint(): SignInHint {
+    val http = this as? HttpException ?: return SignInHint.NONE
+    return when (http.response()?.headers()?.get(SIGN_IN_HINT_HEADER)?.trim()?.uppercase()) {
+        "AMBIGUOUS_IDENTIFIER" -> SignInHint.AMBIGUOUS_IDENTIFIER
+        "PASSWORD_NOT_SET" -> SignInHint.PASSWORD_NOT_SET
+        else -> SignInHint.NONE
+    }
+}
+
+/**
  * The sentence to put on the sign-in screen for a failed sign-in.
  *
  * The server's own `detail` wins wherever there is one, because it is the only text that knows WHY
@@ -791,6 +854,8 @@ class WorkshopRepository(
         pageSize: Int = 20,
         search: String? = null,
         statusFilter: String? = null,
+        /** A `WORKSHOP_KIND` token, or null/blank for every type. See the API declaration. */
+        workshopKind: String? = null,
         craftName: String? = null,
         state: String? = null,
         mineOnly: Boolean = false
@@ -799,6 +864,10 @@ class WorkshopRepository(
         pageSize = pageSize,
         search = search?.trim()?.takeIf { it.isNotEmpty() },
         statusFilter = statusFilter?.takeIf { it.isNotBlank() },
+        // Folded to null here rather than at the four call sites, the same way `statusFilter` is:
+        // a blank token on the wire is a filter that matches nothing, and "no type chosen" has to
+        // reach the server as an absent parameter or the list comes back empty over a full corpus.
+        workshopKind = workshopKind?.trim()?.takeIf { it.isNotEmpty() },
         craftName = craftName?.trim()?.takeIf { it.isNotEmpty() },
         state = state?.takeIf { it.isNotBlank() },
         mineOnly = mineOnly
@@ -2862,11 +2931,16 @@ class WorkshopRepository(
         title: String,
         description: String?,
         designWorkshopId: String?,
+        kind: String? = null,
     ): CustomQuestionnaireDto? {
         val body = CustomQuestionnaireCreateBody(
             title = title.trim(),
             description = description?.trim()?.takeIf { it.isNotEmpty() },
             designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
+            // Blank is "not stated" and travels as null, so the picker's own blank row is a valid
+            // answer rather than a 422. The body is what the outbox stores, so a kind chosen in a
+            // courtyard is posted with the questionnaire when the signal returns.
+            kind = kind?.takeIf { it.isNotBlank() },
         )
         if (isOnline(context)) {
             val sent = runCatching { api.createCustomQuestionnaire(body) }
@@ -2888,11 +2962,13 @@ class WorkshopRepository(
         title: String,
         description: String? = null,
         designWorkshopId: String? = null,
+        kind: String? = null,
     ): CustomQuestionnaireDto = api.createCustomQuestionnaire(
         CustomQuestionnaireCreateBody(
             title = title.trim(),
             description = description?.trim()?.ifBlank { null },
             designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
+            kind = kind?.takeIf { it.isNotBlank() },
         )
     )
 
@@ -2902,6 +2978,10 @@ class WorkshopRepository(
      * [changeWorkshop] must be set by the caller that is DECIDING the attachment, because a blank
      * [designWorkshopId] means detach and an omitted key means leave alone — two different requests
      * that a single nullable argument cannot tell apart. See [customQuestionnaireUpdateJson].
+     *
+     * [changeKind] is the same pairing for the same reason, one field along: a blank [kind] clears
+     * the questionnaire back to "not stated" and an omitted key leaves whatever is there. A caller
+     * that sets one of the pair and forgets the other sends a request it did not mean.
      */
     suspend fun updateCustomQuestionnaire(
         id: String,
@@ -2910,6 +2990,8 @@ class WorkshopRepository(
         changeDescription: Boolean = false,
         designWorkshopId: String? = null,
         changeWorkshop: Boolean = false,
+        kind: String? = null,
+        changeKind: Boolean = false,
         isActive: Boolean? = null,
     ): CustomQuestionnaireDto = api.updateCustomQuestionnaire(
         id,
@@ -2919,6 +3001,8 @@ class WorkshopRepository(
             changeDescription = changeDescription,
             designWorkshopId = designWorkshopId,
             changeWorkshop = changeWorkshop,
+            kind = kind,
+            changeKind = changeKind,
             isActive = isActive,
         )
     )
@@ -3317,6 +3401,80 @@ class WorkshopRepository(
         val user = api.me()
         tokenStore.setUser(user)
         return user
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════════════════════════
+     * PASSWORDS: the first-login change, and the administrator's one-off link
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * ALL FIVE THROW AND NONE OF THEM IS EVER QUEUED, for the reason `designWorkshopDictate` gives
+     * and one more of their own. There is no cached anything that could stand in for the answer, so
+     * a swallowed failure would reach the person as a screen that simply did nothing; and a password
+     * write replayed hours later out of an outbox would set a credential its owner had long since
+     * replaced, silently, from a device they may no longer be holding.
+     */
+
+    /**
+     * Replace this account's own password. The call `mustChangePassword` sends somebody to.
+     *
+     * THE CURRENT PASSWORD IS REQUIRED EVEN WHEN THE FLAG IS SET, and the caller always has it: the
+     * gate screen carries forward the one typed at the door, and asks for it only where this session
+     * never saw one. The server refuses an empty one with a sentence of its own, so nothing here
+     * guesses.
+     *
+     * THE CACHED PROFILE IS REFRESHED ON SUCCESS, and that line is the gate. `mustChangePassword`
+     * lives on the cached `UserDto`, `mustChangePasswordBlocks` reads it, and a stale copy would
+     * hold somebody on the gate screen after they had satisfied it — asking a second time for a
+     * password they just set. Best-effort: the write has landed by then, and reporting a failed
+     * re-read as a failed change would invite them to do it again.
+     */
+    suspend fun changeOwnPassword(currentPassword: String, newPassword: String) {
+        api.changeOwnPassword(
+            ChangePasswordRequest(currentPassword = currentPassword, newPassword = newPassword)
+        )
+        runCatching { refreshUser() }
+    }
+
+    /**
+     * Mint a set-password link for another account. Admin only; throttled per SUBJECT on the server.
+     *
+     * **THE LINK COMES BACK ONCE AND IS NEVER RETURNED AGAIN.** There is no route that re-reads it
+     * and no field beside it carrying the token, deliberately — a credential appearing twice in one
+     * answer is a credential in two places to keep out of logs. So it is handed straight to the
+     * caller and NOT written to [TokenStore], not logged, and not cached: an administrator who
+     * dismisses the panel without copying it has to issue another, which is the correct cost.
+     */
+    suspend fun issuePasswordLink(userId: String): IssuedPasswordLinkDto =
+        api.issuePasswordLink(IssuePasswordLinkRequest(userId = userId))
+
+    /** Withdraw a link that has not been used. The one thing the credential fingerprint cannot do. */
+    suspend fun revokePasswordLink(linkId: String) {
+        api.revokePasswordLink(linkId)
+    }
+
+    /**
+     * Is a link still good? Unauthenticated, and safe to call from a signed-out handset.
+     *
+     * A FAILED CHECK IS NOT A DEAD LINK — the caller must treat a thrown exception as "unknown" and
+     * draw the form anyway, because the network may simply be down and telling somebody their link is
+     * invalid when it has not been examined sends them back to an administrator for nothing. The POST
+     * is the authority either way. The web screen takes the same position in as many words.
+     */
+    suspend fun checkPasswordLink(token: String): PasswordLinkCheckDto = api.checkPasswordLink(token)
+
+    /**
+     * Redeem a link and set the password on it.
+     *
+     * IT SIGNS THIS DEVICE OUT, and that is not tidiness: the redemption writes
+     * `User.sessionsValidFrom` server-side, so every token minted before this instant — including any
+     * this handset is holding — is refused by `deps._user_from_bearer` from now on. Leaving a dead
+     * token in the store would give the next screen a 401 it would report as a server problem. The
+     * clear is local and unconditional for the reason [logout] states: a person must end up signed
+     * out even if something else fails.
+     */
+    suspend fun setPasswordWithLink(token: String, password: String) {
+        api.setPasswordWithLink(SetPasswordRequest(token = token, password = password))
+        tokenStore.clear()
     }
 
     suspend fun stats(): DashboardStats = api.dashboardStats()
@@ -3942,6 +4100,27 @@ class WorkshopRepository(
 
     /** Master-admin only: all users' feedback, newest first, each with its author. */
     suspend fun allFeedback(): List<FeedbackDto> = api.allFeedback()
+
+    /** The closed lists a feedback report is filed against — served, never compiled in. */
+    suspend fun feedbackVocabulary(): FeedbackVocabularyDto = api.feedbackVocabulary()
+
+    /**
+     * File a grievance, suggestion, recommendation or bug report.
+     *
+     * NOT QUEUED THROUGH THE OUTBOX, and that is a decision rather than an omission. The outbox
+     * exists so a researcher in a village with no signal does not lose an interview and its
+     * photographs; a feedback report is written from a settled moment, is short, and — crucially —
+     * its whole value to the person filing it is the STATUS that comes back. A queued report would
+     * sit with no id, appear in no list, and be indistinguishable from one that was never written,
+     * on the one screen whose promise is that what you said is on the record. The screen reports the
+     * failure and keeps the words in the box instead, so the person can send it again.
+     */
+    suspend fun createFeedbackReport(request: FeedbackReportCreateRequest): FeedbackReportDto =
+        api.createFeedbackReport(request)
+
+    /** This account's own reports, newest first, with the trail of who has answered them. */
+    suspend fun myFeedbackReports(page: Int = 1, pageSize: Int = 25): FeedbackReportPageDto =
+        api.myFeedbackReports(page, pageSize)
 
     /** Master-admin only: the global app settings (transcription mode + off-peak processing window). */
     suspend fun appSettings(): AppSettingDto = api.appSettings()

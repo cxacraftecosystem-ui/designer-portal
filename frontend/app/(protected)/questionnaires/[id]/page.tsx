@@ -73,7 +73,11 @@ import {
   downloadQuestionnaireWorkbook,
   patchQuestionnaire,
   patchSection,
+  questionnaireKindLabel,
+  QUESTIONNAIRE_KINDS,
+  QUESTIONNAIRE_KIND_LABELS,
   type QForm,
+  type QFormKind,
   type QFormUploadReport
 } from "@/lib/questionnaireForms";
 
@@ -356,6 +360,34 @@ export default function QuestionnaireDetailPage() {
     }
   }
 
+  /**
+   * Set or clear the questionnaire's KIND.
+   *
+   * SAVES ON SELECT, like `attachWorkshop` above and unlike the title box, because it is a pick and
+   * not a phrase — there is nothing to proofread before committing it, and a designer who chose a
+   * kind and navigated away without pressing "Save details" would have chosen nothing.
+   *
+   * THE BLANK ROW TRAVELS AS AN EXPLICIT `null`, the same asymmetry the workshop dropdown has and
+   * for the same mechanism: `clean_data` drops keys, and `kind` is named in the route's
+   * `_QUESTIONNAIRE_CLEARABLE_COLUMNS` so the null survives it and genuinely clears the column.
+   * `undefined` would leave the old kind standing and the dropdown would spring back on the next
+   * load with no error anywhere.
+   */
+  async function setKind(kind: string) {
+    const next = await run(
+      () => patchQuestionnaire(id, { kind: (kind || null) as QFormKind | null }),
+      "Unable to change the kind of this questionnaire"
+    );
+    if (next) {
+      setForm(next);
+      setNotice(
+        kind
+          ? `Filed as ${questionnaireKindLabel(kind)}. The report puts its answers under that stage.`
+          : "Kind cleared. The report leaves its answers unfiled until a kind is chosen."
+      );
+    }
+  }
+
   /*
     THE RENAME BOX RE-SEEDS FROM THE SERVER, WHICH IS WHAT ITS `key` USED TO DO.
 
@@ -557,16 +589,37 @@ export default function QuestionnaireDetailPage() {
         </div>
       ) : null}
       {!mayEdit ? (
-        // An honest statement of a real boundary, not a padlock over the page. Reading this form and
-        // answering it are both open to any designer; only its wording belongs to its author.
+        /*
+          ══ THE REFUSAL, AND THE WAY FORWARD BESIDE IT ══════════════════════════════════════════
+
+          There is no `/questionnaires/[id]/edit` route in this app — editing is IN PLACE on this
+          page, behind `mayEdit` — so for a designer handed a colleague's form, or looking at the
+          published standard form, this notice is the entire explanation of why the page has no
+          controls on it. It used to end at what they could not do plus a download, and left out the
+          one action that actually gets them an editable instrument: REUSE, which copies the
+          questions into a questionnaire they own. `POST /questionnaires/{id}/reuse` is ungated for
+          exactly this reason, and the "Reuse at another workshop" button is already in the header
+          above — but a reader who has just been told they may not edit does not go looking for a
+          button whose label is about workshops.
+
+          SHORTER THAN WHAT IT REPLACES. House rule: UI copy is terse, and the reasoning lives here.
+          The .xlsx paragraph is gone from the screen — the button that download belongs to is not
+          rendered for this reader, so a sentence explaining its absence explained a control they
+          cannot see. `ArtefactNotice` below still carries the question-set/xlsx distinction.
+        */
         <div className="mb-4 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <Lock className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
-            This questionnaire belongs to another designer, so its questions cannot be changed here. You can still record
-            answers against it, and you can download the <span className="font-medium text-ink-900">question set</span> —
-            the questions on their own — to run this instrument yourself. The full .xlsx is not offered, because it
-            carries every sitting recorded against this form: the respondents&rsquo; names, the interview notes and every
-            answer.
+            This form belongs to another designer, so its questions cannot be changed here. You can record answers
+            against it, download the <span className="font-medium text-ink-900">question set</span>, or{" "}
+            <button
+              type="button"
+              className="font-medium text-purple-700 underline underline-offset-2 hover:text-purple-800"
+              onClick={() => setReuseOpen(true)}
+            >
+              reuse it into a copy of your own
+            </button>{" "}
+            and edit that.
           </span>
         </div>
       ) : null}
@@ -666,6 +719,33 @@ export default function QuestionnaireDetailPage() {
                 }
                 // This dropdown SAVES on select rather than filling in a form field, so focus must
                 // not jump to the next control the way it does in a top-to-bottom record form.
+                advanceOnSelect={false}
+              />
+            </FieldBlock>
+            {/*
+              THE KIND — what decides which stage of the report this instrument's answers land in.
+              `FieldBlock` for the reason stated two controls up, and no `searchable` because this is
+              a two-member constant vocabulary rather than a list of records.
+            */}
+            <FieldBlock
+              label="Kind"
+              hint={
+                <p className="mt-1 text-xs leading-5 text-ink-500">
+                  Decides which stage of the report this questionnaire&rsquo;s answers are filed under.
+                </p>
+              }
+            >
+              <Dropdown
+                value={form.kind ?? ""}
+                onChange={setKind}
+                options={QUESTIONNAIRE_KINDS.map((kind) => ({
+                  value: kind,
+                  label: QUESTIONNAIRE_KIND_LABELS[kind]
+                }))}
+                noneLabel="Not stated"
+                ariaLabel="Kind"
+                disabled={busy}
+                // Saves on select, so focus must not jump on to the next control.
                 advanceOnSelect={false}
               />
             </FieldBlock>

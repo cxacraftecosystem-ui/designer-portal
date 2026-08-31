@@ -64,6 +64,7 @@ import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { moveIndex, useDragReorder } from "@/components/hooks/useDragReorder";
 import { FLASH_MS } from "@/components/hooks/useRevealRow";
 import { findMissingViews } from "@/lib/imageQuality";
+import { isTentativeRow, tentativeField } from "@/lib/sketchTentative";
 import { FIELD_ANCHOR_ATTRIBUTE, ROW_ANCHOR_ATTRIBUTE, type StageFocus } from "@/lib/workshopSearch";
 import {
   blankRow,
@@ -1545,6 +1546,36 @@ export function CollectionTable({
   const dragIds = useMemo(() => rows.map(keyOf), [rows]);
 
   /**
+   * The registry's "Tentative" flag, where this entity declares one — TODAY ONLY `sketch` DOES.
+   *
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * THIS LIST IS DELIBERATELY *NOT* PARTITIONED TENTATIVE-FIRST, AND THAT IS THE JUDGEMENT
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * `lib/sketchTentative.ts` carries the owner's request and the partition that serves it: tentative
+   * sketches are listed first wherever sketches are READ. This is the one place they are WRITTEN, and
+   * the two cannot both be true of the same array:
+   *
+   *   * the digit printed on each row is `index + 1`, and that index IS the `ordinal`
+   *     `buildStageEntries` sends and `save_stage` stores. Drawing a partitioned order would either
+   *     print the display position (a number that is not the ordinal the provenance page and the
+   *     report use) or print the stored one out of sequence (1, 4, 2, 3);
+   *   * `useDragReorder` and both arrows move a row BY INDEX inside this same array, so a partition
+   *     over the top of it would snap a dragged row back across the group boundary — a gesture that
+   *     visibly does nothing, which is rule 2 of that hook read from the other side;
+   *   * the checkbox itself lives INSIDE the row's own expanded panel, so ticking it would move the
+   *     open panel out from under the designer's cursor mid-edit.
+   *
+   * Anything that reordered here would therefore be writing `ordinal`, which is precisely what makes
+   * unticking the box unable to restore a row's place. So the flag is SAID instead — one word on the
+   * collapsed row, below — and the reordering is left to the surfaces that only read.
+   *
+   * READ OFF THE REGISTRY, so the word on screen is `stage_definitions.py`'s label and the other 42
+   * collection entities draw nothing at all.
+   */
+  const tentativeFlag = useMemo(() => tentativeField(entity), [entity]);
+
+  /**
    * The one commit both the arrows and the drag go through.
    *
    * `moveIndex` — the hook's own pure helper — rather than the swap this function used to do. For the
@@ -1864,6 +1895,25 @@ export function CollectionTable({
                   >
                     {rowTitle(entity, row, index)}
                   </button>
+                  {/*
+                    ONE WORD, AND IT IS THE REGISTRY'S. A reader scanning nine sketches has to be able
+                    to see which are unsettled without opening each one, and this list is not
+                    reordered (see `tentativeFlag` above), so the word is the whole of the signal here.
+
+                    AMBER AND NOT PURPLE. Purple-700 is the action colour and this chip is not an
+                    action; amber is what this app already uses for "wants attention, nothing is
+                    wrong", which is exactly what an unfinalised sketch is. It sits beside the
+                    required-progress chip, which uses the same pair, so one row never carries two
+                    different vocabularies for "not done yet".
+
+                    NOT A SENTENCE. The registry's help text under the checkbox explains the rule; a
+                    list chip that repeated it would be an essay printed nine times.
+                  */}
+                  {tentativeFlag && isTentativeRow(row) ? (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      {tentativeFlag.label}
+                    </span>
+                  ) : null}
                   {progress.total ? (
                     <span
                       className={

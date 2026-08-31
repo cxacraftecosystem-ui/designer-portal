@@ -46,6 +46,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.USAGE_BASIS_REQUIRED_AT_SIGN_IN
@@ -83,11 +85,23 @@ import kotlinx.coroutines.launch
  *     tick at the door is a promise this client makes; this screen is the enforcement, and it is
  *     reached in three genuine situations, none of them a corner case:
  *
- *       * the door could not show the notice at all ([UsageDoorPolicy.AskLater]);
+ *       * the door could not read the notice, so the tick was taken but nothing could be FILED
+ *         against a version — see [UsageDoorState.mayProceed] for what that used to do instead;
  *       * the tick was taken and the `POST /usage/consent` that records it failed — a phone that
  *         had signal for the login and lost it a second later, which on this fleet is a Tuesday;
  *       * `usage.NOTICE_VERSION` moved since the account last agreed, so a session that was fine
  *         yesterday is asked again today, at the door it happens to walk through.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * WHAT THE AGREEMENT IS TO, SINCE 2026-08-30
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The tick agrees to the TERMS AND CONDITIONS, not to the recording notice on its own. [TermsScreen]
+ * carries nine clauses compiled into this binary plus the served notice as clause 10, so the whole
+ * agreement can be read on a phone with no signal, and the door is one line with an underlined link.
+ * The web made the identical change on the same day (`frontend/app/terms/page.tsx`), and §16 of the
+ * frontend reference is why the two had to move together: the sign-in card and this screen are built
+ * against one description.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * THE ANSWER RECORDED AT THE DOOR IS NOT ALWAYS THE ANSWER SENT
@@ -143,17 +157,38 @@ class UsageDoorState internal constructor(private val store: UsageNoticeStore) {
     var agreedAt by mutableStateOf<String?>(null)
         private set
 
-    val policy: UsageDoorPolicy
-        get() = usageDoorPolicy(noticeReady = notice?.isUsable == true, stillFetching = fetching)
+    /** A usable notice is in hand — the server's, or the copy this device kept. It decides only what
+     *  the answer can be FILED against; it has no vote on whether sign-in may proceed. */
+    val noticeReady: Boolean
+        get() = notice?.isUsable == true
 
-    /** Sign-in may proceed. TRUE under [UsageDoorPolicy.AskLater] on purpose — the enforcement moves
-     *  to [UsageConsentGateScreen] rather than disappearing. See [UsageDoorPolicy]. */
+    /**
+     * SIGN-IN MAY PROCEED. The tick, and nothing else.
+     *
+     * ── WHAT THIS USED TO BE, AND WHY IT IS NOT THAT ANY MORE ─────────────────────────────────
+     *
+     * It used to be a three-way over a `UsageDoorPolicy`: the tick was required only where a notice
+     * had arrived, sign-in WAITED while the first fetch was in flight, and where no notice could be
+     * had from any source the door let the person through unasked and moved the enforcement to
+     * [UsageConsentGateScreen]. Every arm of that existed to avoid one failure — a checkbox whose
+     * text never arrives is a permanently disabled button on the one screen with no other controls,
+     * i.e. a fleet-wide lockout out of one bad deploy of `GET /usage/consent/notice`.
+     *
+     * That failure cannot happen any more, and the reason is [TermsScreen]: since 2026-08-30 the box
+     * agrees to the terms and conditions, which are constants compiled into this binary. The
+     * question can always be put and can always be answered with no network at all, so the escape
+     * hatch is a net for a fall that no longer exists — and leaving it in would be a front door that
+     * a dead endpoint walks straight through. `frontend/app/login/page.tsx` made the identical
+     * change on the same day and states it in one clause: `blocked = !agreed`.
+     *
+     * **The requirement is not weakened and the notice is not abandoned.** It is still fetched,
+     * because [usageAnswerAtTheDoor] files the answer against its version; when it is missing
+     * nothing is filed, [USAGE_NOTICE_NOT_FILED_LINE] says so under the box, the server's gate goes
+     * on reading `required`, and [UsageConsentGateScreen] asks again one screen later. What moved is
+     * the FILING, never the asking.
+     */
     val mayProceed: Boolean
-        get() = when (policy) {
-            UsageDoorPolicy.Blocking -> agreed
-            UsageDoorPolicy.AskLater -> true
-            UsageDoorPolicy.Waiting -> false
-        }
+        get() = agreed
 
     /** Named `agree` and not `setAgreed`: the latter is the JVM name Kotlin already
      *  generates for [agreed]'s private setter, and declaring both is a signature clash. */
@@ -187,8 +222,15 @@ class UsageDoorState internal constructor(private val store: UsageNoticeStore) {
         if (notice == null) notice = store.read()
     }
 
-    /** Ask the server for the notice again. Public so the door can offer a retry to somebody
-     *  who was offline when this screen opened and has since found a signal. */
+    /**
+     * Ask the server for the notice again.
+     *
+     * Public so a RETRY can be offered to somebody who was offline when the app opened and has since
+     * found a signal. That control used to sit on the door; it now sits under clause 10 of
+     * [TermsScreen], which is the only place on either client where a missing notice is visible as
+     * an absence — the door no longer shows the notice at all, so a retry button there would have
+     * been a control for a problem the reader could not see.
+     */
     suspend fun refresh(context: Context) {
         fetching = notice == null
         val fresh = runCatching { UsageClient.of(context).consentNotice() }.getOrNull()
@@ -196,6 +238,11 @@ class UsageDoorState internal constructor(private val store: UsageNoticeStore) {
             // A NEW VERSION UNTICKS THE BOX. Somebody who ticked against the cached text and then
             // received a different one has not agreed to what is now on screen, and carrying the tick
             // across would record them as having agreed to text they never saw.
+            //
+            // STILL TRUE NOW THAT THE DOOR SHOWS NO NOTICE, and worth saying because it looks like it
+            // should not be: the notice is clause 10 of the terms this box agrees to, and
+            // [TermsScreen] renders the very copy held here. So a version that moved under the tick
+            // moved the agreement, whether or not the reader had the terms open at the time.
             if (fresh.version != notice?.version) agree(false)
             notice = fresh
             store.write(fresh)
@@ -462,28 +509,127 @@ fun UsageNoticeDisclosure(
 }
 
 // ---------------------------------------------------------------------------------------------
+// The one line the agreement is made on
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * THE TICK AND THE LINK, shared by the door and by [UsageConsentGateScreen] so the two screens
+ * cannot ask for the agreement in two different sentences.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY IT IS TWO CONTROLS AND NOT ONE ROW
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The whole row used to be one `toggleable` with `Role.Checkbox`, which is the right shape for a
+ * checkbox beside a label and the WRONG shape the moment part of that label has to be tappable: a
+ * `toggleable` ancestor consumes the tap, so a link drawn inside it would tick the box instead of
+ * opening the terms — silently, and only ever for the reader who wanted to read before agreeing.
+ *
+ * So the tick target ends where the link begins. The reader gets two announcements, "not ticked,
+ * checkbox" and "terms and conditions, button", which is what a person navigating with TalkBack
+ * needs anyway: one control to agree, one to read what they are agreeing to, told apart by role
+ * rather than by remembering which half of a sentence was underlined.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE OTHER ACCESSIBILITY RULINGS, UNCHANGED
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ *  * **A real checkbox.** The [Checkbox] takes `onCheckedChange = null` and the row around it owns
+ *    the gesture, so the tick is one target with one announcement instead of a 20dp box beside a
+ *    label announced separately.
+ *  * **The link is underlined AND coloured.** Colour alone is a signal a colour-blind reader never
+ *    receives, and on a phone there is no hover to reveal it either.
+ *  * **It survives the largest font scale.** Nothing here has a fixed height and the link takes the
+ *    remaining width with `weight`, so at 200% the phrase wraps downwards instead of clipping. The
+ *    sign-in screen is already in a `verticalScroll`.
+ */
+@Composable
+private fun UsageAgreeRow(
+    agreed: Boolean,
+    onAgree: (Boolean) -> Unit,
+    onOpenTerms: () -> Unit,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 14.sp,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.toggleable(
+                value = agreed,
+                role = Role.Checkbox,
+                onValueChange = onAgree
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Decoration: the row owns the gesture. A clickable box here would be announced as a
+            // second control on top of the row that already announces itself.
+            Checkbox(checked = agreed, onCheckedChange = null)
+            Text(
+                USAGE_AGREE_LABEL,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = fontSize
+            )
+        }
+        Text(
+            USAGE_TERMS_LINK,
+            modifier = Modifier
+                .weight(1f)
+                .clickable(
+                    role = Role.Button,
+                    // Spoken instead of the bare phrase, because "terms and conditions, button"
+                    // does not say what the button DOES, and on this screen the reader is deciding
+                    // whether pressing it will lose the password they have half typed.
+                    onClickLabel = "Read the terms and conditions"
+                ) { onOpenTerms() }
+                // The tap target, not decoration: 14sp of text is about 20dp tall, and 48dp is the
+                // minimum a thumb can aim at. The Checkbox beside it already enforces its own.
+                .padding(vertical = 14.dp),
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = fontSize,
+            fontWeight = FontWeight.SemiBold,
+            textDecoration = TextDecoration.Underline
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The door
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The consent block on the sign-in screen: the required tick, the notice behind it, and — when
- * sign-in is blocked — the reason, announced.
+ * The consent block on the sign-in screen: one line, and — when sign-in is blocked — the reason,
+ * announced.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- * ACCESSIBILITY IS THE DESIGN HERE, NOT A PASS OVER IT
+ * WHAT THIS SCREEN USED TO CARRY, AND WHERE IT WENT
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- *  * **A real checkbox.** The whole row is `toggleable` with `Role.Checkbox` and the [Checkbox]
- *    itself takes `onCheckedChange = null`. That gives one tap target with one announcement — "not
- *    ticked, checkbox, double tap to toggle" — instead of a label and a box announced separately,
- *    where the box is a 20dp target beside a three-line sentence.
- *  * **The blocked reason is announced.** A disabled `Button` is read as "disabled" and nothing
- *    more; [usageSignInBlockedReason] is drawn in a polite live region so the reason is SPOKEN when
- *    it changes, and it is on screen for everybody else too.
- *  * **It survives the largest font scale.** Nothing here has a fixed height, the tick row is a
- *    `Row` with an `Alignment.Top` checkbox beside a weighted `Column`, and the whole sign-in screen
- *    is already in a `verticalScroll`. At 200% with "Larger text" also on, the notice grows
- *    downwards and the person scrolls; nothing clips and nothing overlaps.
+ * The notice's title, a three-clause label, the server's `requiredSentence` printed under it, and a
+ * disclosure that opened eight sections of served text — all of it over a half-typed password in a
+ * card 360dp wide. The owner's ruling on 2026-08-30 was that nobody reads it there, and the web's
+ * `ConsentGateField` was cut to one line the same day. This is the handset's half of that change.
+ *
+ * Nothing was deleted. Every one of those sentences is now clause 10 of [TermsScreen], rendered by
+ * the same [UsageNoticeBody] the settings card uses, off the same payload, still versioned, still
+ * the version the answer is filed against. What changed is that a person who wants to read it goes
+ * to a screen built for reading.
+ *
+ * **THE LINK OPENS AN IN-APP SCREEN AND MUST NEVER OPEN A BROWSER.** These handsets are used where
+ * there is no signal; a browser intent to the web terms page would hand somebody a blank tab and
+ * ask them to agree to it. See [TermsScreen]'s header.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE BLOCKED REASON IS STILL ANNOUNCED
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A disabled `Button` is read by TalkBack as "disabled" and nothing more, so [usageDoorHint] is
+ * drawn in a polite live region beside the buttons: the reason is SPOKEN when it changes, and it is
+ * on screen for everybody else too. That was the argument for the old blocked-reason line and it is
+ * unchanged; only the sentences are shorter.
  */
 @Composable
 fun UsageConsentDoor(
@@ -493,92 +639,27 @@ fun UsageConsentDoor(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     /*
-     * READ HERE AND NOT PASSED IN, which is the opposite of what the two usage screens do and is
-     * right for the opposite reason. A value handed down from the sign-in host is computed when the
-     * HOST recomposes, and the host does not recompose while somebody types an email or taps this
-     * card's retry — so a phone that was in a tunnel when the app opened would go on being told it
-     * has no connection for the whole session. Read at composition, this is fresh every time the
-     * door redraws, which includes every retry.
-     *
-     * IT IS NOT A SECOND IDEA OF "OFFLINE". `WorkshopRepository.isOnline` is a one-line forward to
-     * this same function; this composable simply has no repository to reach through.
+     * STATE HERE AND NOT HOISTED, unlike the tick beside it. Whether the terms are open is a fact
+     * about this screen and dies with it, which is exactly right: a person who read the terms and
+     * came back has not thereby agreed to anything, and nothing after sign-in needs to know they
+     * looked. `door.agreed` is hoisted because the POST genuinely needs it after this screen is gone.
      */
-    val online = ConnectivityObserver.isOnline(context)
-    var expanded by remember { mutableStateOf(false) }
-    val notice = door.notice
-    val blocked = usageSignInBlockedReason(door.policy, door.agreed, online)
+    var showTerms by remember { mutableStateOf(false) }
+    val hint = usageDoorHint(
+        agreed = door.agreed,
+        noticeReady = door.noticeReady,
+        stillFetching = door.fetching
+    )
 
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (notice != null) {
-            if (notice.title.isNotBlank()) {
-                Text(
-                    notice.title,
-                    display = true,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .toggleable(
-                        value = door.agreed,
-                        role = Role.Checkbox,
-                        onValueChange = { door.agree(it) }
-                    )
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Decoration: the row owns the gesture. A clickable box here would be announced as a
-                // second control on top of the row that already announces itself.
-                Checkbox(checked = door.agreed, onCheckedChange = null)
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        USAGE_AGREE_LABEL,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    if (notice.requiredSentence.isNotBlank()) {
-                        // The SERVER's sentence, under the label, unopened. The requirement must not
-                        // be something a person only meets by expanding a disclosure.
-                        Text(
-                            notice.requiredSentence,
-                            color = MaterialTheme.field.muted,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp
-                        )
-                    }
-                }
-            }
-            UsageNoticeDisclosure(
-                notice = notice,
-                expanded = expanded,
-                onExpandedChange = { expanded = it }
-            )
-        } else if (door.policy == UsageDoorPolicy.AskLater) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        UsageAgreeRow(
+            agreed = door.agreed,
+            onAgree = { door.agree(it) },
+            onOpenTerms = { showTerms = true }
+        )
+        if (hint != null) {
             Text(
-                USAGE_ASK_LATER_LINE,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
-                lineHeight = 17.sp
-            )
-            // OFFERED RATHER THAN POLLED. A phone that was in a tunnel when this screen opened will
-            // never be asked again by the one-shot fetch in `rememberUsageDoorState`, and a
-            // background retry loop on a sign-in screen is a battery drain for a question nobody may
-            // be about to answer. So the person who has just walked outside gets a control, and the
-            // person who has not is not charged for it.
-            TextButton(onClick = { scope.launch { door.refresh(context) } }) {
-                Text("Read the notice now", fontSize = 12.sp)
-            }
-        }
-
-        if (blocked != null) {
-            Text(
-                blocked,
+                hint,
                 // POLITE and not ASSERTIVE: the reader is mid-form, typing an email, and an
                 // assertive region interrupts them at every keystroke that changes the state.
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -587,6 +668,23 @@ fun UsageConsentDoor(
                 lineHeight = 17.sp
             )
         }
+    }
+
+    if (showTerms) {
+        TermsDialog(
+            // THE COPY THE ANSWER WILL BE FILED AGAINST, handed over rather than fetched again. A
+            // terms screen that asked for its own could show one version while
+            // [usageAnswerAtTheDoor] recorded another — a signature against text nobody displayed,
+            // which is the single failure the version column exists to make impossible.
+            notice = door.notice,
+            // OFFERED RATHER THAN POLLED. A phone that was in a tunnel when the app opened will
+            // never be asked again by the one-shot fetch in [rememberUsageDoorState], and a
+            // background retry loop on a sign-in screen is a battery drain for a question nobody may
+            // be about to answer. So the person who has just walked outside gets a control, and the
+            // person who has not is not charged for it.
+            onRetryNotice = { scope.launch { door.refresh(context) } },
+            onDismiss = { showTerms = false }
+        )
     }
 }
 
@@ -608,12 +706,20 @@ fun UsageConsentDoor(
  * ── AND WHY IT ASKS THE SERVER RATHER THAN TRUSTING THE ACCOUNT IT WAS HANDED ──────────────────
  *
  * `GET /usage/consent` returns the gate, the notice, the stored answer AND the decision log in one
- * call. Rendering the notice from that payload rather than from the door's copy means the text on
- * the screen where the answer is actually recorded came from the same request that said an answer
- * was needed — so the version sent back is provably the version shown. It also gives this screen a
- * SECOND source for the notice: a deployment where `GET /usage/consent/notice` is broken but the
- * rest of the API is fine still asks the question here, correctly, which is what makes
- * [UsageDoorPolicy.AskLater] a safe fallback rather than a hole.
+ * call. Taking the notice from that payload rather than from the door's copy means the version this
+ * screen files the answer against came from the same request that said an answer was needed. It also
+ * gives this screen a SECOND source for the notice: a deployment where `GET /usage/consent/notice`
+ * is broken but the rest of the API is fine still asks the question here, correctly, and files it.
+ *
+ * ── THE NOTICE IS NO LONGER PRINTED ON THIS SCREEN, AND THAT IS A CHANGE OF ADDRESS ────────────
+ *
+ * It used to render [UsageNoticeBody] in full, expanded, with the argument: *"This screen has
+ * nothing else on it, so hiding the text a person is agreeing to behind one more tap would be asking
+ * for a signature on a folded page."* That argument was right about the notice being the agreement.
+ * Since 2026-08-30 the agreement is the TERMS, the notice is clause 10 of them, and both clients ask
+ * for it in one line with the phrase linked. So the text is one tap away in [TermsScreen] — the same
+ * one tap it is at the door — and this screen asks the same question in the same words rather than
+ * being the one place in the product that asks it differently.
  */
 @Composable
 fun UsageConsentGateScreen(
@@ -635,6 +741,9 @@ fun UsageConsentGateScreen(
     var agreedAt by remember { mutableStateOf<String?>(null) }
     var sending by remember { mutableStateOf(false) }
     var sendError by remember { mutableStateOf<String?>(null) }
+    // Local, and it dies with the screen: reading the terms is not answering, and nothing after this
+    // screen needs to know somebody looked. Same ruling as [UsageConsentDoor]'s own `showTerms`.
+    var showTerms by remember { mutableStateOf(false) }
 
     suspend fun load() {
         read = UsageReadState.Loading
@@ -709,39 +818,26 @@ fun UsageConsentGateScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // EXPANDED, not behind a disclosure. This screen has nothing else on it, so
-                    // hiding the text a person is agreeing to behind one more tap would be asking for
-                    // a signature on a folded page.
-                    UsageNoticeBody(notice)
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .toggleable(
-                                value = agreed,
-                                role = Role.Checkbox,
-                                onValueChange = {
-                                    agreed = it
-                                    agreedAt = if (it) usageNowStamp() else null
-                                }
-                            )
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Checkbox(checked = agreed, onCheckedChange = null)
-                        Text(
-                            USAGE_AGREE_LABEL,
-                            modifier = Modifier.weight(1f),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+                    // THE SAME ROW AS THE DOOR, from the same composable. Two surfaces that ask for
+                    // one agreement must ask for it in one sentence — a person who ticked "I agree
+                    // to the terms and conditions" at the door and then met a differently worded box
+                    // here would reasonably conclude they were being asked for something else.
+                    UsageAgreeRow(
+                        agreed = agreed,
+                        onAgree = {
+                            agreed = it
+                            // Stamped on the TICK, not at the POST, for the reason `UsageDoorState`
+                            // states: the two are separated by a network this fleet often does not
+                            // have, and the server already stamps its own `createdAt`.
+                            agreedAt = if (it) usageNowStamp() else null
+                        },
+                        onOpenTerms = { showTerms = true },
+                        fontSize = 15.sp
+                    )
 
                     if (!agreed) {
                         Text(
-                            "You cannot continue until you tick the box.",
+                            USAGE_TICK_TO_CONTINUE,
                             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                             color = MaterialTheme.field.muted,
                             fontSize = 12.sp
@@ -823,5 +919,18 @@ fun UsageConsentGateScreen(
         ) {
             Text("Reload this question", fontSize = 12.sp)
         }
+    }
+
+    if (showTerms) {
+        TermsDialog(
+            // This screen's own copy, from `GET /usage/consent` — the same payload the answer below
+            // is filed against, so the version read and the version recorded cannot diverge.
+            notice = notice,
+            // `load()` and not `door.refresh`: on this screen the notice arrives with the gate, and
+            // re-reading the one without the other would leave clause 10 fresh and the reason line
+            // above it stale.
+            onRetryNotice = { scope.launch { load() } },
+            onDismiss = { showTerms = false }
+        )
     }
 }

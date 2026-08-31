@@ -957,7 +957,14 @@ def create_app() -> FastAPI:
         # queue full — so the sign-in page can tell a person waiting on an administrator apart from
         # a person who mistyped a password. It carries no information the response's own `detail`
         # sentence does not already say in English; see app/api/routes/auth.py.
-        expose_headers=["X-Access-Status"],
+        #
+        # `X-Sign-In-Hint` is the SECOND refusal header and it is not a duplicate of the first: it
+        # classifies a refusal that is about the IDENTIFIER rather than about admission — what you
+        # typed names two accounts, or this account has never had a password. It is listed here
+        # for the identical reason, and forgetting it would produce the identical divergence: the
+        # sign-in screen falls back to neutral chrome in the browser while the handset draws the
+        # right panel, and no server test can see the difference.
+        expose_headers=["X-Access-Status", "X-Sign-In-Hint"],
     )
     # Added AFTER CORS so it wraps it (Starlette runs the most recently added middleware outermost),
     # which is what puts the security headers on preflight responses too.

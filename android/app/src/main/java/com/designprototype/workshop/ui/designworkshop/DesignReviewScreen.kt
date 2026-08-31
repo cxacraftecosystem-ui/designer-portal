@@ -99,6 +99,7 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.designWorkshopHint
 import com.designprototype.workshop.ui.designWorkshopLabel
 import com.designprototype.workshop.ui.field
+import com.designprototype.workshop.ui.requiredMarked
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1743,7 +1744,24 @@ private fun DwReviewTextBox(
                 dropped = (typed.length - MAX_REVIEW_TEXT).coerceAtLeast(0)
                 onValueChange(typed.take(MAX_REVIEW_TEXT))
             },
-            label = { Text(label) },
+            /*
+              [requiredMarked] AS INSURANCE, NOT AS A FIX — the one form-field label render on this
+              screen that the red-asterisk wave deliberately left unwrapped.
+
+              Its rule is that the mark IS a trailing " *" and that honouring the convention at the
+              RENDERER is what catches every label, "including the two dozen that spell it into a
+              literal and would have been missed by a per-call-site Boolean". Both of this box's call
+              sites today pass optional labels carrying no mark, so this wrapper changes nothing on
+              screen right now: [dwRequiredMarked] returns a plain single-span string for a label
+              with no trailing mark, which is why that file says it is "safe to wrap around EVERY
+              label a control renders rather than only the ones known to be required".
+
+              WHAT IT BUYS IS THE NEXT CALL SITE. A required one added here would otherwise compile
+              perfectly and draw a plain-ink asterisk — the exact silent failure RequiredMark.kt
+              exists to prevent, on a screen where a designer is typing a justification that goes
+              into an audit ledger. Mark-safe by construction beats mark-safe by inspection.
+            */
+            label = { Text(requiredMarked(label)) },
             placeholder = { Text(placeholder) },
             minLines = 2,
             // The refusal is the box's own, so it belongs on the box for a reader who navigates by

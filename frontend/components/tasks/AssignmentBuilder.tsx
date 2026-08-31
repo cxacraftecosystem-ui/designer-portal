@@ -14,6 +14,12 @@ import type { TaskBatchResult, TaskOptions } from "@/components/tasks/types";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { ROLES_BY_RANK, roleLabel } from "@/lib/permissions";
+import {
+  deviceLooksOffline,
+  workshopEmptyLabel,
+  type WorkshopListState,
+  type WorkshopListVoice
+} from "@/lib/workshopOptions";
 import { handleFormEnter } from "@/lib/formNav";
 import type { UserRole } from "@/lib/types";
 
@@ -60,9 +66,21 @@ function Picked({ labels, empty }: { labels: string[]; empty: string }) {
   );
 }
 
+/**
+ * WHAT IS NOT AT STAKE when `/tasks/options` does not answer.
+ *
+ * The shared clause is *"this record can be saved without it"*, and nothing on this panel is a
+ * record: the assignees are REQUIRED and a batch cannot be sent without them. What an admin needs
+ * instead is that the pickers are short rather than the repository empty, and that the page's own
+ * error banner above already names the failure. The OPENING of both sentences stays the shared one
+ * -- see `WorkshopListVoice.reassurance`.
+ */
+const READ_FAILED_HERE = "The error above says what happened.";
+
 export function AssignmentBuilder({
   options,
   loading,
+  optionsFailed,
   workshopId,
   workshopTitle,
   pickerSearch,
@@ -70,6 +88,11 @@ export function AssignmentBuilder({
 }: {
   options: TaskOptions | null;
   loading: boolean;
+  /**
+   * Did the last `/tasks/options` read FAIL? Distinct from `loading`, and distinct from an answer
+   * with nothing in it -- three states that this panel used to render as one empty list.
+   */
+  optionsFailed: boolean;
   workshopId: string;
   workshopTitle: string | null;
   /**
@@ -99,6 +122,34 @@ export function AssignmentBuilder({
   const allAssignees = useMemo(() => options?.assignees ?? [], [options]);
   const allArtisans = useMemo(() => options?.artisans ?? [], [options]);
   const allSections = useMemo(() => options?.sections ?? [], [options]);
+
+  /*
+    ONE STATE FOR ALL THREE PICKERS, because one request fills all three: they arrive together or
+    not at all. `rows` is empty in the "ok" arm deliberately -- this value is only ever read for its
+    KIND, since each picker below keeps its own genuinely-empty sentence (they are three different
+    claims: nobody ranks below you, the questionnaire has no active sections, this workshop has no
+    artisans, and the shared "No {noun} have been recorded yet" is none of them).
+
+    `accessList: false`: none of the three is a grant set, so R6's reason for never keeping a list
+    on the device does not apply here and must not be printed as though it did.
+  */
+  const listState: WorkshopListState<never> = loading
+    ? { kind: "loading" }
+    : optionsFailed
+      ? { kind: "failed" }
+      : { kind: "ok", rows: [], total: null };
+  const listOnline = !deviceLooksOffline();
+  const voiceFor = (noun: string): WorkshopListVoice => ({
+    table: "field",
+    noun,
+    scoped: false,
+    accessList: false,
+    online: listOnline,
+    reassurance: READ_FAILED_HERE
+  });
+  /** The site's own sentence once the read has ANSWERED; the shared ones before that. */
+  const emptyLabelFor = (noun: string, own: string) =>
+    listState.kind === "ok" ? own : workshopEmptyLabel(listState, voiceFor(noun));
 
   // Switching workshop reloads a narrower artisan list; anything picked from the previous workshop
   // has to go, or the batch would silently carry artisans who are not at this workshop at all.
@@ -240,7 +291,10 @@ export function AssignmentBuilder({
               }))}
               searchable
               placeholder={loading ? "Loading people..." : "Select people"}
-              emptyLabel={loading ? "Loading people..." : "Nobody ranked below you"}
+              // "Nobody ranked below you" is a claim about the hierarchy and may only be made off an
+              // answer that arrived. Before that it is the app's one word for "an answer is
+              // outstanding", and on a failure it is the shared sentence.
+              emptyLabel={emptyLabelFor("people", "Nobody ranked below you")}
               confirmLabel="Confirm people"
             />
             {/*
@@ -344,7 +398,8 @@ export function AssignmentBuilder({
               // questionnaire with seven active sections would offer no way to type either.
               searchable
               placeholder="Sections to cover"
-              emptyLabel="No active questionnaire sections"
+              // A claim about the questionnaire, so it waits for the questionnaire's answer.
+              emptyLabel={emptyLabelFor("questionnaire sections", "No active questionnaire sections")}
               confirmLabel="Confirm sections"
             />
           </FieldBlock>
@@ -369,7 +424,11 @@ export function AssignmentBuilder({
               // `searchable`: the artisan corpus, and capped — see the notice under this control.
               searchable
               placeholder={workshopId ? "All artisans at this workshop" : "All artisans"}
-              emptyLabel={workshopId ? "No artisans linked to this workshop" : "No artisans yet"}
+              // Two claims about the repository, both of which need the read to have answered first.
+              emptyLabel={emptyLabelFor(
+                "artisans",
+                workshopId ? "No artisans linked to this workshop" : "No artisans yet"
+              )}
               confirmLabel="Confirm artisans"
             />
             {/*

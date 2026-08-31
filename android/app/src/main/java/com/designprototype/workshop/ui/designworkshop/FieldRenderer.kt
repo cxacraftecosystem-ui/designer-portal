@@ -63,12 +63,18 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.ui.MapPickerDialog
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
+import com.designprototype.workshop.ui.SelectCreateAction
 import com.designprototype.workshop.ui.SelectOption
+import com.designprototype.workshop.ui.WorkshopListKind
+import com.designprototype.workshop.ui.WorkshopListState
+import com.designprototype.workshop.ui.workshopListNotice
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text. Every file in this feature
 // imports it. Without the import the bare `Text` in this file resolves to Material's, which inherits
 // whatever family LocalTextStyle happens to carry and quietly sets headings in the body face — the
 // exact failure FieldText.kt was written to make impossible.
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.requiredMarked
+import com.designprototype.workshop.ui.dwWithoutRequiredMark
 import com.designprototype.workshop.ui.FieldDateField
 import com.designprototype.workshop.ui.FieldTimeField
 import com.designprototype.workshop.ui.ArtisanPhoneField
@@ -79,6 +85,7 @@ import com.designprototype.workshop.ui.joinNumbered
 import com.designprototype.workshop.ui.splitNumbered
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.formatFieldDate
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
@@ -558,7 +565,14 @@ fun FieldRenderer(
                     capNotice = if (dropped == 0) {
                         null
                     } else {
-                        "${dwListCeilingClause(fieldLabel(field), declaredCap)}. $dropped of the " +
+                        // STRIPPED, because this is PROSE and not a label. The clause reads
+                        // "Photographs holds at most 8 entries"; interpolating the marked form put
+                        // an asterisk mid-sentence, which reads as a typo rather than as a
+                        // requirement — and the reader is being told about a ceiling, not asked to
+                        // fill anything in. Colouring it would not have helped: red punctuation in
+                        // the middle of a sentence is still punctuation nobody asked for.
+                        "${dwListCeilingClause(dwWithoutRequiredMark(fieldLabel(field)), declaredCap)}. " +
+                            "$dropped of the " +
                             "${next.size} you chose ${if (dropped == 1) "was" else "were"} not kept — " +
                             "untick something first if you need ${if (dropped == 1) "it" else "them"} instead."
                     }
@@ -746,13 +760,40 @@ fun FieldRenderer(
                     onPatch = onPatch,
                 )
 
-            // The number pad for the one TEXT shape whose content is digits — see
-            // [dwNumericTextField], which is also what takes the microphone off it.
-            DwFieldType.TEXT -> ScalarInput(
-                field, value, onChange, enabled, error, resetKey = resetKey,
-                keyboard = if (dwNumericTextField(field)) KeyboardType.Number else KeyboardType.Text,
-                services = services,
-            )
+            /*
+             * "NAME OF WORKSHOP" GETS THE NAMES ALREADY ON RECORD, AND STILL TAKES ANYTHING TYPED.
+             *
+             * The one TEXT field in the registry that is the design workshop's OWN title, which is
+             * promoted onto `DesignWorkshop.title` and printed on the report cover. The whole
+             * argument — including the standing objection to putting a dropdown here and why it does
+             * not reach a control that cannot refuse an answer — is on [dwOwnWorkshopTitleRole] and
+             * [DwWorkshopNameField].
+             *
+             * GATED ON `services`, LIKE REF AND GEO ABOVE, AND FOR THE SAME REASON. A null bundle
+             * means this field is being PREVIEWED rather than edited, so there is no repository to
+             * ask for the names and the honest control is the box this field has always been —
+             * which loses nothing, because the box was always the whole answer here.
+             */
+            DwFieldType.TEXT -> if (services != null && dwOwnWorkshopTitleRole(field)) {
+                DwWorkshopNameField(
+                    field = field,
+                    value = value,
+                    onChange = onChange,
+                    enabled = enabled,
+                    error = error,
+                    resetKey = resetKey,
+                    services = services,
+                    rowValues = rowValues,
+                )
+            } else {
+                // The number pad for the one TEXT shape whose content is digits — see
+                // [dwNumericTextField], which is also what takes the microphone off it.
+                ScalarInput(
+                    field, value, onChange, enabled, error, resetKey = resetKey,
+                    keyboard = if (dwNumericTextField(field)) KeyboardType.Number else KeyboardType.Text,
+                    services = services,
+                )
+            }
         }
 
         // Last in the column, under whatever the branch above drew. `attribution()` returns null for
@@ -951,6 +992,406 @@ private fun InlineError(error: String?) {
 internal fun dwNumericTextField(field: FieldDto): Boolean =
     DwFieldType.of(field.type) == DwFieldType.TEXT && field.format == "PINCODE"
 
+// --------------------------------------------------------------------------------------
+// "Name of workshop" — the design workshop's OWN title, offered as a list and ACCEPTED as typed
+// --------------------------------------------------------------------------------------
+
+/**
+ * How many names this control asks for.
+ *
+ * THE SAME 80 THE BROWSER ASKS FOR, and that is the whole justification: `WORKSHOP_OPTION_PAGE_SIZE`
+ * is what `StageWorkshopNameField.tsx` sends for this identical field, so the two clients offer a
+ * designer the same names. A different number here would be the two clients disagreeing about which
+ * precedents exist, on the field that names a ministry document.
+ *
+ * DELIBERATELY NOT `WorkshopListScreen`'s `NAME_OFFER_PAGE_SIZE`, WHICH IS 20 FOR A REASON THAT DOES
+ * NOT HOLD HERE. That one feeds the create dialog's ANCHORED MENU, which "builds every row eagerly
+ * inside a scrolling column, which is right for twenty and is not where two hundred belong". This
+ * feeds the sheet's `LazyColumn`, which composes what is on screen — and, more to the point, the
+ * sheet has a FILTER BOX, and a box is only worth having over as much of the corpus as it can reach.
+ * See [DwWorkshopNameField] for the rest of that argument.
+ */
+private const val DW_NAME_OFFER_PAGE_SIZE = 80
+
+/**
+ * Is this box the design workshop's OWN name — `workshopSetup.workshopTitle`, stage 1?
+ *
+ * ── THE OBJECTION THIS ANSWERS, WHICH WAS RIGHT ABOUT THE CONTROL IT REFUSED ────────────────────
+ *
+ * The browser's `stageFieldRoles.ts` says by name that this key must never be in
+ * `WORKSHOP_TITLE_FIELD_KEYS`: *"it is not a reference to a `Workshop` row at all, and a dropdown
+ * there would refuse a workshop that has no `Workshop` record yet, which is most of them on the day
+ * they start."* Every clause of that is still true and it still forbids what it forbade — a CLOSED
+ * picker of `Workshop` rows on this box. It does not reach [DwWorkshopNameField], for the two
+ * reasons `ownWorkshopTitleRole` sets out on the other client: the list is `DesignWorkshop` TITLES
+ * rather than `Workshop` rows, and **nothing here can refuse an answer** — whatever is in the box is
+ * committable in one tap, so a workshop nobody has ever filed is answered exactly as fast as one
+ * with ten years of history.
+ *
+ * MATCHED BY EXACT KEY AND ON THE RAW TOKEN, mirroring the web arm for arm. The raw `type` and not
+ * [DwFieldType.of], because `of` degrades an unrecognised token to TEXT — deliberately, so one new
+ * server type cannot blank 22 stages on a handset that has not updated — and a field whose type this
+ * build has never heard of is not a field this build should be putting a workshop list on. The
+ * entity is not checked because `workshopTitle` is declared once in the registry, on `workshopSetup`,
+ * and it is the field `PROMOTED_COLUMNS` copies onto `DesignWorkshop.title`; the looser match is
+ * affordable precisely because the control refuses nothing, so the worst outcome of a false positive
+ * is a box that offers some names beside it.
+ */
+internal fun dwOwnWorkshopTitleRole(field: FieldDto): Boolean =
+    field.type == "TEXT" && !field.deprecated && field.key == "workshopTitle"
+
+/**
+ * What the create row says for what is in the sheet's box, or null to draw no row for that term.
+ *
+ * THE TERM IS QUOTED AND NEVER SUMMARISED — the browser's rule, kept word for word: a reader has to
+ * be able to see the exact string that would be stored, the capitals, the punctuation, the double
+ * space they did not mean to type, and a paraphrase is the one shape that cannot show them. "Use"
+ * rather than "Create", because nothing is created by answering this box.
+ *
+ * NULL ON AN EMPTY BOX, which is what keeps this row off the anchored menu as well: there is nothing
+ * to use, and a button reading *Use “” as the name* is a button that can only do harm. See
+ * [SelectCreateAction], whose contract this is.
+ */
+internal fun dwWorkshopNameCreateLabel(query: String): String? =
+    query.trim().takeIf { it.isNotEmpty() }?.let { "Use “$it” as the name" }
+
+/** The names on offer, and how many were held back because this field could not store them. */
+@Immutable
+internal data class DwWorkshopNameOffer(val names: List<String>, val withheld: Int)
+
+/**
+ * The distinct titles in an answer, in the SERVER'S order, with the unstorable ones counted out.
+ *
+ * DEDUPLICATED BECAUSE ONLY THE NAME IS STORED. Two workshops may legitimately share a title, and
+ * offering the same string twice is a control that appears to distinguish two answers it cannot.
+ *
+ * ORDER IS THE SERVER'S AND IS NEVER RE-SORTED. `GET /design-workshops` answers newest first, which
+ * is the workshop a designer naming one today almost always means; sorting alphabetically would bury
+ * this season's between two from 2019.
+ *
+ * A TITLE LONGER THAN THE FIELD STORES IS WITHHELD AND COUNTED, never silently dropped: `coerce`
+ * refuses an over-length string, so offering one would offer an option that turns the row into a
+ * refused answer on save. [maxLength] of 0 means the registry declared no bound.
+ */
+internal fun dwWorkshopNamesOnRecord(titles: List<String>, maxLength: Int): DwWorkshopNameOffer {
+    val kept = LinkedHashSet<String>()
+    var withheld = 0
+    for (raw in titles) {
+        val title = raw.trim()
+        if (title.isEmpty()) continue
+        if (maxLength > 0 && title.length > maxLength) {
+            withheld += 1
+            continue
+        }
+        kept += title
+    }
+    return DwWorkshopNameOffer(kept.toList(), withheld)
+}
+
+/**
+ * The rows, with the name already on this workshop FIRST and always present.
+ *
+ * A PICKER THAT CANNOT DRAW ITS OWN CURRENT VALUE READS AS BLANK, and the obvious repair for a blank
+ * box is to answer it again — which on the field that names a ministry document overwrites a true
+ * answer with a guess. One page is at most [DW_NAME_OFFER_PAGE_SIZE] titles ordered newest first, so
+ * a workshop named two seasons ago is very often not among them. Same rule and same reason as the
+ * browser's, and as `useRecordOffPage` for the pickers that hold an id.
+ *
+ * NO HINT ON THE OFFERED ROWS, unlike the browser's, which prints the day or "N workshops share this
+ * name". A 48dp handset row shares its width with a name that is frequently forty characters of
+ * scheme and cluster, and the second line buys nothing here: the value stored is the bare title
+ * either way, and every row in this list is a title somebody already chose. The hint on the FIRST
+ * row is different in kind — it says where that row came from, so nobody reads their own answer as a
+ * workshop the server has just offered.
+ */
+internal fun dwWorkshopNameOptions(current: String, names: List<String>): List<SelectOption> {
+    val typed = current.trim()
+    val rows = mutableListOf<SelectOption>()
+    if (typed.isNotEmpty() && names.none { it == typed }) {
+        rows += SelectOption(value = typed, label = typed, hint = "already on this workshop")
+    }
+    names.forEach { rows += SelectOption(value = it, label = it) }
+    return rows
+}
+
+/**
+ * WHAT THE LIST IS, AND WHAT IT LEFT OUT — R3 and R4 in one line, and the browser's words.
+ *
+ * A designer cannot tell "the workshops I can open" from "every workshop there is" by looking at a
+ * dropdown, and a narrowing nobody announced is absence reading as non-existence. The type clause is
+ * printed only when a type is chosen, because a sentence about a narrowing that is not applied is a
+ * sentence about nothing.
+ *
+ * DELIBERATELY NOT `workshopCapLine`, WHICH IS THE RIGHT SENTENCE FOR A DIFFERENT CONTROL. That one
+ * ends *"Open Design workshops to search the whole list, then come back"* — it names a SCREEN,
+ * because a picker that holds an id has nowhere else to reach the rest from. This control's answer
+ * is in the box in front of the designer: what reaches the rest here is typing, and sending somebody
+ * off to another screen to look up a string they are about to type by hand would be advice that
+ * costs more than the problem. `WorkshopListScreen`'s create dialog prints the same pair for the
+ * same field.
+ */
+internal fun dwWorkshopNameOfferLine(workshopKind: String, shown: Int, total: Int): String =
+    buildString {
+        append(
+            if (workshopKind.isBlank()) "Names from workshops you can open."
+            else "Names from workshops of this type."
+        )
+        append(" Type a new one if it is not here.")
+        // BOTH NUMBERS OR NEITHER. "Showing 80" alone leaves a reader guessing whether that is most
+        // of their workshops or a sixth of them, which is the difference between trusting the offer
+        // and going to look somewhere else.
+        if (shown > 0 && total > shown) append(" Showing $shown of $total.")
+    }
+
+/**
+ * The names that could not be offered because this field could not store them. Null for none.
+ *
+ * STATED RATHER THAN DROPPED. It cannot happen with today's titles, and the sentence is here because
+ * the day it does, a designer must not be left hunting for a name that is on screen nowhere and
+ * refused by nothing. The browser prints this line word for word.
+ */
+internal fun dwWorkshopNamesWithheldLine(withheld: Int, maxLength: Int): String? =
+    if (withheld <= 0) null
+    else "$withheld name${if (withheld == 1) "" else "s"} not offered: over $maxLength characters."
+
+/**
+ * "Name of workshop" — the creatable combo, and the handset's half of a control the web already has.
+ *
+ * ── WHY THIS FIELD IS NOT AN ORDINARY BOX ANY MORE ─────────────────────────────────────────────
+ *
+ * A stage entry is a FROZEN COPY that nothing re-resolves, and this string is promoted onto
+ * `DesignWorkshop.title` and printed on the cover of a document a ministry receives. "Bagru Block
+ * Print Workshop 2025" and "Bagru block-printing workshop, 2025" are one fortnight to a reader and
+ * two different strings to every group-by; the one in the ministry's file is whichever was typed. A
+ * workshop that runs every year, or in three clusters at once, is named three ways by three
+ * designers unless the names already on record are in front of them while they type.
+ *
+ * The web shipped that control and this client did not, so a designer moving between the two met two
+ * different controls for one box — and met the plain one on the client they use in the courtyard.
+ * `WorkshopListScreen`'s create dialog has offered the same names since the same wave; what was
+ * missing was the field the report cover actually reads.
+ *
+ * ── IT REFUSES NOTHING, WHICH IS THE PROPERTY THE STANDING OBJECTION DEMANDS ───────────────────
+ *
+ * See [dwOwnWorkshopTitleRole] for the objection and why it does not reach this control. The
+ * mechanism is [SelectCreateAction]: whatever is in the sheet's box is committable in one tap, and
+ * the row NAMES IT BACK, so a workshop that exists nowhere is answered as fast as one with a
+ * history.
+ *
+ * ── THE FILTER BOX, AND THE RULE IT LOOKS LIKE IT IS BREAKING ──────────────────────────────────
+ *
+ * `SearchableSelectField.searchable`'s own note says to pass `false` over ONE SERVER-TRUNCATED PAGE,
+ * because "a filter box over a page filters the page" and typing the title of a workshop on page
+ * four answers "nothing matches" about a workshop that exists. That rule is about a picker whose box
+ * is the only route to an answer. Two things make this control the exception, and both are stated on
+ * screen rather than assumed:
+ *
+ *   · the page is [DW_NAME_OFFER_PAGE_SIZE] — the browser's number for this same field — so for any
+ *     account with fewer workshops than that the box is filtering the WHOLE corpus and the rule has
+ *     nothing to bite on; where it is not, [dwWorkshopNameOfferLine] prints both numbers; and
+ *   · the box never answers "nothing matches" ALONE. The create row is drawn for the same term and
+ *     reads *Use “…” as the name*, so the reader is never told a name does not exist — they are
+ *     offered the answer they were typing anyway.
+ *
+ * The honest end state is the browser's: the box wired to `GET /design-workshops?search=`, which
+ * needs a server-query seam this handset's picker has not got. That is a primitive change and a
+ * separate one; until it lands the two clauses above are what keeps this box from lying.
+ *
+ * ── AND IT NEVER STANDS DOWN ───────────────────────────────────────────────────────────────────
+ *
+ * R2 — *a field may only be mandatory where it is answerable* — is satisfied here without disabling
+ * anything, because the box IS the answer. A failed read leaves the control fully usable and the
+ * sentence underneath says what the list is doing rather than what the designer may not do.
+ * `enabled` is the caller's alone (a locked stage, a save in flight).
+ */
+@Composable
+private fun DwWorkshopNameField(
+    field: FieldDto,
+    value: JsonElement?,
+    onChange: (JsonElement?) -> Unit,
+    enabled: Boolean,
+    error: String?,
+    resetKey: Any,
+    services: DwFieldServices,
+    rowValues: Map<String, JsonElement>,
+) {
+    /**
+     * The `WORKSHOP_KIND` token answered on this same entry, or "" where none is chosen.
+     *
+     * **NARROWS THE OFFER, NEVER THE ANSWER.** With a type chosen the list is the workshops of that
+     * type, because that is the set whose naming conventions are worth copying — a Skill Upgradation
+     * sitting and a Design Intervention are named to different patterns and mixing them is how a
+     * designer copies the wrong precedent. The create row is untouched by it either way.
+     */
+    val workshopKind = DwValues.text(rowValues["workshopKind"])
+
+    /*
+      KEYED ON `resetKey` LIKE EVERY OTHER BUFFER ON THIS RENDERER. Collection rows share composable
+      slots, so state keyed on the field alone survives a row change — see [FieldRenderer]'s own
+      `resetKey` note. `workshopTitle` is a singleton field today and this costs nothing; it is here
+      so that the day it is not, this control does not become the one that remembers the wrong row.
+    */
+    var list by remember(field.key, resetKey) {
+        mutableStateOf<WorkshopListState>(WorkshopListState.Loading)
+    }
+    var offer by remember(field.key, resetKey) { mutableStateOf(DwWorkshopNameOffer(emptyList(), 0)) }
+    /**
+     * Whether the phone reached the server at all, when [list] is Failed.
+     *
+     * NOT A NETWORK PROBE: `WorkshopRepository.isTransient`'s verdict on the throwable, which is the
+     * same classification the offline outbox uses to decide whether an entry is worth retrying. One
+     * idea of "offline" per app. Meaningless in every other state and ignored by the notice there.
+     */
+    var online by remember(field.key, resetKey) { mutableStateOf(true) }
+    /** The coercion's refusal for the last thing committed — an over-length name and nothing else. */
+    var localError by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
+    /** The recogniser's running guess, drawn under the control and NOT yet in the store. */
+    var spoken by remember(field.key, resetKey) { mutableStateOf("") }
+
+    val current = DwValues.text(value)
+
+    /**
+     * Commit a picked row, a typed term or a dictated phrase through ONE coercion.
+     *
+     * A value that will not coerce is NOT pushed to the store, exactly as [ScalarInput] refuses one:
+     * `coerce` mirrors the server's `coerce_value`, so an over-length title refused here is a title
+     * the save would have refused anyway — with the difference that the sentence names the box while
+     * the designer is still looking at it.
+     */
+    fun commit(text: String) {
+        val coerced = DwValues.coerce(field, text)
+        localError = coerced.error
+        if (coerced.error == null) onChange(coerced.value)
+    }
+
+    /*
+      RE-READ WHENEVER THE CHOSEN TYPE CHANGES, and once on open.
+
+      A FAILED READ IS NOT AN EMPTY ANSWER. Holding it as `emptyList()` is what turns a dropped
+      connection into a confident claim that this account is on no design workshop; the state carries
+      the difference and `workshopListNotice` prints it. Nothing else changes — the control stays
+      usable, because typing was always the answer here.
+    */
+    LaunchedEffect(workshopKind, field.key, resetKey) {
+        val answer = try {
+            services.repository.designWorkshops(
+                page = 1,
+                pageSize = DW_NAME_OFFER_PAGE_SIZE,
+                // OMITTED when no type is chosen: `designWorkshops` folds a blank to null, and a
+                // blank token on the wire is a filter that matches nothing — an empty list over a
+                // full corpus.
+                workshopKind = workshopKind.takeIf { it.isNotBlank() },
+            )
+        } catch (cancelled: CancellationException) {
+            // NEVER SWALLOWED. This effect is KEYED, so changing the type above cancels the run in
+            // flight; catching that like any other throwable would report a failed read for a
+            // request nobody was waiting for, and leave the previous type's names under the new
+            // type's heading.
+            throw cancelled
+        } catch (failure: Throwable) {
+            online = !services.repository.isTransient(failure)
+            list = WorkshopListState.Failed
+            // The names already held are deliberately NOT cleared: on a re-read whose answer failed,
+            // blanking what is on screen takes away the one thing that still works.
+            return@LaunchedEffect
+        }
+        val built = dwWorkshopNamesOnRecord(answer.items.map { it.title }, field.maxLength)
+        offer = built
+        list = WorkshopListState.Listed(count = built.names.size, total = answer.total)
+    }
+
+    val options = remember(current, offer) { dwWorkshopNameOptions(current, offer.names) }
+    val notice = workshopListNotice(list, WorkshopListKind.DESIGN, online)
+    val listed = list as? WorkshopListState.Listed
+
+    val canDictate = rememberDictationAvailable() && dictatable(DwFieldType.of(field.type))
+
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FieldCaption(field)
+        SearchableSelectField(
+            label = fieldLabel(field),
+            options = options,
+            selectedValue = current,
+            // No blank row: the title is what every list, search result and report cover shows this
+            // workshop by, and a "None" row on it would offer to leave a document unnamed.
+            includeNone = false,
+            // FORCED ON, ahead of the count. The box is where a new name is typed and the create row
+            // reads it back; without it this control could only ever offer what already exists, which
+            // is the closed picker the standing objection refuses. See the header for the page size
+            // that makes a local filter honest here.
+            searchable = true,
+            enabled = enabled,
+            // Never a claim the state does not support — `workshopListNotice` is the app's one
+            // decider and it says nothing at all while there are rows to draw.
+            emptyMessage = notice,
+            createAction = SelectCreateAction(
+                label = ::dwWorkshopNameCreateLabel,
+                onClick = ::commit,
+            ),
+            onSelect = { picked -> if (picked.isNotBlank()) commit(picked) },
+        )
+        Text(
+            dwWorkshopNameOfferLine(workshopKind, offer.names.size, listed?.total ?: 0),
+            color = MaterialTheme.field.muted,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+        )
+        notice?.let {
+            Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        dwWorkshopNamesWithheldLine(offer.withheld, field.maxLength)?.let {
+            Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        if (canDictate) {
+            /*
+              THE MICROPHONE STAYS, AND IT IS UNDER THE CONTROL RATHER THAN INSIDE IT.
+
+              This field was an ordinary [ScalarInput] until this control landed, so it had a mic in
+              the box's trailing icon, and taking a capability away from the client used in the
+              courtyard would be a worse trade than any amount of tidiness. What cannot follow it
+              here is the PARTIAL: [ScalarInput] renders the recogniser's running guess inside the
+              box the designer is watching, "because a transcript that appears somewhere other than
+              where it will be saved is a transcript nobody trusts", and a dropdown trigger has no
+              box to stream into. So the guess is drawn in its own line directly beneath, which is
+              the nearest honest place, and the trigger reads the committed name the moment it lands.
+
+              APPENDED, not replaced, exactly as the browser's `appendDictated` appends: a designer
+              adding "two thousand twenty six" to a name already in the box is finishing an answer,
+              not starting one. `commit` runs the same coercion the picked and typed paths run, so an
+              over-length result is refused with the same sentence rather than a third one.
+            */
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DwDictationButton(
+                    enabled = enabled,
+                    onPartial = { partial -> spoken = partial },
+                    onCommit = { finalText ->
+                        val merged = appendSpoken(current, finalText)
+                        spoken = ""
+                        commit(merged)
+                    },
+                    onError = { message ->
+                        spoken = ""
+                        services.onError(message)
+                    },
+                )
+                if (spoken.isNotBlank()) {
+                    Text(
+                        appendSpoken(current, spoken),
+                        color = MaterialTheme.field.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+            DwDictationHint(listening = spoken.isNotBlank())
+        }
+        // `localError` first: it is about the commit that was just refused, so it is the newest fact
+        // and the one the designer is acting on. `error` is the repository's answer about the value
+        // it stored, which is older and most likely to have been superseded.
+        InlineError(localError ?: error)
+    }
+}
+
 /**
  * Every text-shaped type, with a local buffer so typing is not fought by the store.
  *
@@ -1087,7 +1528,7 @@ private fun ScalarInput(
             // saved from.
             value = if (spoken.isBlank()) buffer else appendSpoken(buffer, spoken),
             onValueChange = { raw -> if (spoken.isBlank()) commit(raw) },
-            label = { Text(fieldLabel(field)) },
+            label = { Text(requiredMarked(fieldLabel(field))) },
             enabled = enabled,
             // Read-only for the seconds the recogniser is running. A keystroke landing in the middle
             // of a stream would be overwritten by the next partial, so the alternative is a box that
@@ -1388,7 +1829,7 @@ private fun BoolField(
     error: String?,
 ) {
     val current = remember(value) { DwValues.bool(value) }
-    Text(fieldLabel(field), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
     FieldCaption(field)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         FilterChip(
@@ -1577,7 +2018,10 @@ private fun TagsField(
          * "full" would report a tag as dropped that is already sitting in the list.
          */
         if (cleaned.isNotEmpty() && tags.none { it.equals(cleaned, ignoreCase = true) } && tags.size >= ceiling) {
-            capNotice = "${dwListCeilingClause(fieldLabel(field), declaredCap)}. “$cleaned” was not " +
+            // Stripped for the same reason as the multi-select's notice above: a sentence, not a
+            // label.
+            capNotice = "${dwListCeilingClause(dwWithoutRequiredMark(fieldLabel(field)), declaredCap)}. " +
+                "“$cleaned” was not " +
                 "added — remove one first if you need it instead."
             return
         }
@@ -1587,7 +2031,7 @@ private fun TagsField(
         onChange(DwValues.ofList(tags + cleaned))
     }
 
-    Text(fieldLabel(field), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
     FieldCaption(field)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
@@ -1696,7 +2140,7 @@ private fun GeoField(
         }
     }
 
-    Text(fieldLabel(field), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
     FieldCaption(field)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
@@ -1793,7 +2237,7 @@ private fun MediaField(
         else listOfNotNull(DwValues.text(value).takeIf { it.isNotBlank() })
     }
 
-    Text(fieldLabel(field), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
     FieldCaption(field)
 
     if (media == null) {

@@ -44,7 +44,11 @@ from pydantic import ValidationError
 from app.api.routes import designers as designer_routes
 from app.schemas.designers import DesignerProfileUpdate
 from app.schemas.records import ArtisanCreate, ArtisanUpdate
-from app.services import designers as designer_service, records as record_service
+from app.services import (
+    designers as designer_service,
+    identity as identity_service,
+    records as record_service,
+)
 from app.services.designers import PROFILE_FIELDS, profile_payload, update_profile
 from app.services.records import attach_location
 
@@ -133,6 +137,16 @@ class _ProfileTable:
         ``prefill_from_profile`` returns an empty dict for.
         """
         self.calls.append({"where": where, "include": include})
+        # ── THE TWO SIGN-IN KEYS ARE UNIQUE COLUMNS TOO, AND THEY ARE LOOKED UP BY NAME ─────────
+        #
+        # ``services.identity.resolve_profile_keys`` asks this table whether a phone key or an
+        # empanelment key is already held by ANOTHER profile, so ``where`` is not always
+        # ``{"userId": ...}`` any more. Answering None means "nobody holds it", which is the right
+        # answer for a stub whose rows were never indexed on either — every save in this module
+        # claims its keys freely, which is what these address tests assume and is not what they
+        # are about. A ``where["userId"]`` here raised ``KeyError`` and failed the file.
+        if "userId" not in where:
+            return None
         stored = self.rows.get(where["userId"])
         return None if stored is None else self._row(stored, include)
 
@@ -188,6 +202,14 @@ def db(monkeypatch: pytest.MonkeyPatch) -> _Db:
     stub = _Db()
     monkeypatch.setattr(record_service, "db", stub)
     monkeypatch.setattr(designer_service, "db", stub)
+    # THE THIRD MODULE, ADDED 2026-08-30 WITH THE SIGN-IN KEYS. ``update_profile`` now asks
+    # ``services.identity`` whether the phone number and the empanelment number on this save
+    # are already claimed by another profile, and that module holds its own ``db`` — so
+    # without this line the two patched above are real and the third is the live client,
+    # which answers ``ClientNotConnectedError`` and fails every test in this file for a
+    # reason that has nothing to do with addresses. Exactly the half-real shape this
+    # fixture's docstring warns about, one module later.
+    monkeypatch.setattr(identity_service, "db", stub)
     return stub
 
 
@@ -199,6 +221,14 @@ async def _save(body: dict[str, Any], *, user_id: str = USER_ID) -> dict[str, An
     three lines below are the entirety of what it does with the body. If that handler grows a fourth
     step, this helper is wrong and has to be updated — which is easier to notice than a passing test
     of a path the application no longer takes.
+
+    IT GREW ONE ON 2026-08-30 AND IT IS DELIBERATELY NOT MIRRORED HERE, which this paragraph
+    exists to say out loud rather than leave as a silent divergence. ``put_my_profile`` now calls
+    ``_assert_empanelment_number`` between the dump and the write: a save that would CREATE a
+    profile with no empanelment number is refused, and an existing profile that already has
+    content may go on saving without one. Every ``_save`` below would meet that gate, and this
+    module is about ADDRESSES — mirroring it would make thirteen address tests fail over a field
+    none of them mentions. The gate has its own coverage in ``tests/test_designer_roster.py``.
     """
     payload = DesignerProfileUpdate(**body)
     values = payload.model_dump(exclude_unset=True)
