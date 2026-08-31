@@ -1,0 +1,194 @@
+# ==========================================================================================
+# Export the deployment environment for offline keeping.
+#
+# WHAT THIS SOLVES. The configuration this deployment actually runs on lives in two places
+# that cannot be read back by hand:
+#
+#   backend   the BACKEND_ENV secret, written to /home/ubuntu/app/backend/.env on the EC2
+#             box by deploy-backend.yml on every deploy. A GitHub secret is write-only, so
+#             a job holding it in scope is the only way to see it again.
+#   frontend  Vercel project environment variables, which live in Vercel and not in git.
+#
+# Losing the machine that had the working copies leaves no local record of either. This
+# job reassembles both into one encrypted bundle you can keep offline.
+#
+# WHY THE BUNDLE IS ENCRYPTED. GitHub masks secrets in LOGS but NOT in ARTIFACT CONTENTS.
+# A plaintext artifact would hand the database URL, the JWT secret and the AWS keys to
+# every account with read access to this repository. It is AES-256 encrypted with a
+# passphrase held in a SEPARATE secret before it ever becomes a downloadable file.
+#
+# RUN IT LIKE THIS
+#   1. python -c "import secrets; print(secrets.token_urlsafe(40))"
+#   2. Add it as the repository secret ENV_EXPORT_PASSPHRASE.
+#   3. Actions -> this workflow -> Run workflow -> type EXPORT.
+#   4. Download `deployment-env-encrypted`, then locally:
+#        gpg --batch --passphrase '<passphrase>' --output env-bundle.tar.gz \
+#            --decrypt deployment-env.tar.gz.gpg
+#        tar xzf env-bundle.tar.gz
+#   5. Delete the artifact and the ENV_EXPORT_PASSPHRASE secret.
+#
+# Everything it produces is gitignored by `.env*` if you drop it back into the tree.
+# ==========================================================================================
+
+name: Export deployment env (offline copy)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type EXPORT to confirm you intend to extract live secrets'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse unless the run was confirmed deliberately
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm }}" != "EXPORT" ]; then
+            echo "::error::Type EXPORT in the confirm input to run this. Nothing was exported."
+            exit 1
+          fi
+
+      - name: Check the passphrase secret exists before reading anything sensitive
+        env:
+          PASSPHRASE: ${{ secrets.ENV_EXPORT_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          [ -n "$PASSPHRASE" ] || { echo "::error::Set an ENV_EXPORT_PASSPHRASE secret first — see the header of this file."; exit 1; }
+          if [ "${#PASSPHRASE}" -lt 16 ]; then
+            echo "::error::ENV_EXPORT_PASSPHRASE is shorter than 16 characters. Use a real random passphrase."
+            exit 1
+          fi
+
+      - name: Collect the backend environment
+        env:
+          BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p bundle/backend
+
+          if [ -z "$BACKEND_ENV" ]; then
+            echo "::error::BACKEND_ENV is empty or unset — there is no backend environment to export."
+            exit 1
+          fi
+          printf '%s' "$BACKEND_ENV" > bundle/backend/.env
+          echo "BACKEND_ENV: $(wc -c < bundle/backend/.env) bytes, $(grep -cE '^[A-Z_][A-Z0-9_]*=' bundle/backend/.env || true) variables"
+
+          # ─── THE AS-DEPLOYED COPY ────────────────────────────────────────────────────────
+          # deploy-backend.yml does NOT write BACKEND_ENV verbatim: it strips any
+          # BACKEND_CORS_ORIGINS line and appends its own, because that value depends on which
+          # origins exist rather than on the secret. Reproducing that here means the second
+          # file matches /home/ubuntu/app/backend/.env byte for byte, without needing SSH to
+          # the box — which would otherwise require opening the security group for the runner.
+          #
+          # If the 'Pin the CORS origins' step in deploy-backend.yml ever changes, change this
+          # line with it, or this file quietly stops matching the server.
+          cors='https://designer-repository.vercel.app,http://localhost:3000'
+          sed '/^BACKEND_CORS_ORIGINS=/d' bundle/backend/.env > bundle/backend/.env.as-deployed
+          [ -s bundle/backend/.env.as-deployed ] \
+            && [ -n "$(tail -c1 bundle/backend/.env.as-deployed)" ] \
+            && printf '\n' >> bundle/backend/.env.as-deployed
+          printf 'BACKEND_CORS_ORIGINS=%s\n' "$cors" >> bundle/backend/.env.as-deployed
+          echo "as-deployed copy: $(wc -c < bundle/backend/.env.as-deployed) bytes"
+
+      - name: Collect the frontend environment from Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p bundle/frontend
+
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::warning::VERCEL_TOKEN or VERCEL_PROJECT_ID is unset — skipping the frontend environment."
+            echo "(frontend environment not exported: Vercel credentials absent)" > bundle/frontend/NOT-EXPORTED.txt
+            exit 0
+          fi
+
+          # The REST API rather than the Vercel CLI: no npm install, no project-link step, and
+          # decrypt=true returns the values a `vercel env pull` would write.
+          url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}/env?decrypt=true"
+          [ -n "$VERCEL_ORG_ID" ] && url="${url}&teamId=${VERCEL_ORG_ID}"
+
+          code="$(curl -sS -o envs.json -w '%{http_code}' -H "Authorization: Bearer ${VERCEL_TOKEN}" "$url")"
+          if [ "$code" != "200" ]; then
+            echo "::error::Vercel API answered ${code} listing project environment variables."
+            exit 1
+          fi
+
+          # PRODUCTION ONLY. A variable can carry a different value for preview and development;
+          # merging the targets produces a file that matches no environment that actually runs.
+          jq -r '
+            "# Vercel production environment. Every value here is live.",
+            "# Snapshot only — Vercel remains the source of truth.",
+            "",
+            (.envs
+             | map(select(.target // [] | index("production")))
+             | sort_by(.key)[]
+             | "\(.key)=\(.value // "<value withheld by the API>")")
+          ' envs.json > bundle/frontend/.env.production.local
+
+          echo "Vercel: $(grep -cE '^[A-Z_][A-Z0-9_]*=' bundle/frontend/.env.production.local || true) production variables"
+          rm -f envs.json
+
+      - name: Describe what is in the bundle
+        run: |
+          set -euo pipefail
+          cat > bundle/MANIFEST.txt <<'EOF'
+          Deployment environment for designer-portal.
+
+          backend/.env
+              The BACKEND_ENV repository secret verbatim. This is the file the deploy
+              pipeline treats as the source of truth for the FastAPI service.
+
+          backend/.env.as-deployed
+              The same file as it actually exists at /home/ubuntu/app/backend/.env on the
+              EC2 box: deploy-backend.yml strips BACKEND_CORS_ORIGINS and appends its own
+              on every deploy. Use this one to reason about the running service; use
+              backend/.env as the thing to edit and put back into the secret.
+
+          frontend/.env.production.local
+              Vercel PRODUCTION environment variables for the Next.js client. Note that
+              NEXT_PUBLIC_* values are inlined into the bundle at build time, so editing
+              them changes nothing until a redeploy.
+
+          Every one of these is a live credential. Store the bundle offline, and rotate
+          anything you believe has been exposed.
+          EOF
+          echo "bundle contents:"; find bundle -type f | sort
+
+      - name: Encrypt the bundle
+        env:
+          PASSPHRASE: ${{ secrets.ENV_EXPORT_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          tar czf bundle.tar.gz bundle
+          printf '%s' "$PASSPHRASE" | gpg --batch --yes --quiet \
+            --passphrase-fd 0 --pinentry-mode loopback \
+            --symmetric --cipher-algo AES256 \
+            --output deployment-env.tar.gz.gpg bundle.tar.gz
+          echo "encrypted bundle: $(stat -c%s deployment-env.tar.gz.gpg) bytes"
+          echo "sha256 of the ENCRYPTED file: $(sha256sum deployment-env.tar.gz.gpg | cut -d' ' -f1)"
+          rm -rf bundle bundle.tar.gz
+
+      - name: Upload the encrypted bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-env-encrypted
+          path: deployment-env.tar.gz.gpg
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Scrub the workspace
+        if: always()
+        run: rm -rf bundle bundle.tar.gz envs.json deployment-env.tar.gz.gpg
