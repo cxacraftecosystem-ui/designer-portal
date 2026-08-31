@@ -59,7 +59,7 @@ val localProperties = Properties().apply {
 // handset carrying a locally built 1.1.19 (versionCode 1,001,019) cannot install this over the top —
 // Android refuses a downgrade — and the in-app updater will not offer it either. Uninstall first on
 // any such device. No FIELD device is affected, because no build was ever published to one.
-val appVersionName = "0.0.5"
+val appVersionName = "0.0.6"
 val appVersionCode = appVersionName.split(".").let { parts ->
     val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
     val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
