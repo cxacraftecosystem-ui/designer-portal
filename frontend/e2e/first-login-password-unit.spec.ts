@@ -57,6 +57,20 @@ const readAndroid = (...parts: string[]) =>
   readFileSync(join(__dirname, "..", "..", "android", "app", "src", "main", "java", "com", "designprototype", "workshop", ...parts), "utf8");
 
 const LOGIN = read("app", "login", "page.tsx");
+/*
+  THE FORM MOVED OUT OF `/login` ON 2026-08-31, and four assertions below moved with it.
+
+  `FirstPasswordGate` was declared inside `app/login/page.tsx` while the door was the only place the
+  flag was read. It is not any more: an administrator who resets a password through
+  `PATCH /api/users/{id}` sets `mustChangePassword` on a session that is already open, and a person
+  who never revisits /login never meets the door — so `AppShell` gates the whole protected tree on
+  the same flag and renders the same form. Two hosts, one component, one password vocabulary.
+
+  The assertions that follow the FORM now read this file; the ones about WHERE THE GATE IS REACHED
+  FROM stay on `LOGIN`, because that is still this spec's subject. The protected host has its own:
+  `e2e/protected-password-gate-unit.spec.ts`.
+*/
+const GATE = read("components", "FirstPasswordGate.tsx");
 const SET_PASSWORD = read("app", "set-password", "page.tsx");
 const SIGN_IN = read("lib", "signIn.ts");
 const KT_COPY = readAndroid("ui", "PasswordSetupCopy.kt");
@@ -176,7 +190,7 @@ test("the sign-in controls are replaced, not left live underneath", () => {
 test("the gate has a way out that is not a way in", () => {
   // `UsageConsentGateScreen`'s own escape, for its reason: a person who cannot complete this must not
   // be held on one screen whose controls all do nothing. It signs out — it does not continue.
-  expect(LOGIN).toContain("Sign out instead");
+  expect(GATE).toContain("Sign out instead");
   const escape = /onSignOut=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
   expect(escape, "the escape was located").toContain("logout()");
   expect(escape, "and it does not navigate into the app").not.toContain("/dashboard");
@@ -185,16 +199,16 @@ test("the gate has a way out that is not a way in", () => {
 test("the current password is carried from the door and asked for only when absent", () => {
   // `POST /auth/change-password` requires it even for an account carrying the flag. On the ordinary
   // path the person typed it ten seconds ago; re-asking would be asking for a secret the page holds.
-  expect(LOGIN).toContain("currentPassword={password}");
-  expect(LOGIN).toMatch(/const askCurrent = currentPassword\.length === 0;/);
+  expect(LOGIN, "the door hands over what was typed").toContain("currentPassword={password}");
+  expect(GATE).toMatch(/const askCurrent = currentPassword\.length === 0;/);
 });
 
 test("the confirmation is a real second box, checked before anything is sent", () => {
   // The owner asked for "set the password on their first login, and confirm it". The server takes
   // one `newPassword` and cannot see the second box, so a mismatch it could never detect would
   // otherwise be filed as the person's choice.
-  expect(LOGIN).toContain('id="gate-confirm-password"');
-  expect(LOGIN).toMatch(/if \(next !== confirm\) \{[\s\S]{0,200}?do not match/);
+  expect(GATE).toContain('id="gate-confirm-password"');
+  expect(GATE).toMatch(/if \(next !== confirm\) \{[\s\S]{0,200}?do not match/);
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

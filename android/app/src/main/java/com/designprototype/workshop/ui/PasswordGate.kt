@@ -318,10 +318,18 @@ fun PasswordGateScreen(
  * navigation drawer or anywhere else inside the app. `MainActivity` renders it INSTEAD OF
  * `LoginScreen` while it is open, and the way back is a button on it.
  *
- * ── THE LINK IS PASTED, NOT TAPPED, AND THAT IS THE POINT ────────────────────────────────────────
+ * ── THE LINK IS PASTED, OR NOW ALSO TAPPED, AND THE BOX IS THE SAME EITHER WAY ───────────────────
  *
- * See [passwordLinkToken]. A link tapped in a chat app opens a browser — which works, and is a
- * detour for somebody standing in a courtyard with this app already open.
+ * See [passwordLinkToken]. A link tapped in a chat app used to open a browser only — which works,
+ * and is a detour for somebody standing in a courtyard with this app already open. `AndroidManifest`
+ * now offers this app for those links as well, and a tap arrives here through [initialLink] with the
+ * whole URL already in the box, so the check fires without anybody copying anything.
+ *
+ * THE PASTE BOX IS NOT SUPERSEDED BY THAT AND MUST NOT BE REMOVED. The filter is a plain one and
+ * not a verified App Link (its comment in the manifest says what a verified one would owe), so it
+ * offers a CHOOSER rather than taking the link; it names one host, so a deployment serving the web
+ * app from anywhere else never matches it at all; and a link read out over a telephone or copied off
+ * a note was never a tap in the first place. Every one of those still ends at this box.
  *
  * ── A FAILED CHECK IS NOT A DEAD LINK ────────────────────────────────────────────────────────────
  *
@@ -343,9 +351,16 @@ fun SetPasswordLinkScreen(
     repository: WorkshopRepository,
     onDone: () -> Unit,
     onCancel: () -> Unit,
+    /**
+     * The link this screen was opened WITH, or blank when it was opened from the sign-in card's own
+     * button. Seeded once into the editable box rather than held as the value, because the box stays
+     * a box: somebody who arrived by tapping a stale link must be able to paste the newer one over it
+     * without leaving the screen.
+     */
+    initialLink: String = "",
 ) {
     val scope = rememberCoroutineScope()
-    var pasted by remember { mutableStateOf("") }
+    var pasted by remember { mutableStateOf(initialLink) }
     var next by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }

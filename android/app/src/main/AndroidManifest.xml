@@ -105,6 +105,67 @@
             </intent-filter>
 
             <!--
+              AN ADMINISTRATOR'S SET-PASSWORD LINK, TAPPED IN A CHAT APP.
+
+              Until this existed the only route into `SetPasswordLinkScreen` was the paste box on the
+              sign-in card: a designer who cannot sign in receives a link, taps it, lands in a
+              browser, and has to come back, open the app, find "I have a set-password link" and
+              paste. This filter puts the app on the chooser for that tap, and `takePasswordLink` in
+              `MainActivity.kt` drops the whole URL into that box so the check fires immediately.
+
+              ⚠ THIS IS A PLAIN FILTER AND **NOT** A VERIFIED APP LINK. There is no
+              `android:autoVerify="true"` below and the absence is deliberate, not an oversight:
+
+                WHAT IS SHIPPED. Android shows a disambiguation dialog — this app beside the
+                browser — and the person chooses. Nothing is taken away from the browser, which
+                still works and is still the route for anybody who does not have the app.
+
+                WHAT A VERIFIED LINK WOULD OWE, and every item is a DEPLOYMENT obligation rather
+                than a code change here:
+
+                 1. `https://<the web origin>/.well-known/assetlinks.json`, served from that exact
+                    host over HTTPS, 200, `Content-Type: application/json`, with NO redirect —
+                    Google's verifier follows none — naming `com.designprototype.workshop` and the
+                    SHA-256 fingerprint of the certificate the installed APK is signed with.
+                 2. THAT FINGERPRINT CANNOT BE WRITTEN DOWN FROM THIS REPOSITORY. The release
+                    keystore is supplied through a local property and is not in the tree (see
+                    `android/app/build.gradle.kts`), so the value has to come from `keytool -list -v`
+                    on the actual keystore, or from Play's App Signing page if Play ever re-signs.
+                    A file listing the wrong fingerprint does not fail loudly: verification simply
+                    does not happen and the link silently degrades to this chooser.
+                 3. EVERY FINGERPRINT, not one. A fleet running APKs signed with the debug key
+                    (`debugSignRelease=true` builds one) needs that certificate in the file too, or
+                    those handsets are the ones that do not verify.
+                 4. Verification is attempted at INSTALL time. Publishing the file after the fleet has
+                    updated verifies nothing until the next install.
+
+                AND THE HOST BELOW IS THE PART TO CHECK FIRST IF A TAP DOES NOT OFFER THE APP.
+                `credential_links.link_for` builds every link from the backend's `NEXT_PUBLIC_APP_URL`,
+                whose default in `app/core/config.py` is `http://localhost:3000`. The deploy workflow
+                pins `BACKEND_CORS_ORIGINS` on the server and does NOT pin that variable, so the value
+                a live link carries lives in the `BACKEND_ENV` secret and cannot be read from this
+                tree. The origin named here is the production web app documented in
+                `docs/ENVIRONMENT.md` and admitted by that pinned CORS list. If the two ever differ,
+                this filter matches nothing — which costs nothing and delivers nothing.
+
+              `BROWSABLE` IS CORRECT HERE AND WRONG ON THE FILTERS BELOW. It means "a web browser or
+              a chat app may hand this app a link", which is exactly what this is; the questionnaire
+              VIEW filters are a file arriving from a file manager and carry no host, which is why
+              they carry `tools:ignore="AppLinkUrlError"` and this one does not need it. `path` and
+              not `pathPrefix`: this is one screen, and a prefix would put the app on the chooser for
+              any longer path that happens to start with these characters.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="designer-repository.vercel.app"
+                    android:path="/set-password" />
+            </intent-filter>
+
+            <!--
               RECEIVING A QUESTIONNAIRE FROM ANOTHER PHONE, with no internet at either end.
 
               Until this existed the app could only SEND. A colleague's Quick Share or Bluetooth push

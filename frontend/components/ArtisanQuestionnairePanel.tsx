@@ -5,6 +5,7 @@ import { ClipboardList } from "lucide-react";
 
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { Markdown } from "@/components/Markdown";
+import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { ArtisanAnswer, ArtisanQuestionnaire } from "@/lib/types";
@@ -68,7 +69,17 @@ export function ArtisanQuestionnairePanel({ artisanId }: { artisanId: string }) 
                   {answers.map((answer) => (
                     <div key={answer.responseId} className="rounded-md bg-field-100 p-3">
                       <div className="text-sm font-medium text-ink">{answer.prompt}</div>
-                      <div className="mt-1 whitespace-pre-wrap text-sm text-ink-muted">{answer.answerText}</div>
+                      {/*
+                        `plainFromStoredRichText` AND NOT `answer.answerText`. The answer box on
+                        `/questionnaire` is a `RichTextField`, so this column holds prose for most
+                        rows and `{"blocks":[{"kind":"PARAGRAPH",…}]}` for a row somebody formatted.
+                        Printed raw, the artisan's answer is unreadable braces on the panel a
+                        researcher reads her answers from — and nothing reports it, because a
+                        JSON-shaped string is not empty. The flattener is the shared read boundary
+                        the consolidated page and the designer profile already use; it is identity on
+                        prose, so every unformatted row renders exactly as it did.
+                      */}
+                      <div className="mt-1 whitespace-pre-wrap text-sm text-ink-muted">{plainFromStoredRichText(answer.answerText)}</div>
                       <div className="mt-2 text-xs text-ink-soft">
                         {[
                           answer.interviewTitle ? `Interview: ${answer.interviewTitle}` : null,

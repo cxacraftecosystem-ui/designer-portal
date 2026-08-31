@@ -47,18 +47,56 @@ const PROTECTED = join(ROOT, "app", "(protected)");
  * printed order neither rendering had printed since. The two renderings agreeing is the whole
  * subject here, and a stale THIRD copy of the order is no better than a divergence between them:
  * update this list in the same edit as the other two, never afterwards.
+ *
+ * IT WENT STALE AGAIN, THE SAME WAY, AND THIS TIME THE SPEC COULD NOT SEE IT. It held nine ids from
+ * 2026-08-26 to 2026-08-31 while `steps.ts` grew to eleven — `design-workshop-questionnaires` after
+ * *Cards & tags*, and `design-workshop-inspection` at the end. Nothing went red, because the order
+ * assertion below FILTERED the deck down to the ids already named here before comparing: an id this
+ * constant had never heard of was invisible to it by construction. `steps.ts` carried a written note
+ * saying precisely that, and naming the three edits needed to close it, for two days.
+ *
+ * Both holes are shut below — the order is now an exact tail rather than a filtered subset, and the
+ * printed-guide routes are keyed by arc id so the list cannot be shorter than the arc. The rule
+ * stands and is now enforced: update this list in the same edit as the other two.
  */
 const WORKSHOP_ARC = [
   "designer-profile",
   "design-workshop",
   "design-workshop-codes",
+  "design-workshop-questionnaires",
   "design-workshop-stages",
   "design-workshop-sketches",
   "design-review",
   "design-workshop-readiness",
   "design-workshop-report",
-  "design-workshop-history"
+  "design-workshop-history",
+  "design-workshop-inspection"
 ];
+
+/**
+ * The route each arc step is reachable at, as `docs/WALKTHROUGH.md` prints it — one per id in
+ * `WORKSHOP_ARC`, in that order, and the test below asserts that correspondence before it reads the
+ * document.
+ *
+ * Matched on the ROUTE and not on the heading, for the reason the printed-guide test gives: a
+ * heading is prose somebody will reword, and a route is the thing a designer has to be able to
+ * reach. The trailing backtick is part of the needle — it is the closing fence of the inline code
+ * span in the document, and without it `/design-workshops` matches inside every longer route under
+ * it and the check passes on the wrong line.
+ */
+const ARC_ROUTES: Record<string, string> = {
+  "designer-profile": "/designers/profile`",
+  "design-workshop": "/design-workshops`",
+  "design-workshop-codes": "/design-workshops/[id]/codes`",
+  "design-workshop-questionnaires": "/questionnaires`",
+  "design-workshop-stages": "/design-workshops/[id]/stages/[stageKey]`",
+  "design-workshop-sketches": "/sketches-and-prototypes`",
+  "design-review": "/design-review`",
+  "design-workshop-readiness": "/design-workshops/[id]/readiness`",
+  "design-workshop-report": "/design-workshops/[id]/report`",
+  "design-workshop-history": "/design-workshops/[id]/report/history`",
+  "design-workshop-inspection": "/design-workshop-inspections`"
+};
 
 test("the guide carries the design & prototype workshop arc, after the record steps", () => {
   const ids = GUIDE_STEPS.map((step) => step.id);
@@ -66,8 +104,22 @@ test("the guide carries the design & prototype workshop arc, after the record st
   // AFTER, not before. The order is the order the work happens in, and a guide that opened on the
   // 22-stage form would be teaching a designer to point at records that do not exist yet.
   expect(ids.indexOf(WORKSHOP_ARC[0])).toBeGreaterThan(ids.indexOf("view-data"));
-  // And in the printed order, so the two renderings can be read side by side.
-  expect(ids.filter((id) => WORKSHOP_ARC.includes(id))).toEqual(WORKSHOP_ARC);
+  /*
+    AN EXACT TAIL, NOT A FILTERED SUBSET, AND THAT IS THE REPAIR OF 2026-08-31.
+
+    This read `ids.filter((id) => WORKSHOP_ARC.includes(id))`, which DISCARDS every id the constant
+    has not heard of before comparing — so a step ADDED to the arc could never fail it. Two were, the
+    printed guide was given neither, and this test reported green over the gap: the exact failure the
+    comment above says a stale third copy causes, surviving the guard written to catch it.
+
+    The arc is the TAIL of the deck, so compare it whole. A step inserted anywhere inside it, or
+    appended to it, now fails here and names itself.
+  */
+  const arcStart = ids.indexOf(WORKSHOP_ARC[0]);
+  expect(
+    ids.slice(arcStart),
+    "every step from the first arc id onward is part of the arc, in order"
+  ).toEqual(WORKSHOP_ARC);
 });
 
 test("every step links to a route that exists", () => {
@@ -121,21 +173,23 @@ test("the printed guide still declares every screen of the arc", () => {
     THE LIST GUARDED SIX ROUTES WHILE THE ARC CARRIED NINE SCREENS, from 2026-08-26 until this line
     was written. A pair-check that covers two thirds of the pair is worse than none, because it
     reports green over the gap: the designer profile, the sketches screen and the design review could
-    each have been dropped from the printed guide without a single test going red. The rule is that
+    each have been dropped from the printed guide without a single test going red. The rule was that
     this list holds one route per id in `WORKSHOP_ARC` — add to both together, or neither.
+
+    THE RULE WAS STATED AND THEN BROKEN AGAIN: nine routes against an eleven-step arc, 2026-08-29 to
+    2026-08-31. A rule that lives only in a comment is a rule that holds until somebody is in a
+    hurry, so it is now STRUCTURAL — the routes are a map keyed by arc id, and the assertion below
+    checks the keys ARE the arc before checking any route. Adding a step to `WORKSHOP_ARC` without a
+    route here now fails, and so does the reverse.
   */
+  expect(
+    Object.keys(ARC_ROUTES),
+    "one printed-guide route per arc id, in arc order"
+  ).toEqual(WORKSHOP_ARC);
   const walkthrough = readFileSync(join(ROOT, "..", "docs", "WALKTHROUGH.md"), "utf8");
-  for (const route of [
-    "/designers/profile`",
-    "/design-workshops`",
-    "/design-workshops/[id]/codes`",
-    "/design-workshops/[id]/stages/[stageKey]`",
-    "/sketches-and-prototypes`",
-    "/design-review`",
-    "/design-workshops/[id]/readiness`",
-    "/design-workshops/[id]/report`",
-    "/design-workshops/[id]/report/history`"
-  ]) {
-    expect(walkthrough, `WALKTHROUGH.md names ${route}`).toContain(route);
+  for (const id of WORKSHOP_ARC) {
+    expect(walkthrough, `WALKTHROUGH.md names ${ARC_ROUTES[id]} for ${id}`).toContain(
+      ARC_ROUTES[id]
+    );
   }
 });

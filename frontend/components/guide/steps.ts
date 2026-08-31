@@ -189,6 +189,33 @@ import {
  * what the system does, and the difference is a document already in an officer’s hands changing
  * under him. Its authority is `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py`.
  *
+ * THE FOURTH PASS WAS 2026-08-31 AND IT WAS AN AUDIT OF `fields[]` ITSELF, prompted by a docs lane
+ * that could not act on what it found: the REGISTER was wrong, not merely the doc rendering it. Every
+ * card's list was read label-for-label against the component named above it. What that turned up is
+ * worth stating as a class rather than as a list of nine edits, because the class is what will happen
+ * again: the two failures were FIELDS ADDED TO A FORM AFTER THIS FILE LAST READ IT (the artisan's two
+ * identity numbers and three date-derived boxes, the questionnaire's capture controls and its audio
+ * and location blocks, the craft form's workshop select, "Type of workshop" on a design workshop,
+ * "Kind" on a designer's own questionnaire) and LABELS RENAMED UNDER A LIST THAT KEPT THE OLD WORD
+ * ("Address" → "Address line"; the process card's two invented per-step rows; "Start and end date"
+ * for a control headed "Workshop duration"). Both are invisible to every test in the repository: the
+ * parity guard holds three copies of this register to each other and none of them to a form.
+ *
+ * THE ARTISAN CARD IS WHY THIS MATTERED MORE THAN A STALE DOC. It omitted the Aadhaar number and the
+ * Artisan Pehchan Card pair — the two fields in the product with the strictest handling rules, and
+ * the only ones on that form a researcher cannot improvise once the artisan has gone home. A list
+ * that looks complete and leaves them out does not read as "incomplete"; it reads as "this form does
+ * not ask for those", which is a designer arriving at a sitting without the one document they needed.
+ *
+ * WHAT THE PASS DELIBERATELY DID NOT DO, so the next reader does not take the silence for agreement:
+ * "Location (GPS fix or map pin)" is a COMPRESSION and stays one. The card's real heading is
+ * "Location of the artisan", it contains a State box that is required on a create, and it opens a
+ * map panel with six more labelled boxes behind it. Enumerating that on seven cards would swamp
+ * every one of them and would fight the printed guide, which renders the same control as a sentence
+ * about the two things it collects and carries a table explaining why they differ (that sentence is
+ * licensed by name in `PROSE_PARAPHRASES`). It is one control, named once. If it is ever expanded,
+ * expand it on all seven cards, in the doc and in the paraphrase table in one commit.
+ *
  * Every `label` here is the Android-parity feature name (see
  * `.claude/skills/field-repo-frontend/SKILL.md` → "Naming"): the walkthrough must call a
  * screen exactly what the dashboard tile and the Android menu call it, or the guide teaches
@@ -330,7 +357,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Kind of workshop (required)",
       "Workshop title (required)",
       "Place (required)",
-      "Start and end date",
+      "Workshop duration (Start date and End date)",
       "Status",
       "Description",
       "Notes",
@@ -383,7 +410,23 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Add the craft being documented so artisans, products and tools have something to hang off.",
     why:
       "Craft is the shared vocabulary of the repository: artisans link to a craft, products and tools inherit the craft name from it, and the Data Browser groups every workshop's contents by craft. Adding it once keeps spellings consistent across everyone's records.",
-    fields: ["Craft name (required)", "Local name", "Category", "Place", "Description", "Craft media"],
+    // Read off `app/(protected)/crafts/page.tsx` in screen order. `Workshop` WAS MISSING and it is
+    // the FIRST control on the form (`:411`), above the craft name — the page's own comment says
+    // why it leads: "the workshop leads every other dropdown: it is the context the record belongs
+    // to". A card that starts at "Craft name" teaches a researcher to skip the box that files the
+    // record, which is the silent-emptiness failure the workshop card above spends a paragraph on.
+    // NO `Design & prototype workshop` HERE, and its absence is a fact about the schema rather than
+    // an oversight: `DesignWorkshopSelect` is not mounted on this page, because a Craft has no such
+    // column. There is no Status and no Location on this form either.
+    fields: [
+      "Workshop",
+      "Craft name (required)",
+      "Local name",
+      "Category",
+      "Place",
+      "Description",
+      "Craft media"
+    ],
     watch: [
       "Check the list first — if the craft already exists, reuse it instead of creating a near-duplicate spelling.",
       "The local name matters as much as the English one; record what the community actually calls it.",
@@ -407,19 +450,58 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Record the person: who they are, where they work, how to reach them, and what they have learnt.",
     why:
       "The artisan is the anchor of the dataset. Products, processes, tools and questionnaire interviews all link back to an artisan record, and the Do's and Don'ts are the artisan's own hard-won craft knowledge — the part of the archive that cannot be reconstructed later.",
+    // ⚠ SIX REAL BOXES WERE MISSING FROM THIS LIST AND TWO OF THEM ARE THE REGULATED ONES, which is
+    // the worst shape this card could have taken. `fields[]` is declared as the real form labels in
+    // screen order, so a designer plans a sitting from it — and it named neither identity number.
+    // Aadhaar and the Artisan Pehchan Card carry the strictest handling rules in the product (masked
+    // storage, never rendered in a list or an export, a mask posted back verbatim for one and omitted
+    // entirely for the other), and they are the one part of this form nobody can improvise in front
+    // of an artisan: you either brought the card to the sitting or you did not. A list that looks
+    // complete and omits them sends somebody to a village unprepared for exactly the questions that
+    // cannot be answered later over the phone. `Date of birth`, `Practising since` and `Experience`
+    // were missing on the same reading — they arrived with the workshop's participant table, which is
+    // what the report prints an age and years of experience from.
+    //
+    // AND THE WORKSHOP PAIR WAS IN THE WRONG PLACE, not merely absent: this list opened on "Name"
+    // while the form opens on the workshop, whose own comment says why — "the workshop opens the
+    // form, because it is the context every other answer belongs to". Screen order is half of what
+    // this array promises; a list read with the form open beside it is the use it was written for.
+    //
+    // Re-read off `components/forms/ArtisanForm.tsx` in screen order 2026-08-31: workshop (`:1183`),
+    // design & prototype workshop (`:1194`), name (`:1207`), local name (`:1219`), craft (`:1227`),
+    // or new craft name (`:1256`), place (`:1268`), gender (`:1278`), date of birth (`:1316`),
+    // practising since (`:1366`), experience (`:1414`), phone (`:1501`), email (`:1504`), address
+    // (`:1537`), notes (`:1559`), the Identity group — Aadhaar (`:1588`) and the Pehchan pair
+    // (`:1602`) — do's (`:1608`), don'ts (`:1614`), status (`:1620`), media (`:1623`), location
+    // (`:1638`).
+    //
+    // THE TWO CONDITIONAL MARKS ARE MARKED AS CONDITIONAL RATHER THAN FLATLY, because the rule is
+    // "check the control" and both controls answer "it depends". `AadhaarField` is mounted
+    // `required={aadhaarRequired}`, and `aadhaarRequired` is `!initial || …` — so it is required on
+    // every NEW artisan, which is the screen this card links to, and stands down only on an old
+    // record that predates the rule. `PehchanFields` sets `required={available}` on the number, so
+    // the Yes/No box directly above it decides: answering No disables the number and clears it.
+    // "Experience" is the FieldBlock heading over the Years and Months pair, which is how this file
+    // already names a two-box group (see the designer profile card's "Designer’s experience").
     fields: [
-      "Name (required)",
-      "Local name",
       "Workshop",
       "Design & prototype workshop",
+      "Name (required)",
+      "Local name",
       "Craft (required)",
       "Or new craft name",
       "Place (required)",
       "Gender",
+      "Date of birth",
+      "Practising since",
+      "Experience",
       "Phone",
       "Email",
       "Address",
       "Notes",
+      "Aadhaar number (required)",
+      "Artisan Pehchan Card available",
+      "Artisan Pehchan Card number (required if the card is available)",
       "Do's (positive prompt) (required)",
       "Don'ts (negative prompt) (required)",
       "Status",
@@ -430,6 +512,16 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Do's and Don'ts are required. Press Enter for each new point — one lesson per line.",
       "You must either select an existing craft or type a new craft name; the form will not save with neither.",
       "Photo EXIF is retained and summarised into the notes automatically — you do not need to transcribe camera details by hand.",
+      // ── THE FOUR BULLETS THE SIX NEW FIELDS OWE THE READER ────────────────────────────────────
+      // A field named on a card and left unexplained is worse than one omitted where the field has
+      // rules a researcher cannot infer from the box: they meet the mask, or the disabled number, and
+      // read it as the form being broken. Every clause below is `ArtisanForm.tsx`, `AadhaarField.tsx`
+      // or `PehchanFields`, not the printed guide — the doc says most of this and copy written from
+      // copy is the failure this whole file exists to prevent.
+      "The Aadhaar number is what stops the same artisan being recorded twice. It is checked as you type and again on save, and if the person is already in the archive you are shown their record — that is the field working. Add to that record rather than opening a second one. It is required on a new artisan; a record entered before the rule still saves without one.",
+      "Wherever the number is shared or exported it appears masked, as “XXXX XXXX 9012”. If a box opens on a mask, leave it alone — saving with the mask still in it is recognised as “unchanged”, so you never have to retype a number you were not shown.",
+      "The Pehchan card is two answers and the order matters. Answer “Artisan Pehchan Card available” first: Yes makes the number required, No clears the number and locks the box. There is no way to store a card number for an artisan who says they hold no card.",
+      "“Date of birth” and “Practising since” are DATES, and the age and the years of experience are worked out from them every time they are read — here, in the workshop’s participant table, and in the report. There is deliberately no age box: a number typed today is wrong within a year with nothing anywhere to say so. The “Experience” pair beside them is the stated fallback, read only while “Practising since” is empty.",
       DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]
@@ -443,11 +535,17 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Record one thing this artisan makes, with its measurements, economics and photographs.",
     why:
       "The product record is where the craft becomes measurable: dimensions, cost of making, selling price and market demand are the fields researchers compare across regions. Link it to the artisan and the craft and the whole chain stays navigable.",
+    // Read off `components/forms/ProductForm.tsx` in screen order. THE WORKSHOP PAIR WAS LISTED
+    // THIRD AND FOURTH AND IS DRAWN FIRST AND SECOND (`:849`, `:855`) — the same drift the artisan
+    // card carried, from the same wave that put the workshop at the head of every record form. No
+    // label is missing here; the two measuring panels between "Height (inches)" and "Cost of making"
+    // are instruments rather than boxes — they PROPOSE a number into the three dimension fields
+    // already listed, and the watch bullets below name both.
     fields: [
-      "Product name (required)",
-      "Local name",
       "Workshop",
       "Design & prototype workshop",
+      "Product name (required)",
+      "Local name",
       "Product type",
       "Linked craft (fills craft name)",
       "Craft name (required)",
@@ -507,6 +605,16 @@ export const GUIDE_STEPS: GuideStep[] = [
     // (`:1312`) is the box the design-workshop report prints under “What happens”, in the
     // traditional-process table and above it. A card that lists the STEPS and not the paragraph the
     // report is built from teaches a designer to leave the report's own text empty.
+    //
+    // ⚠ TWO OF THE PER-STEP ROWS THEN NAMED LABELS THE FORM DOES NOT DRAW, which is the same defect
+    // as the questionnaire card's invented "Date" one card down, only quieter because the words were
+    // plausible. It read "additional context notes (optional)" and "attached media"; the step card
+    // draws a CHECKBOX, "Record additional information" (`:1622`), and only once it is ticked does a
+    // notes control appear, headed "Additional context for this step" (`:1627`). The media card
+    // under it is titled "Attach media" (`:1636`). A researcher hunting the screen for either of the
+    // two old strings finds nothing, and the checkbox that gates the notes was named by neither — so
+    // the box the card promised was, for most readers, genuinely not on the screen. Three rows now,
+    // in the order the step draws them.
     fields: [
       "Workshop",
       "Design & prototype workshop",
@@ -516,8 +624,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "What happens in this process",
       "Pre-processes available",
       "Per step: Name of the step (required)",
-      "Per step: additional context notes (optional)",
-      "Per step: attached media",
+      "Per step: Record additional information",
+      "Per step: Additional context for this step",
+      "Per step: Attach media",
       "Status"
     ],
     watch: [
@@ -538,12 +647,18 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Record the toolkit the artisan uses: what it is made of, how big it is, who made it, what it costs to replace.",
     why:
       "Tools are the most quietly endangered part of a craft — the maker of a tool often disappears before the craft does. Replacement cost, maker and tradition type are the fields that record whether the toolchain behind the craft is still alive.",
+    // Read off `components/forms/ToolForm.tsx` in screen order. Every label matched on a re-read of
+    // 2026-08-31 except the position of the workshop pair, which is drawn first and second (`:958`,
+    // `:964`) and was listed fourth and fifth — the artisan and product cards carried the same drift.
+    // The two measuring panels sit between "Radius" and "Maker" and are not listed, for the reason
+    // the product card gives: they propose into boxes already named here, and the watch bullets say
+    // which boxes (this form is the one with two of them called "Height").
     fields: [
+      "Workshop",
+      "Design & prototype workshop",
       "Toolkit name (required)",
       "Local name",
       "English name",
-      "Workshop",
-      "Design & prototype workshop",
       "Linked craft (fills craft name)",
       "Craft name (required)",
       "Linked artisan (fills artisan + place)",
@@ -607,6 +722,22 @@ export const GUIDE_STEPS: GuideStep[] = [
     // 2026-08-29: title (`:1003`), place (`:1015`), language (`:1056`), workshop (`:1071`), design &
     // prototype workshop (`:1076`), status (`:1077`), primary artisan (`:1094`), additional artisans
     // (`:1133`), the per-question boxes, and interview notes (`:1359`).
+    //
+    // ⚠ FOUR MORE WERE ADDED 2026-08-31, and three of them are decisions a researcher makes BEFORE
+    // the artisan sits down, which is the worst kind of control to leave off a card somebody plans a
+    // sitting from. `<QuestionnaireCaptureControls>` draws two: "Recording mode", which is the choice
+    // between one take per question and one take for a whole section, and "Do not display answer text
+    // boxes", which `DEFAULT_CAPTURE_PREFS` has ON — so a reader who was never told it exists meets a
+    // screen with no typing boxes at all and concludes the form is broken. The "Interview audio"
+    // capture card under it is the take for the interview as a whole, distinct from the per-question
+    // ones and never hidden by that toggle, and `<LocationFields />` sits under that. Named rather
+    // than cited by line, unlike the boxes above: that page was being edited in a neighbouring lane
+    // as this was written, and a line number that is already wrong is worse than none at all.
+    //
+    // AND THEY SIT ABOVE THE QUESTIONS, NOT AT THE FOOT. `docs/WALKTHROUGH.md` said "at the foot",
+    // which is where the notes are; the audio and the location are between "Additional artisans" and
+    // the first section. Screen order is half of what this array promises, so the doc was corrected
+    // to match the form rather than this list to match the doc.
     fields: [
       "Interview title (required)",
       "Place",
@@ -616,6 +747,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Status",
       "Primary artisan",
       "Additional artisans",
+      "Recording mode",
+      "Do not display answer text boxes",
+      "Interview audio",
+      "Location (GPS fix or map pin)",
       "Per question: \"Record this question\" audio, or typed answer",
       "Interview notes"
     ],
@@ -623,6 +758,11 @@ export const GUIDE_STEPS: GuideStep[] = [
       "There is one interview per exact set of artisans. If an entry already exists for that set, saving adds your answers to it — it never creates a duplicate.",
       "There is no date to fill in. The interview is dated from when it was actually recorded, so there is nothing here to tab past and nothing to get wrong.",
       "Language is a closed list of twenty-four, in the same order as the handset, with Hindi and English at the top because that is what most interviews are conducted in. If an older interview holds something not on the list — a dialect, or somebody’s own spelling — it is offered first and never overwritten.",
+      // THE DEFAULT THAT READS AS A BROKEN SCREEN. `DEFAULT_CAPTURE_PREFS` has `hideAnswers` ON, and
+      // the toggle's own hint says so — "On by default — show only the record button." A researcher
+      // who came to type finds no box to type in and no reason given, which is the one state on this
+      // form a card can spare somebody entirely.
+      "“Do not display answer text boxes” is ON when you first open the screen, so each question shows only its record button. Turn it off to type written answers. “Recording mode” beside it decides whether a take covers one question or a whole section — set both before the artisan sits down.",
       "Answer only the questions actually asked; empty questions stay open for whoever picks the interview up next.",
       "Questions already answered by someone else can only be changed by that contributor or an admin.",
       "Use \"Check completion\" at the top of the screen to see the artisans × sections matrix and find the gaps.",
@@ -785,6 +925,24 @@ export const GUIDE_STEPS: GuideStep[] = [
       // marked, and the `watch` bullet below used to tell the reader in as many words that NONE of
       // them was. `DESIGNER_PROFILE_REQUIRED_FIELDS` in `designers/profileCopy.ts` is the register
       // both profile screens and the server read; these four are it.
+      //
+      // ⚠ A FIFTH BOX CARRIES AN ASTERISK AND IS NOT IN THAT ARRAY, and reading the array alone is
+      // how this card came to say four. `DesignerProfileForm` mounts the empanelment number as
+      // `<Field label={…} required>` — unconditionally, with its own comment saying why ("the number
+      // is mandatory, and a designer reading this form should be told so whichever state their
+      // profile is in") — and the server refuses a CREATE without one in `_assert_empanelment_number`.
+      // The native attribute alone is dropped on the grace path, for a profile that already has
+      // content, so nobody is locked out of saving their biography; the mark stays either way.
+      //
+      // TWO OTHER CORRECTIONS FROM THE SAME RE-READ. "Address" is now "Address line", renamed in
+      // `profileCopy.ts` on 2026-08-30 to match Android and, in its own words, because "there are now
+      // two addresses on this screen and an unqualified word over one of two is the reading a person
+      // gets wrong" — this card kept the old word for a day. And the location card at the foot of the
+      // Postal address group (`DesignerProfileForm:906`) was never listed at all: it is a real
+      // control, it is where the district and the map point live, and the form itself warns that
+      // filling it in INSTEAD of the four boxes above produces a report with no address on it. It is
+      // not one of the twenty-one columns, which is why the count in the bullet below is stated of
+      // the columns rather than of this array.
       "Name (required)",
       "Name in the local script",
       "Designation",
@@ -797,11 +955,12 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Phone (required)",
       "Email (required)",
       "Website",
-      "Address",
+      "Address line",
       "City or town",
       "State",
       "Pincode",
-      "Empanelment number",
+      "Location (GPS fix or map pin)",
+      "Empanelment number (required)",
       "Empanelment date",
       "Photograph",
       "Signature",
@@ -817,7 +976,8 @@ export const GUIDE_STEPS: GuideStep[] = [
       // gone from true to the opposite of true on the one card a designer reads BEFORE opening the
       // page. The fallback it described still exists for rows saved before the rule; what stopped
       // being true is that skipping those four is free.
-      "Four of the twenty-one are required — name, qualification, phone and email — because they are what a report is submitted under and how the person who signed it is reached. The other seventeen are optional, and none of the twenty-one is guessed for you.",
+      "Five boxes carry an asterisk — name, qualification, phone, email and the empanelment number — because they are what a report is submitted under, how the person who signed it is reached, and the identifier a government document is expected to carry. The rest of the twenty-one are optional, and none of them is guessed for you.",
+      "The Postal address group asks twice and the two halves do not fill each other in. The four boxes at the top — address line, city or town, state, pincode — are what a report prints. The location card under them is where the district and the map point live, and nothing on it reaches the document. Fill in both, or a report goes out with no address on it.",
       // ⚠ THIS BULLET ENDED "Either way it reaches your reports as an annexure." AND THAT WAS FALSE —
       // the FIFTH surface to carry the sentence, and the fourth time it was written from a neighbour's
       // copy rather than from the code. No branch of this codebase puts a FILE in a report annexure:
@@ -908,10 +1068,18 @@ export const GUIDE_STEPS: GuideStep[] = [
     // one: it is the control that decides WHOSE designer profile is copied into stage 1 and stage 3,
     // the mechanism the card above this one spends four bullets describing. One card explained the
     // copy and the other omitted the control that drives it. Re-read in screen order 2026-08-29.
+    //
+    // "Type of workshop" JOINED IT ON 2026-08-31, out of the same audit: `FieldBlock label="Type of
+    // workshop"` sits between the template and the craft (`design-workshops/page.tsx:1489`) and this
+    // list stepped straight from one to the other. It is the second box on this screen carrying the
+    // word "workshop" in a different sense from the first — "Start from a recorded workshop" points
+    // at a Workshop RECORD, this one classifies the design workshop being opened — which is exactly
+    // the pair a reader needs named rather than left to be met cold.
     fields: [
       "Start from a recorded workshop — what narrows every reference picker inside the stages",
       "Workshop title (required)",
       "Report template",
+      "Type of workshop",
       "Craft",
       "Cluster",
       "State",
@@ -998,9 +1166,15 @@ export const GUIDE_STEPS: GuideStep[] = [
     why:
       "The artisan questionnaire further up this guide is one global instrument, shared by the whole repository, and it cannot be changed for your cluster. This is the other kind — a form you write yourself and attach to your design workshop — and every one of the six report templates prints its answers at the back as “Annexure — Questionnaire responses”. The spreadsheet is the point rather than a convenience: building a questionnaire box by box in a browser is the slow path, and it is offered third and quietly for that reason.",
     fields: [
+      // "Kind" WAS MISSING AND IT IS NOT A COSMETIC BOX. Added to the create form on 2026-08-30 at
+      // the owner's request ("they also do market survey interviews, so create that differentiation
+      // as well, so that we can map the questionnaires and the transcripts to the correct stage in
+      // the report"), it decides which stage of the report this questionnaire's answers are filed
+      // under — its own hint on `questionnaires/page.tsx:592` says so. A designer who leaves it on
+      // "Not stated" because no card mentioned it gets answers filed nowhere in particular.
       "Download the pro-forma",
       "Upload a filled-in pro-forma",
-      "Or “Start an empty one” — Title, Attach to a design workshop, Description",
+      "Or “Start an empty one” — Title, Attach to a design workshop, Kind, Description",
       "Per section: Section title, Code",
       "Per question: Question, Help text",
       "Record answers",

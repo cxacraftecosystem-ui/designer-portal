@@ -1557,6 +1557,20 @@ export type DwReferenceOption = {
   label: string;
   sublabel: string;
   data: Record<string, unknown>;
+  /**
+   * Has this row been ticked "Tentative"? — see {@link DwReferencePayload.tentativeFirst}.
+   *
+   * ONE BOOLEAN, AND POINTEDLY NOT A KEY IN `data`. `data` above is the hydration dictionary, and
+   * `sketch.supersedesSketch` is a `DwSketch` picker mounted on a `sketch` row, which declares
+   * `isTentative` itself — so an `isTentative` inside `data` would be a standing offer to tick the
+   * new sketch's box from the old one's. The server keeps it out for that reason
+   * (`_in_record_options`), and this key must not be folded back in for tidiness.
+   *
+   * ABSENT ON EVERY PICKER WHOSE MODEL DECLARES NO SUCH FLAG, and absent from any server that
+   * predates the feature. Read it as `option.tentative === true`; treat undefined as "not
+   * tentative", exactly as `isTentativeRow` treats a missing value.
+   */
+  tentative?: boolean;
 };
 
 /**
@@ -1603,6 +1617,32 @@ export type DwReferencePayload = {
    * on every other answer, including from an older server. Never rendered as part of `options`.
    */
   outOfScopeOption?: DwReferenceOption | null;
+  /**
+   * The server ordered `options` tentative-first — the rows a designer ticked "Tentative", then the
+   * rest, each group in its own stage order.
+   *
+   * WHY THE SERVER AND NOT THIS FILE. `options` is one CAPPED page (`truncated` above), so sorting
+   * it here would sort the page and leave a tentative sketch stranded behind the cap — a
+   * client-side re-sort cannot recover a row the server already cut, which is the same defect as a
+   * client-side filter over a server-truncated list (§11.5). The partition therefore runs beside
+   * the truncation, in `_in_record_options`, and this flag is how the picker knows it may say so.
+   *
+   * FALSE OR ABSENT is the ordinary answer: every external model (Artisan, ProductDocumentation, …)
+   * and every in-record entity that declares no such field — `prototype`, `sketchReview` — plus any
+   * server that predates the feature. A picker must not claim an ordering on a false or missing
+   * flag; a claim about an order nobody applied is worse than no sentence at all.
+   */
+  tentativeFirst?: boolean;
+  /**
+   * The registry's own word for the flag — "Tentative" — or `""` where there is none.
+   *
+   * READ, NEVER HARDCODED, for §16's reason and `sketchTentative.ts`'s: the label belongs to
+   * `stage_definitions.py`, four surfaces already draw it, and a word typed into a component is the
+   * copy that goes stale the day the registry is edited. It arrives on the payload rather than
+   * being looked up here because a picker holds the REF field's `refModel` and not the referenced
+   * entity's schema.
+   */
+  tentativeLabel?: string;
   options: DwReferenceOption[];
 };
 

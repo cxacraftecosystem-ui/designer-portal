@@ -8,10 +8,17 @@ import { OutboxBanner } from "@/components/OutboxBanner";
 import { UnsavedChangesProvider } from "@/components/UnsavedChangesGuard";
 
 /**
- * Every protected page renders inside AppShell, which owns the two things that must apply to all of
- * them: the sign-in redirect, and the route guards declared in lib/permissions.ts (ROUTE_GUARDS).
- * Enforcing access here rather than page by page is why a direct URL to /users, /review, /data or a
- * create form cannot render content the API would refuse.
+ * Every protected page renders inside AppShell, which owns the three things that must apply to all
+ * of them: the sign-in redirect, the route guards declared in lib/permissions.ts (ROUTE_GUARDS), and
+ * the first-login password gate. Enforcing access here rather than page by page is why a direct URL
+ * to /users, /review, /data or a create form cannot render content the API would refuse.
+ *
+ * THE THIRD ONE IS NEW AND IS NOT A ROUTE RULE, which is why it is worth naming here. `ROUTE_GUARDS`
+ * answers "may this person open THIS page"; `mustChangePassword` answers "may this person use the
+ * product at all" while their account still holds a password an administrator typed. AppShell
+ * returns a full surface for it ABOVE the island and above both guards — read the comment beside the
+ * branch before moving anything near it, and note that `/set-password`, the one route somebody who
+ * does not know that password can use, is deliberately not in this tree.
  *
  * It is also where the app-wide dialogs are mounted, once each — same reasoning as the single
  * ToastProvider in the root layout:

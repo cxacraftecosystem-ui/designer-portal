@@ -244,9 +244,22 @@ fun questionnaireTranscriptOutcome(
  * the machine's copy here would relabel a mixed answer as untouched machine output, which is exactly
  * the claim the flag exists to prevent. That is why this returns only the merged answer and not a
  * second value: there is nothing else to write.
+ *
+ * ── AND THIS IS THE ONE APPEND ON THIS SCREEN THAT CAN MEET A DOCUMENT ──────────────────────────
+ *
+ * An offer is made precisely BECAUSE the box differs from the machine's words, and applying any
+ * formatting makes it differ — so a formatted answer always arrives here rather than at the WRITTEN
+ * branch above. `appendSpokenToRecord` alone would concatenate the machine's sentence onto the end
+ * of a JSON string, producing a value that is neither valid JSON nor readable prose, on the one
+ * path guaranteed to see one. [questionnaireAnswerAppend] is that function for prose and appends
+ * INTO the document when there is one; its own KDoc argues the placement.
+ *
+ * The WRITTEN branch of [questionnaireTranscriptOutcome] needs no such care and deliberately does
+ * not have it: it fires only when the box is blank or still holds the machine's own words, and the
+ * machine only ever writes plain text, so a document cannot reach it.
  */
 fun questionnaireAcceptOffer(inBox: String, offered: String): String =
-    appendSpokenToRecord(inBox, offered)
+    questionnaireAnswerAppend(inBox, offered)
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════
  * 5. The flag

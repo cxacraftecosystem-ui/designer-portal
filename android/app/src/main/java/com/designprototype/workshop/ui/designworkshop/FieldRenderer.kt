@@ -86,6 +86,7 @@ import com.designprototype.workshop.ui.splitNumbered
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.formatFieldDate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
@@ -1014,6 +1015,17 @@ internal fun dwNumericTextField(field: FieldDto): Boolean =
 private const val DW_NAME_OFFER_PAGE_SIZE = 80
 
 /**
+ * How long a keystroke in the name box waits before it becomes a request.
+ *
+ * `WorkshopListScreen`'s number, deliberately, because it is the same act against the same route:
+ * a designer typing a cluster name into a box that lists design workshops. Two surfaces that felt
+ * different while doing one thing would read as one of them being broken. Long enough that a
+ * five-letter word is one request rather than five on a metered field connection, short enough that
+ * the list does not feel like it has stopped answering.
+ */
+private const val DW_NAME_SEARCH_DEBOUNCE_MS = 350L
+
+/**
  * Is this box the design workshop's OWN name — `workshopSetup.workshopTitle`, stage 1?
  *
  * ── THE OBJECTION THIS ANSWERS, WHICH WAS RIGHT ABOUT THE CONTROL IT REFUSED ────────────────────
@@ -1130,18 +1142,79 @@ internal fun dwWorkshopNameOptions(current: String, names: List<String>): List<S
  * costs more than the problem. `WorkshopListScreen`'s create dialog prints the same pair for the
  * same field.
  */
-internal fun dwWorkshopNameOfferLine(workshopKind: String, shown: Int, total: Int): String =
+internal fun dwWorkshopNameOfferLine(
+    workshopKind: String,
+    shown: Int,
+    total: Int,
+    /**
+     * Whether there is a term in the picker's box — i.e. whether these rows are the SERVER'S answer
+     * to it rather than the newest page of the whole list.
+     *
+     * DEFAULTED SO THE UNSEARCHED SENTENCE IS THE ONE THAT NEEDS NO ARGUMENT, and because the two
+     * facts genuinely differ: unsearched, the reader needs to know the box reaches past what is on
+     * screen; searched, they need to know it already has.
+     */
+    searching: Boolean = false,
+): String =
     buildString {
         append(
             if (workshopKind.isBlank()) "Names from workshops you can open."
             else "Names from workshops of this type."
         )
-        append(" Type a new one if it is not here.")
+        // "Type a new one if it is not here." STOOD ALONE HERE AND DID TWO JOBS, one of which it was
+        // not entitled to. It is the escape — and it was also, silently, the entire answer to a box
+        // that could only filter one page: the reader was never told a name did not exist, they were
+        // offered the one they were typing. That kept the control from lying and it did not make the
+        // box work. The box now asks the server, so the two facts are separated and both are said.
+        append(
+            if (searching) " All of them searched. Type a new one if it is not here."
+            else " Type to search all of them, or type a new one."
+        )
         // BOTH NUMBERS OR NEITHER. "Showing 80" alone leaves a reader guessing whether that is most
         // of their workshops or a sixth of them, which is the difference between trusting the offer
-        // and going to look somewhere else.
+        // and going to look somewhere else. While searching, both numbers are about the MATCHES —
+        // the server counts what its own filter found — which is the fact worth printing there too.
         if (shown > 0 && total > shown) append(" Showing $shown of $total.")
     }
+
+/**
+ * The one sentence under an EMPTY name list, which is a different fact once the server is filtering.
+ *
+ * [workshopListNotice] is this app's single decider for what an unanswered workshop list says, and
+ * it is still the decider here for every state it was written for: a read in flight, a read that
+ * failed online, a read that failed with no signal, and an account genuinely on no design workshop
+ * ("Ask an admin" — never "create one", because the remedy is a grant and a designer told otherwise
+ * goes and makes a duplicate).
+ *
+ * WHAT IT CANNOT KNOW IS THAT A TERM WAS TYPED. `Listed(count = 0)` used to mean one thing — this
+ * account is on no workshops — and now means either that or "the server searched every workshop you
+ * can open and none is called that". Printing the scope sentence for the second is the exact defect
+ * this control's whole lane is about, one layer along: absence read as non-existence, except now it
+ * is the account's whole access being denied on the strength of a misspelt cluster name.
+ *
+ * ORDER IS LOAD-BEARING. The term is consulted ONLY on `Listed`, so a read that FAILED with a term
+ * in the box still says the server could not be reached — never "no name matches", which would
+ * report a dead connection as a fact about the repository. That is the same trap
+ * [SearchableSelect.pickerEmptyLine]'s `listIsEmpty` guard exists for, and the reason this decision
+ * is the caller's: only the caller holds the state machine that can tell the two apart.
+ *
+ * NULL MEANS "SAY NOTHING", exactly as [workshopListNotice]'s does — there are rows to draw.
+ */
+internal fun dwWorkshopNameNotice(
+    state: WorkshopListState,
+    online: Boolean,
+    query: String,
+): String? {
+    val term = query.trim()
+    if (state is WorkshopListState.Listed && state.count == 0 && term.isNotEmpty()) {
+        // TERSE, AND IT DOES NOT NAME THE NEXT MOVE, because the next move is already drawn directly
+        // beneath it: the create row reads *Use "…" as the name* for this same term. A second
+        // sentence telling the designer to type what they have just typed is the sort of copy the
+        // owner's "the user is not a dunce" rules out.
+        return "No workshop name matches “$term”."
+    }
+    return workshopListNotice(state, WorkshopListKind.DESIGN, online)
+}
 
 /**
  * The names that could not be offered because this field could not store them. Null for none.
@@ -1178,24 +1251,35 @@ internal fun dwWorkshopNamesWithheldLine(withheld: Int, maxLength: Int): String?
  * the row NAMES IT BACK, so a workshop that exists nowhere is answered as fast as one with a
  * history.
  *
- * ── THE FILTER BOX, AND THE RULE IT LOOKS LIKE IT IS BREAKING ──────────────────────────────────
+ * ── THE FILTER BOX, AND THE RULE IT LOOKED LIKE IT WAS BREAKING ────────────────────────────────
  *
  * `SearchableSelectField.searchable`'s own note says to pass `false` over ONE SERVER-TRUNCATED PAGE,
  * because "a filter box over a page filters the page" and typing the title of a workshop on page
- * four answers "nothing matches" about a workshop that exists. That rule is about a picker whose box
- * is the only route to an answer. Two things make this control the exception, and both are stated on
- * screen rather than assumed:
+ * four answers "nothing matches" about a workshop that exists.
+ *
+ * THE BOX IS NOW WIRED TO `GET /design-workshops?search=`, WHICH IS THE BROWSER'S OWN ANSWER and
+ * what `StageWorkshopNameField.tsx` has always done. [SearchableSelectField.onSearch] is the seam —
+ * the sheet hands every keystroke back here, the read below re-asks the server with it, and the
+ * sheet stops filtering the reply locally (it must: the server matches the code, the craft and the
+ * cluster, and this list prints only the title, so a local second pass would delete the hits the
+ * server had just found). The rule above is therefore satisfied rather than excepted: the box
+ * reaches the whole corpus this account may open, at any number of workshops.
+ *
+ * ── THE TWO CLAUSES THAT HELD IT UP BEFORE THAT, WHICH ARE STILL TRUE AND NO LONGER LOAD-BEARING ─
+ *
+ * They were the argument for shipping the box over one page, and they are kept because they are why
+ * that was survivable rather than a defect waiting to be found:
  *
  *   · the page is [DW_NAME_OFFER_PAGE_SIZE] — the browser's number for this same field — so for any
- *     account with fewer workshops than that the box is filtering the WHOLE corpus and the rule has
- *     nothing to bite on; where it is not, [dwWorkshopNameOfferLine] prints both numbers; and
+ *     account with fewer workshops than that the box was filtering the WHOLE corpus and the rule had
+ *     nothing to bite on; where it was not, [dwWorkshopNameOfferLine] printed both numbers; and
  *   · the box never answers "nothing matches" ALONE. The create row is drawn for the same term and
  *     reads *Use “…” as the name*, so the reader is never told a name does not exist — they are
  *     offered the answer they were typing anyway.
  *
- * The honest end state is the browser's: the box wired to `GET /design-workshops?search=`, which
- * needs a server-query seam this handset's picker has not got. That is a primitive change and a
- * separate one; until it lands the two clauses above are what keeps this box from lying.
+ * The first is now a statement about what is DRAWN rather than what is reachable, and
+ * [dwWorkshopNameOfferLine] says which of the two it is. The second is unchanged and still the
+ * reason an empty answer here costs a designer nothing.
  *
  * ── AND IT NEVER STANDS DOWN ───────────────────────────────────────────────────────────────────
  *
@@ -1247,6 +1331,18 @@ private fun DwWorkshopNameField(
     var localError by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
     /** The recogniser's running guess, drawn under the control and NOT yet in the store. */
     var spoken by remember(field.key, resetKey) { mutableStateOf("") }
+    /**
+     * WHAT IS TYPED IN THE PICKER'S SEARCH BOX — hoisted out of the sheet so the SERVER can answer it.
+     *
+     * This is the whole of the divergence this control carried: the box filtered the one page it had
+     * been handed, so over [DW_NAME_OFFER_PAGE_SIZE] workshops it answered "nothing matches" about
+     * workshops that exist. See the header for why that was survivable and why it is not the shape
+     * to ship.
+     *
+     * KEYED LIKE EVERY OTHER BUFFER HERE, so a collection row change does not leave the previous
+     * row's term filtering this one's list.
+     */
+    var nameQuery by remember(field.key, resetKey) { mutableStateOf("") }
 
     val current = DwValues.text(value)
 
@@ -1272,11 +1368,29 @@ private fun DwWorkshopNameField(
       the difference and `workshopListNotice` prints it. Nothing else changes — the control stays
       usable, because typing was always the answer here.
     */
-    LaunchedEffect(workshopKind, field.key, resetKey) {
+    LaunchedEffect(workshopKind, nameQuery, field.key, resetKey) {
+        // DEBOUNCED, AND ONLY FOR TYPING. Keying on `nameQuery` means every keystroke cancels the
+        // run in flight and starts a new one, so without this a five-letter cluster name is five
+        // list requests on a metered field connection and four replies nobody will look at. The type
+        // above changes by a tap on a picker rather than by typing, so it has no run of intermediate
+        // values to swallow and must not be made to wait — the same split, and the same number,
+        // `WorkshopListScreen` uses for its own search and type filters.
+        if (nameQuery.isNotBlank()) delay(DW_NAME_SEARCH_DEBOUNCE_MS)
+        // A NEW TERM MUST NOT LEAVE THE PREVIOUS ANSWER ON SCREEN LOOKING LIKE ITS OWN. The failure
+        // arm below deliberately keeps the names it has, which is right for a dropped connection and
+        // wrong here — those rows are the answer to a word the designer has since edited.
+        list = WorkshopListState.Loading
         val answer = try {
             services.repository.designWorkshops(
                 page = 1,
                 pageSize = DW_NAME_OFFER_PAGE_SIZE,
+                // THE SERVER IS THE FILTER NOW. `GET /design-workshops?search=` matches the code,
+                // the craft and the cluster as well as the title, over the WHOLE corpus this account
+                // may open — which is what makes the box in the sheet honest at any number of
+                // workshops. Folded to null by `designWorkshops`, so an empty box asks the same
+                // unfiltered question it always asked. See [SearchableSelectField.onSearch] for why
+                // the sheet must then stop filtering these rows again locally.
+                search = nameQuery.trim().takeIf { it.isNotEmpty() },
                 // OMITTED when no type is chosen: `designWorkshops` folds a blank to null, and a
                 // blank token on the wire is a filter that matches nothing — an empty list over a
                 // full corpus.
@@ -1291,8 +1405,17 @@ private fun DwWorkshopNameField(
         } catch (failure: Throwable) {
             online = !services.repository.isTransient(failure)
             list = WorkshopListState.Failed
-            // The names already held are deliberately NOT cleared: on a re-read whose answer failed,
-            // blanking what is on screen takes away the one thing that still works.
+            // The names already held are deliberately NOT cleared WHEN THE BOX IS EMPTY: on a
+            // re-read whose answer failed, blanking what is on screen takes away the one thing that
+            // still works.
+            //
+            // WITH A TERM IN THE BOX THEY ARE CLEARED, and that is the same rule rather than an
+            // exception to it. Once the SERVER is the filter, the rows on screen are the answer to
+            // whatever word was last answered successfully — so leaving them under a new term draws
+            // eighty workshops as though they matched "bagru", which is worse than an empty list
+            // beside a sentence saying the server could not be reached. Nothing is lost either way:
+            // typing was always the answer on this control, and the create row still offers it.
+            if (nameQuery.isNotBlank()) offer = DwWorkshopNameOffer(emptyList(), 0)
             return@LaunchedEffect
         }
         val built = dwWorkshopNamesOnRecord(answer.items.map { it.title }, field.maxLength)
@@ -1301,7 +1424,7 @@ private fun DwWorkshopNameField(
     }
 
     val options = remember(current, offer) { dwWorkshopNameOptions(current, offer.names) }
-    val notice = workshopListNotice(list, WorkshopListKind.DESIGN, online)
+    val notice = dwWorkshopNameNotice(list, online, nameQuery)
     val listed = list as? WorkshopListState.Listed
 
     val canDictate = rememberDictationAvailable() && dictatable(DwFieldType.of(field.type))
@@ -1328,10 +1451,22 @@ private fun DwWorkshopNameField(
                 label = ::dwWorkshopNameCreateLabel,
                 onClick = ::commit,
             ),
+            // THE BOX ASKS THE SERVER. This is what closes the divergence the header used to end on
+            // — "the honest end state is the browser's: the box wired to `GET
+            // /design-workshops?search=`, which needs a server-query seam this handset's picker has
+            // not got". The seam is [SearchableSelectField.onSearch]; passing it also stops the
+            // sheet filtering these rows a second time, which matters because the server matches the
+            // code, the craft and the cluster and this list only prints the title.
+            onSearch = { typed -> nameQuery = typed },
             onSelect = { picked -> if (picked.isNotBlank()) commit(picked) },
         )
         Text(
-            dwWorkshopNameOfferLine(workshopKind, offer.names.size, listed?.total ?: 0),
+            dwWorkshopNameOfferLine(
+                workshopKind = workshopKind,
+                shown = offer.names.size,
+                total = listed?.total ?: 0,
+                searching = nameQuery.isNotBlank(),
+            ),
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 15.sp,

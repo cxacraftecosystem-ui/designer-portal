@@ -119,6 +119,7 @@ from app.services.stage_schema import (
     REFERENCE_HYDRATION,
     Cardinality,
     EntitySpec,
+    FieldSpec,
     FieldType,
     StageSpec,
     all_entities,
@@ -2722,6 +2723,7 @@ def _reference_payload(
     *,
     truncated: bool,
     out_of_scope_option: dict[str, Any] | None = None,
+    tentative: FieldSpec | None = None,
 ) -> dict[str, Any]:
     """The picker's whole answer. Every flag on it exists so a short list can say WHY it is short.
 
@@ -2739,6 +2741,25 @@ def _reference_payload(
     False is the ordinary answer, including for every by-id lookup that resolved inside the scope
     and for every id that resolved to nothing — see the same probe for why those last two must
     stay indistinguishable.
+
+    ── ``tentativeFirst`` AND ``tentativeLabel``: THE FIFTH THING A LIST HAS TO SAY ABOUT ITSELF ──
+
+    The four flags above all exist because a list that is SHORT for a knowable reason must say the
+    reason. These two are the same obligation about a list that is REORDERED: :func:`_in_record_options`
+    promotes the rows a designer has ticked "Tentative" above the rest, and a list whose order a
+    reader cannot account for is a list that reads as arbitrary — which is worse than the ordinal
+    order it replaced, because the ordinal order at least matched the stage form.
+
+    ``tentativeFirst`` says the partition WAS applied, so a client talking to a server that predates
+    it draws no claim it cannot back up (both defaults are the inert answer). ``tentativeLabel``
+    carries the registry's own word — ``stage_definitions.py`` owns it, and a word typed into a
+    component is the copy that goes stale when the registry is edited (§16). It is sent from here
+    rather than resolved on each client because a picker holds the REF field's ``refModel``, not the
+    referenced entity's schema: making two clients look up a second entity to learn one word is two
+    more places for the word to be wrong.
+
+    Both are derived from ``tentative`` alone, for the reason ``outOfScope`` is derived from its own
+    row: a flag and the thing it describes must not be able to drift apart.
     """
     return {
         "model": model,
@@ -2749,6 +2770,11 @@ def _reference_payload(
         # Derived here and nowhere else, so the flag and the row it describes cannot drift apart.
         "outOfScope": out_of_scope_option is not None,
         "outOfScopeOption": out_of_scope_option,
+        # Same rule. `False` / `""` is the answer for every reference model in `REFERENCE_MODELS`:
+        # an Artisan or a ProductDocumentation has no stage-entry `data` and therefore no such flag,
+        # and neither client may draw the word for one.
+        "tentativeFirst": tentative is not None,
+        "tentativeLabel": tentative.label if tentative is not None else "",
         "options": options,
     }
 
@@ -2952,6 +2978,37 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, R
     }
 
 
+#: THE REGISTRY KEY THE "TENTATIVE" FLAG IS STORED UNDER, spelled here so the server agrees with
+#: the two clients that already spell it: ``TENTATIVE_FIELD_KEY`` in ``frontend/lib/sketchTentative.ts``
+#: and ``DW_TENTATIVE_FIELD_KEY`` in ``android/.../ui/designworkshop/DwSketchChooserRows.kt``.
+#:
+#: NOT INFERRED FROM A PATTERN, for the reason both of those give: it is an exact key on an exact
+#: entity, and a pattern ("any BOOL whose key starts with `is`") would start reordering some other
+#: collection's picker the day such a field is added.
+TENTATIVE_FIELD_KEY = "isTentative"
+
+
+def _tentative_field(entity: EntitySpec) -> FieldSpec | None:
+    """The entity's own tentative flag, or None where it declares none.
+
+    THE SAME THREE CONDITIONS BOTH CLIENTS APPLY — the exact key, ``BOOL``, not deprecated — so
+    that a picker never draws the word for a field the server did not partition by, and never
+    partitions by a field the picker will not draw. ``prototype`` and ``sketchReview`` declare no
+    such field, so their pickers are ordered exactly as they were; that is an ordinary state and
+    not an error.
+
+    Returned as the FieldSpec rather than as a boolean because the LABEL travels with it. The word
+    on the picker row belongs to ``stage_definitions.py`` — §16's rule, and the reason
+    ``sketchTentative.ts`` reads its chip's word off the schema instead of writing "Tentative" into
+    a component. Sending it from here is what lets both clients draw the registry's word without
+    either of them resolving a second entity's schema from a REF field's ``refModel``.
+    """
+    for field in entity.fields:
+        if field.key == TENTATIVE_FIELD_KEY and field.type is FieldType.BOOL and not field.deprecated:
+            return field
+    return None
+
+
 async def _in_record_options(
     record: Any, entity: EntitySpec, search: str | None, take: int, *, record_id: str = ""
 ) -> dict[str, Any]:
@@ -2994,6 +3051,7 @@ async def _in_record_options(
         "",
     )
     term = (search or "").strip().casefold()
+    tentative = _tentative_field(entity)
 
     options: list[dict[str, Any]] = []
     for row in rows:
@@ -3002,11 +3060,74 @@ async def _in_record_options(
         sublabel = str(data.get(sub_key) or "").strip() if sub_key else ""
         if term and term not in label.casefold() and term not in sublabel.casefold():
             continue
-        options.append({"id": row.id, "label": label, "sublabel": sublabel, "data": {}})
+        option: dict[str, Any] = {"id": row.id, "label": label, "sublabel": sublabel, "data": {}}
+        if tentative is not None:
+            # ── ONE BOOLEAN OUT OF `data`, AND DELIBERATELY NOT `data` ITSELF ────────────────────
+            #
+            # `data` above stays EMPTY on this payload and this line does not begin filling it. A
+            # reference option's `data` is the HYDRATION dictionary — `DW_REFERENCE_HYDRATION` /
+            # `FieldDto.refHydration` map its keys onto the fields of the entity being filled in —
+            # so a `data` carrying `isTentative` would be a standing offer to copy one sketch's
+            # working state onto another row. `sketch.supersedesSketch` is the picker where that
+            # lands: the entity being filled IS `sketch`, it declares `isTentative` itself, and the
+            # key matches. Choosing a tentative predecessor would tick the NEW sketch's box.
+            #
+            # It is also not the whole blob for the reason the picker exists: a stage's answers are
+            # not a chooser's business, and `DwSketch` rows carry dimensions, prices, notes and
+            # media ids that would then travel on every keystroke of a debounced search.
+            #
+            # `is True` AND NOTHING LOOSER, matching `isTentativeRow` in
+            # `frontend/lib/sketchTentative.ts` exactly: `coerce_value` stores a real boolean for a
+            # BOOL field, so this is precisely the set of rows whose checkbox reads "Yes". A
+            # predicate that also took `"yes"` or `1` would pull a row to the top of this list whose
+            # own stage form shows the box unanswered — one record disagreeing with itself.
+            option["tentative"] = data.get(TENTATIVE_FIELD_KEY) is True
+        options.append(option)
+
+    if tentative is not None:
+        # ══════════════════════════════════════════════════════════════════════════════════════
+        # THE PARTITION, AND IT IS ABOVE THE CAP BECAUSE OTHERWISE IT WOULD NOT BE ONE
+        # ══════════════════════════════════════════════════════════════════════════════════════
+        #
+        # The owner, 2026-08-30: designers mark a sketch tentative "to bring them to the top of the
+        # list". Stage 11's sketches already sort tentative-first wherever they are LISTED — the
+        # upload chooser on both clients — and did not where one is CHOSEN, because the three
+        # `ref_model="DwSketch"` pickers (`sketch.supersedesSketch`, `sketchReview.sketchRef`,
+        # `prototype.sketchRef`) are resolved through this function and the flag was not on the wire
+        # at all.
+        #
+        # SORTING THIS ON THE CLIENT WOULD HAVE BEEN THE WRONG FIX AND A FAMILIAR ONE. The list is
+        # capped below, so a browser reordering what arrived would reorder ONE PAGE and leave a
+        # tentative sketch stranded behind the cap — "a client-side filter over a server-truncated
+        # list", which is the trap §11.5 of the frontend contract names and which
+        # `FunnelFilters.tsx` states in one line: a client-side re-sort cannot recover a row the
+        # server already cut. Ordering has to happen where the truncation is decided, which is here.
+        #
+        # A STABLE PARTITION AND NOT A SORT KEY, matching `tentativeFirst` / `dwTentativeFirst`
+        # verbatim. `ordinal` remains the only ordering input this repository has — `save_stage`
+        # derives it from array order at send time — so the rows within each group keep the
+        # arrangement the designer made on the stage form, and unticking the box returns a row to
+        # exactly the place it would have had, because nothing was ever written.
+        #
+        # ── DO NOT PUSH THE CAP INTO THE QUERY ────────────────────────────────────────────────
+        #
+        # `find_many` above takes NO `take`, and that is what makes these two lines correct rather
+        # than decorative. Adding `take=take + 1` there would look like an obvious saving and would
+        # silently restore the exact defect this fixes: the database would cut by `ordinal` first
+        # and the partition would then reorder the survivors, so the tentative sketch at ordinal 60
+        # would never reach this function to be promoted. If this ever needs a database-side bound,
+        # it needs an ORDER BY that carries the flag, not a `take`.
+        options = [o for o in options if o["tentative"]] + [o for o in options if not o["tentative"]]
 
     truncated = len(options) > take
     return _reference_payload(
-        entity.name, REF_SCOPE_WORKSHOP, True, False, options[:take], truncated=truncated
+        entity.name,
+        REF_SCOPE_WORKSHOP,
+        True,
+        False,
+        options[:take],
+        truncated=truncated,
+        tentative=tentative,
     )
 
 

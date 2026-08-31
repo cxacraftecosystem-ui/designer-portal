@@ -121,6 +121,14 @@ import kotlinx.coroutines.launch
 //      reach. The web refuses to draw that box for exactly this reason; `searchable = false` is how
 //      this file refuses too, and the caller owes the reader a sentence saying what does reach the
 //      rest.
+//
+//      THERE IS NOW A SECOND ANSWER TO THAT SAME DEFECT, and the first is not withdrawn.
+//      `searchable = false` is still right for a picker that holds a record ID, where the rest of
+//      the corpus genuinely is on another screen and the caller can name it. It is a poor answer for
+//      a CREATABLE COMBO, where typing is the answer and the box has to be drawn whatever the count
+//      says — refusing to filter there means drawing a box that does nothing. [SearchableSelectField
+//      .onSearch] is the other answer: hand the term to the caller, let the SERVER filter, and stop
+//      filtering locally. A caller takes exactly one of the two; taking neither is the defect.
 //   2. A list that CHANGES SHAPE WITH THE ANSWER ABOVE IT. Goa has 2 districts, Sikkim 6, Uttar
 //      Pradesh 75, so one district field is an anchored menu in one state and a bottom sheet in the
 //      next, and a researcher cannot learn a control that keeps changing what it is. `searchable =
@@ -427,6 +435,38 @@ fun SearchableSelectField(
      * about it before the interview ends.
      */
     createAction: SelectCreateAction? = null,
+    /**
+     * THE SEAM THAT LETS THE SERVER BE THE FILTER, instead of a box filtering one page of it.
+     *
+     * Non-null means: *this list is an ANSWER TO THE TERM IN THE BOX, and the caller will fetch a
+     * new one when the term changes.* The sheet hands over every keystroke and stops filtering
+     * [options] locally — because with a server-backed list the local pass is not a second opinion,
+     * it is a bug. `GET /design-workshops?search=` matches the code, the craft and the cluster as
+     * well as the title, so a row the server returned for "bagru" because its CLUSTER is Bagru does
+     * not contain "bagru" in the label this file matches on, and the local filter would delete the
+     * hit the server had just gone and found.
+     *
+     * ── THE RULE AT THE TOP OF THIS FILE IS WHAT THIS EXISTS TO SATISFY, NOT TO ESCAPE ──────────
+     *
+     * Case 1 up there — *"A list that is ONE SERVER-TRUNCATED PAGE … typing the title of a workshop
+     * that sits on page four answered 'Nothing matches' about a workshop that exists"* — is the
+     * defect, and `searchable = false` was the only answer this file could offer: refuse to draw the
+     * box at all and make the caller write a sentence pointing somewhere else. That is a real answer
+     * for a picker holding a record id, where the rest is genuinely somewhere else. It is a poor one
+     * for a creatable combo, where typing IS the answer and the box has to be there anyway. This is
+     * the other answer: draw the box, and make it reach.
+     *
+     * THE CALLER OWES THE DEBOUNCE, and this file deliberately does not own it. A debounce needs a
+     * coroutine scope tied to the caller's own read, cancellation of the superseded request, and a
+     * failed-read state to render — none of which belong to a picker, and all of which the caller
+     * already has. `DwWorkshopNameField` is the worked example.
+     *
+     * NOT OFFERED ON THE MULTI-SELECT. A multi-select's ticks have to survive the list changing
+     * under them, and a server-backed list can return a page that does not contain a ticked row —
+     * which is a real design question about where the selection lives, not a parameter. No caller
+     * needs it yet, so it is not invented here.
+     */
+    onSearch: ((String) -> Unit)? = null,
     onSelect: (String) -> Unit
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
@@ -644,6 +684,7 @@ fun SearchableSelectField(
             noneLabel = if (includeNone) placeholder else null,
             emptyMessage = emptyMessage ?: GENERIC_EMPTY_LINE,
             createAction = createAction,
+            onSearch = onSearch,
             onDismiss = { sheetOpen = false },
             onApply = { next -> onSelect(next.firstOrNull().orEmpty()) }
         )
@@ -969,6 +1010,11 @@ private fun SearchablePickerSheet(
     createAction: SelectCreateAction? = null,
     /** Whether the bulk row is offered at all. See [SearchableMultiSelectField]'s parameter. */
     bulk: Boolean = true,
+    /**
+     * Non-null when [options] is the SERVER'S answer to the term in the box. See
+     * [SearchableSelectField]'s parameter of the same name for the whole argument.
+     */
+    onSearch: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -980,7 +1026,18 @@ private fun SearchablePickerSheet(
     var draft by remember { mutableStateOf(selected) }
 
     val terms = queryTerms(query)
-    val filtered = remember(options, query) { options.filter { it.matches(terms) } }
+    /*
+      THE LOCAL PASS IS SKIPPED ENTIRELY WHEN THE SERVER IS DOING THE FILTERING, and that is a
+      correctness rule rather than a saving. `GET /design-workshops?search=` matches the workshop
+      code, the craft and the cluster as well as the title; this file's `matches` only sees the
+      label, the hint and the value. Run both and every hit the server found on a column the row does
+      not print is filtered straight back out — the search would appear to work and would quietly be
+      strictly worse than no search at all. See [SearchableSelectField.onSearch].
+    */
+    val serverFiltered = onSearch != null
+    val filtered = remember(options, query, serverFiltered) {
+        if (serverFiltered) options else options.filter { it.matches(terms) }
+    }
     val searching = terms.isNotEmpty()
 
     // Only meaningful while filtering. Unfiltered, "the first row" is whatever happens to sort
@@ -991,6 +1048,20 @@ private fun SearchablePickerSheet(
         // Hide first so the sheet slides away rather than vanishing, matching the filter sheet on
         // the search screen; the flag drops once the animation has actually finished.
         scope.launch { sheetState.hide() }.invokeOnCompletion { if (!sheetState.isVisible) onDismiss() }
+    }
+
+    /**
+     * THE ONE WRITER OF [query], so that every route which changes it also tells a server-backed
+     * caller. There are four — typing, the clear icon in the box, the "Clear search" button under an
+     * empty list, and the multi-select's IME tick — and a seam wired to only the first would leave
+     * the sheet showing the server's answer to a term the box no longer contains, which is the same
+     * absence-read-as-non-existence defect [SearchableSelectField.onSearch] exists to end.
+     *
+     * A no-op for every locally filtered picker, which is all of them but one.
+     */
+    fun setQuery(next: String) {
+        query = next
+        onSearch?.invoke(next)
     }
 
     fun commitSingle(value: String) {
@@ -1014,7 +1085,7 @@ private fun SearchablePickerSheet(
         val row = highlighted ?: return
         if (multiple) {
             toggle(row.value)
-            query = ""
+            setQuery("")
             scope.launch { listState.scrollToItem(0) }
         } else {
             commitSingle(row.value)
@@ -1027,8 +1098,17 @@ private fun SearchablePickerSheet(
     // composed at all — so a closed ladder long enough to clear [AUTOFOCUS_THRESHOLD] would take
     // the picker down on the frame it opened, on the one code path a short vocabulary is supposed
     // to make simpler.
+    //
+    // A SERVER-BACKED BOX TAKES FOCUS AT EVERY LENGTH, and [AUTOFOCUS_THRESHOLD]'s own reasoning is
+    // what says so rather than an exception to it. That number is "for a dozen rows the researcher
+    // can very likely SEE the one they want" — which is an argument about a list that is ALL of the
+    // list. When the rows on screen are one page of an answer, seeing them is not the same as having
+    // found the workshop, and typing is the only route to the rest; popping the IME is then what the
+    // reader came for at four rows exactly as much as at forty.
     LaunchedEffect(Unit) {
-        if (searchable && options.size >= AUTOFOCUS_THRESHOLD) focusRequester.requestFocus()
+        if (searchable && (serverFiltered || options.size >= AUTOFOCUS_THRESHOLD)) {
+            focusRequester.requestFocus()
+        }
     }
 
     val maxSheetHeight = LocalConfiguration.current.screenHeightDp.dp * SHEET_HEIGHT_FRACTION
@@ -1079,7 +1159,7 @@ private fun SearchablePickerSheet(
                 if (searchable) {
                     OutlinedTextField(
                         value = query,
-                        onValueChange = { query = it },
+                        onValueChange = { setQuery(it) },
                         // Just "Search", not "Search $title". A field label in this app is a whole
                         // phrase — "Artisans of selected crafts", "State / union territory" — and
                         // prefixing it wrapped the label onto two lines, which grows the box and, on
@@ -1103,7 +1183,7 @@ private fun SearchablePickerSheet(
                         },
                         trailingIcon = {
                             if (query.isNotEmpty()) {
-                                IconButton(onClick = { query = "" }) {
+                                IconButton(onClick = { setQuery("") }) {
                                     Icon(
                                         Icons.Filled.Close,
                                         contentDescription = "Clear search",
@@ -1233,7 +1313,7 @@ private fun SearchablePickerSheet(
                                 lineHeight = 17.sp
                             )
                             if (searching) {
-                                TextButton(onClick = { query = "" }) { Text("Clear search") }
+                                TextButton(onClick = { setQuery("") }) { Text("Clear search") }
                             }
                         }
                     }

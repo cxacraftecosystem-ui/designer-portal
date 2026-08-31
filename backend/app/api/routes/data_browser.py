@@ -879,7 +879,26 @@ def _interview_answers(interview: Any, info: dict[str, Any]) -> str:
         q = getattr(r, "question", None)
         prompt = getattr(q, "prompt", r.questionId) if q else r.questionId
         code = getattr(q, "sectionCode", "") if q else ""
-        answers.append(f"[{code}] {prompt}\n  -> {r.answerText or ''}\n")
+        # ``_cell`` AND NOT ``r.answerText or ""`` — the rich-text read boundary, and the sixth call
+        # site ``record_fields.cell``'s docstring predicted. ``QuestionnaireResponse.answerText`` is
+        # a ``String?`` that has always held plain prose and, since the answer box became a
+        # ``RichTextField`` on 2026-08-31, sometimes holds a serialised document instead. The raw
+        # value stringifies to ``{"blocks":[{"kind":"PARAGRAPH",…}]}``, and this line writes the
+        # ``answers.txt`` a researcher downloads out of the data browser — the exact failure
+        # ``report_builder.format_value`` records at its own RICH_TEXT branch, and a silent one,
+        # because a JSON-shaped string is not empty and so passes every emptiness check above it.
+        #
+        # ``_text`` CANNOT SAVE THIS ONE, which is why the flattening is here and not there. That
+        # funnel flattens the string it is handed, and what it is handed here is the whole assembled
+        # file — header, prompts and answers concatenated. That is not a document, so
+        # ``plain_from_stored`` correctly leaves it alone with the braces still inside it. Only a
+        # per-answer call sees a value that IS one.
+        #
+        # The sibling builder in ``export.py`` (``emit_interview``) writes the same file for the
+        # dataset archive and already spells it this way; the two must not come to disagree about
+        # what an answer is. A plain string comes back unchanged by identity, so the existing corpus
+        # renders byte-for-byte as it did.
+        answers.append(f"[{code}] {prompt}\n  -> {_cell(r.answerText)}\n")
     return header + "\n\n" + "".join(answers)
 
 

@@ -124,7 +124,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.res.painterResource
@@ -321,9 +320,13 @@ import com.designprototype.workshop.ui.designworkshop.WorkshopCodesScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopListScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopInspectorsScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopViewersScreen
+import com.designprototype.workshop.ui.questionnaires.QuestionnaireAnswerBox
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireAnswerScreen
+import com.designprototype.workshop.ui.questionnaires.questionnaireAnswerPlain
 import com.designprototype.workshop.ui.questionnaires.QUESTIONNAIRE_CLIP_MAX_MILLIS
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireQuickTranscript
+import com.designprototype.workshop.ui.questionnaires.QuestionnaireTranscriptActions
+import com.designprototype.workshop.ui.questionnaires.TRANSCRIPT_DOCUMENT_MIME
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireTranscriptOutcome
 import com.designprototype.workshop.ui.questionnaires.questionnaireAcceptOffer
 import com.designprototype.workshop.ui.questionnaires.questionnaireClipCapLine
@@ -472,6 +475,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import com.designprototype.workshop.data.ProductDetailDto
@@ -496,6 +501,19 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
+
+/**
+ * The screen an administrator's password link points at, as the deep-link filter and this file both
+ * have to spell it.
+ *
+ * ONE CONSTANT, THREE PLACES, AND THE THIRD IS IN ANOTHER LANGUAGE. `credential_links` on the
+ * server defines this path and builds every link from it; `AndroidManifest.xml` names it in the VIEW
+ * filter so the OS knows which links to offer this app for; and [MainActivity.takePasswordLink]
+ * checks it again on the intent that arrives, because a filter is what the OS matched and not
+ * evidence about what the app was handed. Changing the server's path changes every link already in
+ * somebody's hands — its own comment says so — and would have to change the two here with it.
+ */
+private const val SET_PASSWORD_LINK_PATH = "/set-password"
 
 class MainActivity : ComponentActivity() {
     /**
@@ -532,6 +550,47 @@ class MainActivity : ComponentActivity() {
      * only ever a check on what to LOOK at: whether the bytes really are a questionnaire is decided
      * by `readQuestionnaireBundle`, which is the only thing that reads them.
      */
+    /**
+     * An administrator's set-password link, tapped in a chat app and handed to this app.
+     *
+     * ── WHY IT IS ACTIVITY STATE, LIKE THE QUESTIONNAIRE DELIVERY ABOVE ───────────────────────
+     *
+     * The same two routes and the same reason: a COLD START (the link is on the launch [Intent])
+     * and a WARM one ([onNewIntent], because the activity is `singleTop`). Both funnel into one
+     * `mutableStateOf` so the screen cannot tell them apart.
+     *
+     * ⚠ IT IS A CREDENTIAL AND IT IS CONSUMED. The token in this URL sets a password and revokes
+     * every session the account holds; it is single-use and short-lived. It is held only long enough
+     * to reach the redeem screen's box, cleared the moment that screen takes it, and — like that
+     * screen's own state — never written to `TokenStore`, a preference or a log. Leaving it set
+     * would re-open the redeem screen over the sign-in card on every recomposition, with a spent
+     * token in it.
+     */
+    private val incomingPasswordLink = mutableStateOf<String?>(null)
+
+    /**
+     * Pull a set-password link out of an intent, or leave the state alone.
+     *
+     * ── THE FILTER IS NOT THE CHECK, AND NEITHER IS THIS ──────────────────────────────────────
+     *
+     * The manifest's filter names the host and the path so the OS knows which links to offer this
+     * app for; this reads the one it was given. Neither validates the token, and neither should:
+     * `passwordLinkToken` extracts it without judging its shape, and the SERVER is the authority on
+     * the signature, the expiry, the row and the credential fingerprint — a client-side shape test
+     * could only invent a seventh refusal for a string the server might well have accepted.
+     *
+     * The path is compared against the one `credential_links.SET_PASSWORD_PATH` defines, with a
+     * trailing slash tolerated, so that a VIEW intent arriving through the questionnaire filters —
+     * which match on MIME type and a `.dpwq` path — cannot be read as a password link.
+     */
+    private fun takePasswordLink(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        val path = uri.path?.trimEnd('/') ?: return
+        if (path != SET_PASSWORD_LINK_PATH) return
+        incomingPasswordLink.value = uri.toString()
+    }
+
     @Suppress("DEPRECATION")
     private fun takeQuestionnaireDelivery(intent: Intent?) {
         val candidate = when (intent?.action) {
@@ -549,11 +608,13 @@ class MainActivity : ComponentActivity() {
         // actually arrived rather than the launcher intent that started the app hours ago.
         setIntent(intent)
         takeQuestionnaireDelivery(intent)
+        takePasswordLink(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         takeQuestionnaireDelivery(intent)
+        takePasswordLink(intent)
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
         val googleAuthClient = GoogleAuthClient(this)
@@ -574,6 +635,8 @@ class MainActivity : ComponentActivity() {
                         googleAuthClient = googleAuthClient,
                         incomingQuestionnaire = incomingQuestionnaire.value,
                         onIncomingQuestionnaireConsumed = { incomingQuestionnaire.value = null },
+                        incomingPasswordLink = incomingPasswordLink.value,
+                        onIncomingPasswordLinkConsumed = { incomingPasswordLink.value = null },
                         preferences = preferences,
                         onPreferencesChanged = { next ->
                             // Apply first, persist second: the switch must feel instant. The screen
@@ -1098,6 +1161,9 @@ private fun RepositoryApp(
     /** A `.dpwq` file handed to this app by another phone. See `MainActivity.incomingQuestionnaire`. */
     incomingQuestionnaire: Uri?,
     onIncomingQuestionnaireConsumed: () -> Unit,
+    /** An administrator's link, tapped elsewhere. See `MainActivity.incomingPasswordLink`. */
+    incomingPasswordLink: String?,
+    onIncomingPasswordLinkConsumed: () -> Unit,
     preferences: AppPreferences,
     onPreferencesChanged: (AppPreferences) -> Unit
 ) {
@@ -1163,12 +1229,59 @@ private fun RepositoryApp(
      * alternatives rather than a screen and its dialog.
      */
     var redeemingLink by remember { mutableStateOf(false) }
+    /**
+     * The link a deep-link tap handed this app, waiting to be put in the redeem screen's box.
+     *
+     * Separate from [redeemingLink] because the screen may be opened either way — from the sign-in
+     * card's own button with nothing to paste, or from a tapped link with everything to paste — and
+     * a single boolean cannot carry the second.
+     */
+    var pastedLink by remember { mutableStateOf("") }
 
     // Declared HERE rather than beside the outbox block below, because the session effect underneath
     // needs it too: `repository.logout` now clears this device's cached questionnaire forms as well as
     // the token, and that needs a Context. See its KDoc for what a sign-out used to leave behind for
     // the next person to sign in on a shared handset.
     val appContext = LocalContext.current.applicationContext
+
+    /*
+     * ── A TAPPED SET-PASSWORD LINK OPENS THE REDEEM SCREEN, WITH THE LINK ALREADY IN IT ───────────
+     *
+     * The manifest offers this app for `/set-password` links; this is what the app does with one.
+     * `SetPasswordLinkScreen` reads the token out of whatever it is given, so the whole URL goes
+     * straight into its box and the check fires without anybody re-copying anything — which is the
+     * entire point of the filter. Tapping the link and finding an empty paste box would be a longer
+     * road than the browser the tap would otherwise have taken.
+     *
+     * ── CONSUMED IMMEDIATELY, BECAUSE IT IS A CREDENTIAL ──────────────────────────────────────────
+     *
+     * Cleared on the activity side the moment it is read, so a token that has been spent — it sets a
+     * password and revokes every session the account holds — cannot re-open this screen on the next
+     * recomposition or after a rotation.
+     *
+     * ── AND A SIGNED-IN HANDSET IS TOLD, NOT SILENTLY IGNORED ─────────────────────────────────────
+     *
+     * The redeem screen exists only in place of the sign-in card: somebody holding one of these
+     * links cannot sign in, and redeeming one signs out every device the account has — including
+     * this one. Opening it over a live session would sign the person out mid-workshop as a side
+     * effect of a tap. So a signed-in app says what to do instead. Saying nothing would be worse
+     * than not being on the chooser at all: the app would come to the front and appear to have
+     * swallowed the link.
+     */
+    LaunchedEffect(incomingPasswordLink) {
+        val link = incomingPasswordLink ?: return@LaunchedEffect
+        if (user == null) {
+            pastedLink = link
+            redeemingLink = true
+        } else {
+            Toast.makeText(
+                appContext,
+                "Sign out first to use a set-password link.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        onIncomingPasswordLinkConsumed()
+    }
 
     // Persistent login: start from the cached profile so minimise/resume never logs the user out.
     // Refresh in the background and only clear the session if the token is genuinely rejected.
@@ -1314,8 +1427,10 @@ private fun RepositoryApp(
              */
             user == null && redeemingLink -> SetPasswordLinkScreen(
                 repository = repository,
+                initialLink = pastedLink,
                 onDone = {
                     redeemingLink = false
+                    pastedLink = ""
                     // The password is now set and the redemption revoked every session this account
                     // had — including, if this handset happened to be holding one, its own. Land
                     // them back on the sign-in card with nothing pre-filled and nothing said, which
@@ -1324,7 +1439,12 @@ private fun RepositoryApp(
                     refusal = AccessRefusal.NOT_REFUSED
                     signInHint = SignInHint.NONE
                 },
-                onCancel = { redeemingLink = false }
+                onCancel = {
+                    redeemingLink = false
+                    // The link goes with the screen. It is single-use and short-lived, and a person
+                    // who backed out is not owed somebody else's token in the box next time.
+                    pastedLink = ""
+                }
             )
             user == null -> LoginScreen(
                 error = error,
@@ -2479,6 +2599,68 @@ private fun HomeScreen(
         message = text
     }
 
+    /**
+     * ONTO A DESIGN WORKSHOP FROM A SEARCH HIT — or null, which means this account has no such route.
+     *
+     * NULL IS PASSED STRAIGHT TO `SearchScreen.onOpenDesignWorkshop`, which is built to take it: the
+     * bucket then draws its rows found, named and untappable under a line saying where they open. See
+     * [SearchDesignWorkshopRoute] for why a PROFESSOR is on the wrong side of this and why handing
+     * them a tappable row would spend a tap to reach "Record not found".
+     *
+     * THE ONLY PLACE A SEARCH HIT BUILDS [Screen.DesignWorkshopStages]. Both readers below — the
+     * screen's own callback and `openSearchRecord`'s backstop — invoke this one value, so the gate and
+     * the destination cannot come apart: there is no second construction to forget the permission.
+     *
+     * The stage INDEX and not a stage: which of the twenty-two the searcher wants is a question the
+     * hit cannot answer, and `WorkshopListScreen` hands over at exactly the same door.
+     */
+    val openDesignWorkshopFromSearch: ((String) -> Unit)? =
+        if (SearchDesignWorkshopRoute.offeredTo(user)) {
+            { workshopId -> message = null; screen = Screen.DesignWorkshopStages(workshopId) }
+        } else {
+            null
+        }
+
+    /**
+     * WHERE A TAPPED SEARCH ROW, A MAP PIN AND A SCANNED CARD ALL GO. One arm, not three copies.
+     *
+     * ── IT WAS THREE COPIES, AND KEEPING THEM IDENTICAL WAS AN AGREEMENT WRITTEN IN COMMENTS ─────
+     *
+     * `RecordCodeLookupPanel`'s mount says "`onOpen` IS THE SEARCH SCREEN'S OWN ARM, character for
+     * character, so a code and a search hit for one record cannot lead to two different places", and
+     * the map's says the same in different words. All three were true and none of them was enforced;
+     * the property they describe held only for as long as three separate edits stayed in step. It is
+     * now one value, so a change to routing reaches all three surfaces or none of them.
+     *
+     * ── AND IT REFUSES IN WORDS WHERE THE MAPPER HAS NO ANSWER ───────────────────────────
+     *
+     * [searchRecordEntryMode] returns null for a type this app has no form for, where it used to
+     * answer `EntryMode.ARTISAN` for anything at all. Null gets [unroutableRecordLine] and no
+     * navigation — nothing opens, and the designer is told why rather than left with a row that
+     * swallows taps.
+     *
+     * `designWorkshop` IS TAKEN FIRST, because it is the one type with a destination and no form. Its
+     * route is [openDesignWorkshopFromSearch]; where that is null the account may not open one, and
+     * the refusal says so. This arm is unreachable from the search screen, which intercepts the type
+     * in `openRow` before the callback fires, and from the scanner, which answers a `G` card with a
+     * join — it is here so that the string cannot become a mis-route by some path added later, which
+     * is exactly how it became one the first time.
+     */
+    val openSearchRecord: (recordType: String, recordId: String) -> Unit = { recordType, recordId ->
+        if (recordType == SearchRecordTypes.DESIGN_WORKSHOP) {
+            val open = openDesignWorkshopFromSearch
+            if (open != null) open(recordId) else showMessage(unroutableRecordLine(recordType))
+        } else {
+            val mode = searchRecordEntryMode(recordType)
+            if (mode == null) {
+                showMessage(unroutableRecordLine(recordType))
+            } else {
+                message = null
+                screen = Screen.Edit(mode, recordId)
+            }
+        }
+    }
+
     // Who may START a new entry of each kind, mirroring the backend dependency on the POST route.
     // A volunteer is deliberately allowed to answer interviews, upload media, browse, use tasks and
     // sharing, and request workshop access — everything `require_record_creator` does NOT cover.
@@ -3330,10 +3512,24 @@ private fun HomeScreen(
                     }
                     SearchScreen(
                         repository = repository,
-                        onOpenRecord = { recordType, recordId ->
-                            message = null
-                            screen = Screen.Edit(searchRecordEntryMode(recordType), recordId)
-                        },
+                        onOpenRecord = openSearchRecord,
+                        // THE SEAM THE SEARCH LANE BUILT AND COULD NOT WIRE, because this file was
+                        // not theirs. Their bucket's rows have been drawn inert since they landed:
+                        // found, named, and untappable, because the only callback the screen had was
+                        // `onOpenRecord`, whose string this host resolved through
+                        // `searchRecordEntryMode` — and a design workshop has no EntryMode, so a
+                        // tappable row would have opened a fortnight of fieldwork as an ARTISAN.
+                        //
+                        // NOT ROUTED THROUGH THAT MAPPER, THEREFORE, AND NOT BY ADDING AN ARM TO IT.
+                        // Every EntryMode opens a record form and a workshop is not one; the arm
+                        // would have had to invent a form for twenty-two stages. It is a different
+                        // destination, so it takes a different callback — the same shape
+                        // `RecordCodeLookup` reached for when it met this trap from the scanner and
+                        // answered a `G` card with a join instead of an open.
+                        //
+                        // NULL WHERE THIS ACCOUNT HAS NO ROUTE, which the screen renders honestly.
+                        // See [openDesignWorkshopFromSearch] and [SearchDesignWorkshopRoute].
+                        onOpenDesignWorkshop = openDesignWorkshopFromSearch,
                         onBack = { attemptExit { goBack() } },
                         initialRecordType = s.searchFocus
                     )
@@ -3351,11 +3547,10 @@ private fun HomeScreen(
                     onError = { showMessage(it) },
                     // A pin's records are the way out of the map. The map speaks the SINGULAR record
                     // type — the same vocabulary [SearchRecordTypes] uses — so the search screen's own
-                    // mapper is reused rather than a second one written beside it that could drift.
-                    onOpenRecord = { recordType, recordId ->
-                        message = null
-                        screen = Screen.Edit(searchRecordEntryMode(recordType), recordId)
-                    }
+                    // ARM is reused, not merely its mapper: sharing the value is what makes "the same
+                    // record opens in the same place from every surface" a fact rather than a promise
+                    // three call sites have to keep. See [openSearchRecord].
+                    onOpenRecord = openSearchRecord
                 )
                 // /questionnaire/consolidated on the web: the artisan picker, and the document behind
                 // it. Both halves live in the one screen because Android has no URL to give the
@@ -3802,10 +3997,11 @@ private fun HomeScreen(
                 )
                 RecordCodeLookupPanel(
                     repository = repository,
-                    onOpen = { recordType, recordId ->
-                        message = null
-                        screen = Screen.Edit(searchRecordEntryMode(recordType), recordId)
-                    }
+                    // LITERALLY the search screen's arm now, where it was a copy of it before. The
+                    // mount's own header above requires the two to be "character for character"; a
+                    // shared value is the only spelling of that requirement a maintainer cannot
+                    // accidentally break. See [openSearchRecord].
+                    onOpen = openSearchRecord
                 )
                 /*
                  * SAID HERE BECAUSE A DESIGNER WHO ARRIVES AT A DESTINATION NAMED "Scan a code" AND
@@ -4145,19 +4341,45 @@ private fun searchFocusLabel(recordType: String): String = when (recordType) {
 /**
  * The record type a search hit — or a scanned code — belongs to, as the app's own [EntryMode].
  *
- * [SearchRecordTypes] is the contract the search screen reports against; anything unrecognised falls
- * back to ARTISAN rather than throwing, because a new bucket appearing server-side must not crash a
- * tap. MEDIA is included: it has no edit form (the web opens the object itself), and [EditScreen]
- * shows the file with its transcript instead.
+ * NULL MEANS THERE IS NO FORM FOR IT, and the caller must refuse rather than open something else.
+ * MEDIA is not one of those: it has no edit form (the web opens the object itself), and [EditScreen]
+ * shows the file with its transcript instead, so it maps.
+ *
+ * ── IT USED TO END `else -> EntryMode.ARTISAN`, AND THAT ONE LINE WAS THE DEFECT ─────────────
+ *
+ * The clause that stood here read: *"anything unrecognised falls back to ARTISAN rather than
+ * throwing, because a new bucket appearing server-side must not crash a tap."* The second half is a
+ * true requirement; the first half is not how you meet it. Not crashing is satisfied by doing
+ * NOTHING. It never required GUESSING, and the guess is what did the damage:
+ *
+ *  * `designWorkshop` reached it. A design workshop is twenty-two stages of somebody's fortnight in
+ *    a village, and this mapper answered ARTISAN — so a tapped search row would have opened it in
+ *    the artisan editor, a form whose Save writes an artisan. That is why the search screen's
+ *    design-workshop bucket shipped INERT, and why `RecordCodeLookup` answers a scanned `G` card
+ *    with a join request rather than an Open button that would have led here. Two lanes worked
+ *    around this line because neither owned the file it lives in.
+ *  * The next unmapped type would have been the same bug arriving quietly. `GET /search` grows
+ *    buckets and `DwWorkshopRecordType` grows codes; an `else` that answers ARTISAN is a promise,
+ *    made in advance, to mis-file every one of them — in a mapper nobody re-reads when a bucket is
+ *    added, and with no failure at the moment of the mistake.
+ *
+ * SO IT REFUSES BY DEFAULT INSTEAD. An unmapped type returns null, the caller says so in words (see
+ * [unroutableRecordLine]), and nothing opens. A type this app cannot show is a sentence a researcher
+ * can act on; the artisan editor opening on a workshop id is not.
+ *
+ * [SearchRecordTypes.DESIGN_WORKSHOP] IS WRITTEN OUT rather than left to fall through, because it is
+ * the one type here that HAS a destination — [Screen.DesignWorkshopStages] — and merely has no
+ * [EntryMode], every one of which opens a record form. An arm for it would mean inventing an
+ * EntryMode for a thing that is not a form. It is routed BESIDE this mapper instead: see
+ * `HomeScreen`'s `openSearchRecord`, and `SearchScreen.onOpenDesignWorkshop` for the seam.
  *
  * IT COVERS MORE THAN THE FIVE SEARCH BUCKETS, and deliberately. `RecordCodeLookupPanel` reports
  * through this same callback using [DwWorkshopRecordType.wire], which is the identical singular
  * vocabulary and reaches three types `GET /search` has no bucket for — a craft, a process and an
  * interview. Routing them here rather than in a second mapper beside it is what keeps a scanned code
- * and a tapped result landing on one screen; a code that fell through to `else` would have opened
- * somebody's craft as an artisan.
+ * and a tapped result landing on one screen.
  */
-private fun searchRecordEntryMode(recordType: String): EntryMode = when (recordType) {
+private fun searchRecordEntryMode(recordType: String): EntryMode? = when (recordType) {
     SearchRecordTypes.ARTISAN -> EntryMode.ARTISAN
     SearchRecordTypes.WORKSHOP -> EntryMode.WORKSHOP
     SearchRecordTypes.PRODUCT -> EntryMode.PRODUCT
@@ -4166,7 +4388,80 @@ private fun searchRecordEntryMode(recordType: String): EntryMode = when (recordT
     DwWorkshopRecordType.CRAFT.wire -> EntryMode.CRAFT
     DwWorkshopRecordType.PROCESS.wire -> EntryMode.PROCESS
     DwWorkshopRecordType.QUESTIONNAIRE.wire -> EntryMode.QUESTIONNAIRE
-    else -> EntryMode.ARTISAN
+    // Has a destination, has no form. Named here so the reason sits at the line somebody would
+    // otherwise "complete" by adding an EntryMode for it. See the header.
+    SearchRecordTypes.DESIGN_WORKSHOP -> null
+    // NOT `EntryMode.ARTISAN`, and not any other record type. See the header — this arm is the whole
+    // reason the return type is nullable.
+    else -> null
+}
+
+/**
+ * What a designer is told when a tapped row or a scanned card has nowhere to go on this handset.
+ *
+ * SOMETHING IS SAID, and that is why this exists rather than a bare `?: return`. The alternative to
+ * the old ARTISAN fallback is not silence: a tap that produces no screen and no sentence reads as a
+ * dead app, so the researcher taps it again and then reports the search box as broken. A refusal in
+ * words is the only outcome that is both honest and actionable.
+ *
+ * TWO WORDINGS BECAUSE THERE ARE TWO CAUSES, and they ask different things of the reader. An unknown
+ * type means this APK is older than the server, which an update or the web portal fixes and every
+ * account can reach. A design workshop is a PERMISSION this account does not hold, which no update
+ * changes — sending that reader to the web portal would send them to a second refusal.
+ *
+ * PURE, and outside the composable, so both wordings can be asserted without a handset.
+ */
+internal fun unroutableRecordLine(recordType: String): String =
+    if (recordType == SearchRecordTypes.DESIGN_WORKSHOP) {
+        DESIGN_WORKSHOP_NO_ROUTE_LINE
+    } else {
+        "This version of the app has no screen for a \"$recordType\" record. Open it in the web portal."
+    }
+
+/**
+ * Said when a design workshop is reported to a host that has no route to one.
+ *
+ * UNREACHABLE FROM THE UI TODAY, and written anyway. `SearchScreen.openRow` intercepts the type
+ * before it can reach `onOpenRecord`, and `RecordCodeLookup` answers a `G` card with a JOIN and
+ * never calls back with it — so this sentence stands behind two other backstops. It costs one
+ * string, and what it stands behind is the artisan editor opening on a workshop id.
+ *
+ * IT NAMES NO MENU ROW. The only account this can reach is one that SEES design-workshop rows in
+ * search and cannot OPEN a workshop — a professor, who may read the corpus but is outside
+ * `can_run_design_workshops`. Pointing them at "Design workshops" would name a menu row they do not
+ * have, which is the failure the sentence is here to avoid rather than repeat.
+ */
+internal const val DESIGN_WORKSHOP_NO_ROUTE_LINE: String =
+    "This account can read design-workshop data but cannot open a workshop."
+
+/**
+ * Whether this account is offered a route from a design-workshop SEARCH HIT onto the workshop.
+ *
+ * `can_run_design_workshops`, read from the one copy of it, and deliberately NOT
+ * [FieldPermissions.canViewDesignWorkshopData] — which decides whether the search CHIP is offered,
+ * and is a different question with a different answer.
+ *
+ * ── THE TWO SETS OVERLAP AND NEITHER CONTAINS THE OTHER, WHICH IS WHY THIS IS NAMED ───────────
+ *
+ * Reading is {PROFESSOR, ADMIN, MASTER_ADMIN}; running is {DESIGNER, ADMIN, MASTER_ADMIN}. A
+ * PROFESSOR therefore gets design-workshop ROWS from `GET /search` and is refused the workshop
+ * itself: `load_workshop_or_404` admits the creator, an admin, and a `DesignWorkshopViewer` grant,
+ * and a professor is none of those by role. Handing them a tappable row would spend a tap to arrive
+ * at "Record not found" — the exact failure the bucket was left inert to avoid. With no route the
+ * screen keeps drawing those rows, found and named, and says where they are opened instead.
+ *
+ * A DESIGNER IS THE OTHER HALF and is why this is not simply `canViewDesignWorkshopData`: a designer
+ * runs workshops and is outside the READ set, so they see no design-workshop bucket to tap in the
+ * first place. This predicate governs the tap, not the chip; the two gates sit on different screens
+ * and neither implies the other.
+ *
+ * THE SAME PREDICATE AS THE MENU ROW AND THE DASHBOARD CARD, on purpose. Those two are already held
+ * to each other by `DesignWorkshopCardTest`; a third door onto the same screen with a different lock
+ * is how an app comes to disagree with itself about what an account may do. Named rather than
+ * inlined for exactly the reason [DesignWorkshopCard.visibleTo] is, and asserted against it.
+ */
+internal object SearchDesignWorkshopRoute {
+    fun offeredTo(user: UserDto): Boolean = FieldPermissions.canRunDesignWorkshops(user)
 }
 
 /**
@@ -11528,7 +11823,6 @@ private fun MediaWithTranscript(context: Context, media: MediaFileDto, repositor
         )
     }
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
     val isAudio = media.mediaType.equals("AUDIO", ignoreCase = true)
     val processing = setOf("QUEUED", "PROCESSING", "PENDING", "RUNNING")
     val done = setOf("COMPLETED", "EMPTY", "DONE")
@@ -11565,56 +11859,77 @@ private fun MediaWithTranscript(context: Context, media: MediaFileDto, repositor
                     .padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Transcript", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    /*
-                     * THE EDITED FLAG ON A STORED TRANSCRIPT — "Edited" OR NOTHING, NEVER "Not edited".
-                     *
-                     * This screen shows what the server holds and has no copy of the machine's own
-                     * words to compare it against, so it can prove that a person DID touch the text
-                     * (the stamp is non-null) and can never prove that nobody did: the column is also
-                     * null for every transcript stored before it existed on 2026-08-31, and several of
-                     * those were rewritten by hand through the very route that now stamps it. Drawing
-                     * "Not edited" on those would credit a provider with a researcher's words.
-                     *
-                     * The interview form one screen over DOES draw both, because it holds
-                     * `machineText` and can make the comparison. Same rule, same two words, two
-                     * different amounts of evidence — and the web splits its surfaces the same way
-                     * (`edited={... ? true : undefined}` on the read-only ones).
-                     */
-                    if (!media.transcriptEditedAt.isNullOrBlank()) {
-                        Spacer(Modifier.width(6.dp))
-                        Row(
-                            modifier = Modifier
-                                .background(MaterialTheme.field.warningContainer, RoundedCornerShape(999.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Filled.Edit,
-                                contentDescription = null,
-                                tint = MaterialTheme.field.onWarningContainer,
-                                modifier = Modifier.size(10.dp)
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            // The word, not the colour — house rule 5, and the same word the web chip
-                            // and the interview form both print.
-                            Text(
-                                "Edited",
-                                color = MaterialTheme.field.onWarningContainer,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                /*
+                 * COPY AND DOWNLOAD, FROM THE ONE ROW EVERY TRANSCRIPT SURFACE MOUNTS.
+                 *
+                 * The owner, 2026-08-30: *"copying and downloading should be there as well"*. Copy
+                 * was here already, as this file's own `clipboard.setText`; Download did not exist in
+                 * this client in any form, so until now the only way a transcript left the handset
+                 * was to select it by hand. `QuestionnaireTranscriptActions` is the port of the web's
+                 * `MarkdownDocument` action row, and it owns the file name, the extension and the
+                 * bytes so the same transcript saved from here and from the interview form is the
+                 * same file.
+                 *
+                 * The heading and the edited chip go in its `leading` slot rather than staying in a
+                 * row of their own, because the row's whole layout — flag first, actions pushed
+                 * right — is the thing being shared.
+                 */
+                QuestionnaireTranscriptActions(
+                    text = transcriptText!!,
+                    // The web's `TranscriptBlock` builds exactly this name for exactly this surface.
+                    filenameBase = "${media.originalFilename}-transcript",
+                    // NULL WHERE THERE IS NO REPOSITORY, so no Download button is drawn rather than
+                    // one that refuses. The writer is a method on the repository instance; the
+                    // preview arms of this composable are handed none. Copy is unaffected.
+                    onSave = repository?.let { repo ->
+                        { fileName: String ->
+                            saveTranscriptToDownloads(context, repo, scope, fileName, transcriptText.orEmpty())
+                        }
+                    },
+                    leading = {
+                        Text("Transcript", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        /*
+                         * THE EDITED FLAG ON A STORED TRANSCRIPT — "Edited" OR NOTHING, NEVER "Not edited".
+                         *
+                         * This screen shows what the server holds and has no copy of the machine's own
+                         * words to compare it against, so it can prove that a person DID touch the text
+                         * (the stamp is non-null) and can never prove that nobody did: the column is also
+                         * null for every transcript stored before it existed on 2026-08-31, and several of
+                         * those were rewritten by hand through the very route that now stamps it. Drawing
+                         * "Not edited" on those would credit a provider with a researcher's words.
+                         *
+                         * The interview form one screen over DOES draw both, because it holds
+                         * `machineText` and can make the comparison. Same rule, same two words, two
+                         * different amounts of evidence — and the web splits its surfaces the same way
+                         * (`edited={... ? true : undefined}` on the read-only ones).
+                         */
+                        if (!media.transcriptEditedAt.isNullOrBlank()) {
+                            Spacer(Modifier.width(6.dp))
+                            Row(
+                                modifier = Modifier
+                                    .background(MaterialTheme.field.warningContainer, RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.field.onWarningContainer,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                // The word, not the colour — house rule 5, and the same word the web chip
+                                // and the interview form both print.
+                                Text(
+                                    "Edited",
+                                    color = MaterialTheme.field.onWarningContainer,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
-                    Spacer(Modifier.weight(1f))
-                    // Copy the transcript to the clipboard — available to everyone.
-                    TextButton(onClick = { clipboard.setText(AnnotatedString(transcriptText!!)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy transcript", modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Copy", fontSize = 12.sp)
-                    }
-                }
+                )
                 // Render with the Markdown renderer so an approved (refined) transcript keeps its
                 // formatting/section breaks; a plain raw transcript is unaffected.
                 MarkdownText(markdown = transcriptText!!, color = Body)
@@ -14240,7 +14555,22 @@ private fun ViewDataDetail(
                 if (allResponses.isNotEmpty()) {
                     HorizontalDivider()
                     Text("Answers", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                    allResponses.forEach { r -> DetailRow(r.answeredBy?.name ?: "Answer", r.answerText) }
+                    /*
+                     * FLATTENED, AND THAT IS A CORRECTNESS FIX RATHER THAN TIDINESS.
+                     * `QuestionnaireResponse.answerText` is a `String?` that holds prose on almost
+                     * every row and the JSON encoding of a document on any row somebody formatted —
+                     * see `QuestionnaireAnswerText.kt`, which is where the shape is decided. Without
+                     * this call the row printed `{"blocks":[{"kind":"PARAGRAPH",…` verbatim, in the
+                     * one place on this screen a researcher reads an answer back. Not a crash and
+                     * not a blank: the braces, where the artisan's words belong.
+                     *
+                     * The de-duplication above deliberately still keys on the STORED value. Two
+                     * records holding the same words in different formatting are two different
+                     * answers, and collapsing them would drop one interviewer's row.
+                     */
+                    allResponses.forEach { r ->
+                        DetailRow(r.answeredBy?.name ?: "Answer", questionnaireAnswerPlain(r.answerText))
+                    }
                 }
                 HorizontalDivider()
                 Text("Recordings & media", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
@@ -15735,6 +16065,27 @@ private fun QuestionnaireForm(
                                  * and there is no box on this take to have departed from the words.
                                  */
                                 machineText[sectionKey]?.takeIf { it.isNotBlank() }?.let { transcript ->
+                                    /*
+                                     * COPY AND DOWNLOAD, AND ON THIS SURFACE THEY ARE THE ONLY WAY
+                                     * OUT. A whole-section take belongs to no answer box, so unlike
+                                     * every other transcript on this form it cannot be moved into
+                                     * the record by accepting it — the researcher reads it and puts
+                                     * what belongs where. Until now that meant retyping from the
+                                     * screen. The web renders this take inside a `MarkdownDocument`
+                                     * for exactly this reason and says so at the same line.
+                                     *
+                                     * NO FLAG IN THE `leading` SLOT: nothing here can be edited, so
+                                     * "edited or not" has nothing to be about — the same ruling the
+                                     * `QuestionnaireQuickTranscript` below makes by passing
+                                     * `machine = null`.
+                                     */
+                                    QuestionnaireTranscriptActions(
+                                        text = transcript,
+                                        filenameBase = "Section-${section.code}-${section.title}-transcript",
+                                        onSave = { fileName ->
+                                            saveTranscriptToDownloads(context, repository, scope, fileName, transcript)
+                                        }
+                                    )
                                     Text(
                                         transcript,
                                         color = MaterialTheme.colorScheme.onSurface,
@@ -15742,6 +16093,23 @@ private fun QuestionnaireForm(
                                         lineHeight = 19.sp
                                     )
                                 }
+                                /*
+                                 * NO `onSave` AND NO `filenameBase` HERE, DELIBERATELY, and this is
+                                 * the second of the panel's two call sites.
+                                 *
+                                 * They would be dead arguments. Those two are read only inside the
+                                 * offered-take plate, and `offered` is a LITERAL null on this
+                                 * surface — a whole-section take belongs to no answer box, so there
+                                 * is nothing to offer to add to one and the plate cannot draw. What
+                                 * this call renders here is the spinner and the refusal line, and
+                                 * nothing else.
+                                 *
+                                 * AND THE TAKE ALREADY HAS BOTH BUTTONS, a dozen lines above: the
+                                 * section's stored transcript is drawn under its own
+                                 * `QuestionnaireTranscriptActions`, named for the section, saved
+                                 * through the same writer. Passing them again would put a second
+                                 * Copy and a second Download on one surface for one piece of text.
+                                 */
                                 QuestionnaireQuickTranscript(
                                     busy = sectionKey in transcribing,
                                     problem = quickProblem[sectionKey],
@@ -15765,10 +16133,42 @@ private fun QuestionnaireForm(
                                     )
                                 }
                                 if (!hideAnswers) {
-                                    TextInput("Answer", answers[question.id]?.value.orEmpty(), minLines = 3) { value ->
-                                        answers[question.id]?.let { state -> state.value = value }
-                                        lastEditedSectionId = section.id
-                                    }
+                                    /*
+                                     * ── THE ANSWER BOX IS A RICH TEXT BOX, AND THE MICROPHONE IS
+                                     *    INSIDE IT ────────────────────────────────────────────
+                                     *
+                                     * Owner, 2026-08-30: the transcript *"should appear in the rich
+                                     * text box"*. The web's twin of this box became a `RichTextField`
+                                     * on 2026-08-31 and this one stayed a plain `TextInput`, which
+                                     * left the handset unable to READ an answer a colleague had
+                                     * formatted from the office — `{"blocks":[{"kind":"PARAGRAPH"…`
+                                     * in place of an artisan's words, overwritten the moment anybody
+                                     * typed. `QuestionnaireAnswerText.kt` argues what the column may
+                                     * hold and lists the readers that were taught to flatten it.
+                                     *
+                                     * NOTHING ABOUT THE PAYLOAD CHANGES for an answer nobody
+                                     * formats: `questionnaireAnswerStored` writes prose for an
+                                     * unformatted document and only stringifies once a mark, a list,
+                                     * a heading, an alignment or a table is actually applied. So
+                                     * `answers[question.id]` is still a `String`, the request body is
+                                     * unchanged, and the offline queue carries the same field.
+                                     *
+                                     * `resetKey` IS LOAD-BEARING. The editor parses its seed once and
+                                     * re-seeds only on a value it did not itself emit; keying it on
+                                     * the interview being edited is what stops one sitting's answers
+                                     * appearing in the boxes of the next one opened in the same
+                                     * composition.
+                                     */
+                                    QuestionnaireAnswerBox(
+                                        value = answers[question.id]?.value.orEmpty(),
+                                        onValueChange = { value ->
+                                            answers[question.id]?.let { state -> state.value = value }
+                                            lastEditedSectionId = section.id
+                                        },
+                                        resetKey = editing?.id to question.id,
+                                        onError = onError,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                     QuestionnaireQuickTranscript(
                                         busy = question.id in transcribing,
                                         problem = quickProblem[question.id],
@@ -15799,7 +16199,46 @@ private fun QuestionnaireForm(
                                                 lastEditedSectionId = section.id
                                             }
                                         },
-                                        onDiscard = { offeredTranscript = offeredTranscript - question.id }
+                                        onDiscard = { offeredTranscript = offeredTranscript - question.id },
+                                        /*
+                                         * COPY AND DOWNLOAD OVER THE OFFERED TAKE.
+                                         *
+                                         * WHY IT MATTERS ON THIS SURFACE AND NOT MERELY FOR PARITY:
+                                         * the two buttons this panel already had are Add to answer,
+                                         * which MIXES the machine's words into what a person wrote,
+                                         * and Discard, which throws the take away. Neither keeps it
+                                         * as a separate second reading, so a researcher who wanted
+                                         * one had to retype it off the screen — in a courtyard, from
+                                         * a box that empties the moment either button is pressed.
+                                         *
+                                         * NAMED BY SECTION CODE AND QUESTION NUMBER, not by the
+                                         * prompt. A prompt runs to two thousand characters and
+                                         * `transcriptDocumentFileName` cuts at sixty, so a folder of
+                                         * takes from one sitting would be a folder of files sharing
+                                         * their first sixty characters. The code and the number are
+                                         * short, unique within the sitting, and are what the
+                                         * researcher has written on the page in front of them.
+                                         *
+                                         * THE SAME WRITER AS EVERY OTHER SAVE IN THIS APP. Not a
+                                         * second saver: `saveTranscriptToDownloads` carries the
+                                         * IS_PENDING handshake, the pre-Q permission check, the
+                                         * `filesDir` fallback and the read-back of the name
+                                         * MediaProvider actually used — all four learned from field
+                                         * failures, and all four things a second copy would get
+                                         * wrong quietly.
+                                         *
+                                         * RE-READ AT THE PRESS rather than captured, so the bytes
+                                         * saved are the bytes the panel is drawing: the button only
+                                         * exists while an offer is on screen, and an offer that has
+                                         * just been accepted or discarded must not still be written
+                                         * to a file from a stale closure.
+                                         */
+                                        filenameBase = "Section-${section.code}-Q${question.sortOrder}-transcript",
+                                        onSave = { fileName ->
+                                            offeredTranscript[question.id]?.let { offer ->
+                                                saveTranscriptToDownloads(context, repository, scope, fileName, offer)
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -18915,6 +19354,76 @@ private fun saveMediaToDevice(context: Context, url: String?, filename: String, 
         Toast.makeText(context, "Saving \"$safeName\" to Downloads…", Toast.LENGTH_SHORT).show()
     }.onFailure {
         Toast.makeText(context, "Couldn't save: ${it.message ?: "download failed"}", Toast.LENGTH_LONG).show()
+    }
+}
+
+/**
+ * Save a transcript into the device's public Downloads folder as a `.md` file.
+ *
+ * ── WHY THIS EXISTS AT ALL ────────────────────────────────────────────────────────────────────
+ *
+ * Until now the only way a transcript left this handset was the clipboard. The owner asked for
+ * copying AND downloading on 2026-08-30; the web grew both in one component that same week, and
+ * this is the handset's half. `QuestionnaireTranscriptActions` decides the NAME and the extension —
+ * one place, so the file a researcher saves from a media card and the one they save from the
+ * interview form are the same file — and this decides where the bytes go.
+ *
+ * ── IT DELEGATES, AND THE DELEGATION IS THE POINT ─────────────────────────────────────────────
+ *
+ * [WorkshopRepository.persistFileToDownloads] is the one function in this app that puts a file in
+ * the public Downloads collection, and every line of it was learned from a field failure: the
+ * MediaStore IS_PENDING handshake, the pre-Q `WRITE_EXTERNAL_STORAGE` check with its `filesDir`
+ * fallback for a refused grant, and the read-back of the name MediaProvider ACTUALLY used after it
+ * silently uniquified a collision. A fourth hand-rolled copy of that dance in this file would be a
+ * fourth thing to get wrong, and the way it goes wrong is a Share control handing over the previous
+ * export.
+ *
+ * ── OFF THE MAIN THREAD, AND THE CACHE FILE IS ALWAYS DELETED ─────────────────────────────────
+ *
+ * A transcript is small, but the write, the MediaStore insert and the read-back are three disk
+ * round trips and a refined multi-clip transcript is not small. The staging copy lives in
+ * `cacheDir` for the width of the call and is removed in a `finally`, because the alternative is a
+ * cache that grows by one file every time anybody presses Download.
+ *
+ * WRITTEN AS UTF-8 EXPLICITLY. `File.writeText` defaults to UTF-8 today, and the default is not the
+ * guarantee: these transcripts are Hindi and Odia far more often than English, and a JVM default
+ * charset would turn a Devanagari transcript into question marks in a file nobody re-reads on the
+ * phone that wrote it.
+ */
+private fun saveTranscriptToDownloads(
+    context: Context,
+    repository: WorkshopRepository,
+    scope: CoroutineScope,
+    fileName: String,
+    text: String,
+) {
+    if (text.isBlank()) return
+    Toast.makeText(context, "Saving \"$fileName\" to Downloads…", Toast.LENGTH_SHORT).show()
+    scope.launch {
+        val outcome = withContext(Dispatchers.IO) {
+            val tmp = File(context.cacheDir, fileName)
+            // THE WRITE IS INSIDE THE `runCatching`, NOT ABOVE IT. A full disk, a read-only cache
+            // and a name the filesystem rejects all throw HERE rather than at the MediaStore call,
+            // and an exception escaping this block leaves the launched coroutine to crash the app
+            // over a failed Download — the one outcome worse than the toast below.
+            runCatching {
+                try {
+                    tmp.writeText(text, Charsets.UTF_8)
+                    repository.persistFileToDownloads(context, tmp, fileName, TRANSCRIPT_DOCUMENT_MIME)
+                } finally {
+                    tmp.delete()
+                }
+            }
+        }
+        outcome
+            .onSuccess { Toast.makeText(context, "Saved to $it", Toast.LENGTH_SHORT).show() }
+            .onFailure {
+                Toast.makeText(
+                    context,
+                    "Couldn't save: ${it.message ?: "the file could not be written"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
     }
 }
 

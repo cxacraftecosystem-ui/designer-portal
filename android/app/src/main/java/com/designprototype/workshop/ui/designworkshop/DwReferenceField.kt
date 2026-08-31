@@ -620,7 +620,15 @@ internal fun DwReferenceSelectField(
         // The scanned stand-in only stands in on the row it was resolved for — see [DwScannedAside].
         val scanned = scannedOption?.takeIf { it.underParent == parentId }?.option
         val aside = (listOfNotNull(scanned) + locallyCreated).distinctBy { it.id }
-        buildReferenceOptions(aside.filterNot { it.id in known } + narrowed, selectedId)
+        buildReferenceOptions(
+            aside.filterNot { it.id in known } + narrowed,
+            selectedId,
+            // THE CACHED LIST'S OWN WORD, not the schema's — see [DwReferenceList.tentativeLabel].
+            // A stand-in built on this device (a scan, an inline create) carries `tentative =
+            // false` and therefore no chip, which is right: this device did not order the list and
+            // has no answer for a row the server has not sent back yet.
+            tentativeWord = list?.tentativeLabel.orEmpty(),
+        )
     }
 
     /** The word for this model, or null when it is not one a picker may create — see [INLINE_CREATABLE]. */
@@ -965,7 +973,7 @@ internal fun DwReferenceMultiSelectField(
         // Without this the multi-select would silently show eight of nine chosen artisans, and the
         // first edit would write the eight back and drop the ninth.
         val known = narrowed.map { it.id }.toSet()
-        buildReferenceOptions(narrowed, "") +
+        buildReferenceOptions(narrowed, "", tentativeWord = list?.tentativeLabel.orEmpty()) +
             selected.filterNot { it in known }.map { orphan ->
                 SelectOption(orphan, orphanLabel(orphan), "on this row, not in this device's list")
             }
@@ -1874,12 +1882,50 @@ private fun DwReferenceScanPanel(
  * apparently EMPTY required field over a perfectly good link. The natural repair is to pick
  * something, and that rewrites a correct join key with a different one.
  */
-private fun buildReferenceOptions(items: List<DwReferenceOption>, selectedId: String): List<SelectOption> {
+/**
+ * The picker's rows, as [SearchableSelectField] draws them.
+ *
+ * `internal` RATHER THAN `private` SO A TEST CAN EXECUTE IT. There is no Compose renderer in
+ * this module's unit tests, so a rule that stays inside a Composable can only be read as source
+ * — and the rule here is a JUDGEMENT (which word goes on a row, and when it does not) rather
+ * than markup. `DwReferenceWireTest` calls it with real options. The web lifted
+ * `scopeNoticeLines` out of its picker for exactly this reason and says so in its own header.
+ */
+internal fun buildReferenceOptions(
+    items: List<DwReferenceOption>,
+    selectedId: String,
+    /**
+     * The registry's word for the tentative flag, as the SERVER sent it with this list, or blank.
+     *
+     * ── WHY A ROW SAYS THIS AT ALL ──────────────────────────────────────────────────────────────
+     *
+     * The server orders a `DwSketch` picker tentative-first (`_in_record_options`), above its own
+     * cap, so the rows a designer ticked "Tentative" come first. A reordered list with no visible
+     * reason is a list that reads as arbitrary — worse than the stage order it replaced, because the
+     * stage order at least matched the form they were just looking at. So the row says which.
+     *
+     * IN THE HINT, BECAUSE [SelectOption] HAS NO THIRD SLOT and giving it one would change a
+     * primitive with 39 call sites to caption one picker. The hint is already the row's second line
+     * on this client, it is already searched, and on an in-record picker it is usually empty — so
+     * the word lands on a line of its own rather than crowding a village name.
+     *
+     * BLANK DRAWS NOTHING, which is the answer for every model with no such flag, for a list cached
+     * by an older build, and for the merged cache that cannot claim an ordering.
+     */
+    tentativeWord: String,
+): List<SelectOption> {
     val options = items.map { option ->
         SelectOption(
             value = option.id,
             label = option.label.ifBlank { orphanLabel(option.id) },
-            hint = option.hint.takeIf { it.isNotBlank() }
+            // THE WORD FIRST WHERE THERE ARE BOTH. A sketch's second line here is another free-text
+            // answer off the row, and the flag is what explains the row's POSITION — a reader
+            // scanning for why the third sketch is at the top should not have to read past a
+            // caption to find it. Joined with the middot this app already uses for a two-part line.
+            hint = listOfNotNull(
+                tentativeWord.takeIf { it.isNotBlank() && option.tentative },
+                option.hint.takeIf { it.isNotBlank() },
+            ).joinToString(" · ").takeIf { it.isNotBlank() }
         )
     }
     if (selectedId.isBlank() || options.any { it.value == selectedId }) return options

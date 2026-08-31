@@ -512,6 +512,25 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
     ),
     Mirror(
+        path=f"{_ANDROID_TEST}/SearchRecordRoutingTest.kt",
+        binding="everyRole",
+        kind="closed",
+        pattern=r"private val everyRole = listOf\(([\s\S]*?)\n[ \t]*\)",
+        why=(
+            "Added 2026-08-31 with the design-workshop search bucket. It walks every tier through "
+            "`SearchDesignWorkshopRoute.offeredTo` and asserts the offered set is exactly the one "
+            "`canRunDesignWorkshops` admits -- which is a SET, not a rank floor, so the claim is "
+            "only as strong as the tuple is complete.\n"
+            "The specific damage a short tuple would do here is worth naming, because this file "
+            "exists to prevent a defect that was nearly shipped: the natural mistake is to gate a "
+            "tappable search row on `canViewDesignWorkshopData` (the predicate that offers the "
+            "bucket), and a PROFESSOR passes that and FAILS `can_run_design_workshops`, so the row "
+            "would lead them to 'Record not found'. The test proves the two predicates disagree by "
+            "filtering this tuple twice. A tier missing from it is a tier silently excused from "
+            "both filters, and the disagreement it is meant to expose could vanish unnoticed."
+        ),
+    ),
+    Mirror(
         path=f"{_ANDROID_TEST}/ui/designworkshop/WorkshopViewerAdminGateTest.kt",
         binding="everyRole",
         kind="closed",
@@ -855,6 +874,18 @@ LADDER_SHAPED = 5
 #: reason has to be "this does not purport to enumerate the ladder" — never "this failure was
 #: inconvenient". Anything that DOES enumerate belongs in ``MIRRORS``, not here.
 KNOWN_NON_MIRRORS: dict[str, str] = {
+    "android/app/src/test/java/com/designprototype/workshop/ui/designworkshop/DwAdoptOfferScopeTest.kt": (
+        "Five tiers named in individual assertions, and NOT an enumeration -- there is no tuple, no "
+        "map and no loop. It pins one boolean, `dwOfferDraftMove`, at the four points where its two "
+        "inputs disagree: a DESIGNER is offered 'Move into a workshop', an ADMIN and a MASTER ADMIN "
+        "are not (they may create, so their draft creates itself on the next sync and the control "
+        "could only lose work by mis-tap), and a PROFESSOR and an INSPECTOR are not (they may "
+        "neither create nor run one). Those five are the interesting cases; the three tiers below "
+        "DESIGNER are uninteresting because they fail the same clause a PROFESSOR fails.\n"
+        "A NEW TIER GENUINELY DOES WANT A LINE HERE, and this row is not a claim otherwise -- it is "
+        "the statement that the file asserts a predicate rather than mirroring the ladder, so the "
+        "sweep should not demand the shape a Mirror row has."
+    ),
     "frontend/e2e/identity-ocr-unit.spec.ts": (
         "Two SEPARATE partial loops asserting two different predicates — {RESEARCHER, PROFESSOR} may "
         "open the artisan form and are refused the card reader, {DESIGNER, ADMIN, MASTER_ADMIN} are "

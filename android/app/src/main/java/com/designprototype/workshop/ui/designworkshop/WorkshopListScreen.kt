@@ -133,6 +133,39 @@ import java.util.UUID
 private const val SEARCH_DEBOUNCE_MS = 350L
 
 /**
+ * May this account be offered "Move into a workshop" — the web's `offerMove`, as a pure rule.
+ *
+ * LIFTED OUT OF THE COMPOSABLE for the reason `resolveSearchable` gives for the same move: there is
+ * no `ui-test-junit4` and no Robolectric in `app/build.gradle.kts`, so the JVM suite cannot render
+ * this screen to look at it, and a decision left inline inside an `@Composable` cannot be asserted
+ * at all. The browser pins its own copy by reading the SOURCE TEXT —
+ * `design-workshop-adopt-scope-unit.spec.ts` asserts the literal
+ * `const offerMove = !allowCreate && allowWork;` — which is that instinct reaching for the only tool
+ * that file had. This one can be called instead.
+ *
+ * See the `offerMove` value inside [WorkshopListScreen] for the argument each half carries.
+ */
+internal fun dwOfferDraftMove(mayCreate: Boolean, mayRunWorkshops: Boolean): Boolean =
+    !mayCreate && mayRunWorkshops
+
+/**
+ * Does a DEVICE-ONLY row survive the type filter? True means "draw it".
+ *
+ * THREE ARMS AND THE MIDDLE ONE IS THE WHOLE POINT. No filter shows everything; a draft that names
+ * its type is tested exactly as a server row is; and a draft with NO type is shown whatever the
+ * filter says, because hiding a fortnight of fieldwork behind a filter that has nothing to test is
+ * the worse of the two errors. The rows that take that third arm are counted and named on screen —
+ * see [WorkshopListScreen]'s `unfilterableLocal`.
+ *
+ * BLANK IS TREATED AS NULL. A draft can carry `""` only from a build that wrote one before
+ * [com.designprototype.workshop.data.WorkshopDraft.workshopKind] folded a blank away; testing the
+ * filter against a string no workshop can have would hide the row rather than show it, which is the
+ * one direction this rule must never fail in.
+ */
+internal fun dwLocalRowPassesKind(workshopKind: String?, kindFilter: String): Boolean =
+    kindFilter.isBlank() || workshopKind.isNullOrBlank() || workshopKind == kindFilter
+
+/**
  * How many names the create form asks for when offering the ones already on record.
  *
  * ONE PAGE, DELIBERATELY SMALL, AND THE PICKER SAYS SO. The offer is a convenience over a box that
@@ -285,6 +318,36 @@ fun WorkshopListScreen(
     val mayRunWorkshops = remember(cachedSession?.id, cachedSession?.role) {
         cachedSession != null && FieldPermissions.canRunDesignWorkshops(cachedSession)
     }
+    /**
+     * May this account be offered "Move into a workshop" AT ALL — the web's `offerMove`, arm for arm.
+     *
+     * ── IT NARROWS A CONTROL THIS FILE USED TO OFFER TO EVERYONE, AND THE OLD ARGUMENT WAS SOUND ──
+     *
+     * The rule that stood on [WorkshopCard]'s `onAdopt` read: *"OFFERED ON EVERY DEVICE-ONLY ROW, to
+     * every account that holds the draft — INCLUDING a designer, deliberately. Nothing here brings a
+     * workshop into existence; it decides which EXISTING workshop this device's unsent fortnight
+     * belongs to, which is the designer's own judgement about their own fieldwork."* Every clause of
+     * that is still true, and NONE of it is overruled: a designer is admitted by this predicate
+     * exactly as before, because a designer is the whole reason the control exists.
+     *
+     * WHAT IT OVERRULES IS THE WORD "EVERY", AND ONLY FOR AN ADMIN. `!mayCreate` is the browser's
+     * narrowing and its reason is on `design-workshops/page.tsx`: *"An admin holding a device-only
+     * draft does not need this: their next sync creates the workshop and the draft resolves itself.
+     * Showing them a control that quietly re-files a fortnight of fieldwork into a DIFFERENT
+     * workshop, for no benefit, is a way to lose work by mis-tap."* The move is not undoable from
+     * this screen, so the trade is a control that can only lose work against a control that can only
+     * do what the next sync does anyway.
+     *
+     * `mayRunWorkshops` is the other half and it is not redundant: the sheet files a fortnight into a
+     * workshop, which is work, and an account outside `DESIGN_WORKSHOP_ROLES` holding a stray draft
+     * must not be handed a filing control for a surface it does not run.
+     *
+     * THIS SCREEN ALREADY BELIEVED IT — IN ONE OF THE TWO PLACES. The banner below has always been
+     * gated on `!mayCreate`, so an admin was told nothing about unlinked drafts and then shown the
+     * button the sentence would have named. One predicate now answers both, which is what stops them
+     * disagreeing again.
+     */
+    val offerMove = dwOfferDraftMove(mayCreate = mayCreate, mayRunWorkshops = mayRunWorkshops)
     /** The title in the offline start box, and whether it is being written. */
     var localTitle by remember { mutableStateOf("") }
     var showCreate by remember(startCreating) { mutableStateOf(startCreating && mayCreate) }
@@ -298,12 +361,24 @@ fun WorkshopListScreen(
     /**
      * How many device-only workshops are on screen that the type filter could not be applied to.
      *
-     * COUNTED AND SAID, never quietly left in the list and never quietly dropped from it. A workshop
-     * minted in a courtyard has no type on this device at all — `WorkshopDraft` carries none, and the
-     * column is promoted from stage 1 by the server — so the filter has nothing to test it against.
-     * Dropping those rows would hide a fortnight of work behind a filter; leaving them silently
-     * would be a filtered list quietly showing rows that do not match it, which teaches a designer
-     * that the filter does not work. So they stay, and the sentence below says how many and why.
+     * COUNTED AND SAID, never quietly left in the list and never quietly dropped from it. Dropping
+     * such a row would hide a fortnight of work behind a filter; leaving it silently would be a
+     * filtered list quietly showing rows that do not match it, which teaches a designer that the
+     * filter does not work. So they stay, and the sentence below says how many and why.
+     *
+     * ── IT USED TO BE EVERY DEVICE-ONLY ROW, AND THAT REASON HAS BEEN REMOVED RATHER THAN RESTATED ─
+     *
+     * The clause here read: *"A workshop minted in a courtyard has no type on this device at all —
+     * `WorkshopDraft` carries none, and the column is promoted from stage 1 by the server — so the
+     * filter has nothing to test it against."* The first half of that is no longer true.
+     * [WorkshopDraft.workshopKind] now records the type the designer picked in the create dialog, so
+     * a courtyard workshop is filtered on its own answer; the second half is still true and still
+     * irrelevant, because promotion from stage 1 is what happens AFTER a sync, not what this list
+     * has to wait for.
+     *
+     * WHAT IS LEFT IS THE ROW NOBODY CHOSE A TYPE FOR — a draft written before that field existed, or
+     * one started with the type left blank. Those genuinely have nothing to test, which is the
+     * original argument still doing its work over a much smaller set.
      */
     var unfilterableLocal by remember { mutableIntStateOf(0) }
     /**
@@ -398,6 +473,23 @@ fun WorkshopListScreen(
             val covered = fromServer.map { it.localId }.toSet()
             val localOnly = drafts
                 .filterNot { (id, _) -> id in covered }
+                /*
+                  THE TYPE FILTER NOW REACHES MOST OF THESE, which it could not before
+                  [WorkshopDraft.workshopKind] existed. A draft minted since then carries the type
+                  the designer picked in the create dialog, so a filtered list can honestly leave it
+                  out — exactly as the server leaves out its own rows.
+
+                  A DRAFT WITH NO TYPE STILL STAYS, and that is the surviving half of the old rule:
+                  a draft written before that field existed, or one started with no type chosen, has
+                  nothing for the filter to test, and hiding a fortnight of work behind a filter that
+                  cannot read it is the worse of the two errors. [unfilterableLocal] counts exactly
+                  those and the sentence under the filter says how many and why.
+
+                  APPLIED BEFORE `rowFor`, which is not a micro-optimisation: `rowFor` reads the
+                  custom-section store off the disk for every row it builds, so filtering afterwards
+                  would do that work for rows nobody is going to see.
+                */
+                .filter { (_, draft) -> dwLocalRowPassesKind(draft.workshopKind, kindFilter) }
                 .map { (id, draft) ->
                     rowFor(
                         context = appContext,
@@ -416,12 +508,23 @@ fun WorkshopListScreen(
                     search.isBlank() || row.title.contains(search, ignoreCase = true)
                 }
 
-            // THE TYPE FILTER IS NOT APPLIED TO THESE, AND CANNOT BE. See [unfilterableLocal]: the
-            // draft on this device holds no kind, so the only honest choices are to show them and
-            // say so, or to hide a fortnight of work behind a filter that has nothing to test. The
-            // count is set even when it is zero, so a designer who clears the filter loses the
-            // sentence with it.
-            unfilterableLocal = if (kindFilter.isBlank()) 0 else localOnly.size
+            // THE ROWS THE FILTER STILL CANNOT BE APPLIED TO — the UNTYPED ones, and only those.
+            //
+            // It used to be every device-only row, because the draft held no kind at all: "the draft
+            // on this device holds no kind, so the only honest choices are to show them and say so,
+            // or to hide a fortnight of work behind a filter that has nothing to test." That trade
+            // is unchanged and still decides these rows; what changed is how many of them there are,
+            // because a draft now records the type its designer chose. The count is still set even
+            // when it is zero, so a designer who clears the filter loses the sentence with it.
+            //
+            // Counted off the DRAFT rather than the row, because `WorkshopRow` deliberately carries
+            // only what a row draws, and after the search filter, so the number describes the rows
+            // actually on screen rather than the ones a title search removed.
+            unfilterableLocal = if (kindFilter.isBlank()) {
+                0
+            } else {
+                localOnly.count { row -> draftById[row.localId]?.workshopKind.isNullOrBlank() }
+            }
 
             (fromServer + localOnly).sortedByDescending { it.updatedAt }
         }.onSuccess { rows = it }
@@ -684,8 +787,11 @@ fun WorkshopListScreen(
           know which one is meant, and choosing for the designer is how a fortnight is filed under
           the wrong cluster - so it names the count and sends them to the row, where the title is.
         */
-        val unlinkedCount = rows.count { it.localOnly && it.hasLocalDraft }
-        if (!offline && !mayCreate && unlinkedCount > 0) {
+        // [offerMove] AND NOT `!mayCreate` ALONE, so this sentence cannot name a control the row
+        // below has decided not to draw. The browser counts the same way — `unlinkedCount =
+        // offerMove ? orphanDrafts.size : 0`.
+        val unlinkedCount = if (offerMove) rows.count { it.localOnly && it.hasLocalDraft } else 0
+        if (!offline && unlinkedCount > 0) {
             Text(
                 (if (unlinkedCount == 1) {
                     "One workshop here was started on this device and is not linked to a workshop yet. "
@@ -715,9 +821,13 @@ fun WorkshopListScreen(
         // [unfilterableLocal] for why the filter cannot reach them and why hiding them is worse.
         if (unfilterableLocal > 0) {
             Text(
+                // "…once they sync" UNTIL 2026-08-31, AND IT IS NO LONGER THE REASON. A draft has
+                // recorded its type since [WorkshopDraft.workshopKind] landed, so a synced-or-not
+                // row is filtered on what the designer picked; what is left here is the row nobody
+                // picked a type FOR, which is a different fact and a different next move.
                 "$unfilterableLocal workshop${if (unfilterableLocal == 1) "" else "s"} on this device " +
                     "${if (unfilterableLocal == 1) "is" else "are"} shown whatever the filter says — " +
-                    "the type is only known once they sync.",
+                    "no type was chosen for ${if (unfilterableLocal == 1) "it" else "them"}.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -918,15 +1028,21 @@ fun WorkshopListScreen(
                     row = row,
                     busy = busy,
                     sending = sendingId == row.localId,
-                    // OFFERED ON EVERY DEVICE-ONLY ROW, to every account that holds the draft —
-                    // INCLUDING a designer, deliberately. Nothing here brings a workshop into
-                    // existence; it decides which EXISTING workshop this device's unsent fortnight
-                    // belongs to, which is the designer's own judgement about their own fieldwork.
-                    // See `WorkshopDraftStore.adoptIntoWorkshop`.
+                    // OFFERED ON EVERY DEVICE-ONLY ROW THIS ACCOUNT SHOULD BE OFFERED ONE FOR —
+                    // INCLUDING a designer, deliberately, which is the half of the old rule that
+                    // still stands and is the whole reason the control exists. Nothing here brings a
+                    // workshop into existence; it decides which EXISTING workshop this device's
+                    // unsent fortnight belongs to, which is the designer's own judgement about their
+                    // own fieldwork. See `WorkshopDraftStore.adoptIntoWorkshop`.
                     //
                     // It is the whole reason this rule can ship without costing anybody a fortnight,
                     // so it is on the row rather than behind a menu.
-                    onAdopt = if (row.localOnly && row.hasLocalDraft) {
+                    //
+                    // THE WORD THAT CHANGED IS "EVERY": this used to read `row.localOnly &&
+                    // row.hasLocalDraft` alone, which offered an ADMIN a control that can only lose
+                    // their work — theirs syncs itself. See [offerMove] for that argument in full and
+                    // for why the banner above had already been narrowed and this had not.
+                    onAdopt = if (offerMove && row.localOnly && row.hasLocalDraft) {
                         { adopting = row }
                     } else {
                         null
@@ -2090,6 +2206,16 @@ private fun CreateWorkshopDialog(
                                 draft.copy(
                                     title = body.title,
                                     templateId = body.templateId,
+                                    // FROM THE BODY FOR THE SAME REASON THE DESIGNER KEYS BELOW ARE,
+                                    // and written whether or not the create landed for the same two
+                                    // reasons: inert if it landed (the column is already set and
+                                    // `WorkshopSync` reads this only inside its `remoteIdOf(draft)
+                                    // == null` arm), and the whole point if it did not — a workshop
+                                    // started in a courtyard remembers the type the designer picked
+                                    // before the signal went, instead of being posted untyped days
+                                    // later and sitting un-filterable on this list until stage 1.
+                                    // Stage 1 stays the authority; see [WorkshopDraft.workshopKind].
+                                    workshopKind = body.workshopKind,
                                     // PERSISTED FROM THE BODY, NOT RE-READ FROM THE PICKER, so the
                                     // draft carries exactly what was sent (or what will be sent) and
                                     // there is one folded value rather than two.

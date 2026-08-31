@@ -395,3 +395,280 @@ def test_no_field_is_blank_on_either_client():
             f"“{step_id}” lists the same field twice: "
             f"{sorted({f for f in fields if fields.count(f) > 1})}"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE THIRD COPY: docs/WALKTHROUGH.md
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# `steps.ts` says of the printed guide that it "carries the same lists in prose", and until
+# 2026-08-31 nothing checked that sentence. Two of the three copies were guarded — everything above
+# holds the handset to the web — and the PROSE one, the version that gets printed and carried into a
+# village with no signal, was held by nothing at all.
+#
+# It had drifted on SEVEN of its EIGHT record steps. Among what the audit that added this section
+# found by reading the form components:
+#
+#   * `workshop` was missing "Kind of workshop", which is REQUIRED and is the FIRST control on the
+#     form — and is the box that marks a workshop as a Design & Prototype one. A researcher working
+#     from the printed list would create an ordinary workshop and then find it absent from the
+#     picker that starts the entire fortnight arc, with nothing on either screen explaining why.
+#   * `questionnaire` listed a "Date" field that the form does not have and deliberately does not
+#     have: the server derives the interview date from when the interview was captured, and
+#     `app/(protected)/questionnaire/page.tsx` says so in a comment where the box used to be. A
+#     guide naming a field that was removed on purpose sends the reader looking for it.
+#   * Six of the eight had never gained "Design & prototype workshop", the link field that is what
+#     puts a record in front of a stage's reference pickers.
+#
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+# WHY THIS IS A ONE-DIRECTIONAL CHECK, AND WHY THAT IS THE POINT RATHER THAN A WEAKNESS
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+#
+# Every field in the register must be NAMED in the prose. The prose may name MORE. That asymmetry is
+# deliberate, and the same audit is the reason for it: THE REGISTER IS ITSELF INCOMPLETE, and on the
+# artisan step the prose is the more accurate of the two. `ArtisanForm.tsx` renders an Aadhaar
+# number, an Artisan Pehchan Card pair, Date of birth, Practising since and Experience; `steps.ts`
+# names none of those five, so neither does the handset — while `docs/WALKTHROUGH.md` has named the
+# Aadhaar and Pehchan boxes all along, with four watch-out bullets about the deduplication key.
+#
+# A two-directional check would therefore report the printed guide as wrong FOR BEING RIGHT, and the
+# quickest way to make it green would be to delete true sentences about the one field that stops the
+# archive filling with duplicate artisans. So this holds the prose to the register as a FLOOR and
+# never as a ceiling. The register's own gaps are recorded in the printed guide's maintenance
+# section and belong to whoever owns `steps.ts`; they are not this file's to close, and this file
+# must not pretend they are closed by making the check symmetric.
+#
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+# WHAT PROSE IS STILL ALLOWED TO DO
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+#
+# Summarise — in the four places named in `PROSE_PARAPHRASES` and nowhere else. "The form asks for
+# the title, the craft and the dates" is not the same kind of claim as a list that must match a form
+# field for field, and a document somebody reads on a bus is allowed to make the first kind. But
+# every such licence is written down here, and `test_no_licensed_paraphrase_is_dead` asserts that
+# the wording each one licences is still in the document and still needed. A paraphrase table nobody
+# checked would be this lane's own subject reappearing one level down: a third register that looks
+# authoritative and is held to nothing.
+
+WALKTHROUGH_DOC = _ROOT / "docs" / "WALKTHROUGH.md"
+
+PROSE_MARKER = "**What the screen asks for:**"
+
+# The heading of each numbered record step, to the `GUIDE_STEPS` id it describes.
+#
+# Only the eight steps that carry a field line are here, and the omissions are deliberate rather than
+# a backlog: steps 9 (Review) and 10 (View Data) are browse screens with no form, step 11 (Scan a
+# code) resolves a code rather than asking for anything, and the workshop arc's Steps A–K describe
+# screens built from the registry the server publishes — `design-workshop-stages` cannot have a
+# hand-kept label list on either side, which is the whole reason that registry exists.
+PROSE_STEPS = {
+    "Workshop": "workshop",
+    "Craft": "craft",
+    "Artisan": "artisan",
+    "Product": "product",
+    "Process": "process",
+    "Tool": "tool",
+    "Questionnaire": "questionnaire",
+    "Miscellaneous Media": "media",
+}
+
+# `(step id, register entry) -> the wording in the printed guide that stands for it`.
+#
+# FOUR ENTRIES, AND EACH IS A SENTENCE DOING A JOB A CHIP CANNOT. These are not spelling variants; a
+# variant belongs in `_loose` below, which already absorbs markdown emphasis and punctuation. These
+# are the places where the guide deliberately says something a label list cannot:
+#
+#   * The artisan step's location line names the TWO THINGS that control collects — the device fix
+#     and the stated address — because confusing them corrupted the live dataset once, and the guide
+#     carries a table about it. "Location (GPS fix or map pin)" is the chip; the sentence is the
+#     lesson, and flattening it back to the chip would delete the correction.
+#   * The four "Per step:" / "Per question:" chips are the web card's way of rendering a REPEATING
+#     block as flat text. Prose has a grammar for that — "then per step: …" — and reads better for
+#     it in the one rendering that has whole sentences available to it.
+#
+# ⚠ THE PROCESS ROWS WERE RE-KEYED ON 2026-08-31 AND THE RE-KEYING IS THE INTERESTING PART. They read
+# `Per step: additional context notes (optional)` and `Per step: attached media` — and the audit that
+# owns `steps.ts` found that NEITHER LABEL IS ON THE FORM. `ProcessForm` draws a "Record additional
+# information" checkbox, and only once it is ticked does a notes control appear headed "Additional
+# context for this step"; the media card under them is titled "Attach media". So this table was
+# licensing prose against two chips that were themselves wrong, which is the failure one level down
+# that the header above warns about: a paraphrase row makes a claim look CONSIDERED. A licence is
+# only ever a licence to say a true thing differently.
+PROSE_PARAPHRASES = {
+    ("artisan", "Location (GPS fix or map pin)"): "Location (device fix **and** stated address)",
+    ("process", "Per step: Record additional information"): (
+        "**Record additional information**"
+    ),
+    ("process", "Per step: Additional context for this step"): (
+        "**Additional context for this step**"
+    ),
+    ("process", "Per step: Attach media"): "**Attach media**",
+    ("questionnaire", 'Per question: "Record this question" audio, or typed answer'): (
+        'then per question either a **"Record this question"** audio clip or a typed answer'
+    ),
+}
+
+
+def _collapse(text: str) -> str:
+    """Every run of whitespace to one space.
+
+    The document is hard-wrapped at about column 100, so a field the guide names is routinely split
+    across two lines — "additional context notes / (optional)" is one. Comparing without this would
+    report a drift for a line break the author never chose: the wrap column is an editor setting,
+    not a claim about the product.
+    """
+    return " ".join(text.split())
+
+
+def _loose(text: str) -> str:
+    """Lowercased, with every run of non-alphanumerics collapsed to one space.
+
+    The prose is MARKDOWN and the register is plain text: the guide writes "**Craft** *(required)*"
+    for the register's "Craft (required)", and that emphasis is typography rather than a different
+    claim about the form. Dropping punctuation also lets a straight apostrophe match a typographic
+    one — which `test_every_field_matches_the_web_word_for_word_and_in_screen_order` deliberately
+    refuses to tolerate BETWEEN THE TWO CLIENTS, where "Do's" against "Do’s" really is one screen
+    calling one box two names. There is no such defect to catch between a form label and an English
+    sentence about it, and enforcing it here would only teach people to paste chips into paragraphs.
+    """
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def prose_fields() -> dict[str, str]:
+    """``{guide step id: the "What the screen asks for" sentence, whitespace-collapsed}``.
+
+    Attached to the numbered HEADING above each sentence rather than to its position in the file, so
+    that inserting a section does not shift every list quietly onto the next step. That failure would
+    not be loud in a useful way: the tool's thirty labels compared against the questionnaire's
+    sentence would report a drift, the workshop's list against the craft's would report several more,
+    and the reader would be sent to six wrong places at once.
+    """
+    raw = WALKTHROUGH_DOC.read_text(encoding="utf-8")
+    out: dict[str, str] = {}
+    heading: str | None = None
+    for paragraph in re.split(r"(?:\r?\n){2,}", raw):
+        found = re.match(r"^## \d+\. (.+?) [-—]", paragraph)
+        if found:
+            heading = found.group(1).strip()
+        stripped = paragraph.lstrip()
+        if not stripped.startswith(PROSE_MARKER):
+            continue
+        assert heading is not None, (
+            f"{WALKTHROUGH_DOC.name} has a “{PROSE_MARKER}” line before any numbered step heading. "
+            "This parser reads each list off the heading above it, so a list with no heading belongs "
+            "to no step and would be silently ignored."
+        )
+        assert heading in PROSE_STEPS, (
+            f"{WALKTHROUGH_DOC.name} step “{heading}” carries a field list and PROSE_STEPS does not "
+            "know it. If a step was renamed, rename it here in the same commit; if a NEW form step "
+            "was added to the printed guide, add it to steps.ts and to PROSE_STEPS together — an "
+            "unmapped list is exactly the unguarded third register this section exists to prevent."
+        )
+        out[PROSE_STEPS[heading]] = _collapse(stripped[len(PROSE_MARKER) :])
+    return out
+
+
+def test_the_printed_guide_still_carries_a_field_line_for_every_record_step():
+    """Green below means the sentences were found and compared, not that the parser returned {}.
+
+    The same guard, for the same reason, as `test_both_declarations_still_parse_to_something` above:
+    reword the marker or the heading format and every assertion under this one starts iterating an
+    empty dict and passing. The document is prose and gets reformatted — that is precisely why it
+    needed a guard, and it is also the thing most likely to break the guard's own reader.
+    """
+    found = prose_fields()
+    assert set(found) == set(PROSE_STEPS.values()), (
+        f"{WALKTHROUGH_DOC.name} carries “{PROSE_MARKER}” lists for {sorted(found)}, and this file "
+        f"expects {sorted(PROSE_STEPS.values())}. A step that lost its list is a screen the printed "
+        "guide no longer says anything about; a step that gained one needs a PROSE_STEPS row."
+    )
+    for step_id, sentence in found.items():
+        assert len(sentence) > 20, (
+            f"“{step_id}”'s field list in {WALKTHROUGH_DOC.name} parsed to {sentence!r}, which is "
+            "too short to be a list of a form's boxes. The marker is probably being matched inside "
+            "something that is not the list."
+        )
+
+
+def test_every_register_field_is_named_in_the_printed_guide():
+    """The join this section exists for: the register is a FLOOR under the prose.
+
+    A field that is on the form, in the web's card and in the handset's card, and that the printed
+    guide does not name, is a box the researcher in the field has not been told to fill in. That is
+    not a cosmetic gap — "Kind of workshop" went unnamed here for months, and it is the control that
+    decides whether the whole design-workshop arc can see the record at all.
+
+    Read the header above before making this symmetric. The prose naming MORE than the register is
+    the register being wrong, and on the artisan step it currently is.
+    """
+    register = dict(web_fields())
+    prose = prose_fields()
+    missing: list[str] = []
+    for step_id, sentence in prose.items():
+        loose = _loose(sentence)
+        collapsed = _collapse(sentence)
+        for field in register[step_id]:
+            licensed = PROSE_PARAPHRASES.get((step_id, field))
+            if licensed is not None:
+                if _collapse(licensed) in collapsed:
+                    continue
+                missing.append(
+                    f"  “{step_id}” · {field!r}\n"
+                    f"      PROSE_PARAPHRASES licenses the wording {licensed!r},\n"
+                    "      and that wording is no longer in the document. Either restore the "
+                    "sentence, or delete the row if the guide now names the field plainly."
+                )
+                continue
+            core = re.sub(r"\s*\(required\)\s*$", "", field)
+            if _loose(core) not in loose:
+                missing.append(f"  “{step_id}” · {field!r}")
+    assert not missing, (
+        f"{WALKTHROUGH_DOC.name} no longer names every field the guide's register declares:\n"
+        + "\n".join(missing)
+        + "\n\nThe printed guide is the copy a researcher takes into a village with no signal. Add "
+        "the field to that step's “What the screen asks for” line — READ THE FORM COMPONENT FIRST "
+        "and put it in screen order, because that list gets read with the form open beside it. If "
+        "the guide genuinely needs to say it as a sentence rather than as a label, add a row to "
+        "PROSE_PARAPHRASES saying so, and why."
+    )
+
+
+def test_no_licensed_paraphrase_is_dead():
+    """A licence for a field that no longer exists, or no longer needs one, is the drift again.
+
+    Both halves fail for a reason worth naming:
+
+    * A key naming a step or a field the register does not declare means this table is quoting a
+      register that has moved. It would keep passing — an unused key is never consulted — while
+      reading as a considered decision about a field nobody has been offered since.
+    * A licence whose field the prose now names PLAINLY is a special case still switched on. The next
+      person to widen this check reads the table as the list of places the document is allowed to be
+      loose, and every stale row makes that list a worse description of the document than it is.
+      Delete it: the plain naming is better than the licence.
+    """
+    register = dict(web_fields())
+    prose = prose_fields()
+    for (step_id, field), licensed in PROSE_PARAPHRASES.items():
+        assert step_id in register, (
+            f"PROSE_PARAPHRASES licenses a wording for step “{step_id}”, which GUIDE_STEPS no longer "
+            "declares."
+        )
+        assert field in register[step_id], (
+            f"PROSE_PARAPHRASES licenses a wording for “{step_id}” · {field!r}, which is no longer "
+            "one of that card's fields. The register moved and this table did not follow."
+        )
+        assert step_id in prose, (
+            f"PROSE_PARAPHRASES licenses a wording for “{step_id}”, which {WALKTHROUGH_DOC.name} no "
+            "longer carries a field list for."
+        )
+        core = re.sub(r"\s*\(required\)\s*$", "", field)
+        assert _loose(core) not in _loose(prose[step_id]), (
+            f"PROSE_PARAPHRASES still licenses a paraphrase for “{step_id}” · {field!r}, but "
+            f"{WALKTHROUGH_DOC.name} now names that field plainly. Delete the row: it is a special "
+            "case that no longer applies, and leaving it makes this table a worse description of "
+            "where the document is allowed to summarise."
+        )
+        assert _collapse(licensed) in _collapse(prose[step_id]), (
+            f"PROSE_PARAPHRASES licenses {licensed!r} for “{step_id}” · {field!r}, and "
+            f"{WALKTHROUGH_DOC.name} does not contain it."
+        )

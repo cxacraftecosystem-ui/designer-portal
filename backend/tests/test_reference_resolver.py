@@ -834,8 +834,12 @@ class _FakeDb:
     """Enough Prisma client for :func:`reference_options`: delegates, and a photo query that
     answers nothing.
 
-    ``order`` is accepted and not applied — no test here turns on row order, and every one of them
-    asserts on a list of one or zero rows or on ids that the insertion order already fixes.
+    ``order`` is accepted and not applied, and the tentative-first section at the foot of this file
+    turns on row order deliberately anyway. That is faithful rather than a gap: the partition under
+    test is applied to the rows AFTER they come back, never by the database, so INSERTION ORDER
+    standing in for ``ordinal ASC`` is exactly the input the real query hands the real function. A
+    fake that sorted would be testing Prisma. Every other test here asserts on a list of one or zero
+    rows, or on ids that the insertion order already fixes.
     """
 
     def __init__(self, rows_by_delegate):
@@ -882,8 +886,13 @@ async def test_a_scanned_record_in_this_cluster_becomes_an_option(monkeypatch):
     assert [o["id"] for o in payload["options"]] == ["prd_here"]
     assert payload["outOfScope"] is False
     assert payload["outOfScopeOption"] is None
+    # THE WHOLE KEY SET, NAMED. Two clients decode this payload — `DwReferencePayload` on the web
+    # and `DwReferenceResponseDto` on the handset — and a key added here without them is a promise
+    # nothing keeps. `tentativeFirst`/`tentativeLabel` are the newest pair; see the section at the
+    # foot of this file for what they say and why they are inert on an external model like this one.
     assert set(payload) == {"model", "scope", "scopedToWorkshop", "filtered", "truncated",
-                            "outOfScope", "outOfScopeOption", "options"}
+                            "outOfScope", "outOfScopeOption", "tentativeFirst", "tentativeLabel",
+                            "options"}
 
 
 async def test_without_the_parameter_the_answer_is_the_one_it_always_gave(monkeypatch):
@@ -1039,3 +1048,185 @@ async def test_the_second_identifier_does_not_widen_past_this_workshop(monkeypat
         "an in-record ref reports no out-of-scope row: another workshop's entry is not a "
         "candidate this field is refusing, it is not a candidate at all"
     )
+
+
+# ── TENTATIVE-FIRST WHERE A SKETCH IS *CHOSEN*, NOT ONLY WHERE ONE IS LISTED ───────────────────
+#
+# The owner, 2026-08-30: a designer marks a sketch tentative "to bring them to the top of the
+# list". Stage 11's sketches already sorted tentative-first wherever they were LISTED — the upload
+# chooser on both clients, through `tentativeFirst` / `dwTentativeFirst` — and did NOT where one is
+# CHOSEN. The three `ref_model="DwSketch"` pickers (`sketch.supersedesSketch`,
+# `sketchReview.sketchRef`, `prototype.sketchRef`) are all answered by `_in_record_options`, and
+# the flag was not on the wire at all, so no client could have drawn or applied it.
+#
+# THE ORDERING IS ON THE SERVER AND THESE TESTS ARE MOSTLY ABOUT WHY. This list is CAPPED, so a
+# browser sorting what arrived would sort one page and leave a tentative sketch stranded behind the
+# cap — "a client-side filter over a server-truncated list", the trap §11.5 of the frontend
+# contract names. `test_the_cap_falls_after_the_partition` is the assertion that would fail if the
+# partition were ever moved below the slice, or the slice pushed into the query as a `take`.
+#
+# No database: the fake Prisma client above is enough, for the reason the by-id section gives.
+
+
+def _sketch(ordinal, name, tentative=None, **overrides):
+    """One stage-11 sketch row, in `ordinal` order because that is the order the query asks for.
+
+    `_Delegate.find_many` accepts `order` and does not apply it, so INSERTION ORDER stands in for
+    `ordinal ASC` here — which is faithful, since the ordering under test is applied to the rows
+    after they come back and never by the database.
+    """
+    data = {"name": name}
+    if tentative is not None:
+        data[dw.TENTATIVE_FIELD_KEY] = tentative
+    fields = {
+        "id": f"ent_{ordinal}", "clientKey": f"ck_{ordinal}", "designWorkshopId": "dw_1",
+        "entityKey": "sketch", "ordinal": ordinal, "data": data,
+    }
+    fields.update(overrides)
+    return _Row(**fields)
+
+
+async def _sketches(monkeypatch, rows, *, take=25, search=None):
+    monkeypatch.setattr(dw, "db", _FakeDb({"dwstageentry": rows}))
+    entity = dw._dw_entity("DwSketch")
+    assert entity is not None, "the registry no longer declares DwSketch; this test is stale"
+    return await dw._in_record_options(_ASKING, entity, search, take)
+
+
+async def test_a_tentative_sketch_is_promoted_above_the_rest(monkeypatch):
+    """The whole feature, at the surface it was missing from."""
+    payload = await _sketches(monkeypatch, [
+        _sketch(0, "First"),
+        _sketch(1, "Second", tentative=True),
+        _sketch(2, "Third"),
+    ])
+    assert [o["id"] for o in payload["options"]] == ["ent_1", "ent_0", "ent_2"]
+
+
+async def test_the_partition_is_stable_inside_each_group(monkeypatch):
+    """A PARTITION, not a sort key — the designer's own arrangement survives within each group.
+
+    This is what makes unticking the box lossless: nothing was ever written to `ordinal`, so a row
+    returns to exactly the place it would have had.
+    """
+    payload = await _sketches(monkeypatch, [
+        _sketch(0, "A"), _sketch(1, "B", tentative=True), _sketch(2, "C"),
+        _sketch(3, "D", tentative=True), _sketch(4, "E"),
+    ])
+    assert [o["id"] for o in payload["options"]] == ["ent_1", "ent_3", "ent_0", "ent_2", "ent_4"]
+
+
+async def test_the_cap_falls_after_the_partition(monkeypatch):
+    """THE ASSERTION THIS LANE EXISTS FOR. Truncating first would have fixed nothing.
+
+    The tentative sketch is the LAST row by `ordinal`. Cap the list at two before ordering and it
+    is cut, and a client-side sort over what arrived can never bring it back — which is precisely
+    the shape of the defect the stage lane reported: an ordering applied to one page of a
+    server-truncated list.
+    """
+    payload = await _sketches(monkeypatch, [
+        _sketch(0, "A"), _sketch(1, "B"), _sketch(2, "C", tentative=True),
+    ], take=2)
+    assert [o["id"] for o in payload["options"]] == ["ent_2", "ent_0"]
+    assert payload["truncated"] is True, "the cap still bites and must still say so"
+
+
+async def test_a_tentative_row_is_never_the_one_the_cap_cuts(monkeypatch):
+    """The property the picker's own truncation sentence is allowed to state.
+
+    Because the promotion happens above the slice, a tentative row can only be cut once EVERY
+    tentative row ahead of it has been drawn. So a picker showing no tentative row is a picker
+    whose whole matched set holds none — which is what lets the web say "the cap falls on the rest
+    first" instead of hedging.
+    """
+    rows = [_sketch(n, f"S{n}") for n in range(6)] + [_sketch(6, "Late", tentative=True)]
+    payload = await _sketches(monkeypatch, rows, take=3)
+    assert [o["tentative"] for o in payload["options"]] == [True, False, False]
+
+
+async def test_the_flag_travels_and_the_stage_s_answers_do_not(monkeypatch):
+    """One boolean on the option, and `data` still empty.
+
+    `data` is the HYDRATION dictionary — `DW_REFERENCE_HYDRATION` maps its keys onto the fields of
+    the entity being filled in — and `sketch.supersedesSketch` fills a `sketch`, which declares
+    `isTentative` itself. Putting the flag in `data` would therefore be a standing offer to tick
+    the new sketch's box from the old one's.
+    """
+    payload = await _sketches(monkeypatch, [
+        _sketch(0, "Plain", lengthCm=40),
+        _sketch(1, "Unsettled", tentative=True),
+    ])
+    assert [(o["id"], o["tentative"]) for o in payload["options"]] == [
+        ("ent_1", True), ("ent_0", False),
+    ]
+    assert all(o["data"] == {} for o in payload["options"]), (
+        "the reference payload is deliberately narrow; a stage's answers are not a picker's business"
+    )
+
+
+async def test_the_payload_says_it_reordered_and_names_the_registry_s_word(monkeypatch):
+    """A reordered list with no visible reason is a list that looks arbitrary.
+
+    The word is the REGISTRY's, sent from the server, because a picker holds the REF field's
+    `refModel` and not the referenced entity's schema — the alternative is two clients each
+    resolving a second entity to learn one string, and two more places for it to go stale.
+    """
+    payload = await _sketches(monkeypatch, [_sketch(0, "A", tentative=True)])
+    assert payload["tentativeFirst"] is True
+    entity = dw._dw_entity("DwSketch")
+    assert payload["tentativeLabel"] == entity.field(dw.TENTATIVE_FIELD_KEY).label
+
+
+async def test_a_value_a_designer_cannot_have_ticked_is_not_tentative(monkeypatch):
+    """`is True` and nothing looser, matching `isTentativeRow` and the BOOL control exactly.
+
+    `coerce_value` stores a real boolean for a BOOL field, so these three are values nothing in the
+    repository writes. Promoting one would put a row at the top of this picker whose own checkbox
+    on the stage form reads "Not answered" — one record disagreeing with itself about one field.
+    """
+    payload = await _sketches(monkeypatch, [
+        _sketch(0, "String", tentative="true"),
+        _sketch(1, "Number", tentative=1),
+        _sketch(2, "Explicit", tentative=False),
+        _sketch(3, "Real", tentative=True),
+    ])
+    assert [o["id"] for o in payload["options"]] == ["ent_3", "ent_0", "ent_1", "ent_2"]
+    assert [o["tentative"] for o in payload["options"]] == [True, False, False, False]
+
+
+async def test_an_unanswered_box_leaves_the_sketch_exactly_where_it_was(monkeypatch):
+    """The owner's own second clause: an unticked sketch is treated as it always was."""
+    payload = await _sketches(monkeypatch, [_sketch(0, "A"), _sketch(1, "B"), _sketch(2, "C")])
+    assert [o["id"] for o in payload["options"]] == ["ent_0", "ent_1", "ent_2"]
+    assert all(o["tentative"] is False for o in payload["options"])
+
+
+async def test_the_search_narrows_first_and_the_partition_orders_what_survived(monkeypatch):
+    """Two narrowings in the right order. The search decides membership; the flag decides rank."""
+    payload = await _sketches(monkeypatch, [
+        _sketch(0, "Indigo tote"),
+        _sketch(1, "Red purse", tentative=True),
+        _sketch(2, "Indigo scarf", tentative=True),
+    ], search="indigo")
+    assert [o["id"] for o in payload["options"]] == ["ent_2", "ent_0"]
+
+
+async def test_an_entity_without_the_flag_is_answered_exactly_as_before(monkeypatch):
+    """`prototype` declares no such field, and that is an ordinary state rather than an error.
+
+    No key on the options, no claim in the payload — so neither client can draw the word for a
+    picker the server did not partition.
+    """
+    payload = await _in_record(monkeypatch, rows=[_entry(), _entry(id="ent_two", ordinal=1)])
+    assert [o["id"] for o in payload["options"]] == ["ent_synced", "ent_two"]
+    assert payload["tentativeFirst"] is False
+    assert payload["tentativeLabel"] == ""
+    assert all("tentative" not in o for o in payload["options"])
+
+
+async def test_an_external_reference_model_makes_no_claim_about_tentativeness(monkeypatch):
+    """An Artisan or a ProductDocumentation has no stage-entry `data` and therefore no such flag."""
+    payload = await _options(monkeypatch, rows=[_product()])
+    assert payload["tentativeFirst"] is False
+    assert payload["tentativeLabel"] == ""
+    assert all("tentative" not in o for o in payload["options"])

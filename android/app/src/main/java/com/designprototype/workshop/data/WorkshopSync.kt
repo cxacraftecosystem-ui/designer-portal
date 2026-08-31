@@ -2018,6 +2018,19 @@ object WorkshopSyncEngine {
                     DesignWorkshopCreateBody(
                         title = draft.title.ifBlank { "Untitled design workshop" },
                         templateId = draft.templateId.ifBlank { "DCH_STANDARD" },
+                        // THE TYPE THE DESIGNER PICKED IN THE CREATE DIALOG, days ago, in a
+                        // courtyard. Sent straight off the draft and already folded to null there,
+                        // so a workshop that was never given a type posts the same bytes it posted
+                        // before this key existed — which is what keeps this compatible with an API
+                        // that predates it, where `APIModel`'s `extra="forbid"` answers 422 to a body
+                        // that merely CARRIES the key and a 422 is never queued.
+                        //
+                        // A WRONG TOKEN CANNOT STRAND THE FORTNIGHT EITHER, because it cannot get
+                        // here: the value came from `workshopKindOptions`, which reads the registry
+                        // this build shipped, and the server validates against `WORKSHOP_KINDS`
+                        // rather than storing what it is given. Stage 1 remains the authority and
+                        // overwrites the column on its first save; see [WorkshopDraft.workshopKind].
+                        workshopKind = draft.workshopKind,
                         designerUserId = draft.designerUserId,
                         designerUserIds = draft.designerUserIds,
                     )

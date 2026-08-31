@@ -164,10 +164,18 @@ async def test_the_filtered_list_holds_several_and_nothing_selects_one(calls):
     payload = await _options(calls, filter_by=PRODUCT_A)
     assert len(payload["options"]) == 4
     assert payload["outOfScope"] is False and payload["outOfScopeOption"] is None
+    # `tentativeFirst` and `tentativeLabel` JOINED THE PAYLOAD ON 2026-08-31, with stage 11's
+    # tentative flag. They belong to the group this docstring already describes — they say how the
+    # LIST WAS ORDERED, on the server, before the cap was applied — and they still carry no
+    # per-option selection signal, which is the property being asserted here. The set is pinned
+    # rather than sampled precisely so a key that DID carry one could not arrive unnoticed.
     assert set(payload) == {
         "model", "scope", "scopedToWorkshop", "filtered", "truncated", "outOfScope",
-        "outOfScopeOption", "options",
+        "outOfScopeOption", "options", "tentativeFirst", "tentativeLabel",
     }
+    # And the new pair is about ORDER, never about a pick: neither may name a row.
+    assert isinstance(payload["tentativeFirst"], bool)
+    assert payload["tentativeLabel"] is None or isinstance(payload["tentativeLabel"], str)
 
 
 async def test_without_a_product_the_workshops_whole_process_list_is_offered(calls):

@@ -5,9 +5,13 @@ import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.liveFields
 import com.designprototype.workshop.ui.SelectCreateAction
+import com.designprototype.workshop.ui.WorkshopListKind
+import com.designprototype.workshop.ui.WorkshopListState
+import com.designprototype.workshop.ui.workshopListNotice
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -279,16 +283,65 @@ class DwWorkshopNameFieldTest {
     @Test
     fun `the offer line names the scope, the escape and both numbers`() {
         assertEquals(
-            "Names from workshops you can open. Type a new one if it is not here.",
+            "Names from workshops you can open. Type to search all of them, or type a new one.",
             dwWorkshopNameOfferLine(workshopKind = "", shown = 12, total = 12)
         )
         assertEquals(
-            "Names from workshops of this type. Type a new one if it is not here.",
+            "Names from workshops of this type. Type to search all of them, or type a new one.",
             dwWorkshopNameOfferLine(workshopKind = "DESIGN_INTERVENTION", shown = 12, total = 12)
         )
         assertEquals(
-            "Names from workshops you can open. Type a new one if it is not here. Showing 80 of 196.",
+            "Names from workshops you can open. Type to search all of them, or type a new one. " +
+                "Showing 80 of 196.",
             dwWorkshopNameOfferLine(workshopKind = "", shown = 80, total = 196)
+        )
+    }
+
+    /**
+     * THE UNSEARCHED SENTENCE PROMISES THAT TYPING REACHES THE REST, AND IT CAN NOW KEEP THAT.
+     *
+     * It read *"Type a new one if it is not here."* and nothing else — the escape, and not one word
+     * about the box directly above it, which at the time could only filter the
+     * `DW_NAME_OFFER_PAGE_SIZE` rows it had been handed. A designer with 196 workshops read "Showing
+     * 80 of 196", typed the name of one of the other 116, and was told nothing matched: absence read
+     * as non-existence, on the field that names a ministry document. The box is wired to
+     * `GET /design-workshops?search=` now, so the sentence has to invite the typing that reaches it.
+     */
+    @Test
+    fun `the unsearched line says the box reaches past what is drawn`() {
+        assertTrue(
+            dwWorkshopNameOfferLine(workshopKind = "", shown = 80, total = 196)
+                .contains("Type to search all of them")
+        )
+    }
+
+    /**
+     * AND WITH A TERM IN THE BOX IT SAYS THE SEARCH ALREADY WENT EVERYWHERE.
+     *
+     * This is the half that ends the divergence. "Showing 12 of 40" under a SEARCHED box is a
+     * statement about the matches — the server counted them — and under an unsearched one it is a
+     * statement about a page the box could not see past. Same numbers, opposite meanings, and only
+     * these words tell the reader which they are looking at.
+     *
+     * The escape survives into this arm on purpose: a term that matched nothing is still a name the
+     * designer may use, and the create row underneath offers precisely that.
+     */
+    @Test
+    fun `a searched line says the whole list was searched, and keeps the escape`() {
+        assertEquals(
+            "Names from workshops you can open. All of them searched. " +
+                "Type a new one if it is not here.",
+            dwWorkshopNameOfferLine(workshopKind = "", shown = 12, total = 12, searching = true)
+        )
+        assertEquals(
+            "Names from workshops of this type. All of them searched. " +
+                "Type a new one if it is not here. Showing 12 of 40.",
+            dwWorkshopNameOfferLine(
+                workshopKind = "DESIGN_INTERVENTION",
+                shown = 12,
+                total = 40,
+                searching = true
+            )
         )
     }
 
@@ -304,5 +357,113 @@ class DwWorkshopNameFieldTest {
         assertFalse(dwWorkshopNameOfferLine("", shown = 0, total = 0).contains("Showing"))
         assertFalse(dwWorkshopNameOfferLine("", shown = 0, total = 196).contains("Showing"))
         assertFalse(dwWorkshopNameOfferLine("", shown = 12, total = 0).contains("Showing"))
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 5. The sentence under an EMPTY list, which the server search split into two facts
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * A TERM THAT MATCHED NOTHING IS A FACT ABOUT THE TERM, NOT ABOUT THE ACCOUNT'S ACCESS.
+     *
+     * `workshopListNotice` answers `Listed(count = 0)` with the SCOPE sentence — the one that names
+     * an administrator — because until this box searched the server, that state could only mean this
+     * account is on no design workshop. It can now equally mean the server searched every workshop
+     * the account CAN open and none is called that. Printing the scope sentence for the second tells
+     * a designer their access has been withdrawn on the strength of a misspelt cluster name, which
+     * is the same class of lie as the one this whole control was rewritten to stop.
+     */
+    @Test
+    fun `an empty answer to a typed term talks about the term`() {
+        assertEquals(
+            "No workshop name matches “bagru”.",
+            dwWorkshopNameNotice(
+                WorkshopListState.Listed(count = 0, total = 0),
+                online = true,
+                query = "bagru"
+            )
+        )
+        // Trimmed, so a trailing space off a predictive keyboard does not make the reader doubt what
+        // they typed — the same rule `pickerEmptyLine` follows for its own echo.
+        assertEquals(
+            "No workshop name matches “bagru”.",
+            dwWorkshopNameNotice(
+                WorkshopListState.Listed(count = 0, total = 0),
+                online = true,
+                query = "  bagru  "
+            )
+        )
+    }
+
+    /**
+     * AND A READ THAT FAILED STILL SAYS SO, TERM OR NO TERM.
+     *
+     * The single most repeated bug class in this product is a read that failed being reported as a
+     * fact about the repository. Wiring this box to the server opened the shortest path back to it:
+     * a handset in a courtyard answering "no workshop name matches" — a claim about every workshop
+     * the account holds, made from a request that never left the phone. The term is consulted ONLY
+     * on `Listed`, and that ordering is what forecloses it.
+     */
+    @Test
+    fun `a failed or pending read is never reported as a term that did not match`() {
+        val failedOffline = dwWorkshopNameNotice(WorkshopListState.Failed, online = false, query = "bagru")
+        val failedOnline = dwWorkshopNameNotice(WorkshopListState.Failed, online = true, query = "bagru")
+        val loading = dwWorkshopNameNotice(WorkshopListState.Loading, online = true, query = "bagru")
+        listOf(failedOffline, failedOnline, loading).forEach { line ->
+            assertNotNull(line)
+            assertFalse(line!!.contains("No workshop name matches"))
+        }
+        // And they are still the app's ONE set of words for those states rather than new ones
+        // written beside them, which is the whole reason `workshopListNotice` exists.
+        assertEquals(
+            workshopListNotice(WorkshopListState.Failed, WorkshopListKind.DESIGN, false),
+            failedOffline
+        )
+        assertEquals(
+            workshopListNotice(WorkshopListState.Failed, WorkshopListKind.DESIGN, true),
+            failedOnline
+        )
+    }
+
+    /**
+     * AN EMPTY BOX OVER AN EMPTY LIST IS UNCHANGED — the scope sentence, which is the true one here.
+     *
+     * This is the state the guard above must not have swallowed: nothing typed, the server answered,
+     * and the answer is none. That genuinely IS "an administrator has put you on no design
+     * workshop", and it has to keep saying so.
+     */
+    @Test
+    fun `an empty answer with an empty box still names the scope`() {
+        assertEquals(
+            workshopListNotice(
+                WorkshopListState.Listed(count = 0, total = 0),
+                WorkshopListKind.DESIGN,
+                true
+            ),
+            dwWorkshopNameNotice(
+                WorkshopListState.Listed(count = 0, total = 0),
+                online = true,
+                query = ""
+            )
+        )
+    }
+
+    /** And a list with rows says nothing at all, searched or not — there is nothing to explain. */
+    @Test
+    fun `a list with rows prints no notice`() {
+        assertNull(
+            dwWorkshopNameNotice(
+                WorkshopListState.Listed(count = 3, total = 3),
+                online = true,
+                query = "bagru"
+            )
+        )
+        assertNull(
+            dwWorkshopNameNotice(
+                WorkshopListState.Listed(count = 3, total = 3),
+                online = true,
+                query = ""
+            )
+        )
     }
 }

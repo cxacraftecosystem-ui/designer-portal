@@ -2713,6 +2713,15 @@ async def list_references(
     ``options`` left EMPTY, so a client that renders ``options`` and has never heard of the flag
     cannot offer it as an ordinary choice.
 
+    ``limit`` IS ALSO WHERE THE SKETCH ORDERING IS DECIDED, which is the one thing a reader of this
+    route should not have to discover in the service. A picker over an entity of THIS workshop —
+    ``DwSketch``, ``DwPrototype``, the roster — is answered by ``_in_record_options``, and for
+    ``DwSketch`` the rows a designer has ticked "Tentative" are promoted above the rest BEFORE this
+    cap is applied. The response says so in ``tentativeFirst``/``tentativeLabel`` and marks each row
+    with ``tentative``, so the reordering is visible rather than mysterious. Sorting the answer on
+    the client instead would sort one page and strand a tentative sketch behind the cap; see the
+    partition in ``_in_record_options`` for why the ordering has to live beside the truncation.
+
     Readable by anyone who can read the workshop. The options are records they can already list
     through ``/records``; refusing them here would only mean the designer opens a second tab and
     copies the name across by hand, which is the behaviour being replaced. ``current_user`` now

@@ -1100,7 +1100,17 @@ class WorkshopRepository(
             // to overwrite a non-empty cache with the empty one — which is the right rule and is
             // why the failure looked like "this phone has never seen the register" rather than
             // like a bug.
-            list = DwReferenceList(model = model, filteredBy = filterValue, items = fetched.options),
+            list = DwReferenceList(
+                model = model,
+                filteredBy = filterValue,
+                items = fetched.options,
+                // THE WORD TRAVELS WITH THE OPTIONS IT EXPLAINS. The server ordered `options`
+                // tentative-first and that order is baked into the list the moment it is stored;
+                // the word that accounts for it arrives on the same response and would otherwise be
+                // gone on the first offline open, leaving a reordered picker with nothing on screen
+                // saying why. Blank whenever the server did not order — see `tentativeLabel`.
+                tentativeLabel = if (fetched.tentativeFirst) fetched.tentativeLabel else "",
+            ),
         )
         onList(stored, fetched.truncated)
     }

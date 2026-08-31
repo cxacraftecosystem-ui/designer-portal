@@ -41,6 +41,7 @@ import com.designprototype.workshop.data.ArtisanAnswerDto
 import com.designprototype.workshop.data.LocationRequest
 import com.designprototype.workshop.data.cameraForPlace
 import com.designprototype.workshop.data.leafletCameraScript
+import com.designprototype.workshop.ui.questionnaires.questionnaireAnswerPlain
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -465,7 +466,25 @@ fun ArtisanQuestionnairePanel(answers: List<ArtisanAnswerDto>, loading: Boolean)
                                 verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 answer.prompt?.let { Text(it, color = Body, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
-                                Text(answer.answerText.orEmpty(), color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+                                // `questionnaireAnswerPlain` AND NOT `answer.answerText.orEmpty()`.
+                                // `QuestionnaireResponse.answerText` is a `String?` that has always
+                                // held prose and, since the web's interview answer box became a rich
+                                // text box on 2026-08-31, sometimes holds the JSON encoding of a
+                                // document instead. Printed straight, this line shows a researcher
+                                // the literal characters `{"blocks":[{"kind":"PARAGRAPH",…}]}` where
+                                // an artisan's answer belongs — not a crash and not a 500, just the
+                                // braces, on the panel the answer is read back from, and with no
+                                // emptiness check anywhere noticing because a JSON-shaped string is
+                                // not empty.
+                                //
+                                // The flattener is the read boundary declared in
+                                // `QuestionnaireAnswerText.kt` and is used as it stands rather than
+                                // spelled again here: a second answer to "is this a document" is how
+                                // the two come to disagree about one, and the disagreement is silent
+                                // both ways — a document read as prose prints braces, and prose read
+                                // as a document blanks somebody's answer. It is identity on a plain
+                                // string, so every answer written before this renders as it did.
+                                Text(questionnaireAnswerPlain(answer.answerText), color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
                                 val meta = listOfNotNull(answer.interviewTitle, answer.answeredByName?.let { "by $it" }).joinToString(" · ")
                                 if (meta.isNotBlank()) Text(meta, color = Muted, fontSize = 10.sp)
                             }

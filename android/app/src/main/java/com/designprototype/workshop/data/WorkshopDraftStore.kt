@@ -456,6 +456,50 @@ data class WorkshopDraft(
     val title: String = "",
     val templateId: String = "",
     /**
+     * WHAT KIND OF WORKSHOP THIS IS — a registry `WORKSHOP_KIND` token, or null for "not stated".
+     *
+     * A CREATE-ONLY INPUT, exactly like [designerUserId] below and carried here for the identical
+     * reason: it is answered in the create dialog BEFORE the workshop exists, and a workshop minted
+     * in a courtyard has to still remember what the designer picked when `WorkshopSync` finally
+     * posts it days later. `WorkshopSync`'s create arm and this screen's list filter are its only
+     * readers; nothing deserialises it back on any read, and `PATCH /design-workshops/{id}` is
+     * closed to it.
+     *
+     * ── WHY IT IS NOT LEFT TO STAGE 1, WHICH IS WHERE THIS FIELD USED TO POINT ──────────────────
+     *
+     * The argument that stood on [com.designprototype.workshop.data.DesignWorkshopCreateBody
+     * .workshopKind] was: *"`WorkshopDraft` has no field for it, exactly as it has none for
+     * `craftName` or `clusterName`, so a workshop minted in a courtyard is posted by `WorkshopSync`
+     * without a type and gets one from the first stage-1 save — which is where the answer is
+     * authoritative anyway."* Stage 1 REMAINS the authority and nothing here competes with it: this
+     * value is consumed by the create and never re-read afterwards, and `promoted_values()`
+     * overwrites the column from `workshopSetup.workshopKind` the moment stage 1 is saved.
+     *
+     * WHAT THE SIBLING COMPARISON GOT WRONG IS WHICH SIBLINGS THESE ARE. `craftName` and
+     * `clusterName` are never ASKED before the workshop exists — there is no control for them on the
+     * offline path, so there is no answer to forget. `workshopKind` has a picker in the create dialog
+     * and the designer answers it, so leaving it out is not "matching a sibling", it is the app
+     * asking a question and discarding the reply. The true sibling is [designerUserId]: also
+     * promoted out of stage 1 (as `designerName`), also authoritative there, and carried here anyway
+     * for precisely this reason.
+     *
+     * AND THE COST IT WAS WEIGHED AGAINST WAS NOT REAL. The same paragraph said *"Widening the draft
+     * is a change to `WorkshopDraftStore` and its schema version"* — but by
+     * [WORKSHOP_DRAFT_SCHEMA_VERSION]'s own rule a rung is owed only to a field that MOVES, is
+     * RENAMED or changes MEANING. This is purely additive and defaulted: a draft written by any
+     * earlier build decodes with null, which is the same "no type stated" it has always meant, and a
+     * build from before this field reads a draft that has it and ignores the key. No rung, no rung
+     * in [WorkshopDraftStore.migrate], for the same reason [designerUserIds] took none.
+     *
+     * THE DEFECT IT CLOSES IS ON THE LIST SCREEN AND IS VISIBLE WITHOUT SYNCING. That field's own
+     * doc says the create key exists *"so the list screen can filter and label a workshop by type on
+     * the day it is opened, before stage 1 has been saved at all"* — and the one case it did not
+     * serve was the offline one, where `WorkshopListScreen.unfilterableLocal` printed *"the type is
+     * only known once they sync"* about a type the designer had typed into that phone minutes
+     * earlier. See that value for what the sentence now says.
+     */
+    val workshopKind: String? = null,
+    /**
      * WHO THE WORKSHOP WAS OPENED FOR, as an account id, chosen before the workshop existed.
      *
      * A CREATE-ONLY INPUT, and it belongs to neither of the two kinds of field around it. It is not

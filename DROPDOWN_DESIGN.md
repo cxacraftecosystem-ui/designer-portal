@@ -97,13 +97,13 @@ design-and-prototype record, gated by `load_workshop_or_404` (creator / admin /
 |---|---|---|---|---|---|
 | 1 | `components/forms/DesignWorkshopSelect.tsx:239` — mounted 6× (`ArtisanForm:1136`, `ProductForm:849`, `ToolForm:958`, `ProcessForm:1131`, `media/page.tsx:562`, `questionnaire/page.tsx:1076`) | 80 / 80 (`:74`) | ~~`searchable={false}` `:262` + `capHint` `:263`~~ → the panel's own box, wired to `GET /design-workshops?search=` | yes, through `workshopCutSentence` | ~~**no — a failed list IS an empty list.** `.catch(()=>null)` then `page?.items ?? []` at `:168,176`, so a network failure renders *"You are on no design workshop yet"* `:257`~~ → **CLOSED.** Now a three-state `WorkshopListState` through `lib/workshopOptions`; pinned by `dropdown-sweep-unit.spec.ts` ("a failed design-workshop read stops rendering as an account with no design workshops") |
 | 2 | `design-workshops/page.tsx:1495` `ContinueOnAllocatedWorkshop` | 50 / 50 (`:1465`) | `searchable` `:1513` | never | collapsed — the control returns `null` at `:1487` and vanishes |
-| 3 | `sketches-and-prototypes/page.tsx:736` | **100 / 80** (`:236`) | `searchable` forced | prints "the first 100 of N" while drawing 80 — the dead band `selectFilter.ts:81-86` exists to kill | correct, `null` and `[]` kept apart |
+| 3 | `sketches-and-prototypes/page.tsx:736` | ~~**100 / 80**~~ → **80 / 80**, `CHOOSER_PAGE = RENDER_CAP` (`:244`) | `searchable` forced | ~~prints "the first 100 of N" while drawing 80~~ → the sentence counts the rows it DREW, `Showing the first {workshops.length} of {total}` (`:792`) | correct, `null` and `[]` kept apart |
 | 4 | `design-review/page.tsx:659` | 80 / 80, `CHOOSER_PAGE = RENDER_CAP` `:245` | `false` + a server `SearchInput` above, 300 ms | yes | correct — five states, `ListFailure` splits unreachable from refusal |
-| 5 | `settings/DesignWorkshopViewersPanel.tsx:609` | **100 / 80** (`:96`) | `searchable` | same dead band, `:650-654` | correct |
+| 5 | `settings/DesignWorkshopViewersPanel.tsx:609` | ~~**100 / 80**~~ → **80 / 80**, `DESIGN_WORKSHOP_PAGE = WORKSHOP_OPTION_PAGE_SIZE` (`:124`) | `searchable` | ~~same dead band~~ → stated, via `workshopListNotice` (`:664`) | correct |
 | 6 | `settings/DesignWorkshopInspectorsPanel.tsx:528` | 80 / 80 | `false` + server search | yes | correct; pins the chosen row `:334-337` |
 | 7 | `designworkshop/AdoptLocalDraftDialog.tsx:372` | 80 / 80 | `false` + server search | yes, plus an offline "partial" panel `:388-394` | correct — five branches `:251-263` |
-| 8 | `questionnaires/page.tsx:418` | **100 / 80** (`:147`) | `searchable` | **never, at either level** | nothing at all |
-| 9 | `questionnaires/[id]/page.tsx:539` | **100 / 80** (`:161`) | `searchable` | never | nothing |
+| 8 | `questionnaires/page.tsx:418` | ~~**100 / 80**~~ → **80 / 80**, `WORKSHOP_OPTION_PAGE_SIZE` (`:217`) | `searchable` | ~~**never, at either level**~~ → `workshopListNotice` (`:267`) | ~~nothing at all~~ → the four-state sentence, and `noneLabel = NO_DESIGN_WORKSHOP` (`:559`) |
+| 9 | `questionnaires/[id]/page.tsx:539` | ~~**100 / 80**~~ → **80 / 80**, `WORKSHOP_OPTION_PAGE_SIZE` (`:198`) | `searchable` | ~~never~~ → `workshopListNotice` (`:261`) | ~~nothing~~ → the four-state sentence, and `noneLabel` (`:707`) |
 | 10 | `questionnaires/UploadDialog.tsx:194` | prop from #8 | `searchable` | never | field hidden when empty `:190` |
 | 11 | `questionnaires/ReuseDialog.tsx:339` | prop | `searchable` | prose only, no numbers `:361-373` | sentence instead of a control |
 
@@ -113,7 +113,7 @@ design-and-prototype record, gated by `load_workshop_or_404` (creator / admin /
 |---|---|---|---|---|
 | 12 | `components/forms/WorkshopSelect.tsx:445` (`ComboBox`), mounted 6× | 100 / 80 | `accessibleOnly=true` `:244`; the record's own workshop merged back in `:372` | 100-vs-total only `:459` |
 | 13 | `components/WorkshopScopeSelect.tsx:232` (`MultiSelectDropdown`), mounted 5× | ~~**100 / 80**~~ → `WORKSHOP_OPTION_PAGE_SIZE` for both | none — deliberately a READ scope | ~~**no notice of any kind**, and on error it falls through to "all workshops" over an empty list~~ → **CLOSED.** `CappedListNotice` for the cut, and a `WorkshopListState` whose failure sentence names the widened scope; the opening is `workshopListNotice`'s through `WorkshopListVoice.reassurance` rather than a second copy (2026-08-31) |
-| 14 | `designworkshop/StageWorkshopField.tsx:232` | 100 / 80, memoised 60 s | `accessibleOnly` | none (it stores the TITLE, not an id) |
+| 14 | `designworkshop/StageWorkshopField.tsx:232`; the fetch now lives in `designworkshop/StageWorkshopNameField.tsx:219` | ~~100 / 80~~ → **80 / 80**, `WORKSHOP_OPTION_PAGE_SIZE`, memoised 60 s | `accessibleOnly` | none (it stores the TITLE, not an id) |
 | 15 | `components/FunnelFilters.tsx:246`, mounted 4× | 100 / 80 | none | 100-vs-total `:282` |
 | 16 | `design-workshops/page.tsx:931` | 100 / 80, **`workshopType=DESIGN_PROTOTYPE`** — the only server-side type filter in the app | `accessibleOnly` | never |
 | 17 | `settings/tasks/page.tsx:290` | 200 / 80, server `search` | — | yes: the only **server-sent truncation flag** in the app, `:307` |
@@ -121,6 +121,31 @@ design-and-prototype record, gated by `load_workshop_or_404` (creator / admin /
 | 19 | `settings/WorkshopAccessRequestPanel.tsx:167` (multi) | 200 / 80 | `/workshops/requestable` | **cannot** — a bare array with no `total` on the wire |
 | 20 | `media/page.tsx:537` | 100 / 80 | none | yes |
 | 21 | `data/page.tsx:931` | 100 / 80 | none | yes — the only one naming a **pager**, `:1005` |
+
+**Swept 2026-08-31 — what has moved since these tables were written.** Struck-through cells are the
+pre-fix state, kept rather than deleted so a reader who remembers the old behaviour can see it was
+known. **Rows 1, 3, 5, 8, 9, 13 and 14 no longer have the 100-asked / 80-drawn dead band**: eleven
+call sites now import `WORKSHOP_OPTION_PAGE_SIZE` from `lib/workshopOptions.ts`, which is `RENDER_CAP`
+by definition (`components/ui/selectFilter.ts:87`, `= 80`) so the two caps cannot drift apart again.
+Rows 8 and 9 additionally gained the §3.5 sentence and a `noneLabel`, which is the whole of what
+"nothing at all" used to mean.
+
+**Row 15 still has the dead band, and it is now the clearest case of it.** `FunnelFilters.tsx:86`
+asks `/workshops` for `LIST_PAGE_CEILING` rows (`components/data/cappedList.ts:71`, `= 100`) into a
+control that draws 80 — a browse ceiling used as a picker page size. Its own comment names the
+consequence: *"THE RE-SORT CANNOT RECOVER A WORKSHOP THE SERVER ALREADY CUT. It reorders the
+hundred…"*. Mounted 4×.
+
+**Rows re-read and unchanged:** 2, 4, 6, 7, 10, 11, 12, 16, 18, 20. Row 10 takes its options as a
+prop from #8, so it was fixed by #8 being fixed.
+
+**Rows NOT re-read in this sweep:** 17, 19, 21. Nothing here says they are wrong; nothing here says
+they are right either.
+
+**What this sweep did not do:** re-derive every `path:line` in the tables above. The header's rule
+still governs — the symbol is the claim and the number is a hint — and the numbers were last read on
+2026-08-29 against a tree six workflows were writing. Row 14's citation is the one already known to
+have moved, and it is corrected in place rather than silently.
 
 **Searched and absent:** no design-workshop picker on `/crafts`, and correctly so — `model Craft`
 carries `workshopId` and no `designWorkshopId` column, unlike Artisan, Product, Tool, Media,
@@ -409,7 +434,7 @@ Two consequences to write down rather than discover:
    not left as a silent regression.
 2. **The pin snapshot must be re-taken when the ANSWER changes, not per keystroke.** `useSelectList`
    recomputes pins on open and on query change (`SearchableSelect.tsx:207-222`). With a server query
-   the options array is replaced when each answer lands, so the snapshot is taken on `options`
+   the options array is replaced as each answer arrives, so the snapshot is taken on `options`
    identity change instead. Without this a multi-select past the cap renumbers rows under a
    stationary highlight — the exact defect `:207-215` describes, on a permissions control.
 
@@ -1841,12 +1866,21 @@ was.** A mark is a statement about the tree on 2026-08-31 and about nothing else
 do not trust the tick.
 
 - ☐ No picker anywhere asks for a page size other than `RENDER_CAP` / the Android page constant, and
-  no screen prints two truncation sentences with two different totals. **Open** — this is the
-  call-site sweep §2.8 rule 1 describes, and §1.1 lists the controls still asking for 100 into a
-  control that draws 80 (#3, #5, #8, #9, #10, #13).
+  no screen prints two truncation sentences with two different totals. **Still open, but for one
+  control rather than six.** Every row this criterion named — #3, #5, #8, #9, #10, #13 — was closed
+  by 2026-08-31: eleven call sites now import `WORKSHOP_OPTION_PAGE_SIZE`, which is defined AS
+  `RENDER_CAP` so the two caps cannot drift apart again, and #1 and #14 came with them. **What is
+  left is #15**, `components/FunnelFilters.tsx:86`, which asks `/workshops` for `LIST_PAGE_CEILING`
+  (100) into a control drawing 80, mounted 4×. It was not on the original list. Re-check with
+  `grep -rn "LIST_PAGE_CEILING" frontend/components/FunnelFilters.tsx`.
 - ☐ Grepping the web for a workshop label built inline returns nothing: `lib/workshopOptions.ts` is
-  the only place a title and a hint are assembled. **Open** — the module exists and is the home; the
-  migration of every caller onto it is not finished.
+  the only place a title and a hint are assembled. **Open, and now countable.** Fifteen files import
+  `designWorkshopOptions` or `fieldWorkshopOptions`; the §1.1 controls whose files do NOT are #3
+  (`sketches-and-prototypes/page.tsx`), #7 (`AdoptLocalDraftDialog.tsx`), #14
+  (`StageWorkshopField.tsx` / `StageWorkshopNameField.tsx`), #15 (`FunnelFilters.tsx`), #17
+  (`settings/tasks/page.tsx`), #19 (`WorkshopAccessRequestPanel.tsx`) and #21 (`data/page.tsx`).
+  Verified 2026-08-31; re-check with
+  `grep -rln "designWorkshopOptions|fieldWorkshopOptions" frontend/app frontend/components`.
 - ☑ Grepping Android for `options.size >= SEARCH_THRESHOLD` returns one hit, inside
   `SearchableSelect.kt`. **Passes** — verified 2026-08-31; E3's `searchable` override is what made it
   one, and the record-backed call sites now pass the flag rather than letting the count decide.

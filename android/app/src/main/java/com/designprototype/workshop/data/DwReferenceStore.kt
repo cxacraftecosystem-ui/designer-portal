@@ -97,6 +97,21 @@ data class DwReferenceOption(
      * starts hydrating with no client change at all.
      */
     val data: JsonObject = JsonObject(emptyMap()),
+    /**
+     * Has this row been ticked "Tentative"? — see [DwReferenceResponseDto.tentativeFirst].
+     *
+     * ONE BOOLEAN, AND POINTEDLY NOT A KEY IN [data]. [data] is the hydration dictionary
+     * (`FieldDto.refHydration` maps its keys onto the fields of the entity being filled in), and
+     * `sketch.supersedesSketch` is a `DwSketch` picker mounted on a `sketch` row, which declares
+     * `isTentative` itself — so the flag inside [data] would be a standing offer to tick the new
+     * sketch's box from the old one's. The server keeps it out for that reason; do not fold it back
+     * in on this side either.
+     *
+     * DEFAULTED FALSE, WHICH IS ALSO THE ANSWER FOR EVERY CACHED LIST WRITTEN BEFORE THIS FIELD
+     * EXISTED and for every model that has no such flag. A stale artisan list is worth immeasurably
+     * more than no artisan list, and the same reasoning applies to a list missing one chip.
+     */
+    val tentative: Boolean = false,
 )
 
 /**
@@ -114,6 +129,22 @@ data class DwReferenceList(
     val items: List<DwReferenceOption> = emptyList(),
     /** ISO-8601, device clock. Displayed, never used to decide whether the cache may be used. */
     val fetchedAt: String = "",
+    /**
+     * The registry's word for the tentative flag, as the server sent it with THIS list, or blank.
+     *
+     * CACHED WITH THE OPTIONS BECAUSE THE CHIP HAS TO SURVIVE A FORTNIGHT WITHOUT SIGNAL. The
+     * ordering is the server's and it is baked into [items]' order the moment the list is stored;
+     * the word that explains that order arrives on the same response and would otherwise be lost on
+     * the first offline open, leaving a picker whose rows are reordered with nothing on screen
+     * saying why — which is the reordered form of the empty-picker failure this file exists around.
+     *
+     * NOT RESOLVED FROM THE BUNDLED SCHEMA, though this device holds one. A picker knows the REF
+     * field's `refModel` ("DwSketch") and not the referenced entity's key, so reading it locally
+     * means a second lookup whose answer could disagree with the ordering the server actually
+     * applied. Blank is the honest answer for a list fetched by an older build, and it draws no
+     * chip — see `dwTentativeWord`.
+     */
+    val tentativeLabel: String = "",
 ) {
     /**
      * The options this list holds for one parent value.
@@ -153,8 +184,13 @@ data class DwReferenceList(
  * six" until the payload grew two more keys, and a count is wrong the day the server adds one while
  * a list of names merely becomes incomplete.
  *
- * `outOfScope` AND `outOfScopeOption` ARE THE TWO NEW KEYS, AND THIS IS THE CHANGE THAT DECLARES
- * THEM. They answer a `recordId` lookup, and `DwReferenceSelectField`'s scan panel is the first
+ * `tentativeFirst` AND `tentativeLabel` ARE THE NEWEST PAIR (2026-08-31), and they follow the rule
+ * the paragraph below sets out rather than being an exception to it: they have a reader on this
+ * client — `DwReferenceField`'s picker rows — in the same change that declares them. They describe
+ * the ORDER of [options] rather than its contents, which makes them the fifth thing a list here says
+ * about itself; see their own KDoc for why the ordering is the server's and must not be redone here.
+ *
+ * `outOfScope` AND `outOfScopeOption` WERE THE PAIR BEFORE THEM, AND THIS FILE STILL DECLARES THEM. They answer a `recordId` lookup, and `DwReferenceSelectField`'s scan panel is the first
  * caller in this app to send one — a card read into a reference picker. Declaring them earlier would
  * have been a field with no reader, which is a promise the UI has not made; the rule holds forwards
  * as well, so neither may be widened, merged into [options] or read for anything but the refusal
@@ -217,6 +253,38 @@ data class DwReferenceResponseDto(
      * keep that property: read this field only to NAME the record in a refusal, never to offer it.
      */
     val outOfScopeOption: DwReferenceOption? = null,
+    /**
+     * True when the server ordered [options] TENTATIVE-FIRST — the rows a designer ticked
+     * "Tentative", then the rest, each group in its own stage order.
+     *
+     * ── WHY THIS IS A FLAG AND NOT A JOB FOR THIS CLIENT ────────────────────────────────────────
+     *
+     * The owner, 2026-08-30: a sketch is marked tentative "to bring them to the top of the list".
+     * Stage 11's sketches already sorted that way wherever they were LISTED — `dwTentativeFirst` in
+     * `ui/designworkshop/DwSketchChooserRows.kt` — and did not where one is CHOSEN, because the
+     * three `DwSketch` REF pickers are answered by this endpoint and the flag was not on the wire.
+     *
+     * [options] IS ONE CAPPED PAGE ([truncated]), so partitioning it here would partition the page
+     * and leave a tentative sketch stranded behind the cap, which no amount of on-device sorting can
+     * recover. The server therefore orders ABOVE its own truncation and this client renders the
+     * order it was given. **Do not call `dwTentativeFirst` on a list from this payload** — that
+     * function is for the on-device row lists, where the whole collection is in hand.
+     *
+     * FALSE IS THE ORDINARY ANSWER: every external model, every in-record entity that declares no
+     * such field (`prototype`, `sketchReview`), and any server that predates the feature. A picker
+     * must not draw the word on a false or missing flag.
+     */
+    val tentativeFirst: Boolean = false,
+    /**
+     * The registry's own word for the flag — "Tentative" — or `""` where there is none.
+     *
+     * READ, NEVER HARDCODED, exactly as `dwTentativeField` reads it for the stage form's chip: the
+     * label belongs to `stage_definitions.py`, several surfaces draw it, and a string typed into a
+     * Composable is the copy that goes stale the day the registry is edited. It rides on the payload
+     * rather than being resolved from the bundled schema because a picker holds `refModel` and not
+     * the referenced entity — see [DwReferenceList.tentativeLabel], which is where it is kept.
+     */
+    val tentativeLabel: String = "",
 )
 
 /**
@@ -513,6 +581,17 @@ object DwReferenceStore {
             // component, and a merged list that reports the freshest timestamp is a merged list that
             // lies about how much of it is two weeks old.
             fetchedAt = merged.mapNotNull { it.fetchedAt.takeIf(String::isNotBlank) }.minOrNull().orEmpty(),
+            // `tentativeLabel` IS LEFT BLANK HERE, AND FOR `filteredBy`'S EXACT REASON one line up:
+            // this branch cannot claim what it did not do. The word means "the server ordered THIS
+            // list tentative-first", and a `flatMap` of several files concatenates several orderings
+            // — whatever came out is not the partition any one of them carried, so drawing the chip
+            // over it would explain an order that is not there. Blank draws nothing, which is the
+            // honest answer.
+            //
+            // NOT REACHABLE FOR THE PICKER THIS MATTERS TO, as it happens: `reference_options`
+            // REFUSES a `filterBy` on an in-record model, so a `DwSketch` list is only ever cached
+            // under the empty filter and the `whole` branch above answers it. Written down because
+            // the day an in-record model gains a cascade is the day this becomes live.
         )
     }
 }

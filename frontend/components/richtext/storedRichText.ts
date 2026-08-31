@@ -39,6 +39,7 @@
  * means the round trip is lossless, not merely close.
  */
 
+import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
 import {
   fromStored,
   isEmptyDoc,
@@ -163,6 +164,68 @@ export function appendStoredParagraph(
     ]
   });
   return encodeStoredRichText(toStored(appended), join) || null;
+}
+
+/**
+ * A DICTATED phrase appended to a value that may be prose or may be a document.
+ *
+ * ── WHY THIS IS NOT {@link appendStoredParagraph} ─────────────────────────────────────────────
+ * That function joins a SEPARATE note onto the end of a record — the EXIF summary — and its prose
+ * branch joins with a blank line because that is what `appendRemarksWithExif` has always done. A
+ * dictated phrase is the opposite kind of addition: the recogniser is stopped and started across one
+ * answer, so the second take is *the rest of the sentence*, and `appendDictatedPhrase` joins with a
+ * single space for a reason its own comment gives — without it a paragraph dictated in five goes
+ * comes out as "…the warpis sized…". Reusing the paragraph joiner here would break one sentence into
+ * two, on EVERY answer rather than only formatted ones, which is the polarity this file's header
+ * warns about: it would move the cost from "records somebody formatted" to "every record".
+ *
+ * ── WHAT IT PREVENTS ──────────────────────────────────────────────────────────────────────────
+ * The answer box on `/questionnaire` is a `RichTextField`, so its value is prose for most answers and
+ * `{"blocks":[…]}` for one somebody bolded. Both of that page's append paths — the transcript that
+ * lands in an untouched box, and the button that accepts an offered transcript over a written one —
+ * called `appendDictatedPhrase` on the RAW stored value, so a transcript arriving over a formatted
+ * answer concatenated plain text onto the end of a JSON string. That value is neither valid JSON nor
+ * readable prose: the editor cannot parse it back, so the researcher's own formatted answer is
+ * replaced by braces with the transcript stuck on the end, and every reader downstream shows the
+ * same. This is the one CORRUPTING site of the four — the other three merely display badly.
+ *
+ * ── THE PROSE BRANCH DOES NOT ROUND-TRIP, AND THAT IS THE POINT OF IT ─────────────────────────
+ * Prose is handed straight to `appendDictatedPhrase` and never parsed. Reading it as a document and
+ * writing it back would run it through `fromPlainText`/`toPlain`, which strips each line, drops blank
+ * lines and collapses runs — the identity rule {@link plainFromStoredRichText} and `plain_from_stored`
+ * both exist for. A researcher's typed answer must come back as the SAME string, and this is the
+ * branch nearly every answer in the column takes.
+ *
+ * ── THE DOCUMENT BRANCH ADDS A PARAGRAPH, WHICH IS THE HANDSET'S RULE AND NOT A SECOND ONE ────
+ * A space-join would be the closer analogue of the prose rule, and it is the wrong answer once there
+ * is structure to land in: the last block of a formatted answer is quite often a bullet, a table row
+ * or a photograph's caption, and running a fresh take onto the end of one of those files the
+ * artisan's words inside a list item — or inside a table cell, where `toPlain` later joins them with
+ * pipes. A new paragraph is the one placement that cannot land inside something the researcher built,
+ * and nothing is lost by it: the words are all there, in order, in the box.
+ *
+ * That argument is `questionnaireAnswerAppend`'s, in `android/…/ui/questionnaires/`, and it is quoted
+ * rather than re-decided because BOTH CLIENTS WRITE THIS COLUMN. Two clients that append a transcript
+ * to one answer differently is a divergence a researcher meets by picking up the other device, and
+ * neither app can see the other to notice. The handset's prose branch (`appendSpokenToRecord`, "one
+ * space, only where one is missing") is `appendDictatedPhrase`'s rule to the character, so the two
+ * platforms now agree on both branches.
+ */
+export function appendDictatedToStored(stored: string | null | undefined, phrase: string): string {
+  const decoded = decodeStoredRichText(stored ?? "");
+  if (decoded === null || typeof decoded === "string") return appendDictatedPhrase(decoded ?? "", phrase);
+
+  // The document half is {@link appendStoredParagraph} UNCHANGED — one paragraph per non-blank line,
+  // re-encoded through `encodeStoredRichText`. It is called rather than reimplemented because it is
+  // already the paragraph rule this branch wants, and a second copy of it is how the EXIF append and
+  // the dictation append come to disagree about where a paragraph goes. What could NOT be reused is
+  // its prose branch, whose blank-line join is right for a separate EXIF note and would break one
+  // dictated sentence into two — on every answer rather than only formatted ones, which is the
+  // polarity this file's header warns about. Hence the split above rather than a bare delegation.
+  //
+  // It returns null only when the addition and the base are BOTH empty, and the base here is a
+  // document; the `?? ""` is for the type, not for a case that can occur.
+  return appendStoredParagraph(stored ?? "", phrase) ?? "";
 }
 
 /**

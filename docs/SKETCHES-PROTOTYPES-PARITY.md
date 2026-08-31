@@ -3,8 +3,15 @@
 **What a designer can do with a sketch or a prototype, on each client, with the code that says so.**
 
 Scope is one feature: stage 11 (`SKETCH_DEVELOPMENT`), stage 13 (`PROTOTYPE_DEVELOPMENT`), and the
-chooser screen each client puts in front of them. Read as of **2026-08-27** against the working tree
-described under "How this document is kept true".
+chooser screen each client puts in front of them. First read as of **2026-08-27**; last swept
+**2026-08-31**.
+
+**This page is live, not a snapshot.** Rows carry their own `Verified «date»; re-check with «grep»`
+stamps and those dates differ — a row is as old as its own stamp, never as old as this line. Two
+things moved under it since the first read, and both are recorded where they happened rather than
+here: the web gained PDF/EPS/DXF export (Matrix B, verdict flipped from a gap to **BOTH**), and the
+`isTentative` flag shipped on both clients (Matrix A, a new row). A row with no stamp has not been
+re-read since 2026-08-27.
 
 ---
 
@@ -44,8 +51,8 @@ not a capability, and the corner-guess row below is exactly that case today.
 | **BOTH** | A designer can do it on either client. The shape may differ; the capability does not |
 | **WEB ONLY (deliberate)** | Absent from the handset, and a comment in the tree argues for the absence. The argument is quoted below |
 | **WEB ONLY (gap)** | Absent from the handset, and nothing in the tree records a decision about it |
-| **ANDROID ONLY (deliberate)** | The mirror of the second row. No row in this matrix uses it |
-| **ANDROID ONLY (gap)** | The mirror of the third row. No row in this matrix uses it either — see "The direction of every gap" |
+| **ANDROID ONLY (deliberate)** | The mirror of the second row. **Two rows use it** — the cost refusal in Matrix B and the new-row affordance in Matrix D. This legend said "no row in this matrix uses it" until 2026-08-31, while the page itself named one of them at "The chooser is a chooser" |
+| **ANDROID ONLY (gap)** | The mirror of the third row. No row uses it as of 2026-08-31 — the one that did, PDF/EPS/DXF export in Matrix B, was closed that day |
 
 **Citations.** A pin is written `` `path#Symbol` `` — a repository path, then the name of something
 declared in it. **Paths and symbol names, never line numbers**, because the pins in
@@ -73,11 +80,22 @@ worthless without one command that settles it.
 | See the plate before anything is attached, and decline it | `frontend/components/designworkshop/SketchRectifyField.tsx#SketchRectifyField` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchRectifyField.kt#DwSketchRectifyPanel` | **BOTH** |
 | Have the approved plate encoded and filed as a second artifact, leaving the photograph untouched | `frontend/lib/sketchRectify.ts#encodePlatePng` · `frontend/lib/sketchRectify.ts#greyToRgba` · `frontend/lib/sketchRectify.ts#derivedPlateName` | `android/app/src/main/java/com/designprototype/workshop/data/DwSketchPlate.kt#platePng` · `android/app/src/main/java/com/designprototype/workshop/data/DwSketchPlate.kt#bitmapOf` · `android/app/src/main/java/com/designprototype/workshop/data/DwSketchPlate.kt#greyPlaneOf` | **BOTH** |
 | Have a button propose where the sheet is, and refuse to propose when it cannot tell | `frontend/components/designworkshop/SketchRectifyField.tsx#guessSheetCorners` · `frontend/lib/sketchRectify.ts#GUESS_MIN_FILL` · `frontend/lib/sketchRectify.ts#GUESS_MIN_FRAME_SHARE` · `frontend/lib/sketchRectify.ts#GUESS_MIN_EDGE_SUPPORT` · `frontend/lib/sketchRectify.ts#GUESS_MIN_CONTRAST` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchRectifyField.kt#dwGuessSheetCorners` over `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchRectifyGuess.kt#dwGuessSheetCorners` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchRectifyGuess.kt#DW_GUESS_MIN_FILL` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchRectifyGuess.kt#DW_GUESS_MIN_FRAME_SHARE` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchRectifyGuess.kt#DW_GUESS_MIN_EDGE_SUPPORT` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchRectifyGuess.kt#DW_GUESS_MIN_CONTRAST` | **BOTH** |
+| Mark a sketch **tentative**, and have it come to the top of every list | `frontend/lib/sketchTentative.ts#TENTATIVE_FIELD_KEY` · `frontend/lib/sketchTentative.ts#tentativeField` · `frontend/lib/sketchTentative.ts#isTentativeRow` · `frontend/lib/sketchTentative.ts#tentativeFirst`, read by `frontend/components/sketches/UploadTabHost.tsx#UploadTabHost` and `frontend/components/sketches/ReviewPanel.tsx#ReviewPanel` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#DW_TENTATIVE_FIELD_KEY` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#dwTentativeField` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#dwIsTentativeRow` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchChooserRows.kt#dwTentativeFirst`. Neither client transcribes the word: both read the label off the registry field. Verified 2026-08-31; re-check with `grep -rn "isTentative" frontend/lib android/app/src/main/java` | **BOTH** |
 
-That last row **changed on 2026-08-27, while this page was being written** — see "The corner guess"
-below, which is worth reading before anyone quotes the argument that used to sit against it. The
+The corner-guess row **changed on 2026-08-27, while this page was being written** — see "The corner
+guess" below, which is worth reading before anyone quotes the argument that used to sit against it. The
 capability is the same on both clients; what a press DOES is not. The browser moves the four handles
 onto the proposal; the handset draws the proposal and waits for a second press before anything moves.
+
+**The tentative row records a shape the owner chose on 2026-08-30, not merely a capability.** The
+instruction read two ways — an additional *Tentative Sketches* upload field, or a flag on the
+existing row — and it was settled as one checkbox per sketch. `stage_definitions.py` carries the
+argument: a second gallery would be two lists over one concept, and every reader of sketches (the
+report's figure block, the design review's ranking, the chooser, both on-device report writers) would
+then have to decide which list it meant, forever. Do not "restore" the second gallery. The flag is
+`report_role=HIDDEN` deliberately — it is a working state, and printing "Tentative: Yes" in a
+ministry document would put a designer's private hedging into the record — while the ORDER it
+produces does reach the report, because the report reads rows in the order the stage holds them.
 
 The row that gets misread most often is the line-art one, and it is misread in both directions.
 **"Line art" here is a local threshold, not a vector trace** — a raster plate, black on white,
@@ -107,12 +125,22 @@ each other by `:core-pipeline`'s own `ParityTest`, which replays the shared fixt
 | Be refused a run this device cannot finish, with the remedy named | Absent, and reasonably so — a laptop is not refused. Verified 2026-08-28; re-check with `grep -rn "maxWorkingLongEdge\|costRefusal" frontend/components/sketches frontend/lib/trace` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTracePanel.kt#dwTraceCostRefusal` bars a resolution or an edge engine above the device's ceiling; `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwTraceKotlinRuntime.kt#dwTraceKotlinMemoryRefusal` measures the heap after the decode and before the first stage and refuses in a sentence naming both figures. **Neither ceiling has been measured on a handset** — `DwTraceAvailability.measuredOn` is null and the panel says so | **ANDROID ONLY (deliberate)** |
 | Drag a divider between the photograph and the traced drawing | `frontend/components/sketches/upload/comparisonPlates.ts#buildComparisonPlates` · `frontend/components/ui/reveal1.tsx#Reveal1` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTraceCompare.kt#DwSketchTraceCompare` over `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTracePlates.kt#DwSketchTracePlates` | **BOTH** |
 | Save the drawing to the device as SVG or PNG | `frontend/components/sketches/upload/traceExport.ts#EXPORT_FORMATS` · `frontend/components/sketches/upload/traceExport.ts#exportSvgFile` · `frontend/components/sketches/upload/traceExport.ts#exportPngFile` · `frontend/components/sketches/upload/geometryToSvg.ts#buildSvg` | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTraceExport.kt#DW_TRACE_EXPORT_FORMATS` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTraceExportCard.kt#DwSketchTraceExportCard` · `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwSketchTraceExportFile.kt#dwSaveTraceExport` | **BOTH** |
-| Save the drawing as a PDF, an EPS or a DXF | Absent from the panel, though not from the engine: the writers sit unoffered in `frontend/lib/trace/engine/pdfWriter.ts`, `epsWriter.ts` and `dxfWriter.ts`. Verified 2026-08-28; re-check with `grep -n "id:" frontend/components/sketches/upload/traceExport.ts` — a row beyond `svg` and `png` means somebody offered them | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwTraceKotlinExporter.kt#DwTraceKotlinExporter` calls `:core-export`'s three writers directly, through `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwTraceKotlinExporter.kt#dwTraceKotlinDocumentOf` | **ANDROID ONLY (gap)** |
+| Save the drawing as a PDF, an EPS or a DXF | Offered, since 2026-08-31: `frontend/components/sketches/upload/traceExport.ts#EXPORT_FORMATS` carries all five ids, the worker's flat geometry is rehydrated into a `VecDocument` by `frontend/components/sketches/upload/geometryToDocument.ts#documentFrom`, and `frontend/lib/trace/engine/exportFormats.ts#exportDocument` writes it. The three are download-only — `attachable` is false on each, because the record is a shared archive the handset reads. Verified 2026-08-31; re-check with `grep -n "id:" frontend/components/sketches/upload/traceExport.ts` — fewer than five rows means one was withdrawn | `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwTraceKotlinExporter.kt#DwTraceKotlinExporter` calls `:core-export`'s three writers directly, through `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwTraceKotlinExporter.kt#dwTraceKotlinDocumentOf` | **BOTH** |
 
-**The last row is a gap in the WEB, and it is the only one on this page that runs that way.** Both
-vendorings carry all four vector writers; only the handset offers three of them. `EXPORT_FORMATS` is
-a statement about the portal's panel and not about the portal's engine, so closing it is a change to
-that table plus a reachable `exportDocument`, not a port.
+**That row read `ANDROID ONLY (gap)` from 2026-08-27 to 2026-08-31, and it is the only gap this page
+has recorded being CLOSED.** Its argument is kept rather than deleted, because the diagnosis was
+right and is the reason the fix was cheap: both vendorings carried all four vector writers and only
+the handset offered three of them, so `EXPORT_FORMATS` was "a statement about the portal's panel and
+not about the portal's engine", and closing it would be "a change to that table plus a reachable
+`exportDocument`, not a port".
+
+That is what shipped. The one thing the row did not name is the piece that actually cost anything:
+the worker sends geometry as six flat typed arrays and `exportDocument` takes a `VecDocument`, so the
+missing part was an ADAPTER — `frontend/components/sketches/upload/geometryToDocument.ts#documentFrom`, about sixty lines, the exact
+inverse of the worker's serialiser. `traceExport.ts`'s own header records that an earlier audit
+finding read "adding them is a table entry each plus a button" and missed it: "the table entry and
+the button are real and are the cheap half; without the adapter they attach to nothing." **A row that
+names the writers as present is not yet a row that says the capability is one edit away.**
 
 Two losses on the handset's three, measured in the vendored writers rather than assumed:
 `EpsWriter.kt` writes `%%Creator: Offline Tracer` outside the `includeMetadata` guard, so an EPS
@@ -247,29 +275,54 @@ at. Settle it in one command rather than trusting this paragraph:
 grep -rn "dwGuessSheetCorners" android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/
 ```
 
-### And the one gap that nothing argues for
+### The gap that nothing argued for — closed, and worth keeping the shape of
 
-**No comment on either client records a decision about the tracer's absence from the handset.**
-Searched on 2026-08-27 across `frontend/lib/trace/`, the upload components and the Kotlin tree: the
-Android sources discuss handset *performance* and say nothing about a port. The nearest thing to a
-decision is the registry's own note, which both clients ship, and which is about the product rather
-than about a client:
+**This section recorded the largest asymmetry in the feature. It is gone, and the record of it is the
+useful part.** As written on 2026-08-27 it said:
 
-> "Line-art and vector files can be attached to a sketch here. The app stores them; it does not
-> produce them from the sketch itself."
+> "**No comment on either client records a decision about the tracer's absence from the handset.**
+> Searched across `frontend/lib/trace/`, the upload components and the Kotlin tree: the Android
+> sources discuss handset *performance* and say nothing about a port. … **The largest asymmetry in
+> this feature is the one nobody wrote down.** … Whoever scopes the Kotlin port should record the
+> decision here first, whichever way it goes."
 
-That note predates the tracer and is now wrong about the browser, which does produce them. **The
-largest asymmetry in this feature is the one nobody wrote down**, which is a fair part of why every
-audit re-derives this comparison. Whoever scopes the Kotlin port should record the decision here
-first, whichever way it goes.
+Every clause of that is now false, and it went false fast. The handset's trace surface landed, the
+JavaScript-bundle engine under it was deleted a day later in favour of the native `DwTraceKotlin*`
+runtime, and Matrix B — every row of which read `WEB ONLY (gap)` — was rewritten to **BOTH**. The
+registry note this section quoted as the nearest thing to a decision no longer exists either;
+`stage_definitions.py` replaced it, and its replacement deliberately names no engine, on the argument
+that *which* engine runs is not a fact a designer in a courtyard can use and is the half that moves.
+
+**What the episode is worth keeping for is the failure mode, which was not a wrong verdict but a
+stale one.** Nothing here was careless: the rows were read, cited and correct on the day. They simply
+described the most actively-worked area of the tree, and a page that says "read as of «date»" with no
+per-row stamps cannot tell a reader which rows have outlived their reading. That is why every row now
+carries its own `Verified «date»; re-check with «grep»` and why the header says the page is live
+rather than a snapshot. **A cited row is not a fresh row.**
+
+One correction the closure does not license: `backend/app/services/stage_definitions.py` still
+carries a note saying this document "records the tracer as absent from the handset and quotes the old
+note as its evidence". That was true when it was written and is not true now — the tracer row has
+read **BOTH** since 2026-08-28. The note is in a file this page cannot edit; it is named here so the
+next reader does not take it as the newer fact, which is exactly the courtesy that note was
+extending to this page.
 
 ---
 
 ## The direction of every gap
 
-**No row in this matrix is ANDROID ONLY, and that is a finding rather than an omission.** Both
-android-only verdicts stay in the vocabulary and neither is used, because inside stages 11 and 13 the
-handset holds no capability the browser lacks: the rectify half is a name-for-name port —
+**No row is ANDROID ONLY (gap) as of 2026-08-31, and two are ANDROID ONLY (deliberate).** This
+section read "no row in this matrix is ANDROID ONLY, and that is a finding rather than an omission",
+and it was wrong on the day it was written: the cost refusal in Matrix B and the new-row affordance
+in Matrix D both carried that verdict, and "The chooser is a chooser" below names the second of them
+in as many words. **A summary that contradicts the rows above it is worse than no summary**, because
+it is the part somebody quotes.
+
+What the corrected count actually shows is narrower and still worth having: **the handset holds no
+capability the browser lacks by accident.** Its two leads are argued for on the page — a phone can be
+too small to finish a trace and a laptop cannot, and the chooser may open a new row because it is the
+only surface a designer reaches without the stage. The unargued asymmetries all ran the other way,
+and the last of those closed on 2026-08-31. The rectify half is a name-for-name port —
 `orderCorners`, `rectifyPlane`, `sauvolaWindow` and the rest are spelled identically on both sides,
 and the corner guess is the same port under a `dw` prefix — and the chooser is deliberately smaller
 than the web's workspace. **The prefix is worth knowing before searching for a port that is there.**

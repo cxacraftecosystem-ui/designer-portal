@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { EyeOff, Lock } from "lucide-react";
 
@@ -14,12 +14,16 @@ import {
 } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { DynamicIslandNav } from "@/components/DynamicIslandNav";
+// The SAME form `/login` renders. See its header: two hosts, one password vocabulary.
+import { FirstPasswordGate } from "@/components/FirstPasswordGate";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { PageSelvedge } from "@/components/PageSelvedge";
+import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { isAdmin, roleLabel, routeGuardFor } from "@/lib/permissions";
+import { mustChangePassword } from "@/lib/signIn";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, logout, refreshMe } = useAuth();
   const { adminMode, adminViewResolved, setAdminView } = useAdminView();
   const router = useRouter();
   const pathname = usePathname();
@@ -37,6 +41,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    * navigation remounts it through `key={pathname}`, which is when `initial` is read again.
    */
   const reduce = useAppReducedMotion();
+  /**
+   * THIS VISIT HAS ALREADY REPLACED THE TEMPORARY PASSWORD — a latch, not a copy of the flag.
+   *
+   * `changeOwnPassword` has succeeded server-side by the time this is set, and the `refreshMe()`
+   * that would prove it is best-effort: on the connections this product is used over, a dropped
+   * request between two calls is an ordinary event. Without the latch that dropped request re-locks
+   * somebody the second after they complied, and the gate then tells them the current password they
+   * have just replaced is wrong.
+   *
+   * A LATCH AND NOT A STORED COPY OF `mustChangePassword`, and the direction matters: the condition
+   * below reads the LIVE account, so an administrator who sets the flag on a session that is already
+   * open is obeyed at that session's next `/me`. A copy taken at mount would be a copy that only
+   * ever goes stale in the direction that lets somebody through.
+   */
+  const [passwordSet, setPasswordSet] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -51,6 +70,86 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) return null;
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * THE FIRST-LOGIN PASSWORD, HELD ABOVE THE APP AND NOT ONLY AT THE DOOR
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * ── THE GAP THIS CLOSES ───────────────────────────────────────────────────────────────────────
+   *
+   * `FirstPasswordGate` landed on /login and fired NOWHERE ELSE, so the obligation was enforced
+   * against people arriving and against nobody already inside. An administrator who resets somebody's
+   * password through `PATCH /api/users/{id}` sets `mustChangePassword` on an account whose browser
+   * tab is open, and that tab went on working indefinitely, because a session that never revisits
+   * /login never meets the door. The server REPORTS and deliberately never refuses — the only route
+   * that can change a password needs a bearer token, so a 403 at sign-in would be a demand the
+   * account could never satisfy — which makes the client the WHOLE of the enforcement, and half of
+   * the client was not enforcing. The handset has gated here since it landed
+   * (`ui/PasswordGate.kt`, a `when` arm replacing `HomeScreen`); this is the web's half of the same
+   * arrangement.
+   *
+   * ── WHY IT IS AN EARLY RETURN AND NOT A PANEL INSIDE `<main>` ─────────────────────────────────
+   *
+   * Because everything below this line is the app. The island alone offers twenty destinations, the
+   * admin-view toggle and sign-out; a lock drawn inside `motion.main` would leave every one of them
+   * live under it, which is a picture of a gate rather than a gate. Returning here is what makes
+   * this a full surface BETWEEN sign-in and the product — the shape `UsageConsentGateScreen` argues
+   * for at length and the shape `FirstPasswordGate`'s own header inherits.
+   *
+   * ── AND WHY IT IS ABOVE `ROUTE_GUARDS` AND ABOVE ADMIN VIEW ───────────────────────────────────
+   *
+   * Those two answer "may this person open THIS route". This one answers "may this person use the
+   * product at all", so it is the outer question and is asked first. Below them, an account that
+   * happens to fail a route guard would be shown the honest permission copy inside full chrome while
+   * still holding a password an administrator typed — the gate silently not applying on exactly the
+   * screens that already refuse something.
+   *
+   * ── THE SETTLING RULE (§7.10), AND WHY THERE IS NOTHING EXTRA TO WAIT FOR ─────────────────────
+   *
+   * Chrome that merely HIDES may act on an unsettled answer; anything that LOCKS must hold the frame
+   * until the answer is known. Admin view needs `adminViewResolved` for that because its answer
+   * arrives from localStorage one commit after the account does. This flag does not: it rides on the
+   * same `/me` payload as the user, so "known" is exactly `!loading` — which is why this branch sits
+   * BELOW the loading frame and below the signed-out return above, and not one line higher. Moved
+   * above them it would paint a lock for somebody who does not need one, or, worse, paint the app for
+   * one commit for somebody who does.
+   *
+   * ── WHAT THIS DOES NOT PROMISE ────────────────────────────────────────────────────────────────
+   *
+   * It is not a poll. The flag is re-read whenever `/me` is — a page load, or any `refreshMe()` — so
+   * a reset performed while a tab sits idle is met the next time that tab reads the account, not
+   * within the second. That is the honest reach of a client-side gate over a fact the server states
+   * and does not enforce, and it is a great deal more than "the next visit to /login", which was the
+   * previous answer.
+   *
+   * ── THE ESCAPE, AND THE ONE DOOR THIS MUST NEVER STAND IN FRONT OF ────────────────────────────
+   *
+   * "Sign out instead" is inside the form, for `UsageConsentGateScreen`'s reason. It matters more
+   * here than at the door: an administrator who resets a password WITHOUT telling anybody leaves a
+   * person who cannot fill this form in at all, because the route requires the current password and
+   * they do not know it. Their way back is the link that administrator issues, redeemed at
+   * `/set-password` — which is public and lives OUTSIDE `app/(protected)/`, so this gate is not in
+   * front of it and must never be moved anywhere that would put it there.
+   */
+  if (!passwordSet && mustChangePassword(user)) {
+    return (
+      <FirstPasswordLocked
+        onDone={() => {
+          setPasswordSet(true);
+          // Best-effort and deliberately not awaited into the branch, the treatment /login gives its
+          // own re-read: the password IS set by this point, and the latch above is what closes the
+          // gate either way. This is only a cache invalidation.
+          refreshMe().catch(() => undefined);
+        }}
+        onSignOut={() => {
+          // `logout` clears the session, which drops `user`, which sends the effect above to /login.
+          // It does not continue into the app — a way out is not a way in.
+          logout().catch(() => undefined);
+        }}
+      />
+    );
+  }
 
   /**
    * Page-level enforcement for the whole protected tree. Hiding a nav entry only removes the link —
@@ -129,6 +228,59 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           children
         )}
       </motion.main>
+    </div>
+  );
+}
+
+/**
+ * THE SURFACE A PERSON MEETS INSTEAD OF THE APP while their account still holds a password somebody
+ * else chose.
+ *
+ * ── IT IS THE AUTH FRAME, NOT THE REFUSAL FRAME, AND THAT IS DELIBERATE ───────────────────────
+ *
+ * `RouteLocked` and `AdminViewHidden` below are panels drawn INSIDE the shell, under the island,
+ * because both are answers about one route and the rest of the app is still the reader's to use.
+ * This one replaces the shell outright, so it has to supply its own frame — and it supplies the
+ * SIGN-IN card's frame rather than a wider page: the mark, one heading, one column of 52px boxes.
+ * Somebody who reloaded a tab and met this needs to recognise in one glance that they are being
+ * asked for a credential, not told that something is broken or forbidden.
+ *
+ * ── THE MARK IS HERE FOR `DeadEndFrame`'S REASON ──────────────────────────────────────────────
+ *
+ * The island carries the wordmark and the island is not on screen. Without it this is a white card
+ * on a tinted page with no answer to "what have I opened" — which is the wrong thing to wonder on
+ * the one screen in the product that asks for a password.
+ *
+ * ── NO `aria-live`, THOUGH BOTH PANELS BELOW HAVE ONE ─────────────────────────────────────────
+ *
+ * The form already opens with a `role="status"` box carrying the sentence that matters ("An
+ * administrator set your password. Choose your own to continue."), and it is present from this
+ * surface's first paint. A live region wrapped around a live region announces the same demand twice,
+ * which on a screen reader is indistinguishable from the app repeating itself.
+ *
+ * ── NO COPY OF ITS OWN BEYOND THE HEADING ─────────────────────────────────────────────────────
+ *
+ * Terse, and one vocabulary: the explanation, the length rule, the mismatch sentence and both
+ * buttons all live in `FirstPasswordGate`, which /login renders too. Anything added here would be a
+ * sentence only half the people who meet this gate ever see.
+ */
+function FirstPasswordLocked({ onDone, onSignOut }: { onDone: () => void; onSignOut: () => void }) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-bg-0 px-4 py-12">
+      <main id="main-content" tabIndex={-1} className="w-full max-w-md">
+        <div className="mb-6 flex flex-col items-center gap-2 text-center">
+          <WorkshopLogo className="h-12 w-12 rounded-xl shadow-sm" />
+          {/* Android's `PasswordGateScreen` heading, word for word — a designer refused on the phone
+              opens the website next, and a different sentence there reads as a different demand. */}
+          <h1 className="font-display text-2xl font-bold text-ink-900">Set your own password</h1>
+        </div>
+        <section className="panel p-6">
+          {/* Always "" here: the protected tree never saw a password typed at a door, so the form
+              draws its "Current password" box. Android's gate does the same for the same case — a
+              session that was already open when the app was launched. */}
+          <FirstPasswordGate currentPassword="" onDone={onDone} onSignOut={onSignOut} />
+        </section>
+      </main>
     </div>
   );
 }

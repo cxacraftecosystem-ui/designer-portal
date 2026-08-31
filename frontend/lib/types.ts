@@ -50,12 +50,18 @@ export type User = {
    * else. It arrives on every `/me` and on the sign-in response for free, because `serialize_user`
    * encodes the whole row.
    *
-   * **`/login` IS THE SCREEN THAT CONSUMES IT, SINCE 2026-08-31.** This paragraph used to say that
-   * no screen on either client did, and it was right: the flag rode on every payload and nobody was
-   * ever asked anything, so an admin-issued password — a secret two people know by construction —
-   * stayed on the account for as long as its owner cared to keep using it. `FirstPasswordGate` in
-   * `app/login/page.tsx` now stands between sign-in and the dashboard while this is true, and
-   * `PasswordGateScreen` does the same on the handset.
+   * **TWO SCREENS CONSUME IT ON THE WEB, AND THE SECOND ONE IS THE ENFORCEMENT.** This paragraph
+   * used to say that no screen on either client did, and it was right: the flag rode on every
+   * payload and nobody was ever asked anything, so an admin-issued password — a secret two people
+   * know by construction — stayed on the account for as long as its owner cared to keep using it.
+   * `components/FirstPasswordGate.tsx` is the form; `app/login/page.tsx` renders it between sign-in
+   * and the dashboard, and `components/AppShell.tsx` renders it above the WHOLE protected tree.
+   *
+   * The second host is the one that closes the real hole, and it landed a day after the first. A
+   * gate that fires only at /login is a gate only new arrivals meet: an administrator who resets
+   * somebody's password through `PATCH /api/users/{id}` sets this flag on a session that is already
+   * OPEN, and a tab that never revisits the sign-in screen never meets the door.
+   * `PasswordGateScreen` gates the handset the same way, as a `when` arm replacing the home screen.
    *
    * The server still REPORTS and never refuses (see the column's comment in schema.prisma), for the
    * reason that route gives: `POST /api/auth/change-password` needs a bearer token, so a 403 at the

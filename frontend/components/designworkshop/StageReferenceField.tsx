@@ -30,6 +30,15 @@
  *   hand on day two and has no documented products. Saying "no results" there invites the designer
  *   to clear the artisan and pick somebody else's product.
  *
+ * A FOURTH, ADDED 2026-08-31, AND IT IS ABOUT THE ORDER RATHER THAN THE CONTENTS. `tentativeFirst`
+ * says the server promoted the rows a designer ticked "Tentative" above the rest — the owner's rule
+ * for stage 11's sketches, applied here because these three `DwSketch` pickers are where a sketch is
+ * CHOSEN and were the last surface still listing them in bare stage order. The ordering is the
+ * SERVER'S and this panel must not re-sort: `options` is one capped page, so a sort here would sort
+ * the page and strand a tentative sketch behind the cap — a client-side re-sort cannot recover a row
+ * the server already cut. What the panel owes is the two halves of saying so: a chip on each ticked
+ * row ({@link TentativeChip}) and one line under the list ({@link scopeNoticeLines}).
+ *
  * A THIRD WAY TO CHOOSE, BESIDE TYPING AND CREATING: THE CARD ITSELF. Every record this repository
  * issues carries a printed code, and a designer holding a colleague's artisan card could look it up
  * on `/search` and then had to READ THE NAME OFF IT AND TYPE IT INTO THE BOX BELOW — which is the
@@ -209,10 +218,89 @@ export function scopeNoticeLines(field: DwField, payload: DwReferencePayload | n
       "Nothing is documented under this design workshop’s linked workshop yet — this list is narrowed to that workshop rather than to the whole repository. Create the record here, or link the existing one to the workshop and it will appear."
     );
   }
+  /*
+    WHY THE ORDER OF THIS LIST IS NOT THE STAGE'S ORDER, SAID ONCE.
+
+    The server promotes the rows a designer ticked "Tentative" above the rest — see
+    `payload.tentativeFirst`. A reordered list with no visible reason is a list that reads as
+    arbitrary, which is worse than the ordinal order it replaced, because the ordinal order at
+    least matched the stage form the designer was just looking at. The chip on each row says WHICH,
+    this line says WHY.
+
+    GATED ON A TENTATIVE ROW BEING VISIBLE, not merely on the flag. Where nothing is ticked the
+    partition changed nothing and the sentence would be noise about a rule with no instance. That
+    gate is exact rather than approximate, and only because the server orders above the cap: a
+    tentative row can only be cut once every tentative row ahead of it has been drawn, so a page
+    holding none is a matched set holding none.
+
+    THE WORD IS THE REGISTRY'S, never a literal here — §16, and `sketchTentative.ts`'s own note on
+    why the chip reads its label off the schema.
+  */
+  const tentativeWord = payload.tentativeFirst ? (payload.tentativeLabel || "").trim() : "";
+  const showsTentative = Boolean(tentativeWord) && payload.options.some((option) => option.tentative === true);
+  if (showsTentative) {
+    lines.push(`“${tentativeWord}” rows come first; the rest keep their stage order.`);
+  }
   if (payload.truncated) {
-    lines.push(`Only the first ${REFERENCE_PAGE} matches are listed — type more of the name to narrow them.`);
+    /*
+      THE CAP, AND WHAT THE ORDERING DOES TO IT — the §3.5 obligation in its reordered form.
+
+      The plain sentence is unchanged, and the box it names is real: this picker's search is the
+      SERVER'S, so typing reaches every row rather than filtering the page (§11.5). The extra clause
+      is the honest consequence of ordering above the cap rather than below it — what falls off the
+      end is the settled rows, and a designer who cannot see their tentative sketch here is looking
+      at a list where none matched, not at one where the cap ate it.
+
+      NOT "tentative rows are never cut", which is what an earlier draft of this said and is false:
+      with more tentative rows than the page holds, the cap lands inside that group. "Falls on the
+      rest first" is true in both cases.
+    */
+    lines.push(
+      showsTentative
+        ? `Only the first ${REFERENCE_PAGE} matches are listed and the cap falls on the rest first — type more of the name to narrow them.`
+        : `Only the first ${REFERENCE_PAGE} matches are listed — type more of the name to narrow them.`
+    );
   }
   return lines;
+}
+
+/**
+ * The word on a picker row that has been ticked "Tentative".
+ *
+ * ONE IMPLEMENTATION FOR BOTH PICKERS IN THIS FILE, refused as a second copy for the reason
+ * `tentativeFirst` and `useDragReorder` are: two renderers of one list that disagreed about which
+ * rows are marked is invisible until somebody compares two screens.
+ *
+ * AMBER, AND THE SAME AMBER AS THE STAGE FORM'S ROW CHIP (`EntityForm.tsx`). Purple-700 is the
+ * action colour and this is not an action; amber is this app's "wants attention, nothing is wrong",
+ * which is exactly what an unfinalised sketch is. A designer scanning nine sketches on the stage
+ * form and then nine in this picker must not have to learn two vocabularies for one flag.
+ *
+ * `amber-100`/`amber-800` AND NOT `amber-50`/`amber-200` — those two rungs are stock Tailwind
+ * (the brand scale defines only 100/500/800) and do not pair.
+ *
+ * NOT A SENTENCE. The registry's help text under the checkbox explains the rule; the notice under
+ * the list explains the order. A chip that repeated either would be an essay printed nine times.
+ */
+function TentativeChip({ option, word }: { option: DwReferenceOption; word: string }) {
+  if (!word || option.tentative !== true) return null;
+  return (
+    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+      {word}
+    </span>
+  );
+}
+
+/**
+ * The word this payload's rows may be chipped with, or `""`.
+ *
+ * READ THROUGH `tentativeFirst` RATHER THAN OFF THE LABEL ALONE, so a picker cannot draw the word
+ * for an ordering the server did not apply — an older server sends neither, and every model that
+ * has no such flag sends `false` and `""`.
+ */
+function tentativeWordFor(payload: DwReferencePayload | null): string {
+  if (!payload?.tentativeFirst) return "";
+  return (payload.tentativeLabel || "").trim();
 }
 
 /** The line under the list. Never omitted when {@link scopeNoticeLines} has something to say. */
@@ -974,6 +1062,7 @@ export function StageReferenceSelect({
     active: open && !awaitingCascade
   });
   const options = payload?.options ?? [];
+  const tentativeWord = tentativeWordFor(payload);
 
   /**
    * The name of the record already chosen.
@@ -1656,12 +1745,16 @@ export function StageReferenceSelect({
                         <span className="mt-0.5 h-4 w-4 shrink-0 text-purple-700">
                           {chosen ? <Check className="h-4 w-4" aria-hidden /> : null}
                         </span>
-                        <span className="min-w-0">
+                        <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm text-ink-900">{option.label}</span>
                           {option.sublabel ? (
                             <span className="block truncate text-xs text-ink-500">{option.sublabel}</span>
                           ) : null}
                         </span>
+                        {/* Outside the `min-w-0` block and `shrink-0`, so a long sketch name
+                            truncates and the chip stays whole — the reverse squeezes the one word
+                            that says why this row is at the top down to nothing. */}
+                        <TentativeChip option={option} word={tentativeWord} />
                       </button>
                     </li>
                   );
@@ -2123,6 +2216,7 @@ export function StageReferenceMultiPicker({
     active: open
   });
   const options = payload?.options ?? [];
+  const tentativeWord = tentativeWordFor(payload);
   const existing = useMemo(() => new Set(alreadyChosen), [alreadyChosen]);
   const pickedIds = useMemo(() => new Set(picked.map((option) => option.id)), [picked]);
 
@@ -2333,13 +2427,15 @@ export function StageReferenceMultiPicker({
                       >
                         {ticked || used ? <Check className="h-3 w-3" /> : null}
                       </span>
-                      <span className="min-w-0">
+                      <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm text-ink-900">{option.label}</span>
                         {option.sublabel ? (
                           <span className="block truncate text-xs text-ink-500">{option.sublabel}</span>
                         ) : null}
                         {used ? <span className="block text-xs text-ink-500">Already on this list</span> : null}
                       </span>
+                      {/* See the single picker's row: outside the truncating block, `shrink-0`. */}
+                      <TentativeChip option={option} word={tentativeWord} />
                     </button>
                   </li>
                 );

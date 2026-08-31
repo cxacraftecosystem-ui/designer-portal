@@ -375,8 +375,9 @@ const DC_HANDICRAFTS = {
  * gradient behind the row — that layer drifts continuously, so the two captures caught it a
  * fraction of a frame apart. Nothing structural differs at any width below `md`.
  *
- * They are also scaled rather than fixed (`h-5`→`h-7` for the wordmark, `h-7`→`h-9` for the seal,
- * stepping up at `lg`), so the first width that shows them is the width at which they are smallest
+ * They are also scaled rather than fixed (`h-5`→`h-7` for the wordmark, `h-[2.625rem]`→
+ * `h-[3.375rem]` for the seal, stepping up at `lg`), so the first width that shows them is the width
+ * at which they are smallest
  * — the brief's "make the marks scale down rather than moving any existing element", carried as far
  * as it goes before the row has no room left to give at all. This is the same
  * answer, for the same reason, as the scroll chevron further down this file: a phone does not need
@@ -387,8 +388,35 @@ const DC_HANDICRAFTS = {
  * The heights are NOT equal, for the reason the band's own header sets out: the seal is portrait
  * (0.89:1, solid ink) and the wordmark is landscape (2.37:1, mostly the space between letters), so
  * mass is equalised instead of height and the wordmark ends about 20% larger by area. The band
- * lands that at `h-12` DC against `h-16` seal — a ratio of 0.75 — and these two pairs hold it:
- * `h-5` against `h-7` is 0.71, `h-7` against `h-9` is 0.78.
+ * lands that at `h-12` DC against `h-16` seal — a ratio of 0.75 — and the masthead pair used to
+ * hold it too: `h-5` against `h-7` is 0.71, `h-7` against `h-9` is 0.78.
+ *
+ * ⚠ THE MASTHEAD PAIR NO LONGER HOLDS THAT RATIO, BY INSTRUCTION, AND THE PARAGRAPH ABOVE IS LEFT
+ * STANDING SO THE NEXT READER KNOWS WHAT WAS SPENT. On 2026-08-31 the owner asked for the IIT seal
+ * 50% larger in the hero — and for the IIT seal only, in both this application and the CxA portal.
+ * 1.5 × `h-7` is 2.625rem and 1.5 × `h-9` is 3.375rem, neither of which is a rung on Tailwind's
+ * scale (2.5, 2.75, 3, 3.5 …), so both are written as literal arbitrary values — the only form the
+ * class scanner can see, and the same reason `aspect-[268/300]` is spelled out below.
+ *
+ * The mass equalisation is therefore GONE from the masthead: the DC wordmark stayed where it was, so
+ * the pair now reads 0.48 at `md` and 0.52 at `lg` instead of 0.71 and 0.78, and the seal is the
+ * visually dominant mark in the row rather than its partner. That is the requested change, not a
+ * regression to quietly repair — but if the balance is ever asked for back, the numbers to restore
+ * are in the sentence above, and raising the DC mark to `h-[2.625rem]`/`h-[3.375rem]` × 0.75 is the
+ * arithmetic that would do it without shrinking the seal again.
+ *
+ * ⚠ AND THE SEAL IS NOW THE TALLEST THING IN THE MASTHEAD ROW, WHICH MAKES THE ROW TALLER. The
+ * previous ceiling was `WorkshopLogo` at `h-10` (40px); the seal now clears it at both rungs, so the
+ * seal is what sets the row's height. Measured in the browser, the header is 66px at `md` and 78px at
+ * `lg` — it is `pt-6` (24px) plus the tallest child, so that is +2px at `md` (42 against 40) and
+ * +14px at `lg` (54 against 40), and the hero content below starts that much lower. The row is a flex
+ * line with `items-center` and no fixed height, so nothing clips and nothing overlaps; the masthead
+ * simply gets taller, which is what asking for a bigger mark inside it means.
+ *
+ * ⚠ THE INSTITUTIONAL BAND FURTHER DOWN THIS FILE IS NOT PART OF THIS CHANGE. Its `markClass`
+ * values (`h-12 w-auto sm:h-16` for the seal, `h-9 w-auto sm:h-12` for the wordmark) are a DIFFERENT
+ * surface with its own optical-sizing argument, and they were verified unchanged at 48px and 64px
+ * after this edit. The instruction named the hero; only the hero moved.
  *
  * Both marks are LINKS, and both carry their destination in the accessible name, because unlike the
  * band there is no visible institution name inside the anchor to serve as one — an unlabelled logo
@@ -397,7 +425,7 @@ const DC_HANDICRAFTS = {
  * reason as below: one name per link, announced once. So the image keeps `alt=""`, and the seal's
  * masked box is `aria-hidden` because a `<span>` painted through a mask has nothing to announce.
  *
- * Neither can shift the layout as it loads. The seal's box is `h-7 aspect-[268/300]` — pure CSS,
+ * Neither can shift the layout as it loads. The seal's box is `h-[2.625rem] aspect-[268/300]` — CSS,
  * resolved before any file is fetched — and the DC `<img>` carries its intrinsic `width`/`height`
  * so the browser reserves its box from that ratio. (`aspect-[268/300]` is the pair declared above,
  * rounded off the true `267.538 × 299.737`. The 0.08% error is safe because `mask-size: contain`
@@ -762,7 +790,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
               rel="noreferrer"
               className="hidden shrink-0 rounded-md transition hover:-translate-y-0.5 active:translate-y-0 md:flex"
             >
-              <span aria-hidden className="block aspect-[268/300] h-7 lg:h-9" style={SEAL_MASK_STYLE} />
+              <span aria-hidden className="block aspect-[268/300] h-[2.625rem] lg:h-[3.375rem]" style={SEAL_MASK_STYLE} />
               <span className="sr-only">
                 {IIT_KHARAGPUR.name} — iitkgp.ac.in (opens in a new tab)
               </span>

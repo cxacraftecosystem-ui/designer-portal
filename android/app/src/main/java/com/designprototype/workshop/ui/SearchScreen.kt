@@ -339,6 +339,37 @@ private val SEARCH_MEDIA_TYPES = listOf("IMAGE", "VIDEO", "AUDIO", "PDF", "DOCUM
 fun SearchScreen(
     repository: WorkshopRepository,
     onOpenRecord: (recordType: String, recordId: String) -> Unit,
+    /**
+     * WHERE A DESIGN-WORKSHOP HIT GOES, or null when the host offers no route to one.
+     *
+     * ── A SEPARATE CALLBACK, AND THAT IS THE WHOLE POINT OF IT ──────────────────────────────────
+     *
+     * A design workshop is NOT a record in [onOpenRecord]'s sense. That callback's string is
+     * resolved by `MainActivity.searchRecordEntryMode` into an [EntryMode] and opened as
+     * `Screen.Edit(mode, id)` — a form. There is no `EntryMode` for a design workshop and there
+     * should not be one: a workshop is twenty-two stages behind `Screen.DesignWorkshopStages`, not a
+     * form, and that mapper's `else` is `EntryMode.ARTISAN`. Reporting `designWorkshop` through
+     * [onOpenRecord] therefore opens somebody's fortnight of fieldwork AS AN ARTISAN, which is why
+     * this bucket's rows were inert rather than wired to it.
+     *
+     * Adding a `designWorkshop` arm to that mapper could not have fixed it either — the arm would
+     * have to return an `EntryMode`, and every `EntryMode` opens a form. The route is a different
+     * destination, so it needs a different callback, and this is it.
+     *
+     * ── NULL IS A REAL STATE AND THE SCREEN RENDERS IT HONESTLY ─────────────────────────────────
+     *
+     * With no route the bucket keeps exactly the behaviour it has always had: rows that are found,
+     * named, and say which stage matched, drawn WITHOUT the "Open ›" affordance and without a click
+     * target, under a line saying where they are opened instead. Finding the workshop is the
+     * feature; a tap that misfires is worse than a tap that is not offered. See
+     * [SearchBucket.openable].
+     *
+     * A ROW OF THIS BUCKET CAN NEVER REACH [onOpenRecord] WHATEVER THIS IS SET TO — see `openRow`
+     * below, which routes on the record type rather than trusting the flag. The trap is that one
+     * string reaching that one mapper, so it is closed structurally rather than by a boolean two
+     * hundred lines away staying correct.
+     */
+    onOpenDesignWorkshop: ((workshopId: String) -> Unit)? = null,
     onBack: () -> Unit,
     showBackAction: Boolean = false,
     /**
@@ -428,6 +459,35 @@ fun SearchScreen(
      * the map default the other way because they are read DURING a workshop. Quietly narrowing this
      * screen would change what every existing route into it means.
      */
+    /**
+     * THE ONE PLACE A TAPPED THING ON THIS SCREEN IS TURNED INTO A DESTINATION.
+     *
+     * It exists to make the [onOpenDesignWorkshop] trap unreachable by construction rather than by
+     * agreement. `designWorkshop` is the one record type the host's `searchRecordEntryMode` cannot
+     * route — its `else` is `EntryMode.ARTISAN` — so instead of trusting [SearchBucket.openable] to
+     * stay false, and trusting every future surface on this screen to consult it, the string itself
+     * is intercepted here. A design-workshop id cannot reach [onOpenRecord] through any path,
+     * including one somebody adds later.
+     *
+     * IT SERVES THE SCANNED CODE TOO. `RecordCodeLookupPanel` reports through the identical singular
+     * vocabulary — `DwWorkshopRecordType.DESIGN_WORKSHOP.wire` is this same string — so a scanned `G`
+     * code and a tapped result cannot land in two different places. That panel answers a `G` code
+     * with a JOIN rather than an open today and never calls back with this type, which is exactly why
+     * routing it here costs nothing and closes the hole if it ever does.
+     *
+     * A NULL ROUTE DROPS THE TAP RATHER THAN REDIRECTING IT. The rows are not clickable in that case
+     * (see [SearchBucket.openable]), so this arm is unreachable from the UI; if something did reach
+     * it, doing nothing is the only honest answer, and it is emphatically better than the artisan
+     * editor opening on a workshop id.
+     */
+    val openRow: (String, String) -> Unit = { recordType, recordId ->
+        if (recordType == SearchRecordTypes.DESIGN_WORKSHOP) {
+            onOpenDesignWorkshop?.invoke(recordId)
+        } else {
+            onOpenRecord(recordType, recordId)
+        }
+    }
+
     val workshopScope = rememberWorkshopScope(
         repository = repository,
         defaultToMostRecent = false,
@@ -653,7 +713,7 @@ fun SearchScreen(
             // nothing to type and nothing to narrow. It reads every record type this app prints a
             // code for and hands the hit back through the SAME `onOpenRecord` a tapped result uses,
             // so a code and a search hit for one record cannot lead to two different places.
-            RecordCodeLookupPanel(repository = repository, onOpen = onOpenRecord)
+            RecordCodeLookupPanel(repository = repository, onOpen = openRow)
 
             error?.let { message ->
                 Text(
@@ -706,7 +766,9 @@ fun SearchScreen(
                 // key an older deployment may not know: a server that ignores it answers with all
                 // five buckets, and a screen that trusted that would show artisans to a researcher
                 // who asked for media.
-                val allBuckets = remember(data) { data.toSearchBuckets() }
+                val allBuckets = remember(data, onOpenDesignWorkshop != null) {
+                    data.toSearchBuckets(designWorkshopRoute = onOpenDesignWorkshop != null)
+                }
                 val buckets = remember(allBuckets, applied, offeredTypes) {
                     // NARROWED BY `offeredTypes` AS WELL AS BY THE TICKS, so a bucket this reader is
                     // not offered cannot appear on screen at all — a stale `applied` (a screen left
@@ -780,7 +842,7 @@ fun SearchScreen(
                 }
 
                 buckets.filter { it.rows.isNotEmpty() }.forEach { bucket ->
-                    SearchBucketSection(bucket = bucket, onOpenRecord = onOpenRecord)
+                    SearchBucketSection(bucket = bucket, onOpenRecord = openRow)
                 }
 
                 SearchPager(
@@ -830,20 +892,28 @@ private data class SearchBucket(
     val total: Int,
     val rows: List<SearchRow>,
     /**
-     * Whether tapping a row of this bucket goes anywhere. TRUE for the five record buckets and
-     * FALSE for design workshops, which is a limitation stated rather than a tap that misfires.
+     * Whether tapping a row of this bucket goes anywhere. Always TRUE for the five record buckets;
+     * for design workshops it is whatever the HOST answered.
      *
-     * A tapped row reports through `onOpenRecord`, and the host resolves that string in
-     * `MainActivity.searchRecordEntryMode`, whose `else` is `EntryMode.ARTISAN`. There is no
-     * `EntryMode` for a design workshop — the handset reaches one through `Screen.DesignWorkshops`,
-     * a different route entirely — so a tappable row here would open somebody's fortnight of
-     * fieldwork AS AN ARTISAN. That is the same trap `RecordCodeLookup` declined to walk into with a
-     * scanned `G` code, written up at length beside its `DESIGN_WORKSHOP` branch, and the answer is
-     * the same: do not report a type the host cannot route.
+     * ── WHY IT WAS A FLAT `false`, AND WHY THAT WAS RIGHT AT THE TIME ───────────────────────────
      *
-     * FINDING THE WORKSHOP IS THE FEATURE; opening it from here is not. The row names it, says which
-     * stage matched, and [noRouteNote] says where to open it. Wiring the tap needs a route the host
-     * owns and is a change to `MainActivity`, which this lane does not touch.
+     * The rule here read: *"A tapped row reports through `onOpenRecord`, and the host resolves that
+     * string in `MainActivity.searchRecordEntryMode`, whose `else` is `EntryMode.ARTISAN`. There is
+     * no `EntryMode` for a design workshop — the handset reaches one through
+     * `Screen.DesignWorkshops`, a different route entirely — so a tappable row here would open
+     * somebody's fortnight of fieldwork AS AN ARTISAN … do not report a type the host cannot
+     * route."* Every word of that is still true of [SearchScreen.onOpenRecord], and it is the
+     * reason this bucket must never be made openable by simply flipping this flag.
+     *
+     * WHAT CHANGED IS THAT THE SCREEN NO LONGER HAS ONLY ONE CALLBACK.
+     * [SearchScreen.onOpenDesignWorkshop] is a route of its own, and `openRow` intercepts the record
+     * type before either callback is reached — so the string this paragraph is about cannot arrive at
+     * that mapper whatever this flag says. The flag now decides only whether the row LOOKS tappable,
+     * which is exactly what it should ever have decided.
+     *
+     * FINDING THE WORKSHOP IS STILL THE FEATURE. With no route the row is drawn without an "Open ›"
+     * and without a click target, it still names the workshop and says which stage matched, and
+     * [noRouteNote] says where to open it — a limitation stated, rather than a tap that misfires.
      */
     val openable: Boolean = true,
     /** Printed under the heading when [openable] is false: where a row of this bucket is opened. */
@@ -861,7 +931,17 @@ private fun SearchResultsDto.totalsReported(): Boolean =
     total > 0 || totals.artisans > 0 || totals.workshops > 0 || totals.products > 0 ||
         totals.tools > 0 || totals.media > 0 || totals.designWorkshops > 0
 
-private fun SearchResultsDto.toSearchBuckets(): List<SearchBucket> {
+private fun SearchResultsDto.toSearchBuckets(
+    /**
+     * Whether the HOST offered a way to open a design workshop — `SearchScreen`'s
+     * [onOpenDesignWorkshop] being non-null, and nothing else.
+     *
+     * FALSE BY DEFAULT so the two call sites that only want the ROWS — `toQuickHits` and
+     * `selectedTotal`, which count and flatten and never draw an "Open ›" — cannot accidentally
+     * promise a route they have no callback for. Only the full screen passes it.
+     */
+    designWorkshopRoute: Boolean = false,
+): List<SearchBucket> {
     val reported = totalsReported()
     fun total(counted: Int, rows: Int) = if (reported) counted else rows
 
@@ -959,9 +1039,16 @@ private fun SearchResultsDto.toSearchBuckets(): List<SearchBucket> {
             "Design workshops",
             total(totals.designWorkshops, designWorkshopRows.size),
             designWorkshopRows,
-            // See [SearchBucket.openable]: there is no `EntryMode` for a design workshop, and the
-            // host's fallback for an unrecognised record type is ARTISAN.
-            openable = false,
+            // THE HOST'S ANSWER, not a constant. This was `false` outright, because the only callback
+            // the screen had was `onOpenRecord` and that string resolves to `EntryMode.ARTISAN` — so
+            // a tappable row here opened a fortnight of fieldwork as an artisan. The screen now takes
+            // a route of its own; where the host passes one, these rows open like any other, and
+            // where it does not they stay exactly as inert as they were. See
+            // [SearchBucket.openable] and `SearchScreen.onOpenDesignWorkshop`.
+            openable = designWorkshopRoute,
+            // Only meaningful when there is no route; `SearchBucketSection` already guards on
+            // `!openable` before printing it, and it is kept unconditionally so the sentence cannot
+            // go missing the day the flag is computed some other way.
             noRouteNote = "Open these from Design workshops.",
             scopeNote = designWorkshopSearchScope
         )

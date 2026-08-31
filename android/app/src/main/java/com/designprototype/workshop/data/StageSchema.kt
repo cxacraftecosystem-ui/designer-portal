@@ -2095,13 +2095,33 @@ data class DesignWorkshopCreateBody(
      * that merely CARRIES it, and a 422 is never queued, so a phone running ahead of its server
      * would otherwise strand a whole courtyard's fortnight rather than merely fail to state a type.
      *
-     * ── AND THE OFFLINE CREATE DOES NOT CARRY IT, WHICH IS THE EXISTING SHAPE AND NOT A NEW GAP ─
+     * ── AND THE OFFLINE CREATE NOW CARRIES IT. IT DID NOT, AND THE ARGUMENT FOR THAT WAS WRONG ──
      *
-     * `WorkshopDraft` has no field for it, exactly as it has none for `craftName` or `clusterName`,
-     * so a workshop minted in a courtyard is posted by `WorkshopSync` without a type and gets one
-     * from the first stage-1 save — which is where the answer is authoritative anyway. Widening the
-     * draft is a change to `WorkshopDraftStore` and its schema version, and it belongs with the two
-     * fields already in that position rather than with this one alone.
+     * What stood here read: *"`WorkshopDraft` has no field for it, exactly as it has none for
+     * `craftName` or `clusterName`, so a workshop minted in a courtyard is posted by `WorkshopSync`
+     * without a type and gets one from the first stage-1 save — which is where the answer is
+     * authoritative anyway. Widening the draft is a change to `WorkshopDraftStore` and its schema
+     * version, and it belongs with the two fields already in that position rather than with this one
+     * alone."* One clause of that survives: stage 1 IS authoritative, `promoted_values()` overwrites
+     * the column on its first save, and nothing about [WorkshopDraft.workshopKind] competes with it.
+     *
+     * THE SIBLINGS WERE THE WRONG ONES. `craftName` and `clusterName` are never asked before the
+     * workshop exists, so there is no answer to forget; this field has a picker in the create dialog
+     * and the designer answers it. Leaving it out was not matching a sibling — it was the app asking
+     * a question and discarding the reply. The true sibling is [designerUserId] below: also promoted
+     * out of stage 1 (as `designerName`), also authoritative there, and carried on the draft anyway
+     * for exactly this reason.
+     *
+     * AND THE PRICE WAS NOT A SCHEMA VERSION. By `WORKSHOP_DRAFT_SCHEMA_VERSION`'s own rule a rung
+     * is owed only to a field that MOVES, is RENAMED or changes MEANING; an additive, defaulted
+     * field round-trips losslessly through an older build and takes none — which is why
+     * `designerUserIds` took none either. The change cost one nullable field.
+     *
+     * WHAT IT COSTS TO OMIT IS ON THE LIST SCREEN, and it is the case the paragraph above this one
+     * says this key exists FOR: "so the list screen can filter and label a workshop by type on the
+     * day it is opened, before stage 1 has been saved at all." Offline was the one day that did not
+     * work — `WorkshopListScreen.unfilterableLocal` printed *"the type is only known once they
+     * sync"* about a type the designer had chosen on that phone minutes earlier.
      */
     val workshopKind: String? = null,
     /**

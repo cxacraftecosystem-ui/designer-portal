@@ -24,10 +24,14 @@ that already exists:
   close, and the two it cannot.
 * :class:`TestCellChokepoint` — the four export surfaces, asserted through the single function they
   all pass every value through.
+* :class:`TestInterviewAnswersTxt` — the data browser's own ``answers.txt``, the second builder of a
+  file ``export.py`` also writes, which the chokepoint does not reach on its own.
 """
 
 import json
+from types import SimpleNamespace
 
+from app.api.routes import data_browser
 from app.services.record_fields import cell
 from app.services.records import contains, prose_contains
 from app.services.rich_text import (
@@ -277,3 +281,57 @@ class TestCellChokepoint:
         assert cell("  Woven in Kutch  ") == "Woven in Kutch"
         assert cell(1500) == "1500"
         assert cell("{not a document}") == "{not a document}"
+
+
+def _interview(answer):
+    """One interview holding one response, which is all ``_interview_answers`` reads."""
+    return SimpleNamespace(
+        responses=[
+            SimpleNamespace(
+                questionId="q1",
+                answerText=answer,
+                question=SimpleNamespace(prompt="How is the warp dressed?", sectionCode="A", sortOrder=1),
+            )
+        ]
+    )
+
+
+class TestInterviewAnswersTxt:
+    """``answers.txt`` has TWO builders, and only one of them had learnt to flatten.
+
+    ``export.py``'s ``emit_interview`` writes this file into the dataset archive and passes every
+    answer through ``cell``; ``data_browser._interview_answers`` writes the same file for the data
+    browser's own download and interpolated the raw column — so one interview came out as prose
+    through one door and as ``{"blocks":[{"kind":"PARAGRAPH",…}]}`` through the other, with nothing
+    reporting a problem because a JSON-shaped string is not empty.
+
+    Asserted against the function rather than the route: the defect lives in one f-string, and the
+    ``_text`` funnel that flattens every other synthetic file in that module cannot reach it — by the
+    time the string arrives there the answer is embedded in a page of header, prompts and sibling
+    answers, which is not a document and is correctly left alone.
+    """
+
+    def test_a_formatted_answer_is_written_as_prose(self):
+        body = data_browser._interview_answers(_interview(to_stored_text(FORMATTED)), {})
+        assert FORMATTED_PLAIN in body
+
+    def test_neither_spelling_of_the_envelope_reaches_the_file(self):
+        # Both quotings, because the two ways a document reaches a reader print differently: the
+        # stored column is JSON (double quotes) and a dict that fell through to ``str()`` is a Python
+        # repr (single quotes). A test that pinned only one would pass while the other shipped.
+        body = data_browser._interview_answers(_interview(to_stored_text(FORMATTED)), {})
+        assert '{"blocks"' not in body
+        assert "{'blocks'" not in body
+        assert "PARAGRAPH" not in body
+        assert "BULLET_ITEM" not in body
+
+    def test_plain_prose_is_written_exactly_as_before(self):
+        body = data_browser._interview_answers(_interview("Twelve looms"), {})
+        assert "[A] How is the warp dressed?\n  -> Twelve looms" in body
+
+    def test_an_unanswered_question_still_prints_an_empty_answer(self):
+        # ``or ""`` used to supply this and ``cell(None)`` supplies it now. A row whose answer is
+        # NULL must keep printing its prompt with nothing after it, not the word "None".
+        body = data_browser._interview_answers(_interview(None), {})
+        assert "[A] How is the warp dressed?\n  -> \n" in body
+        assert "None" not in body

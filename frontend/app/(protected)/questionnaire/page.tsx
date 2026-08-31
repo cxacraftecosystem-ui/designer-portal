@@ -18,7 +18,7 @@ import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { RichTextField } from "@/components/richtext/RichTextField";
-import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
+import { appendDictatedToStored, plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { readableError } from "@/components/review/reviewErrors";
 import { dictateAudio, dictationAnswerSentence } from "@/lib/designWorkshops";
 import {
@@ -755,7 +755,16 @@ function QuestionnairePageBody() {
       setOfferedTranscript((current) => ({ ...current, [key]: text }));
       return;
     }
-    const merged = appendDictatedPhrase(inBox, text);
+    // `appendDictatedToStored` AND NOT `appendDictatedPhrase`, and this is the CORRUPTING half of the
+    // rich-text read boundary rather than the merely-ugly half. `inBox` is the stored column value,
+    // which the answer box being a `RichTextField` makes prose for most answers and `{"blocks":[…]}`
+    // for one somebody bolded. A bare append concatenates the machine's words onto the end of a JSON
+    // string, producing a value that is neither valid JSON nor readable prose: the editor cannot parse
+    // it back, so the researcher's formatted answer is REPLACED on screen by braces with the
+    // transcript stuck on the end, and it saves in that state. The shared function appends INTO the
+    // document when there is one, and is byte-for-byte `appendDictatedPhrase` when there is not — the
+    // single-space joiner, and the sentence continued rather than broken, both survive.
+    const merged = appendDictatedToStored(inBox, text);
     setAnswers((current) => ({ ...current, [key]: merged }));
     setMachineText((current) => ({ ...current, [key]: merged }));
     // The editor seeds from `defaultValue` once and never re-reads it, so a new key is the only way
@@ -1723,7 +1732,14 @@ function QuestionnairePageBody() {
                               go on saying so. Updating it here would relabel a mixed answer as
                               untouched machine output, which is the claim the flag exists to prevent.
                             */
-                            const merged = appendDictatedPhrase(answers[question.id] ?? "", text);
+                            /*
+                              `appendDictatedToStored`, for the reason spelled out at
+                              `applyTranscript`: the box holds a stored rich-text column, and this
+                              branch is reached PRECISELY when a person wrote in it — which is the
+                              case most likely to carry a mark, and the one where a bare append
+                              destroys their words rather than merely printing badly.
+                            */
+                            const merged = appendDictatedToStored(answers[question.id] ?? "", text);
                             setAnswers((current) => ({ ...current, [question.id]: merged }));
                             setAnswerSeed((current) => ({ ...current, [question.id]: (current[question.id] ?? 0) + 1 }));
                             setOfferedTranscript((current) => {

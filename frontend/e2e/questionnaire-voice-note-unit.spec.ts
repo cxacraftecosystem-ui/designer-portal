@@ -141,15 +141,24 @@ test("NEITHER branch can lose a syllable — both paths append through the share
   // first, and the accept button exists precisely because the box holds words a person wrote. So
   // `appendDictatedPhrase` — the repository's one joiner, written because "a commit that replaced
   // the box would delete everything already in it at the first pause for breath" — is on both paths.
-  expect(Q_SINGULAR).toMatch(/const merged = appendDictatedPhrase\(inBox, text\);/);
-  expect(Q_SINGULAR).toMatch(/const merged = appendDictatedPhrase\(answers\[question\.id\] \?\? "", text\);/);
+  //
+  // REACHED THROUGH `appendDictatedToStored` SINCE 2026-08-31, AND THAT IS NOT A SECOND JOINER: for
+  // prose it IS `appendDictatedPhrase`, byte for byte and without a parse. The wrapper exists because
+  // this box became a `RichTextField` in the same wave, so `answers[…]` holds prose for most answers
+  // and a JSON document for one somebody bolded — and joining the machine's words onto the END OF A
+  // JSON STRING produces a value that is neither valid JSON nor readable prose: the editor cannot
+  // parse it back, so the researcher's own formatted answer is replaced on screen by braces with the
+  // transcript stuck on the end, and it saves that way. The syllable this test is named for was being
+  // lost by the other branch. See `frontend/components/richtext/storedRichText.ts`.
+  expect(Q_SINGULAR).toMatch(/const merged = appendDictatedToStored\(inBox, text\);/);
+  expect(Q_SINGULAR).toMatch(/const merged = appendDictatedToStored\(answers\[question\.id\] \?\? "", text\);/);
 });
 
 test("accepting an offer leaves the machine's copy alone, so the answer stays flagged as edited", () => {
   // The box then holds the researcher's words AND the machine's. Updating `machineText` there would
   // relabel a mixed answer as untouched machine output — the claim the flag exists to prevent.
   const accept = /onAccept=\{\(\) => \{[\s\S]*?\n {26}\}\}/.exec(Q_SINGULAR)?.[0] ?? "";
-  expect(accept, "the accept handler was located").toContain("appendDictatedPhrase");
+  expect(accept, "the accept handler was located").toContain("appendDictatedToStored");
   expect(accept, "and it does not touch the machine's copy").not.toContain("setMachineText");
 });
 

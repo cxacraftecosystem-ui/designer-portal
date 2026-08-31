@@ -17,14 +17,21 @@ The same guide is available inside the app at **`/guide`** ("Walkthrough"), wher
 straight to the screen it describes. This document is the version you can print, email, or read on
 the bus on the way to the village.
 
-> **The two renderings are back in step as of 2026-08-26.** `frontend/components/guide/steps.ts`
-> declares nineteen steps: the ten record ids (`workshop`, `craft`, `artisan`, `product`, `process`,
-> `tool`, `questionnaire`, `media`, `review`, `view-data`) and then `designer-profile`,
-> `design-workshop`, `design-workshop-codes`, `design-workshop-stages`, `design-workshop-sketches`,
-> `design-review`, `design-workshop-readiness`, `design-workshop-report`,
-> `design-workshop-history`. Each of the nine has a section below under the same name. The note that
-> stood here from 2026-08-19 recorded the divergence as a debt; it is paid, and the maintenance rule
-> at the foot of this file is the thing that keeps it paid.
+> **The two renderings are in step as of 2026-08-31, at twenty-two steps.**
+> `frontend/components/guide/steps.ts` declares eleven record ids (`workshop`, `craft`, `artisan`,
+> `product`, `process`, `tool`, `questionnaire`, `media`, `review`, `view-data`, `scan`) and eleven
+> workshop ids (`designer-profile`, `design-workshop`, `design-workshop-codes`,
+> `design-workshop-questionnaires`, `design-workshop-stages`, `design-workshop-sketches`,
+> `design-review`, `design-workshop-readiness`, `design-workshop-report`, `design-workshop-history`,
+> `design-workshop-inspection`). Each has a section below under the same name.
+>
+> **It said "nineteen" from 2026-08-26 until 2026-08-31, and by the end that was three screens
+> short.** `scan`, `design-workshop-questionnaires` and `design-workshop-inspection` were added to
+> the in-app guide and never here, so a designer reading the printed guide had no idea the
+> pro-forma questionnaire builder or the inspection screen existed. The pair-check in
+> `frontend/e2e/guide-walkthrough-unit.spec.ts` did not catch it because it compared only the nine
+> routes hard-coded in its own list and *filtered the rest out* — a growing arc was invisible to it
+> by construction. That hole is closed; see the foot of this file.
 
 The screens carry the **same names on the web and in the Android app**. Wherever this document
 names a screen — *Artisan*, *Product*, *Process*, *Tool*, *Questionnaire*, *Miscellaneous Media*,
@@ -35,12 +42,13 @@ names a screen — *Artisan*, *Product*, *Process*, *Tool*, *Questionnaire*, *Mi
 ## The process in one line
 
 **Workshop → Craft → Artisan → Product → Process → Tool → Questionnaire → Miscellaneous Media →
-Review → View Data**
+Review → View Data → Scan a code**
 
 Then, for the fortnight that those records feed:
 
-**My designer profile → Design workshops → Cards & tags → Stages → Sketches & prototypes →
-Design review → Readiness → Report → Report history**
+**My designer profile → Design workshops → Cards & tags → My questionnaires → Stages →
+Sketches & prototypes → Design review → Readiness → Report → Report history →
+Workshops to inspect**
 
 Learn those two orders and you can work without the guide.
 
@@ -93,8 +101,9 @@ so — that is information, not an error.
 
 Open the workshop you are documenting under — or create it — before you record anything else.
 
-**What the screen asks for:** Workshop title *(required)*, Place *(required)*, start and end date,
-Description, Notes, Linked artisans, Crafts covered, Workshop media, Location (GPS fix or map pin).
+**What the screen asks for:** **Kind of workshop** *(required)*, Workshop title *(required)*, Place
+*(required)*, Workshop duration (Start date and End date), Status, Description, Notes, Linked
+artisans, Crafts covered, Workshop media, Location (GPS fix or map pin).
 
 **Why it exists.** The workshop is the container everything else drops into. Products, tools and
 interviews all link to one, and *View Data* opens on **By workshop**, which files the whole
@@ -103,6 +112,10 @@ repository under the workshop each record was made in.
 **Watch out for:**
 
 - Create the workshop *before* you leave for the field.
+- **Get *Kind of workshop* right.** It is the first box on the form and it is what marks this as a
+  Design & Prototype Development Workshop rather than an ordinary one. Only workshops of that kind
+  appear in the picker at the top of Step B, so an ordinary workshop is invisible to the whole
+  fortnight arc below and nothing on either screen explains why.
 - Records created outside a workshop's date window are flagged as **out-of-window** and need a
   reviewer's approval.
 
@@ -114,8 +127,8 @@ repository under the workshop each record was made in.
 
 Add the craft being documented so artisans, products and tools have something to hang off.
 
-**What the screen asks for:** Craft name *(required)*, Local name, Category, Place, Description,
-Craft media.
+**What the screen asks for:** Workshop, Craft name *(required)*, Local name, Category, Place,
+Description, Craft media.
 
 **Why it exists.** Craft is the shared vocabulary of the repository: artisans link to a craft,
 products and tools inherit the craft name from it, and the Data Browser groups every workshop's
@@ -135,10 +148,12 @@ contents by craft. Adding it once keeps spellings consistent across everyone's r
 
 Record the person: who they are, where they work, how to reach them, and what they have learnt.
 
-**What the screen asks for:** Name *(required)*, Local name, Workshop, **Craft** *(required)*, Or new
-craft name, Place *(required)*, **Aadhaar number**, **Artisan Pehchan Card available** and its number,
-Gender, Phone, Email, Address, Notes, **Do's (positive prompt)** *(required)*, **Don'ts (negative
-prompt)** *(required)*, Artisan media, Location (device fix **and** stated address).
+**What the screen asks for:** Workshop, Design & prototype workshop, Name *(required)*, Local name,
+**Craft** *(required)*, Or new craft name, Place *(required)*, Gender, **Date of birth**,
+**Practising since**, Experience (in whole years and months), Phone, Email, Address, Notes,
+**Aadhaar number** *(required)*, **Artisan Pehchan Card available**, **Artisan Pehchan Card number**
+*(required if the card is available)*, **Do's (positive prompt)** *(required)*, **Don'ts (negative
+prompt)** *(required)*, Status, Artisan media, Location (device fix **and** stated address).
 
 **Why it exists.** The artisan is the anchor of the dataset — products, processes, tools and
 questionnaire interviews all link back to an artisan record. The Do's and Don'ts are the artisan's
@@ -157,6 +172,12 @@ own hard-won craft knowledge: the part of the archive that cannot be reconstruct
   recognised as "unchanged"; you do not have to retype the number.
 - **Pehchan card**: answer Yes/No first. Answering Yes makes the card number required; answering No
   clears it. It is not possible to store a card number for an artisan who says they hold no card.
+- **Date of birth and *Practising since* are dates, and the numbers come off them.** The design
+  workshop's participant table wants an age and years of experience; a number stored today is wrong
+  within a year with nothing anywhere to say so, so the form keeps the **date** and derives the
+  figure every time it is read — here, in the participant table, and in the report. There is
+  deliberately **no age box**. The *Experience* boxes beside them are the stated fallback, read only
+  while *Practising since* is empty.
 - Photo EXIF is retained and summarised into the notes automatically. Do not transcribe camera
   details by hand.
 - **Location asks two different things** — see the box below.
@@ -169,11 +190,12 @@ own hard-won craft knowledge: the part of the archive that cannot be reconstruct
 
 Record one thing this artisan makes, with its measurements, economics and photographs.
 
-**What the screen asks for:** Product name *(required)*, Local name, Workshop, Product type, Linked
-craft (fills craft name), Craft name *(required)*, Linked artisan (fills artisan + place), Artisan
-name *(required)*, Place *(required)*, Time taken to complete, Size, Length (inches), Breadth
-(inches), Height (inches), Cost of making, Selling price, Market demand, Raw materials used, Main
-tools used, Function or use, Remarks, Product media, Location (GPS fix or map pin).
+**What the screen asks for:** Workshop, Design & prototype workshop, Product name *(required)*,
+Local name, Product type, Linked craft (fills craft name), Craft name *(required)*, Linked artisan
+(fills artisan + place), Artisan name *(required)*, Place *(required)*, Time taken to complete, Size,
+Length (inches), Breadth (inches), Height (inches), Cost of making, Selling price, Market demand,
+Raw materials used, Main tools used, Function or use, Remarks, Status, Product media, Location (GPS
+fix or map pin).
 
 **Why it exists.** The product record is where the craft becomes measurable. Dimensions, cost of
 making, selling price and market demand are the fields researchers compare across regions.
@@ -182,8 +204,18 @@ making, selling price and market demand are the fields researchers compare acros
 
 - **Pick the linked craft first.** The artisan dropdown stays disabled until a craft is chosen, and
   then only lists that craft's artisans.
-- Use **"Document using grid"** to photograph the piece against the measuring grid: it fills length,
-  breadth and height for you *and* stores the photo as evidence.
+- **"Measure from a photograph" is the first of the two measuring panels and the one to reach for.**
+  Lay the piece on the one-inch grid sheet, mark across a known number of squares, and it works out
+  the inches on **this device** — no connection, no cost, and an error bar that narrows as you zoom
+  in to place a mark more carefully. **"Document using grid"** underneath is the fallback and a
+  different instrument: it asks a vision model to *estimate* the inches, so it needs a connection,
+  has no retry, and cannot show its working.
+- **Neither panel writes a dimension.** Each one proposes a number and you press the button that
+  accepts it into a box — a figure that filled itself in would be stored under the name of whoever
+  pressed Save, asserting that a person measured it. The photograph you measured on is uploaded with
+  the record either way, so the number can be checked against the picture it came from. *(This guide
+  said the grid panel "fills length, breadth and height for you" until 2026-08-31. It has not filled
+  anything in since 2026-08-27, and it was never the panel to reach for first.)*
 - Choosing a linked artisan fills the artisan name and place; choosing a linked craft fills the
   craft name.
 
@@ -195,9 +227,10 @@ making, selling price and market demand are the fields researchers compare acros
 
 Walk through how that product is made, one step at a time, filming each step as it happens.
 
-**What the screen asks for:** Name of the process *(required)*, Artisan *(required)*, Product
-*(required)*, then per step: Name of the step *(required)*, optional additional context notes, and
-attached media.
+**What the screen asks for:** Workshop, Design & prototype workshop, Name of the process
+*(required)*, Artisan *(required)*, Product *(required)*, What happens in this process, Pre-processes
+available, Status — then per step: Name of the step *(required)*, a **Record additional information**
+tick, the **Additional context for this step** notes it opens, and **Attach media**.
 
 **Why it exists.** The process is the craft itself. A product photograph shows the result; the
 step-by-step record with per-step media shows the *knowledge* — the sequence, the hand movements,
@@ -220,12 +253,12 @@ the judgement calls that a text description always loses.
 Record the toolkit the artisan uses: what it is made of, how big it is, who made it, what it costs
 to replace.
 
-**What the screen asks for:** Toolkit name *(required)*, Local name, English name, Workshop, Linked
-craft (fills craft name), Craft name *(required)*, Linked artisan (fills artisan + place), Artisan
-name *(required)*, Place *(required)*, Process used in, Material, Years in use, Height, Width,
-Length (inches), Breadth (inches), Thickness, Weight, Radius, Maker, Tradition type, Replacement
-cost, Suggestions for improvement, Remarks, Process stages, Tool media, Location (GPS fix or map
-pin).
+**What the screen asks for:** Workshop, Design & prototype workshop, Toolkit name *(required)*,
+Local name, English name, Linked craft (fills craft name), Craft name *(required)*, Linked artisan
+(fills artisan + place), Artisan name *(required)*, Place *(required)*, Process used in, Material,
+Years in use, Height, Width, Length (inches), Breadth (inches), Height (inches), Thickness, Weight,
+Radius, Maker, Tradition type, Replacement cost, Suggestions for improvement, Remarks, Status,
+Process stages, Tool media, Location (GPS fix or map pin).
 
 **Why it exists.** Tools are the most quietly endangered part of a craft — the maker of a tool often
 disappears before the craft does. Replacement cost, maker and tradition type are the fields that
@@ -248,9 +281,10 @@ record whether the toolchain behind the craft is still alive.
 
 Sit down with the artisan and work through the interview sections, recording each answer as audio.
 
-**What the screen asks for:** Interview title *(required)*, Date, Place, Language, Primary artisan,
-Additional artisans, then per question either a **"Record this question"** audio clip or a typed
-answer.
+**What the screen asks for:** Interview title *(required)*, Place, Language, Workshop, Design &
+prototype workshop, Status, Primary artisan, Additional artisans, **Recording mode**, **Do not
+display answer text boxes**, Interview audio and Location (GPS fix or map pin) — then per question
+either a **"Record this question"** audio clip or a typed answer, and Interview notes at the foot.
 
 **Why it exists.** The questionnaire is the artisan speaking in their own voice and their own
 language. Recorded audio is auto-transcribed on the server, so you get both the original recording
@@ -258,6 +292,13 @@ and searchable text without typing during the interview.
 
 **Watch out for:**
 
+- **There is no date box, and that is deliberate.** The interview date is derived from when the
+  interview was actually captured, so there is nothing to confirm and nothing to mistype. This guide
+  listed a *Date* field until 2026-08-31, by which time the form had not had one for some time.
+- **"Do not display answer text boxes" is ON when you open the screen**, so each question shows only
+  its record button and there is nowhere to type. Turn it off for written answers. **Recording mode**
+  beside it decides whether one take covers a single question or a whole section — set both before
+  the artisan sits down.
 - **There is one interview per exact set of artisans.** If an entry already exists for that set,
   saving adds your answers to it — it never creates a duplicate.
 - Answer only the questions actually asked. Empty questions stay open for whoever picks the
@@ -275,8 +316,8 @@ and searchable text without typing during the interview.
 Upload the photographs, video, audio and files that do not belong to any single record.
 
 **What the screen asks for:** Capture media (images, video, audio and documents), Media title /
-object name, **Linked record type** *(required)*, Linked entry *(optional)*, Caption, Location (GPS
-fix or map pin).
+object name, **Linked record type** *(required)*, Linked entry *(optional)*, Design & prototype
+workshop, Caption, Location (GPS fix or map pin).
 
 **Why it exists.** Field work produces context that no form has a slot for: the road into the
 village, the market, an unplanned conversation. Miscellaneous Media keeps that material inside the
@@ -342,6 +383,34 @@ content-type filters, or take the whole subtree as a **`.xlsx` report**.
 
 ---
 
+## 11. Scan a code — *Open*
+
+**Screen:** Scan (`/scan`)
+
+Point the camera at an artisan card or a prototype tag and open the record it names. Three ways in:
+**scan with the camera**, **upload a picture** — or drop one, or paste it with <kbd>Ctrl</kbd>+<kbd>V</kbd>
+— or **type the code** printed under the QR. What it resolved to appears with one press to open it.
+
+**Why it exists.** Every card and every tag carries a code, and typing a name to find the record
+behind it is where the wrong record gets opened. This is a door named after the thing in your hand.
+
+**Watch out for:**
+
+- A picture works as well as the card itself — a screenshot, a photo taken earlier, or one forwarded
+  to you. A code arriving over a messaging app does not have to be saved to disk first.
+- Hold the card 10-15 cm from the lens with the whole square in view. If the camera will not open,
+  the screen says which of the three reasons it is and offers the picture and the typed code instead
+  of failing silently.
+- **This page asks the repository, so it wants a connection.** A design workshop's own *Cards & tags*
+  page reads that workshop's codes out of the draft held on this device first, which is why a
+  prototype tag still resolves there in a village with no signal.
+- A scan **inside a stage form** is doing a different job: there it *links* a record to the box you
+  are filling in, rather than opening it.
+- A code for a record you may not read answers "not found" rather than "not allowed", on purpose —
+  so a code can never be used to find out what exists.
+
+---
+
 ## Before you leave the field
 
 A missing field is a phone call. A missing recording is another trip. Run this list while the
@@ -398,16 +467,23 @@ Four rules worth knowing before you open stage 1:
 Your own standing details, kept in one place rather than typed into a stage form: **Name**, **Name in
 the local script**, **Designation**, **Institution**, **Department**, **Qualification**,
 **Specialisation**, **Designer's experience**, **Designer's profile** (the paragraph), **Phone**,
-**Email**, **Website**, **Address**, **City or town**, **State**, **Pincode**, **Empanelment
+**Email**, **Website**, **Address line**, **City or town**, **State**, **Pincode**, **Empanelment
 number**, **Empanelment date**, **Photograph**, **Signature** and **CV** — twenty-one in eight
-groups.
+groups, plus the location card at the foot of the postal address group.
 
 These are the values a new design workshop's **stage 1** and **stage 3** start pre-filled with, and
 they stay editable inside the workshop. A designer signing in for the first time is brought here
 automatically, once, with an explanation of why.
 
-- **Nothing here is required and nothing is guessed for you.** Left blank, the report cover falls
-  back to the name on your account.
+- **Five boxes carry an asterisk and nothing is guessed for you.** *Name*, *Qualification*, *Phone*
+  and *Email* are what a report is submitted under and how the person who signed it is reached;
+  the *Empanelment number* is the identifier a government document is expected to carry, and the
+  server refuses to create a profile without one. The other sixteen are optional. On a row saved
+  before those rules, a blank name still falls back to the name on your account for the report cover.
+- **The postal address is asked twice and the two halves do not fill each other in.** *Address line*,
+  *City or town*, *State* and *Pincode* are the four the report prints. The location card under them
+  is where the district and the map point live, and nothing on it reaches the document. Fill in both:
+  answering only the more capable-looking half produces a report with no address on it.
 - **A PDF CV is rendered on the page** as soon as it uploads; a .docx or .odt is stored and
   downloadable instead. **Your reports name it rather than carrying it**, so send the file alongside
   the report.
@@ -452,7 +528,43 @@ join-card screen on the web — and a card is good for one person unless an admi
 more. A late-comer whose card was already spent is not turned away: the ask is filed for an admin to
 decide, so their work is not orphaned while they wait.
 
-### Step D — Fill the stages
+### Step D — Build your own questionnaire
+
+**Screen: My questionnaires** (`/questionnaires`) · Android: *My questionnaires*
+
+Build the research instrument this workshop needs in a spreadsheet: **download the pro-forma**, type
+your questions into it, **upload it back**, and record the answers here. Sections carry a title and a
+code; questions carry the question and its help text. Starting an empty one in the browser — Title,
+*Attach to a design workshop*, Description — is offered third, and quietly, because building a
+questionnaire box by box is the slow path.
+
+**It sits on the first afternoon, beside the code cards.** The stages take the fortnight; preparing
+the instrument does not.
+
+**Why it exists.** The *Questionnaire* in step 7 is the repository's one global instrument, shared by
+everybody and not changeable for your cluster. This is the other kind — a form you write yourself and
+attach to your design workshop — and every one of the six report templates prints its answers at the
+back as *Annexure — Questionnaire responses*.
+
+**Watch out for:**
+
+- **This is not the questionnaire in step 7.** *Take interview* is the repository's shared artisan
+  questionnaire, open to every signed-in researcher; this is a designer's own instrument, attached to
+  one design workshop. Separate features, separate tables — answering in the wrong one is not a
+  mistake either screen can catch for you.
+- The sheet may come back with answers already typed into it, or with none. Both are ordinary, and
+  the upload reports what it read before anything is saved.
+- **"Reuse at another workshop" copies.** Two rows, two question trees, two histories: correcting a
+  typo on one never touches the other, and no sitting and no answer comes across. The dialog says so
+  while you are choosing the target.
+- Creating one works with no signal — the row is banked on the device and lands when there is a
+  connection. What is queued is the questionnaire *itself*, not its sections and questions: those
+  need the id the server mints, so write them once the row has landed.
+- A questionnaire published as the standard form appears in everybody's list, badged, so a row you
+  did not upload cannot read as somebody else's work leaking in.
+- Opens for designers, admins and the master admin.
+
+### Step E — Fill the stages
 
 **Screen: the workshop** (`/design-workshops/[id]`) → **a stage** (`/design-workshops/[id]/stages/[stageKey]`)
 Android: the stage index, then the stage screen.
@@ -479,7 +591,7 @@ deployment added, and they print in its report. They are written on the workshop
 the editor tells you what an edit will cost a question somebody has already answered **before** you
 press anything. Reorder with the plus button, the up/down arrows, or by dragging.
 
-### Step E — Sketches and prototypes
+### Step F — Sketches and prototypes
 
 **Screen: Sketches & prototypes** (`/sketches-and-prototypes`, or the workshop's own tab at
 `/design-workshops/[id]/sketches-and-prototypes`) · Android: *Sketches & prototypes*
@@ -511,7 +623,7 @@ capture** and **3D model** on a prototype.
   and they are rateable in both rounds — a wider pool picking one up is the reason to write them
   down at all.
 
-### Step F — Design review
+### Step G — Design review
 
 **Screen: Design review** (`/design-review`) · Android: *Design review*
 
@@ -525,7 +637,7 @@ because the pool round is by design about workshops you were never added to. The
 **Sketches**.
 
 **Two rounds, and this screen is the second.** The workshop's own designers rate each other first, on
-the *Review* tab of Step E. Then the wider pool ranks the pieces a workshop has finished — including
+the *Review* tab of Step F. Then the wider pool ranks the pieces a workshop has finished — including
 workshops the reviewer was never added to, which is the whole difference between the two levels. A
 pool reviewer sees the rateable rows and their scores and **nothing else about the workshop**: they
 are not a member of it and cannot write to its stages.
@@ -538,7 +650,7 @@ are not a member of it and cannot write to its stages.
 - The order you place is stored on the row, inside one workshop — which is why the round is asked one
   workshop at a time and there is no mixed cross-workshop list to rank.
 
-### Step G — See what is still outstanding
+### Step H — See what is still outstanding
 
 **Screen: Readiness** (`/design-workshops/[id]/readiness`) · Android: the same list, on the stage
 index rather than a separate screen.
@@ -553,7 +665,7 @@ Read it against the third rule at the top of this section. Nothing on this list 
 **workshop's** submission — a workshop may be submitted part-filled. What these fields refuse is
 *Save and check required fields* on the one stage that holds them.
 
-### Step H — Configure and generate the report
+### Step I — Configure and generate the report
 
 **Screen: Report** (`/design-workshops/[id]/report`) · Android: *Report*
 
@@ -582,7 +694,7 @@ after the audio reaches the server) and machine-assisted text. **Questionnaire a
 the phone too** — but only once that handset has opened the workshop's questionnaire list at least
 once with a connection, and until then the file says so.
 
-### Step I — Look at what you have already produced
+### Step J — Look at what you have already produced
 
 **Screen: Report history** (`/design-workshops/[id]/report/history`)
 
@@ -590,6 +702,34 @@ Every file ever generated for this workshop, including ones a phone produced off
 checksum, size, page count, template and timestamp — and a diff between any two. A report submitted
 to a ministry comes back for revision three or four times, and "did you update the cost sheet before
 you resubmitted?" needs an answer.
+
+### Step K — Read a finished workshop back
+
+**Screen: Workshops to inspect** (`/design-workshop-inspections`)
+
+The inspector's own list: the design & prototype workshops an admin has assigned them, searchable by
+title, craft, cluster or workshop code. Open one and all 22 stages are readable and none of it is
+editable, with **who wrote each field and when** under every value, and how complete the workshop is.
+
+**Why it exists.** A report submitted to a Development Commissioner's office is read by somebody who
+did not run the fortnight, and *who wrote this field* is most of what that reading is for. The
+authorship line is drawn by the same component as on the designer's own stage form, so an inspector
+and the designer being inspected can never be reading two different accounts of who did what.
+
+**Watch out for:**
+
+- **This is its own tier, not a rank.** Inspector / Reviewer is the only role this screen opens for.
+  An admin and the master admin are refused it exactly as a professor is, and they read design &
+  prototype workshops on *Design workshops* instead. If you are a designer, this step is here so you
+  know what a colleague is looking at when they read your workshop back — not because you can open it.
+- An admin chooses who inspects a workshop, one workshop at a time, on *Manage workshop access*.
+- An empty page is a real answer and the screen says which kind it is: nothing assigned reads "No
+  workshop is assigned to you", while a list that could not be loaded says so instead.
+- There is no Save, no stage form, no submit and no report button, and none of them is missing —
+  there is no route behind this page that would accept one. Nothing an inspector does can change a
+  workshop.
+- Photographs, recordings and attachments are **counted rather than shown**. An empty gallery would
+  look like a file that failed to load, which is not what happened.
 
 ---
 
@@ -609,6 +749,9 @@ you resubmitted?" needs an answer.
 | **My designer profile** (`/designers/profile`) | The twenty-one standing details a new workshop's stage 1 and stage 3 start pre-filled with. Kept in one place. |
 | **Sketches & prototypes** (`/sketches-and-prototypes`) | Stage 11 and stage 13 of any of your workshops, from one screen, with the tracing panel. |
 | **Design review** (`/design-review`) | The pool round: rank a colleague's finished pieces. |
+| **Scan a code** (`/scan`) | Open the record an artisan card or a prototype tag names — see *[11. Scan a code](#11-scan-a-code--open)* above. |
+| **My questionnaires** (`/questionnaires`) | Your own research instrument, built in a spreadsheet and attached to a design workshop. Not the shared artisan questionnaire in step 7. |
+| **Workshops to inspect** (`/design-workshop-inspections`) | Inspector / Reviewer only: a finished workshop read back, with authorship under every field. |
 | **Give app feedback** (`/feedback`) | Tell us what slowed you down. |
 
 For installing the app, getting an account, working offline and getting the data back out, see
@@ -619,19 +762,45 @@ ranked above you", see **[PERMISSIONS.md](PERMISSIONS.md)**.
 
 ## How this document is kept true
 
-This document describes **screens and their fields**, which no test asserts and no script can derive.
-It is maintained by walking it.
+### What kind of claims this document makes
+
+Settled 2026-08-31, after an audit found the field lists below had drifted from the forms on **seven
+of their eight steps** while nothing anywhere would have said so.
+
+**The field lists are a checked register, not a summary.** Each step's *What the screen asks for*
+line must name every field the in-app Walkthrough's own register declares for that step;
+`backend/tests/test_walkthrough_fields_parity.py` asserts it on every backend run and names the
+missing field when it fails. That test already held the handset's copy to the web's, so the three
+copies of these lists are now one guarded set rather than two guarded and one loose.
+
+**Where prose is still allowed to summarise, it says so in one place.** Four entries are worded as
+sentences rather than as labels — the artisan's two-part location, and the three *per step* / *per
+question* repeating blocks. Each is licensed by name in `PROSE_PARAPHRASES` in that test, and the
+licence is itself checked: the wording must still be present, and the row must still be needed. A
+paraphrase table nobody checked would be the same problem one level down.
+
+**Everything else here — the *Why it exists* paragraphs, the watch-outs, Steps A–K — is prose, and is
+maintained by walking it.** Those are not field-for-field claims and are not asserted by anything.
+
+**The check runs one way, on purpose: the register is a floor, not a ceiling.** This document may
+name a field the register omits. It no longer does — the gap that made the asymmetry necessary was
+closed on 2026-08-31, in the register itself (see the row below) — but the direction stays as it is,
+because the reason for it was never the artisan step. A symmetric check would report the printed
+guide as wrong FOR BEING RIGHT the next time a form gains a box, and the quickest way to make it
+green would be to delete a true sentence. **If you find this document naming something the register
+omits, fix `steps.ts` — do not delete the sentence here.**
 
 | Section | Checked against |
 |---|---|
-| The field list on each step | The form component: `frontend/components/forms/ArtisanForm.tsx`, `ProductForm.tsx`, `ToolForm.tsx`, `ProcessForm.tsx`, and the questionnaire page. `grep -oP 'label="[^"]+"'` over a form gives its labels in one command; diff that against the step's field list. |
+| The field list on each step | **Asserted** by `backend/tests/test_walkthrough_fields_parity.py` against `GuideStep.fields` in `frontend/components/guide/steps.ts`. To check the register itself against the product, read the form component: `frontend/components/forms/ArtisanForm.tsx`, `ProductForm.tsx`, `ToolForm.tsx`, `ProcessForm.tsx`, and the `workshops`, `crafts`, `questionnaire` and `media` pages. `grep -oP 'label="[^"]+"'` gives most of a form's labels in one command, **but not all of them, and that is how this drifted**: `WorkshopSelect`, `DesignWorkshopSelect`, `LocationFields`, `MediaCaptureField`, `StatusField`, `DateRangeField`, `MultiNoteField`, `DosDontsField`, `AadhaarField`, `PehchanFields` and `PhoneField` each render their own label from inside the component, so a grep over the form file alone reports the workshop form as having no *Notes* box when it has one. Grep for those component names too. |
 | Which fields are **required** | The same components' validation, and the Pydantic schemas in `backend/app/schemas/records.py`. A field marked *(required)* here that is optional there is the error to look for — it makes the guide stricter than the product, which reads as a bug to the researcher. |
 | The route in each **Screen:** heading | The `(protected)` route tree. `docs/tools/check-docs.mjs` does not check these (they are app routes, not files), so they are the most likely thing here to be stale after a page moves. |
-| The nineteen-step order | `frontend/components/guide/steps.ts`, which is what `frontend/app/(protected)/guide/page.tsx` renders — the in-app Walkthrough. **These two must not diverge**, because a researcher may read either. Ten record steps then nine workshop steps, matching Steps A–I below one for one. They diverged from 2026-08-19 to 2026-08-26 and the notes recording that debt have been removed with it; renaming or adding a step is an edit to both files in one commit. |
+| The twenty-two-step order | `frontend/components/guide/steps.ts`, which is what `frontend/app/(protected)/guide/page.tsx` renders — the in-app Walkthrough. **These two must not diverge**, because a researcher may read either. Eleven record steps then eleven workshop steps, matching Steps A–K below one for one. **Asserted** by `frontend/e2e/guide-walkthrough-unit.spec.ts`, which compares the arc as an exact tail of the deck and holds one printed-guide route per arc id. It has diverged twice — 2026-08-19 to 2026-08-26 at nine steps, and 2026-08-29 to 2026-08-31 when `scan`, `design-workshop-questionnaires` and `design-workshop-inspection` were added to the app and not here. The second time the spec was green throughout, because it filtered the deck down to the ids it already knew before comparing; that is fixed. Renaming or adding a step is an edit to both files in one commit. |
 | The design & prototype workshop steps | The `(protected)/design-workshops/` route tree for the routes, [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §3 for the tier rule, and each page's own file header for what the screen is for — those headers are unusually full and are the source this section was written from. **The one claim here that is not a screen description is the reference rule** ("choosing a record copies its values; the report prints the copy"); its authority is `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py` and [REPORT-DATA-WIRING.md](REPORT-DATA-WIRING.md). Do not soften it into "the report shows the linked record" — that is the opposite of what the system does, and the difference is a document already handed to an officer changing under him. |
-| Who may open Steps A–I | `ROUTE_GUARDS` in `frontend/lib/permissions.ts` and [PERMISSIONS.md](PERMISSIONS.md) §5. All four designer paths sit on `can_run_design_workshops`, and the Walkthrough itself is deliberately ungated — so this section describes screens most of its readers cannot open. Say so, as the fourth rule at the top of the section does; do not quietly drop the arc, which is the deliverable the fortnight exists for. |
-| **What the app does not do** | One claim was checked and deliberately left out, and it is the one most likely to be "restored" by a reader who remembers a brief rather than the code. **There is no 3D viewer**: `frontend/components/sketches/upload/PrototypeModelField.tsx` states that no dependency in `frontend/package.json` can render a model, that the file is stored and downloadable, and that it prints as "1 document attached". A guide asserting a feature that does not exist is worse than one that omits it. **The converse is worse still, and this row shipped it.** A second entry here asserted there is no plate straightening, on the evidence that `frontend/lib/trace/imageEdit.ts` is a crop and an unsharp mask with no deskew anywhere under `frontend/lib/trace/`. That evidence was accurate and the conclusion was not: `lib/trace/` is the *tracing* panel, and the straightening ships in `frontend/lib/sketchRectify.ts` for a different registry field (see Step E, which now describes it). So: absence proved inside one directory is not absence from the product, and a "does not do" row is the one kind of claim that tells the next reader not to look. Prove a negative over the whole tree or do not write it. |
+| Who may open Steps A–K | `ROUTE_GUARDS` in `frontend/lib/permissions.ts` and [PERMISSIONS.md](PERMISSIONS.md) §5. All four designer paths sit on `can_run_design_workshops`, and the Walkthrough itself is deliberately ungated — so this section describes screens most of its readers cannot open. Say so, as the fourth rule at the top of the section does; do not quietly drop the arc, which is the deliverable the fortnight exists for. |
+| **What the app does not do** | One claim was checked and deliberately left out, and it is the one most likely to be "restored" by a reader who remembers a brief rather than the code. **There is no 3D viewer**: `frontend/components/sketches/upload/PrototypeModelField.tsx` states that no dependency in `frontend/package.json` can render a model, that the file is stored and downloadable, and that it prints as "1 document attached". A guide asserting a feature that does not exist is worse than one that omits it. **The converse is worse still, and this row shipped it.** A second entry here asserted there is no plate straightening, on the evidence that `frontend/lib/trace/imageEdit.ts` is a crop and an unsharp mask with no deskew anywhere under `frontend/lib/trace/`. That evidence was accurate and the conclusion was not: `lib/trace/` is the *tracing* panel, and the straightening ships in `frontend/lib/sketchRectify.ts` for a different registry field (see Step F, which now describes it). So: absence proved inside one directory is not absence from the product, and a "does not do" row is the one kind of claim that tells the next reader not to look. Prove a negative over the whole tree or do not write it. |
 | Statuses in step 9 | `RecordStatus` in `backend/prisma/schema.prisma`; the authority on who may set which is [PERMISSIONS.md](PERMISSIONS.md). |
+| **Gaps in the register itself** *(closed 2026-08-31)* | Kept as a record of what a register held to nothing but its own copies looks like. `GuideStep.fields` was missing real fields, found by reading the forms: **`artisan`** — Aadhaar number, the Artisan Pehchan Card pair, Date of birth, Practising since, Experience; **`craft`** — the *Workshop* select, the first control on the form; **`questionnaire`** — the recording-mode pair, the interview audio and the location block. The same audit then found the other half, which nobody had reported: **labels renamed under a list that kept the old word.** The designer profile's *Address* became *Address line* on 2026-08-30 and the card did not follow; the workshop form's date control is headed *Workshop duration*, not *Start and end date*; and the process card named two per-step boxes — *additional context notes (optional)* and *attached media* — that the form has never drawn (it draws a *Record additional information* tick, an *Additional context for this step* notes box and an *Attach media* card). The workshop and design-workshop pickers were also listed after the name on three record cards while the forms draw them first. All of it is in `steps.ts` and regenerated into `WalkthroughJourney.kt`. **The lesson, not the list:** three copies agreeing is not accuracy, and nothing in this repository compares any of them to a form. The only cure is reading the component — see the first row of this table for which components hide their own labels. |
 
 **The real maintenance procedure:** this document and the in-app `/guide` are two renderings of one
 thing. When a form changes, update both in the same commit — the in-app version is the one
@@ -640,6 +809,22 @@ researchers actually read, and this one is the version that gets printed and car
 **Review triggers:** any file under `frontend/components/forms/`, the guide page, or a new step in the
 documentation workflow.
 
-**Known unverified:** the Android screens are asserted to carry the same names and the same fields as
-the web ones. That parity is real as a design rule and is **not** mechanically checked; if a field
-exists on one client and not the other, nothing in this repository will notice.
+**Known unverified — narrowed 2026-08-31, and the narrowing matters.** This note used to say that
+web/Android parity was not mechanically checked at all. That is no longer true of the *walkthroughs*:
+`backend/tests/test_walkthrough_fields_parity.py` holds the handset's `WALKTHROUGH_FIELDS` to the
+web's `GuideStep.fields` word for word and in order, and now holds this document to the same
+register. It runs in the backend job, which is the only one with both trees on disk.
+
+What is **still** unchecked is the claim underneath: that the Android *forms* ask for the same things
+as the web forms. The guard compares three descriptions of the product to each other, not any of them
+to Android's screens — so if `ArtisanForm.kt` gains a box the web has not got, all three copies stay
+agreeing and nothing notices. The audit that wrote this found the register itself missing five real
+fields on the artisan step alone, which is what that gap looks like from the inside: mutual agreement
+is not accuracy, and the only cure is reading a form.
+
+**Those five are closed**, along with the rest of what a full label-for-label re-read of every card
+turned up on 2026-08-31 — see *Gaps in the register itself* above. Closing them changed nothing about
+the gap itself: the guard went green before the audit started and it is green now, and it would have
+been green with the fields still missing. **It cannot tell you whether a list is true.** The next
+reader who wants to know that has to open the form component, and the row above says which ones hide
+their labels inside shared components where a grep will not find them.
