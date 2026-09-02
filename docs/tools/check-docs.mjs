@@ -1496,9 +1496,10 @@ const PROVIDER_CLAIM = /\*\*Production runs on ([A-Z][A-Za-z0-9 ._-]{1,30}?)\.\*
 /** Filenames that contain a provider name. A PATH IS NOT A CLAIM: `keep-supabase-active.yml` and
  *  `backend/.env.supabase.bak` are real files, §2 checks the paths that are written down, and the
  *  whole point of keeping the `.bak` one named is that a reader who finds it can tell what it is.
- *  Stripped from a line before the line is swept; the self-test pins that a claim sharing the line
- *  with a filename still reports. */
-const PROVIDER_IN_A_FILENAME = /[\w./-]*(?:keep-supabase-active|\.env\.supabase)[\w./-]*/gi;
+ *  `supabase/.temp/` joined 2026-09-02: the provider's CLI writes its machine-local state there,
+ *  and the .gitignore pattern excluding it is a path too. Stripped from a line before the line is
+ *  swept; the self-test pins that a claim sharing the line with a filename still reports. */
+const PROVIDER_IN_A_FILENAME = /[\w./-]*(?:keep-supabase-active|\.env\.supabase|supabase\/\.temp)[\w./-]*/gi;
 
 /** The lines in `lines` (returned 1-based) where `re` names a provider OUTSIDE the escapes every
  *  sweep in §8c shares: a filename that merely contains the name is stripped first, and a mention

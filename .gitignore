@@ -25,7 +25,7 @@ __pycache__/
 !.env.example
 !.env.*.example
 
-# Supabase CLI local state (project link, version cache). Machine-local, never repo material.
+# The database provider's CLI writes its machine-local state here (project link, version cache).
 supabase/.temp/
 
 # Node / Next.js
