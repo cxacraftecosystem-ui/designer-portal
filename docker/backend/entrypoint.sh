@@ -5,7 +5,7 @@
 # It exists for ONE reason: to make it impossible to accidentally run this container against the
 # production database.
 #
-# backend/.env in this repository holds the LIVE Supabase pooler URL, the real JWT secret and the
+# backend/.env in this repository holds the LIVE managed-database URL, the real JWT secret and the
 # AWS media credentials. It is excluded from the build context (.dockerignore) so it can never be
 # baked into an image — but nothing stops a developer from passing it in by hand:
 #
@@ -78,7 +78,7 @@ if [ "$DB_KIND" = "remote" ] && [ "${ALLOW_REMOTE_DATABASE:-}" != "yes-i-mean-it
     fail "DATABASE_URL points at a REMOTE host: ${DB_HOST}" \
          "" \
          "This is the production-database guard. Containers in this stack are expected to talk" \
-         "to the compose Postgres service ('postgres:5432'), not to Supabase." \
+         "to the compose Postgres service ('postgres:5432'), not to a managed database." \
          "" \
          "If you passed --env-file backend/.env, that is the bug: that file is PRODUCTION." \
          "Use the repo-root .env (copied from .env.docker.example) instead." \

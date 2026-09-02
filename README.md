@@ -526,7 +526,7 @@ Useful optional backend variables:
 - `MASTER_ADMIN_NAME` defaults to `Ankit Kumar`; `DEFAULT_SIGNUP_ROLE` defaults to `CROWDSOURCE_VOLUNTEER`.
 - `ELEVENLABS_API_KEY`/`ELEVENLABS_STT_MODEL`, `DEEPGRAM_API_KEY`/`DEEPGRAM_STT_MODEL`, `OPENAI_API_KEY`/`OPENAI_TRANSCRIPTION_MODEL`/`OPENAI_CHAT_MODEL`, `GEMINI_API_KEY`/`GEMINI_API_KEYS`/`GEMINI_MEASUREMENT_MODEL` (default `gemini-2.5-flash-lite`), `NEXT_PUBLIC_MAPTILER_API_KEY` for optional transcription, refinement, measurement and map picking.
 - `MEDIA_QUEUE_WORKER_ENABLED` (set **false** on the production web process — the separate `fieldrepo-queue` service drains the queue), `MEDIA_QUEUE_INTERVAL_SECONDS`, `MEDIA_QUEUE_BATCH_SIZE`, `MEDIA_QUEUE_JOB_MAX_ATTEMPTS`.
-- `SUPABASE_REST_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` — **historical, 2026-08-22.** No code in this repository reads them and production is not on that provider. Kept, unset, only so the names are explained rather than mysterious; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
+- `SUPABASE_REST_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` — **unused; historical since 2026-08-22.** No code in this repository reads them: the application consumes exactly one thing from its database host — the PostgreSQL DSN — never a provider's HTTP APIs. Kept, unset, only so the names are explained rather than mysterious; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 - `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` for seeding the first admin. Keep the password only in private `.env` files or deployment secrets.
 - Security knobs, all safe at their defaults: `JWT_ALGORITHM` (`HS256`; HS-family only), `ALLOW_WEAK_JWT_SECRET` (local dev only), `DATABASE_REQUIRE_SSL` (unset = `sslmode=require` for remote hosts only), `AWS_S3_SSE_ALGORITHM` (`AES256`; empty for MinIO), and `SECURITY_HSTS_ENABLED`/`SECURITY_HSTS_MAX_AGE`/`SECURITY_FORCE_HSTS` — **set `SECURITY_FORCE_HSTS=true` in production**, because nginx overwrites `X-Forwarded-Proto` and the app otherwise never sees that the viewer used TLS. Details in [docs/SECURITY.md](docs/SECURITY.md).
 
@@ -575,15 +575,16 @@ without reading a secret: the "The database" section of
 [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md). It is deliberately not repeated here, because it being
 repeated in thirty files is what left this repository describing the wrong provider for months.
 
-### Keep-alive cron — dormant since 2026-08-22
+### Keep-alive cron — live again since 2026-09-02
 
-`.github/workflows/keep-supabase-active.yml` and `scripts/keep-supabase-active.mjs` exist to ping
-the database nightly. They were written for a free-tier Supabase project, which *paused* after a
-stretch of inactivity and needed a human to restore it — historical, 2026-08-22. The current
-provider suspends idle compute and wakes it on the next connection instead, so the ping buys this
-deployment nothing; the workflow's two `schedule:` lines are commented out and `workflow_dispatch`
-is kept. It is dormant rather than deleted, with the full argument and a review date in that file's
-header. Read the header before re-enabling or removing it.
+`.github/workflows/keep-supabase-active.yml` and `scripts/keep-supabase-active.mjs` ping the
+database nightly. They exist because a free-tier project at the provider hosting production today
+*pauses* after a stretch of inactivity and needs a human to restore it — which is why the cron was
+dormant from 2026-08-22 to 2026-09-02, while the provider of that era suspended idle compute and
+woke it on the next connection by itself. The 2026-09-02 move restored the two `schedule:` lines
+and set the database secret; `workflow_dispatch` is kept for firing the ping by hand. A red run is
+a real signal now. The file's header has the full story; where production runs is recorded in
+[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)'s database section, deliberately not here.
 
 ## Android Data Flow Notes
 

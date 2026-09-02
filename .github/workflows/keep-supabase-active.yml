@@ -1,61 +1,32 @@
-# ─── DORMANT ON THIS PORTAL, AND KEPT WHOLE ON PURPOSE ──────────────────────────────────────
+# ─── LIVE AGAIN AS OF 2026-09-02 ────────────────────────────────────────────────────────────
 #
-# THE SCHEDULE IS REMOVED; NOTHING ELSE IS. The provider hosting this portal's production database
-# suspends idle compute and wakes it on the next connection, so a nightly ping buys it nothing.
-# (WHICH provider that is is stated in exactly one place, docs/ENVIRONMENT.md's "The database"
-# section, and deliberately not repeated here — copying it into every file that mentions a database
-# is how a provider move came to leave thirty files saying something untrue.) A Supabase project is
-# the case this was written for — a free-tier project PAUSES after a stretch of inactivity and needs
-# a human to restore it — and that argument is still sound wherever it applies.
+# This workflow was dormant from 2026-08-22 (schedule commented out, no database secret) while the
+# provider of that era suspended idle compute on its own. On 2026-09-02 production moved back onto a
+# Supabase project, whose free tier PAUSES after a stretch of inactivity and needs a human to
+# restore it — the exact case this ping was built for — so the dormancy header's own condition 2
+# was executed as written: the two `schedule:` lines below were restored, the
+# `SUPABASE_DATABASE_URL` repository secret was set (the session-pooler DSN; the script rewrites the
+# port to the transaction pooler itself, so the nightly ping never occupies a session slot), and the
+# dormancy block was replaced by this one. (WHICH provider hosts production is still stated in
+# exactly one place, docs/ENVIRONMENT.md's "The database" section; this file is the workaround that
+# exists because of that provider's pause behaviour, which is why it may name it.)
 #
-# So this is dormant rather than deleted, and the Supabase path is deliberately intact: the step, its
-# two environment variables and the `npm run keep-alive` script all remain, and `SUPABASE_DATABASE_URL`
-# still takes precedence over `DATABASE_URL` so a deployment backed by Supabase — or a portal that
-# moves onto one later — re-enables this by restoring the two `schedule:` lines below and adding the
-# secret. Deleting the file would mean rebuilding it from memory at exactly the moment somebody
-# discovers a paused project.
+# `workflow_dispatch` is KEPT so the ping can also be fired by hand against whichever URL the
+# secrets name — useful for confirming the database is reachable from a runner without deploying.
 #
-# WHAT IT WAS ACTUALLY DOING HERE: failing, every night, since at least 9 August. `gh secret list` on
-# this repository returns BACKEND_ENV, EC2_HOST and EC2_SSH_KEY and nothing else, so neither
-# `SUPABASE_DATABASE_URL` nor `DATABASE_URL` was ever present and the run could only ever end in the
-# failure notice at the foot of this file. A workflow that fails nightly for a week trains everybody
-# to ignore a red mark on this repository, which is the cost worth removing even though the ping
-# itself was harmless.
+# A run that fails here is a real signal now, not noise: it means the runner could not reach the
+# production database. Check the secret first, then the provider's status page.
 #
-# `workflow_dispatch` is KEPT so the ping can still be fired by hand against whichever URL the secrets
-# name — useful for confirming a database is reachable from a runner without deploying anything.
-#
-# ─── WHEN THIS FILE SHOULD GO: REVIEW ON 2027-02-22, OR ON THE NEXT PROVIDER MOVE ──────────────────
-#
-# Dated deliberately, because "dormant, kept in case" is how a repository accumulates files nobody
-# dares touch. Two conditions, either of which ends it:
-#
-#   1. On review, production is still on a provider that does not pause idle projects — delete this
-#      file, `scripts/keep-supabase-active.mjs`, and the `keep-alive` script in the root
-#      `package.json`, and drop the `SUPABASE_KEEPALIVE_*` / `SUPABASE_DB_SSL` rows from
-#      docs/ENVIRONMENT.md's Actions table. Six months of nobody needing it is enough evidence, and
-#      the argument above survives in this file's history where a reader who needs it can find it.
-#   2. A deployment moves onto a provider that DOES pause — restore the two `schedule:` lines below,
-#      add the secret, and delete this block instead.
-#
-# ONE THING TO KNOW BEFORE DELETING: `npm ci` here is the reason the root `package.json` name cannot
-# be renamed in a single commit — docs/CI.md §7 records that constraint. Removing this file removes
-# that constraint too, so say so in the commit message.
-#
-# WHY THIS IS NOT ALREADY DELETED. The provider is a deployment detail everywhere else in this
-# repository, and the honest reading is that this workflow is the ONE place where that is not true:
-# it is not configuration that happens to name a provider, it is a workaround that only exists
-# because of one provider's pause behaviour. It cannot be made agnostic — a generic "ping the
-# database nightly" job is a cron with no purpose. So the choice was delete or date it, not
-# generalise it, and it is dated because a reachability ping fired by hand has independent value and
-# the deletion is cheap to do later and expensive to reconstruct.
+# ONE THING TO KNOW BEFORE DELETING THIS FILE: `npm ci` here is the reason the root `package.json`
+# name cannot be renamed in a single commit — docs/CI.md §7 records that constraint. Removing this
+# file removes that constraint too, so say so in the commit message.
 
 name: Keep Supabase Active
 
 on:
-  # Re-enable by restoring these two lines. Every day at 8:00 PM UTC (1:30 AM IST).
-  #   schedule:
-  #     - cron: "0 20 * * *"
+  # Every day at 8:00 PM UTC (1:30 AM IST).
+  schedule:
+    - cron: "0 20 * * *"
   workflow_dispatch:
 
 jobs:
@@ -84,8 +55,7 @@ jobs:
       - name: Notify on failure
         if: failure()
         run: |
-          echo "Supabase keep-alive failed."
-          echo "Check that SUPABASE_DATABASE_URL or DATABASE_URL is present in repository secrets."
-          echo "NOTE: this workflow is DORMANT (no schedule) and neither secret is expected to exist."
-          echo "If you did not fire this by hand deliberately, nothing here needs fixing - read the"
-          echo "header of .github/workflows/keep-supabase-active.yml first."
+          echo "Supabase keep-alive failed - the runner could not reach the production database."
+          echo "SUPABASE_DATABASE_URL is expected to exist in repository secrets (set 2026-09-02)."
+          echo "Check that secret first, then the provider's status page. A red run here is a real"
+          echo "signal, not noise - the header of this file explains why it is live."

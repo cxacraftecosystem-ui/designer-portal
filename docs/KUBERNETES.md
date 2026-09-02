@@ -67,18 +67,17 @@ merely gets slow.
 **The ceiling.** 200 client connections, shared by everything — every pod, every environment, every
 `psql`, every dashboard tab left open.
 
-> **UNRESOLVED — WHAT IS THE CURRENT PROVIDER'S CONNECTION CEILING? Recorded 2026-08-22; needs a
-> console, not a checkout.** The 200 is a **Supabase per-project** figure, and production left that
-> provider (see "The database" in [ENVIRONMENT.md](ENVIRONMENT.md)). It is the number every budget
-> below, `maxReplicas: 6` in `infra/k8s/base/hpa.yaml`, and both overlays' `DATABASE_CONNECTION_LIMIT`
-> are derived from. **Nothing in this repository establishes the new one**, and it is not the sort of
-> number to guess: too high re-runs the outage above, too low throttles the cluster for no reason.
->
-> The numbers are therefore **left exactly as they were** rather than re-derived against a ceiling
-> nobody has measured. They are known-survivable on the old provider and are conservative against any
-> larger ceiling; the risk of leaving them is wasted headroom, and the risk of editing them on a guess
-> is the outage. Nothing here is deployed on Kubernetes today — the API runs on EC2 — so the cost of
-> waiting is zero.
+> **RESOLVED 2026-09-02, by the deployment moving rather than by a console.** The question this
+> blockquote used to carry — "what is the current provider's ceiling, now that production left the
+> one the 200 was measured on?" — answered itself when production moved back onto that provider
+> (a new project, same per-project shape; see "The database" in [ENVIRONMENT.md](ENVIRONMENT.md)).
+> The 200-client figure these budgets, `maxReplicas: 6` in `infra/k8s/base/hpa.yaml`, and both
+> overlays' `DATABASE_CONNECTION_LIMIT` were derived from is the operative kind of number again —
+> **but it was measured on the pre-2026-08-22 project**, so confirm it in the provider's dashboard
+> for the new project before ever applying these manifests; tiers differ. The EC2 deployment that
+> actually serves production budgets separately and explicitly: two processes × an explicit limit
+> of 5 against the ~15-slot session pool, recorded in ENVIRONMENT.md's `DATABASE_CONNECTION_LIMIT`
+> row. Nothing here is deployed on Kubernetes today, so nothing needs editing on a guess.
 >
 > **The one thing that answers it:** open the current provider's console and read the compute's
 > connection limit (managed PostgreSQL usually states both a direct `max_connections` and a separate

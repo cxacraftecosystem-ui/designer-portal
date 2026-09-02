@@ -228,12 +228,15 @@ Nothing in this section depends on which provider hosts it, with one exception, 
 first because it is the one that changed under this document's feet.
 
 - **Encryption at rest is the provider's, and this repository cannot verify it.** Until 2026-08-22
-  this section asserted AES-256 volume and backup encryption as a fact about Supabase. Production
-  moved (see "The database" in [ENVIRONMENT.md](ENVIRONMENT.md)), and a claim about one vendor's
-  platform is not transferable to another's. **ACTION:** confirm at-rest encryption and backup
-  encryption in the current provider's console and record the answer here with a date. No
-  application configuration is required or possible either way — which is exactly why it has to be
-  checked in a console rather than in the code.
+  this section asserted AES-256 volume and backup encryption as a fact about one vendor's platform;
+  production then moved twice (see "The database" in [ENVIRONMENT.md](ENVIRONMENT.md)), and a claim
+  about one vendor is not transferable to another. **ANSWERED 2026-09-02, against the provider
+  hosting production today:** its published security page states "All customer data is encrypted at
+  rest with AES-256 and in transit via TLS." Backup encryption is **not separately asserted** on
+  that page — and note that automated daily backups themselves are a paid-plan feature there, so
+  the project's plan, not this repository, decides whether provider-side backups exist at all. No
+  application configuration is required or possible either way. Re-confirm on the next provider
+  move, with a date, as before.
 - Passwords are stored as bcrypt hashes (`passlib`, `CryptContext(schemes=["bcrypt"])`). Google
   sign-in accounts have no password hash at all.
 - **Nothing is encrypted at the column level.** Artisan names, phone numbers, addresses, GPS

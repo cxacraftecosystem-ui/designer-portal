@@ -14,15 +14,15 @@
 #
 # The budget, in full:
 #
-#   ceiling                     200   client connections. THIS NUMBER IS SUPABASE'S, and production
-#                                       left that provider on 2026-08-22. The current provider's
-#                                       client ceiling has NOT been established from this repository,
-#                                       and none of these numbers has been re-derived against it.
-#                                       Deliberately left as-is rather than guessed: this is known
-#                                       survivable on the old ceiling and conservative against a
-#                                       larger one, nothing here is deployed, and the failure mode of
-#                                       guessing high is the outage above. docs/KUBERNETES.md carries
-#                                       the open question and the console step that answers it.
+#   ceiling                     200   client connections. This is the per-project figure of the
+#                                       provider that hosted production until 2026-08-22 — and since
+#                                       2026-09-02 production is BACK on that provider (a new
+#                                       project, same shape; docs/ENVIRONMENT.md names it, once), so
+#                                       the number binds again rather than standing as a
+#                                       conservative leftover. The arithmetic below is live
+#                                       arithmetic now: re-verify it in the provider's dashboard
+#                                       before ever applying these manifests. docs/KUBERNETES.md
+#                                       carries the console step.
 #   planning limit              100   deliberately half the ceiling — see below for what eats the rest
 #
 #   per pod                      10   DATABASE_CONNECTION_LIMIT (configmap.yaml)

@@ -7,8 +7,9 @@ __pycache__/
 # Secrets.
 #
 # THE BARE `.env` THAT USED TO BE THE WHOLE RULE MATCHED ONLY THAT ONE NAME. It did not match
-# `backend/.env.supabase.bak`, a real file in this tree holding a live Supabase DATABASE_URL and
-# password, JWT_SECRET, AWS_SECRET_ACCESS_KEY, SUPABASE_SECRET_KEY, OPENAI_API_KEY, three Gemini
+# `backend/.env.supabase.bak`, a real file in this tree that held the DATABASE_URL and password of
+# the project that hosted this deployment until 2026-08-22, plus JWT_SECRET, AWS_SECRET_ACCESS_KEY,
+# SUPABASE_SECRET_KEY, OPENAI_API_KEY, three Gemini
 # keys and ADMIN_PASSWORD — the last of which is reused AS the database password. This repository
 # has no `.git` yet, so the first `git init && git add .` would have committed every one of them,
 # and SECURITY.md §2.2 is explicit that the database credentials bypass the entire role ladder in
@@ -23,6 +24,9 @@ __pycache__/
 .env.*
 !.env.example
 !.env.*.example
+
+# Supabase CLI local state (project link, version cache). Machine-local, never repo material.
+supabase/.temp/
 
 # Node / Next.js
 node_modules/

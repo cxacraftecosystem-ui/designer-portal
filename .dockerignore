@@ -12,7 +12,7 @@
 # ---------------------------------------------------------------------------------------------
 
 # --- Secrets. NEVER let these into a build context ------------------------------------------
-# backend/.env holds the LIVE PRODUCTION Supabase URL, the real JWT secret and the AWS media keys.
+# backend/.env holds the live production database URL, the real JWT secret and the AWS media keys.
 # A COPY that swept it into a layer would bake production credentials into every image, where
 # `docker history` shows them and any registry push publishes them. The pattern is deliberately
 # broad: it matches .env at any depth while leaving every *.example template copyable.

@@ -1355,14 +1355,15 @@ const KNOWN_PROVIDERS = [
   // honest move is to leave `sweepable` false and rely on the ENVIRONMENT.md sentence — not to flip
   // it and drown the run. Re-measure the same way before changing any of these.
   //
-  // `sweepable` ALSO governs the "stated once" count at the foot of this check, which is why Neon's
-  // is `true`: that count is about the CURRENT provider, and it can only be enforced for a name the
-  // tree can be grepped for. Measured 2026-08-23 over the 1,228 files `trackedTextFiles` returns:
-  // `\bneon\b` occurs on 3 lines, all of them in docs/ENVIRONMENT.md's authority section, and on
-  // zero lines anywhere else. The word is not the CSS colour keyword or an adjective in this tree,
-  // whatever it is elsewhere — so it is grep-able, and the "once" can be asserted instead of claimed.
-  ["Neon", "neon.tech", true],            // measured: 3 lines, one file — see the paragraph above
-  ["Supabase", "supabase.co", true],      // means nothing else; the whole reason this check exists
+  // `sweepable` ALSO governs the "stated once" count at the foot of this check: that count is about
+  // the CURRENT provider (Supabase, since 2026-09-02), and it can only be enforced for a name the
+  // tree can be grepped for. Both names that have hosted this deployment stay sweepable: Neon so the
+  // former-provider sweep catches an unlabelled leftover of the 2026-09-02 move, Supabase so the
+  // "stated once" half can be counted rather than claimed. Neither word means anything else in this
+  // tree — "neon" the CSS colour keyword does not appear, and the ARM-SIMD homonym is excused by
+  // path in PROVIDER_HOMONYM_PREFIXES, not by unsweeping the name.
+  ["Neon", "neon.tech", true],            // hosted this deployment 2026-08-22 → 2026-09-02
+  ["Supabase", "supabase.co", true],      // CURRENT since 2026-09-02; also the pre-2026-08-22 era
   ["Amazon RDS", "rds.amazonaws.com", true],
   ["Cloud SQL", "cloudsql", false],       // "cloud" plus a product word, both common in prose here
   ["Azure", "postgres.database.azure.com", false],
@@ -1499,6 +1500,23 @@ const PROVIDER_CLAIM = /\*\*Production runs on ([A-Z][A-Za-z0-9 ._-]{1,30}?)\.\*
  *  with a filename still reports. */
 const PROVIDER_IN_A_FILENAME = /[\w./-]*(?:keep-supabase-active|\.env\.supabase)[\w./-]*/gi;
 
+/** The lines in `lines` (returned 1-based) where `re` names a provider OUTSIDE the escapes every
+ *  sweep in §8c shares: a filename that merely contains the name is stripped first, and a mention
+ *  whose label window says "this is the past" is history doing its job, not rot. ONE helper serves
+ *  the former-provider sweep and the "stated once" count so the two halves cannot drift apart —
+ *  the 2026-09-02 move back onto a previously-swept provider is exactly when they would have. */
+function unlabelledProviderMentions(lines, re) {
+  const hits = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!re.test(lines[i])) continue;
+    // Strip the filenames that legitimately contain a provider name, then re-test.
+    if (!re.test(lines[i].replace(PROVIDER_IN_A_FILENAME, " "))) continue;
+    if (HISTORY_LABEL.test(flattenProse(providerLabelWindow(lines, i + 1)))) continue;
+    hits.push(i + 1);
+  }
+  return hits;
+}
+
 /** Reads `backend/.env.production` and returns ONLY the names of providers whose host substring is
  *  present — names taken from KNOWN_PROVIDERS above, never from the file. Nothing derived from the
  *  file's text is returned, stored, or logged. Returns null when there is no file to read. */
@@ -1569,16 +1587,17 @@ function checkDatabaseProvider() {
     // This file is exempt from its own sweep: naming every provider is what its table is FOR.
     if (rel === "docs/tools/check-docs.mjs") continue;
     if (PROVIDER_WORKAROUND_FILES.has(rel)) continue;
+    // The vendored ARM-SIMD "neon" homonym — mattered nowhere while Neon was the CURRENT provider
+    // (only "stated once" looked for it, and that half always had this escape), and matters here
+    // from the day Neon became a FORMER one. See PROVIDER_HOMONYM_PREFIXES.
+    if (isProviderHomonymPath(rel)) continue;
     const lines = read(join(REPO, rel)).split("\n");
     for (const [name] of stale) {
       const re = new RegExp(String.raw`\b${name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}\b`, "i");
-      for (let i = 0; i < lines.length; i += 1) {
-        if (!re.test(lines[i])) continue;
-        // Strip the filenames that legitimately contain a provider name, then re-test.
-        if (!re.test(lines[i].replace(PROVIDER_IN_A_FILENAME, " "))) continue;
-        if (HISTORY_LABEL.test(flattenProse(providerLabelWindow(lines, i + 1)))) continue;
+      const hits = unlabelledProviderMentions(lines, re);
+      if (hits.length) {
         const key = `${rel} ${name}`;
-        seen.set(key, (seen.get(key) ?? 0) + 1);
+        seen.set(key, (seen.get(key) ?? 0) + hits.length);
       }
     }
   }
@@ -1610,12 +1629,22 @@ function checkDatabaseProvider() {
 
   // ── "Stated once" — the half the sweep above structurally cannot see. ──
   //
-  // The sweep looks for FORMER providers. A SECOND statement of the CURRENT one is invisible to it,
-  // and copying the current provider's name into every file that mentions a database is precisely how
-  // the thirty untrue files were produced: each of them was accurate on the day it was written.
-  // docs/ENVIRONMENT.md asserts "stated once" as the architecture, so this counts it rather than
-  // taking its word for it. ENVIRONMENT.md itself is exempt — it is the one place the name belongs —
-  // and so is this file, whose table has to spell every provider out.
+  // The sweep looks for FORMER providers. A SECOND live-tense statement of the CURRENT one is
+  // invisible to it, and copying the current provider's name into every file that mentions a
+  // database is precisely how the thirty untrue files were produced: each of them was accurate on
+  // the day it was written. docs/ENVIRONMENT.md asserts "stated once" as the architecture, so this
+  // counts it rather than taking its word for it. ENVIRONMENT.md itself is exempt — it is the one
+  // place the name belongs — and so is this file, whose table has to spell every provider out.
+  //
+  // WHAT CHANGED ON 2026-09-02: production moved back onto a provider this repository has real
+  // machinery named after — the keep-alive workaround, and a history of measured incidents from the
+  // pre-2026-08-22 era. The original "zero mentions anywhere else" count, which held while the
+  // current provider was a name nothing else used, would now fail the workaround files, every
+  // correctly dated note about that era, and every path containing the name. So this half applies
+  // the SAME escapes as the sweep above — workaround files, vendored homonym paths, filenames, and
+  // history-labelled prose — via the shared unlabelledProviderMentions. What survives the escapes is
+  // what the rule was always about: a LIVE-TENSE claim about where production runs, outside the one
+  // file allowed to make it. Those fail, minus the counted CURRENT_PROVIDER_ALLOWLIST.
   //
   // ONLY POSSIBLE FOR A SWEEPABLE NAME. If the current provider's name is also an ordinary word here,
   // grepping for it measures nothing, and the honest output is to say the "once" is unenforced rather
@@ -1633,25 +1662,34 @@ function checkDatabaseProvider() {
   const elsewhere = new Map();
   for (const rel of trackedTextFiles()) {
     if (rel === "docs/tools/check-docs.mjs" || rel === "docs/ENVIRONMENT.md") continue;
+    if (PROVIDER_WORKAROUND_FILES.has(rel)) continue;
     if (isProviderHomonymPath(rel)) continue;
-    const n = read(join(REPO, rel)).split("\n").filter((l) => claimedRe.test(l)).length;
+    const n = unlabelledProviderMentions(read(join(REPO, rel)).split("\n"), claimedRe).length;
     if (n) elsewhere.set(rel, n);
   }
-  if (elsewhere.size === 0) {
-    note(
-      `"${claimed}" is named in docs/ENVIRONMENT.md and nowhere else in the ${trackedTextFiles().length} files swept — ` +
-      `the "stated once" rule is enforced, not just asserted`,
-    );
-  } else {
-    for (const [rel, n] of [...elsewhere].sort()) {
+  let extra = 0;
+  for (const [rel, n] of [...elsewhere].sort()) {
+    const allowed = CURRENT_PROVIDER_ALLOWLIST.get(`${rel} ${claimed}`) ?? 0;
+    if (n > allowed) {
+      extra += 1;
       fail(
-        `${rel}: names the CURRENT provider "${claimed}" on ${n} line(s). That fact belongs in exactly one place — ` +
-        'docs/ENVIRONMENT.md\'s "The database" section — and a second copy is a file that will be silently wrong on ' +
-        "the day the deployment moves, which is how the last migration left thirty of them. Say what the sentence " +
-        "actually needs instead (\"the provider hosting production today\", \"a PostgreSQL that suspends idle " +
-        "compute\") and point at that section.",
+        `${rel}: ${n} live-tense mention(s)${allowed ? ` of which ${allowed} are allowlisted` : ""} of the CURRENT ` +
+        `provider "${claimed}". Where production runs is stated in exactly one place — docs/ENVIRONMENT.md's "The ` +
+        'database" section. History may name the provider WITH a label (a HISTORY_LABEL word in the same table row ' +
+        "or the line's ±1 window), the keep-alive workaround machinery may name it freely, and a filename is a path, " +
+        'not a claim — this line is none of those. Say what the sentence actually needs ("the provider hosting ' +
+        'production today", "a managed PostgreSQL") and point at that section.',
       );
+    } else if (n) {
+      known(`${rel}: ${n} live-tense mention(s) of ${claimed}, allowlisted — machinery documentation, not a claim`);
     }
+  }
+  if (!extra) {
+    note(
+      `"${claimed}" appears live-tense only in docs/ENVIRONMENT.md and the ${CURRENT_PROVIDER_ALLOWLIST.size} ` +
+      `allowlisted place(s), across the ${trackedTextFiles().length} files swept — every other mention is a ` +
+      'filename, the keep-alive machinery, or labelled history. "Stated once" is enforced in its 2026-09-02 form.',
+    );
   }
 }
 
@@ -1662,32 +1700,25 @@ function checkDatabaseProvider() {
  *  mention in an already-listed file is a new finding rather than a free ride. Every entry is a real
  *  leftover of the migration; shrinking the list to nothing is the work. */
 const PROVIDER_ALLOWLIST = new Map([
-  // The container entrypoint's refusal-to-boot guard, and the header explaining it. Both name the
-  // old provider as the example of "a remote host you must not hand a throwaway container", which is
-  // still a correct illustration and is not a claim about where production is — but it reads as one,
-  // and the guard itself is host-shape logic that names no provider. `docker/` is outside the
-  // documentation workstream that added this check, so it is listed rather than edited from here.
-  // Whoever next touches that file: the two mentions can simply say "a managed database".
-  ["docker/backend/entrypoint.sh Supabase", 2],
-  // Two ignore-files that came into this sweep's reach when KEEP_BASENAMES was added (see
-  // trackedTextFiles). Both are real leftovers and both are OUTSIDE the documentation group that
-  // wrote this check, so they are listed with the correction rather than edited from here:
-  //   * `.dockerignore` — the comment above the `**/.env` pattern says backend/.env "holds the LIVE
-  //     PRODUCTION Supabase URL". The pattern is right and the reason is right; only the vendor name
-  //     is stale. It should read "the live production database URL" — the safety argument does not
-  //     need to know whose database it is.
-  //   * `.gitignore` — the block explaining why `.env.*` is ignored names `.env.supabase.bak` (a real
-  //     path, and correctly excused by PROVIDER_IN_A_FILENAME) but then describes its contents as "a
-  //     live Supabase DATABASE_URL". Past tense plus a date fixes it; the file it describes IS a
-  //     leftover of the migration, so it is history, not a requirement.
-  [".dockerignore Supabase", 1],
-  [".gitignore Supabase", 1],
-  // The root frontend env template's keep-alive block. Its mention is a TRUE description of what
+  // EMPTY as of 2026-09-02, and the emptying is the story: the move back onto the previously-swept
+  // provider was the occasion to apply every recorded fix rather than carry it — entrypoint.sh and
+  // .dockerignore now say "managed database", .gitignore dates its .bak description as history —
+  // and the NEW former provider left no unlabelled mention behind (its name only ever appeared in
+  // docs/ENVIRONMENT.md's authority section, which the move relabelled in the same change). An
+  // entry added here is a regression to hunt down, not a workaround to keep.
+]);
+
+/** Live-tense mentions of the CURRENT provider that are machinery documentation rather than a
+ *  second statement of where production runs. Same contract as PROVIDER_ALLOWLIST: keyed
+ *  FILE + PROVIDER with a count, so a SECOND mention in a listed file is a new finding. Every entry
+ *  must be documentation OF provider-specific machinery — never a claim about the deployment — and
+ *  each dies with the machinery it documents. */
+const CURRENT_PROVIDER_ALLOWLIST = new Map([
+  // The root env template's keep-alive block: a TRUE description of what
   // `scripts/keep-supabase-active.mjs` does — it really does match `*.pooler.supabase.com:5432` and
-  // nothing else — so it is the same category as PROVIDER_WORKAROUND_FILES above, one step removed:
-  // a template documenting that script's own variables. It is not a claim about where production
-  // runs, and it dies when the script does. Listed rather than edited because the env templates are
-  // another workstream's files; whoever retires the workflow deletes that block and this line.
+  // nothing else. The same category as PROVIDER_WORKAROUND_FILES, one step removed: a template
+  // documenting that script's own variables. Whoever retires the workflow deletes that block and
+  // this line together.
   [".env.example Supabase", 1],
 ]);
 
@@ -1764,8 +1795,8 @@ function selfTestDatabaseProvider() {
   // KNOWN_PROVIDERS' header and the only one; if you re-measure it, change it in both places.
   const sweepable = new Map(KNOWN_PROVIDERS.map(([name, , sweep]) => [name, !!sweep]));
   const WHY_SWEPT = {
-    Supabase: "Supabase is the provider this repository actually migrated off; not sweeping for it leaves the check asserting nothing about the tree.",
-    Neon: 'Neon is the CURRENT provider, and the "stated once" count at the foot of the check can only run on a sweepable name — measured 2026-08-23, `\\bneon\\b` occurs on 3 lines in this tree, all in docs/ENVIRONMENT.md.',
+    Supabase: 'Supabase is the CURRENT provider (since 2026-09-02), and the "stated once" count at the foot of the check can only run on a sweepable name.',
+    Neon: "Neon hosted this deployment from 2026-08-22 until 2026-09-02; not sweeping for it leaves the check asserting nothing about unlabelled leftovers of that move.",
   };
   for (const [name, want] of [["Supabase", true], ["Neon", true], ["Render", false], ["Timescale", false]]) {
     n += 1;
@@ -1831,6 +1862,28 @@ function selfTestDatabaseProvider() {
       "check-docs: §8c's flattenProse no longer strips only LEADING continuation markers " +
       `(got "${flattenProse("a line\n# 2026-08-22 and a # inside it")}")`,
     );
+  }
+
+  // THE SHARED MENTION-COUNTER behind both halves (the former sweep and "stated once"): a labelled
+  // mention is history doing its job, an unlabelled one is rot, and a filename alone is not a
+  // mention. One helper serves both so its edges are pinned once, here.
+  const mentionCases = [
+    [0, ["Runs on the Supabase project that", "hosted this deployment until 2026-08-22."]],
+    [1, ["Use the Supabase session pooler URL for DATABASE_URL."]],
+    [0, ["See .github/workflows/keep-supabase-active.yml for the cron."]],
+  ];
+  for (const [want, sample] of mentionCases) {
+    n += 1;
+    const got = unlabelledProviderMentions(sample, /\bSupabase\b/i).length;
+    if (got !== want) {
+      fail(
+        `check-docs: §8c's unlabelledProviderMentions counts ${got} where ${want} was expected for ` +
+        `${JSON.stringify(sample)} — ` +
+        (want
+          ? "an unlabelled live-tense mention no longer reports, which is the exact rot both halves exist for."
+          : "labelled history or a bare filename now reports as rot, and a check that cries wolf gets deleted."),
+      );
+    }
   }
 
   // THE WINDOW. A row must not be excused by its NEIGHBOURS — the hole §10 found for the sibling
