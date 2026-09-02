@@ -1,21 +1,21 @@
-// ─── DORMANT. THIS SCRIPT'S SCHEDULED CALLER NO LONGER RUNS ON A SCHEDULE ─────────────────────────
+// ─── LIVE AGAIN AS OF 2026-09-02. THIS SCRIPT'S CALLER RUNS NIGHTLY ───────────────────────────────
 //
 // Invoked by `npm run keep-alive`, which is invoked by `.github/workflows/keep-supabase-active.yml`
-// — whose `schedule:` lines were commented out on 2026-08-22 and which now only fires on
-// `workflow_dispatch`. THAT FILE'S HEADER IS THE ONE TO READ: it carries the whole argument for
-// keeping this rather than deleting it, and the date it should be reviewed again (2027-02-22).
+// — dormant from 2026-08-22 (schedule commented out, no secret) and re-armed on 2026-09-02 when
+// production moved back onto a Supabase project. THAT FILE'S HEADER IS THE ONE TO READ for the
+// story; "The database" in docs/ENVIRONMENT.md is the one place the current provider is named.
 //
-// WHY IT WAS WRITTEN: a free-tier Supabase project PAUSES after a stretch of inactivity and needs a
-// human to restore it, so a nightly query kept it awake. The provider hosting production today
-// suspends idle compute and wakes it on the next connection instead, which makes the ping pointless
-// here — see "The database" in docs/ENVIRONMENT.md, the one place the current provider is named.
+// WHY IT EXISTS: a free-tier Supabase project PAUSES after a stretch of inactivity and needs a
+// human to restore it, so a nightly query keeps it awake.
 //
-// NOTHING BELOW IS CHANGED, DELIBERATELY. Every line of it — the `:5432 → :6543` pooler rewrite, the
-// EMAXCONNSESSION reasoning, the retry backoff — is specific to one provider's pooler, and that is
-// the point rather than a defect: this file is the workaround, not the configuration. Generalising
-// it would leave a nightly `select now()` with no reason to exist. Against any other PostgreSQL host
-// the rewrite below simply does not match and the URL is used unchanged, so firing this by hand
-// against the current database is harmless and is a genuine way to confirm a runner can reach it.
+// THE MECHANISM BELOW IS UNCHANGED FROM THE PRE-2026-08-22 ERA, DELIBERATELY. Every line — the
+// `:5432 → :6543` pooler rewrite, the EMAXCONNSESSION reasoning, the retry backoff — is specific to
+// one provider's pooler, and that is the point rather than a defect: this file is the workaround,
+// not the configuration. ONE OPERATIONAL CONSTRAINT LEARNED ON RE-ARMING, 2026-09-02: the URL in
+// the secret must NOT carry `sslmode=require` — pg 8.16+'s libpq-compat path then verifies the
+// pooler's provider-signed chain and fails with SELF_SIGNED_CERT_IN_CHAIN, overriding the
+// `rejectUnauthorized: false` below. TLS still happens; this client just does not verify the chain,
+// which is an accepted trade for a nightly `select now()` and nothing else.
 
 import pg from "pg";
 
