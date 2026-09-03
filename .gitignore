@@ -28,6 +28,11 @@ __pycache__/
 # The database provider's CLI writes its machine-local state here (project link, version cache).
 supabase/.temp/
 
+# The AWS console names every downloaded access-key CSV like this (`<user>_accessKeys.csv`), and a
+# download dropped into the repo root is one `git add .` away from publishing an admin credential.
+# The pattern, not one filename: the next key download must not depend on somebody re-learning this.
+*accessKeys*.csv
+
 # Node / Next.js
 node_modules/
 .next/
