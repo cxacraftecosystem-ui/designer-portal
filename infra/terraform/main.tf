@@ -171,10 +171,14 @@ terraform {
   #      `user_data` diff on an existing instance is applied by STOPPING the
   #      instance, modifying the attribute and STARTING it again — an outage on
   #      the production API, proposed as an ordinary in-place update and easy to
-  #      wave through. `ignore_changes = [user_data]` (item (e)) is what removes
+  #      wave through. `ignore_changes = [user_data, ami]` (item (e)) is what removes
   #      it, so the plan a reader gets now really is the three lines above. If
-  #      you SEE a user_data diff, that block has been deleted and this step is
-  #      no longer the test it claims to be.
+  #      you SEE a user_data or ami diff, ONE of two things is true (corrected
+  #      2026-09-03, when the second was observed): the block was deleted — or
+  #      the resource is being REPLACED, because ignore_changes never applies
+  #      to a create and a replacement is one. A replacement row on this
+  #      instance is never acceptable in a routine plan; find the ForceNew
+  #      attribute it names and pin or ignore that, as `ami` itself had to be.
   #
   # NOTHING IN THIS CHANGE WAS RUN. No `init`, no `plan`, no `apply` — this file
   # only declares the intent, and a declaration that has not been reconciled is
@@ -594,6 +598,11 @@ resource "aws_security_group" "api" {
 resource "aws_iam_role" "ssm" {
   name = "${var.project}-ssm"
 
+  # The live role was created by CLI on 2026-08-30 carrying this description; declaring it here
+  # keeps the first reconciled apply from silently clearing a sentence somebody wrote on purpose
+  # (2026-09-03). The tags below are additive on that same apply — the live role has none.
+  description = "SSM Session Manager access for ${var.project}-api. Mirrors fieldrepo-ssm."
+
   # ec2.amazonaws.com and nothing else. No external id, no account principal, no wildcard: the only
   # thing that may wear this identity is an EC2 instance this profile is attached to.
   assume_role_policy = jsonencode({
@@ -722,8 +731,16 @@ resource "aws_instance" "api" {
   # should want: remove this block for one apply, accept the stop/start in a window, put it back.
   # `terraform apply -replace=aws_instance.api` is the other way and it is a rebuild, with
   # everything that implies (see the note on `key_name` above).
+  #
+  # `ami` JOINED THE LIST ON 2026-09-03, AND THE FIRST RECONCILIATION PLAN IS WHY. `data.aws_ami`
+  # asks for Canonical's MOST RECENT noble image, so every Canonical publish makes the data source
+  # answer a new id — and `ami` is ForceNew, so the very first plan after the state was rebuilt
+  # proposed DESTROYING the production instance to chase a fortnight-newer base image. The live
+  # box's identity is managed by the deploy workflow, not by rebuild-time inputs; same argument as
+  # `user_data`, same shape: an EXISTING instance keeps its image, and a deliberate rebuild (or a
+  # second box) still gets the current one, because ignore_changes never touches a create.
   lifecycle {
-    ignore_changes = [user_data]
+    ignore_changes = [user_data, ami]
   }
 }
 
