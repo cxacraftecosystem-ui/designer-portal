@@ -132,13 +132,21 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-client-17
-          pg_dump --version
-          # Assert the major we actually got. `apt-get install postgresql-client-17` can succeed
-          # while `pg_dump` on PATH is still the older one from the image's postgresql-client-common
-          # alternatives, which would then fail mid-dump with a version error instead of here.
-          major="$(pg_dump --version | sed -E 's/.* ([0-9]+).*/\1/')"
+          # THE PATH `pg_dump` IS NOT THE ONE WE INSTALLED, AND THAT IS THE IMAGE'S DESIGN, NOT A
+          # FAULT (learned on this workflow's first live run, 2026-09-03: the guard below fired with
+          # "major 16"). Debian's postgresql-client-common serves `/usr/bin/pg_dump` through
+          # pg_wrapper, which prefers the CLUSTER's version — and on a runner with no cluster it
+          # answers with the image's own client, whatever newer majors are installed beside it. So
+          # this workflow addresses the versioned binary DIRECTLY and never trusts PATH: the PGDG
+          # package always lands it at /usr/lib/postgresql/17/bin/pg_dump.
+          PG_DUMP=/usr/lib/postgresql/17/bin/pg_dump
+          echo "PG_DUMP=${PG_DUMP}" >> "$GITHUB_ENV"
+          "$PG_DUMP" --version
+          # Assert the major we actually got — from the binary we will actually run. If the PGDG
+          # layout ever moves, this is where the job says so, before any connection is opened.
+          major="$("$PG_DUMP" --version | sed -E 's/.* ([0-9]+).*/\1/')"
           if [ "${major:-0}" -lt 17 ]; then
-            echo "::error::pg_dump on PATH is major ${major}, but the managed database needs a client >= 17. The PGDG install did not take over the alternatives link."
+            echo "::error::${PG_DUMP} is major ${major}, but the managed database needs a client >= 17."
             exit 1
           fi
 
@@ -162,7 +170,7 @@ jobs:
           #
           # `set -o pipefail` above is load-bearing: without it the exit status of this line is
           # gzip's, and gzip is perfectly happy to compress a failed dump's partial output.
-          pg_dump "$DATABASE_URL" --no-owner --no-privileges --schema=public \
+          "$PG_DUMP" "$DATABASE_URL" --no-owner --no-privileges --schema=public \
             | gzip -9 > "backup-${stamp}.sql.gz"
           ls -l "backup-${stamp}.sql.gz"
           # A local floor before spending an upload on it. 100 KB is far below a real dump of this
